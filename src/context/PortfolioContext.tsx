@@ -9,7 +9,7 @@ interface PortfolioContextType {
     summary: PortfolioSummary;
     addTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
-    updateTarget: (type: TransactionType, percentage: number) => void;
+    updateTarget: (ticker: string, percentage: number) => void;
     resetPortfolio: () => void;
 }
 
@@ -24,14 +24,11 @@ export const usePortfolio = () => {
 };
 
 // Default targets
-const DEFAULT_TARGETS: Target[] = [
-    { type: 'ETF', targetPercentage: 60 },
-    { type: 'Bond', targetPercentage: 40 },
-];
+const DEFAULT_TARGETS: Target[] = [];
 
 export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [transactions, setTransactions] = useLocalStorage<Transaction[]>('portfolio_transactions', []);
-    const [targets, setTargets] = useLocalStorage<Target[]>('portfolio_targets', DEFAULT_TARGETS);
+    const [targets, setTargets] = useLocalStorage<Target[]>('portfolio_targets_v2', DEFAULT_TARGETS);
 
     const addTransaction = (transaction: Transaction) => {
         setTransactions((prev) => [...prev, transaction]);
@@ -41,14 +38,14 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTransactions((prev) => prev.filter((t) => t.id !== id));
     };
 
-    const updateTarget = (type: TransactionType, percentage: number) => {
+    const updateTarget = (ticker: string, percentage: number) => {
         setTargets((prev) => {
-            // Ensure specific type is updated, or add if missing
-            const exists = prev.find(t => t.type === type);
+            // Ensure specific ticker is updated, or add if missing
+            const exists = prev.find(t => t.ticker === ticker);
             if (exists) {
-                return prev.map(t => t.type === type ? { ...t, targetPercentage: percentage } : t);
+                return prev.map(t => t.ticker === ticker ? { ...t, targetPercentage: percentage } : t);
             }
-            return [...prev, { type, targetPercentage: percentage }];
+            return [...prev, { ticker, targetPercentage: percentage }];
         });
     };
 

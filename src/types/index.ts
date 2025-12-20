@@ -22,7 +22,7 @@ export interface Asset {
   // Let's assume for now "Value" = Sum of (Amount * Price) from transactions (Cost Basis) OR User manually updates current prices.
   // Given "understand how much it deviates from target", likely needs CURRENT market value.
   // I will add `currentPrice` to Asset which user can update.
-  currentPrice?: number; 
+  currentPrice?: number;
 }
 
 export interface PortfolioSummary {
@@ -34,6 +34,6 @@ export interface PortfolioSummary {
 }
 
 export interface Target {
-  type: TransactionType;
+  ticker: string;
   targetPercentage: number; // 0-100
 }
