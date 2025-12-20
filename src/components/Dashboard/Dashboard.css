@@ -1,0 +1,139 @@
+/* Dashboard Styles */
+
+.dashboard-container {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+/* Summary Cards */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--space-6);
+}
+
+.summary-card {
+  background-color: var(--bg-surface);
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card-label {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.card-value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.card-trend {
+  font-size: 0.875rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.trend-up {
+  color: var(--color-success);
+}
+
+.trend-down {
+  color: var(--color-danger);
+}
+
+.trend-neutral {
+  color: var(--text-muted);
+}
+
+/* Allocation & Targets */
+.allocation-card {
+  background-color: var(--bg-surface);
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+}
+
+.section-title {
+  font-size: 1.25rem;
+  color: var(--text-primary);
+  margin-bottom: var(--space-6);
+}
+
+.allocation-bar-container {
+  height: 24px;
+  width: 100%;
+  background-color: var(--bg-app);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  display: flex;
+  margin-bottom: var(--space-6);
+}
+
+.allocation-segment {
+  height: 100%;
+  transition: width 0.5s ease;
+}
+
+.segment-etf {
+  background-color: var(--color-etf);
+}
+
+.segment-bond {
+  background-color: var(--color-bond);
+}
+
+.allocation-details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-6);
+}
+
+.allocation-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--bg-card);
+}
+
+.allocation-type {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.dot-etf { background-color: var(--color-etf); }
+.dot-bond { background-color: var(--color-bond); }
+
+.allocation-stats {
+  text-align: right;
+}
+
+.allocation-perc {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.allocation-diff {
+  font-size: 0.875rem;
+}
+
+.diff-positive { color: var(--color-success); } /* Overweight */
+.diff-negative { color: var(--color-warning); } /* Underweight */
+.diff-neutral { color: var(--text-muted); }

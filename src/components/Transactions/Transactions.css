@@ -1,0 +1,135 @@
+/* Transaction Components Styles */
+
+.transaction-container {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: var(--space-8);
+}
+
+@media (max-width: 900px) {
+  .transaction-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Form */
+.transaction-form-card {
+  background-color: var(--bg-surface);
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  height: fit-content;
+}
+
+.transaction-form-card h2 {
+  margin-bottom: var(--space-4);
+  font-size: 1.25rem;
+  color: var(--text-primary);
+}
+
+.form-group {
+  margin-bottom: var(--space-4);
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.form-input, .form-select {
+  width: 100%;
+  padding: var(--space-3);
+  background-color: var(--bg-app);
+  border: 1px solid var(--bg-card);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: 1rem;
+  transition: border-color 0.2s;
+}
+
+.form-input:focus, .form-select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+}
+
+.btn-submit {
+  width: 100%;
+  padding: var(--space-3);
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  margin-top: var(--space-2);
+  transition: background-color 0.2s;
+}
+
+.btn-submit:hover {
+  background-color: var(--color-primary-hover);
+}
+
+/* List */
+.transaction-list-card {
+  background-color: var(--bg-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-md);
+  overflow-x: auto;
+}
+
+.transaction-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 600px;
+}
+
+.transaction-table th {
+  text-align: left;
+  padding: var(--space-4);
+  color: var(--text-muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--bg-card);
+  font-size: 0.875rem;
+}
+
+.transaction-table td {
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--bg-card);
+  color: var(--text-primary);
+}
+
+.type-badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.type-etf {
+  background-color: rgba(59, 130, 246, 0.1);
+  color: var(--color-etf);
+}
+
+.type-bond {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: var(--color-bond);
+}
+
+.btn-delete {
+  background: transparent;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  transition: all 0.2s;
+}
+
+.btn-delete:hover {
+  background-color: var(--color-danger);
+  color: white;
+}
