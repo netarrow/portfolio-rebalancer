@@ -3,8 +3,13 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, deleteTransaction, refreshPrices } = usePortfolio();
+    const { transactions, assets, deleteTransaction, refreshPrices } = usePortfolio();
     const [updating, setUpdating] = React.useState(false);
+
+    const getAssetPrice = (ticker: string) => {
+        const asset = assets.find(a => a.ticker === ticker);
+        return asset?.currentPrice;
+    };
 
     const handleRefresh = async () => {
         setUpdating(true);
@@ -41,7 +46,8 @@ const TransactionList: React.FC = () => {
                             <th>Side</th>
                             <th>Type</th>
                             <th>Qty</th>
-                            <th>Price</th>
+                            <th>Price (Exec)</th>
+                            <th>Price (Mkt)</th>
                             <th>Total</th>
                             <th>Action</th>
                         </tr>
@@ -66,6 +72,9 @@ const TransactionList: React.FC = () => {
                                 </td>
                                 <td>{tx.amount}</td>
                                 <td>{tx.price.toFixed(2)}</td>
+                                <td style={{ color: 'var(--text-muted)' }}>
+                                    {getAssetPrice(tx.ticker)?.toFixed(2) || '-'}
+                                </td>
                                 <td>{(tx.amount * tx.price).toFixed(2)}</td>
                                 <td>
                                     <button
