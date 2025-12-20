@@ -60,34 +60,62 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Process transactions to build assets
         transactions.forEach(tx => {
-            const existing = assetMap.get(tx.ticker);
-            if (existing) {
-                // Update existing asset
-                const totalQuantity = existing.quantity + tx.amount;
-                // Average price calculation (simplified: weighted average)
-                // formula: (oldQty * oldAvg + newQty * newPrice) / totalQty
-                const newAveragePrice = ((existing.quantity * existing.averagePrice) + (tx.amount * tx.price)) / totalQuantity;
+            // normalize ticker
+            const ticker = tx.ticker.toUpperCase();
+            const existing = assetMap.get(ticker);
 
-                assetMap.set(tx.ticker, {
+            // Default to Buy if undefined (migration safety)
+            const direction = tx.direction || 'Buy';
+
+            if (existing) {
+                let newQuantity = existing.quantity;
+                let newAveragePrice = existing.averagePrice;
+
+                if (direction === 'Buy') {
+                    const totalQuantity = existing.quantity + tx.amount;
+                    // Weighted Average Price
+                    newAveragePrice = ((existing.quantity * existing.averagePrice) + (tx.amount * tx.price)) / totalQuantity;
+                    newQuantity = totalQuantity;
+                } else {
+                    // Sell
+                    newQuantity = existing.quantity - tx.amount;
+                    // Average Price doesn't change on Sell
+                }
+
+                assetMap.set(ticker, {
                     ...existing,
-                    quantity: totalQuantity,
+                    quantity: newQuantity,
                     averagePrice: newAveragePrice,
-                    currentValue: totalQuantity * (existing.currentPrice || newAveragePrice), // Using last known price or avg
+                    currentValue: newQuantity * (existing.currentPrice || newAveragePrice), // Use last known price or new Avg? Ideally we should have a separate "Current Price" user input. For now assume Current Price = Last Buy Price or Avg Price is flawed. 
+                    // Let's assume for MVP: Value = Quantity * Last Known Price. 
+                    // Check if this tx has a price. If it's a Buy/Sell at market, maybe that's the new "Current Price"?
+                    currentPrice: tx.price // Update current market price to latest transaction price
                 });
             } else {
                 // New asset
-                assetMap.set(tx.ticker, {
-                    ticker: tx.ticker,
+                // If first tx is Sell, we have negative quantity. Allowed.
+                const quantity = direction === 'Buy' ? tx.amount : -tx.amount;
+                assetMap.set(ticker, {
+                    ticker: ticker,
                     type: tx.type,
-                    quantity: tx.amount,
+                    quantity: quantity,
                     averagePrice: tx.price,
-                    currentValue: tx.amount * tx.price,
+                    currentValue: quantity * tx.price,
                     currentPrice: tx.price
                 });
             }
         });
 
-        const assetsList = Array.from(assetMap.values());
+        // Update current values based on final quantity * last seen price
+        // Note: The loop above updates currentValue incrementally, but we should probably recalc at the end if we want "Latest Price" to apply to ALL quantity.
+        // Let's do a second pass or just ensure the stored Asset has the "Latest Price" from the sort order?
+        // Transactions are usually appended. So last one is latest.
+
+        // Better approach: Calculate stats after processing all txs
+        const assetsList = Array.from(assetMap.values()).map(asset => ({
+            ...asset,
+            currentValue: asset.quantity * (asset.currentPrice || asset.averagePrice)
+        }));
 
         // Calculate totals
         const totalValue = assetsList.reduce((sum, asset) => sum + asset.currentValue, 0);

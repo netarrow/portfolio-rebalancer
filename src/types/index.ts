@@ -1,10 +1,12 @@
 export type TransactionType = 'ETF' | 'Bond';
+export type TransactionDirection = 'Buy' | 'Sell';
 
 export interface Transaction {
   id: string;
   date: string; // ISO date string YYYY-MM-DD
   ticker: string;
   type: TransactionType;
+  direction: TransactionDirection;
   amount: number; // Quantity
   price: number; // Price per unit
   currency: string;

@@ -21,6 +21,7 @@ const TransactionList: React.FC = () => {
                         <tr>
                             <th>Date</th>
                             <th>Ticker</th>
+                            <th>Side</th>
                             <th>Type</th>
                             <th>Qty</th>
                             <th>Price</th>
@@ -33,6 +34,14 @@ const TransactionList: React.FC = () => {
                             <tr key={tx.id}>
                                 <td>{tx.date}</td>
                                 <td style={{ fontWeight: 600 }}>{tx.ticker}</td>
+                                <td>
+                                    <span style={{
+                                        color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
+                                        fontWeight: 600
+                                    }}>
+                                        {tx.direction || 'Buy'}
+                                    </span>
+                                </td>
                                 <td>
                                     <span className={`type-badge type-${tx.type.toLowerCase()}`}>
                                         {tx.type}
