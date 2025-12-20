@@ -25,6 +25,9 @@ export interface Asset {
   // Given "understand how much it deviates from target", likely needs CURRENT market value.
   // I will add `currentPrice` to Asset which user can update.
   currentPrice?: number;
+  lastUpdated?: string;
+  gain?: number;
+  gainPercentage?: number;
 }
 
 export interface PortfolioSummary {
@@ -33,6 +36,8 @@ export interface PortfolioSummary {
   allocation: {
     [key in TransactionType]: number; // Percentage 0-100
   };
+  totalGain: number;
+  totalGainPercentage: number;
 }
 
 export interface Target {

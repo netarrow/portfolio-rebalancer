@@ -24,9 +24,11 @@ const AllocationOverview: React.FC = () => {
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
                 <div className="allocation-row" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
                     <div style={{ flex: 1 }}>Asset</div>
-                    <div style={{ width: '100px', textAlign: 'right' }}>Target</div>
-                    <div style={{ width: '100px', textAlign: 'right' }}>Actual</div>
-                    <div style={{ width: '150px', textAlign: 'right' }}>Action</div>
+                    <div style={{ width: '80px', textAlign: 'right' }}>Price</div>
+                    <div style={{ width: '100px', textAlign: 'right' }}>Gain</div>
+                    <div style={{ width: '80px', textAlign: 'right' }}>Target</div>
+                    <div style={{ width: '80px', textAlign: 'right' }}>Actual</div>
+                    <div style={{ width: '120px', textAlign: 'right' }}>Action</div>
                 </div>
 
                 {allTickers.length === 0 ? (
@@ -53,6 +55,9 @@ const AllocationOverview: React.FC = () => {
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
                                 rebalanceAmount={rebalanceAmount}
+                                currentPrice={asset?.currentPrice || 0}
+                                gain={asset?.gain || 0}
+                                gainPerc={asset?.gainPercentage || 0}
                             />
                         );
                     })
@@ -68,9 +73,12 @@ interface RowProps {
     currentPerc: number;
     targetPerc: number;
     rebalanceAmount: number;
+    currentPrice: number;
+    gain: number;
+    gainPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, type, currentPerc, targetPerc, rebalanceAmount }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, type, currentPerc, targetPerc, rebalanceAmount, currentPrice, gain, gainPerc }) => {
     const diff = currentPerc - targetPerc;
 
     // Color helper (simple hash or type based?) -> sticking to Type for badge color, maybe?
@@ -85,18 +93,31 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, type, currentPerc, targetPe
                 </div>
             </div>
 
-            <div style={{ width: '100px', textAlign: 'right' }}>
+            <div style={{ width: '80px', textAlign: 'right' }}>
+                €{currentPrice.toFixed(2)}
+            </div>
+
+            <div style={{ width: '100px', textAlign: 'right', fontSize: '0.9rem' }}>
+                <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                    {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+                </div>
+                <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                    {gainPerc.toFixed(1)}%
+                </div>
+            </div>
+
+            <div style={{ width: '80px', textAlign: 'right' }}>
                 {targetPerc}%
             </div>
 
-            <div style={{ width: '100px', textAlign: 'right' }}>
+            <div style={{ width: '80px', textAlign: 'right' }}>
                 <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
                 <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
                     {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
                 </div>
             </div>
 
-            <div style={{ width: '150px', textAlign: 'right' }}>
+            <div style={{ width: '120px', textAlign: 'right' }}>
                 <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                     {Math.abs(rebalanceAmount) < 5 ? ( // Threshold to ignore small dust
                         <span className="trend-neutral">OK</span>

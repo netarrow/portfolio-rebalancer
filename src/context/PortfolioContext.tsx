@@ -10,6 +10,7 @@ interface PortfolioContextType {
     addTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
     updateTarget: (ticker: string, percentage: number) => void;
+    refreshPrices: () => Promise<void>;
     resetPortfolio: () => void;
 }
 
@@ -29,6 +30,14 @@ const DEFAULT_TARGETS: Target[] = [];
 export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [transactions, setTransactions] = useLocalStorage<Transaction[]>('portfolio_transactions', []);
     const [targets, setTargets] = useLocalStorage<Target[]>('portfolio_targets_v2', DEFAULT_TARGETS);
+    const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
+
+    const updateMarketData = (ticker: string, price: number, lastUpdated: string) => {
+        setMarketData(prev => ({
+            ...prev,
+            [ticker.toUpperCase()]: { price, lastUpdated }
+        }));
+    };
 
     const addTransaction = (transaction: Transaction) => {
         setTransactions((prev) => [...prev, transaction]);
@@ -52,6 +61,23 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const resetPortfolio = () => {
         setTransactions([]);
         setTargets(DEFAULT_TARGETS);
+        setMarketData({});
+    };
+
+    const refreshPrices = async () => {
+        // Dynamic import to avoid circular dependency if any, though likely safe.
+        // Also cleaner separation.
+        const { fetchAssetPrice } = await import('../services/marketData');
+
+        // Get unique tickers
+        const uniqueTickers = Array.from(new Set(transactions.map(t => t.ticker)));
+
+        await Promise.all(uniqueTickers.map(async (ticker) => {
+            const data = await fetchAssetPrice(ticker);
+            if (data) {
+                updateMarketData(ticker, data.currentPrice, data.lastUpdated);
+            }
+        }));
     };
 
     // Derive Assets and Summary
@@ -86,14 +112,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     ...existing,
                     quantity: newQuantity,
                     averagePrice: newAveragePrice,
-                    currentValue: newQuantity * (existing.currentPrice || newAveragePrice), // Use last known price or new Avg? Ideally we should have a separate "Current Price" user input. For now assume Current Price = Last Buy Price or Avg Price is flawed. 
-                    // Let's assume for MVP: Value = Quantity * Last Known Price. 
-                    // Check if this tx has a price. If it's a Buy/Sell at market, maybe that's the new "Current Price"?
-                    currentPrice: tx.price // Update current market price to latest transaction price
+                    // Temporary currentValue, updated below
+                    currentValue: newQuantity * existing.averagePrice,
+                    currentPrice: tx.price
                 });
             } else {
                 // New asset
-                // If first tx is Sell, we have negative quantity. Allowed.
                 const quantity = direction === 'Buy' ? tx.amount : -tx.amount;
                 assetMap.set(ticker, {
                     ticker: ticker,
@@ -106,20 +130,33 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }
         });
 
-        // Update current values based on final quantity * last seen price
-        // Note: The loop above updates currentValue incrementally, but we should probably recalc at the end if we want "Latest Price" to apply to ALL quantity.
-        // Let's do a second pass or just ensure the stored Asset has the "Latest Price" from the sort order?
-        // Transactions are usually appended. So last one is latest.
+        // Calculate final stats using Market Data if available
+        const assetsList = Array.from(assetMap.values()).map(asset => {
+            // Prefer market data if available
+            const marketInfo = marketData[asset.ticker];
+            const effectivePrice = marketInfo ? marketInfo.price : (asset.currentPrice || asset.averagePrice);
+            const lastUpdated = marketInfo ? marketInfo.lastUpdated : undefined;
 
-        // Better approach: Calculate stats after processing all txs
-        const assetsList = Array.from(assetMap.values()).map(asset => ({
-            ...asset,
-            currentValue: asset.quantity * (asset.currentPrice || asset.averagePrice)
-        }));
+            const currentValue = asset.quantity * effectivePrice;
+            const totalCost = asset.quantity * asset.averagePrice;
+            const gain = currentValue - totalCost;
+            const gainPercentage = totalCost !== 0 ? (gain / totalCost) * 100 : 0;
+
+            return {
+                ...asset,
+                currentPrice: effectivePrice,
+                currentValue: currentValue,
+                lastUpdated,
+                gain,
+                gainPercentage
+            };
+        });
 
         // Calculate totals
         const totalValue = assetsList.reduce((sum, asset) => sum + asset.currentValue, 0);
         const totalCost = assetsList.reduce((sum, asset) => sum + (asset.quantity * asset.averagePrice), 0);
+        const totalGain = totalValue - totalCost;
+        const totalGainPercentage = totalCost !== 0 ? (totalGain / totalCost) * 100 : 0;
 
         // Calculate allocation
         const allocationByType: { [key in TransactionType]: number } = {
@@ -141,11 +178,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             allocation: {
                 'ETF': etfPerc,
                 'Bond': bondPerc
-            }
+            },
+            totalGain,
+            totalGainPercentage
         };
 
         return { assets: assetsList, summary: summaryData };
-    }, [transactions]);
+    }, [transactions, marketData]);
 
     const value = {
         transactions,
@@ -155,6 +194,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addTransaction,
         deleteTransaction,
         updateTarget,
+        refreshPrices,
         resetPortfolio
     };
 

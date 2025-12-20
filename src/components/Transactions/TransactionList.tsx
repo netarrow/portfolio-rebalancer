@@ -3,7 +3,14 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, deleteTransaction } = usePortfolio();
+    const { transactions, deleteTransaction, refreshPrices } = usePortfolio();
+    const [updating, setUpdating] = React.useState(false);
+
+    const handleRefresh = async () => {
+        setUpdating(true);
+        await refreshPrices();
+        setUpdating(false);
+    };
 
     // Sort by date desc
     const sortedTransactions = [...transactions].sort((a, b) =>
@@ -12,7 +19,17 @@ const TransactionList: React.FC = () => {
 
     return (
         <div className="transaction-list-card">
-            <h2 style={{ marginBottom: 'var(--space-4)' }}>History</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+                <h2>History</h2>
+                <button
+                    onClick={handleRefresh}
+                    disabled={updating}
+                    className="btn-primary"
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.8rem' }}
+                >
+                    {updating ? 'Updating...' : 'Update Prices'}
+                </button>
+            </div>
             {transactions.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)' }}>No transactions yet.</p>
             ) : (
