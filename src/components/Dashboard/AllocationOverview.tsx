@@ -44,14 +44,15 @@ const AllocationOverview: React.FC = () => {
                         const targetValue = summary.totalValue * (targetPerc / 100);
                         const rebalanceAmount = targetValue - currentValue;
 
-                        // Type guessing for color (fallback if no asset data)
-                        const type = asset?.type || 'ETF';
+                        const assetClass = asset?.assetClass || 'Stock';
+                        const assetSubClass = asset?.assetSubClass || '';
 
                         return (
                             <AllocationRow
                                 key={ticker}
                                 ticker={ticker}
-                                type={type}
+                                assetClass={assetClass}
+                                assetSubClass={assetSubClass}
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
                                 rebalanceAmount={rebalanceAmount}
@@ -69,7 +70,8 @@ const AllocationOverview: React.FC = () => {
 
 interface RowProps {
     ticker: string;
-    type: string;
+    assetClass: string;
+    assetSubClass?: string;
     currentPerc: number;
     targetPerc: number;
     rebalanceAmount: number;
@@ -78,18 +80,29 @@ interface RowProps {
     gainPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, type, currentPerc, targetPerc, rebalanceAmount, currentPrice, gain, gainPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, currentPrice, gain, gainPerc }) => {
     const diff = currentPerc - targetPerc;
 
-    // Color helper (simple hash or type based?) -> sticking to Type for badge color, maybe?
-    const colorClass = type === 'Bond' ? 'dot-bond' : 'dot-etf'; // Simple fallback
+    const colorMap: Record<string, string> = {
+        'Stock': 'dot-etf', // Reuse existing class names for now or map to new ones
+        'Bond': 'dot-bond',
+        'Commodity': 'dot-commodity',
+        'Crypto': 'dot-crypto'
+    };
+
+    // Fallback if css classes aren't updated yet, but 'dot-etf' / 'dot-bond' exist
+    // We should ideally update CSS to have generic classes like 'dot-blue', 'dot-green', etc. or class-specific
+    const colorClass = colorMap[assetClass] || 'dot-neutral';
 
     return (
         <div className="allocation-row" style={{ padding: 'var(--space-3) 0' }}>
             <div className="allocation-type" style={{ flex: 1 }}>
-                <div className={`dot ${colorClass}`} />
+                <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
                 <div>
                     <strong>{ticker}</strong>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                        {assetClass} {assetSubClass ? `• ${assetSubClass}` : ''}
+                    </div>
                 </div>
             </div>
 
@@ -130,6 +143,17 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, type, currentPerc, targetPe
             </div>
         </div>
     );
+}
+
+// Inline helper for colors until CSS is fully updated (though existing classes work too)
+function getColorForClass(assetClass: string): string {
+    switch (assetClass) {
+        case 'Stock': return '#3B82F6';
+        case 'Bond': return '#10B981';
+        case 'Commodity': return '#F59E0B';
+        case 'Crypto': return '#8B5CF6';
+        default: return '#9CA3AF';
+    }
 }
 
 export default AllocationOverview;

@@ -44,7 +44,8 @@ const TransactionList: React.FC = () => {
                             <th>Date</th>
                             <th>Ticker</th>
                             <th>Side</th>
-                            <th>Type</th>
+                            <th>Class</th>
+                            <th>Subclass</th>
                             <th>Qty</th>
                             <th>Price (Exec)</th>
                             <th>Price (Mkt)</th>
@@ -66,9 +67,12 @@ const TransactionList: React.FC = () => {
                                     </span>
                                 </td>
                                 <td>
-                                    <span className={`type-badge type-${tx.type.toLowerCase()}`}>
-                                        {tx.type}
+                                    <span className={`type-badge type-${(tx.assetClass || 'stock').toLowerCase()}`}>
+                                        {tx.assetClass}
                                     </span>
+                                </td>
+                                <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                    {tx.assetSubClass || '-'}
                                 </td>
                                 <td>{tx.amount}</td>
                                 <td>{tx.price.toFixed(2)}</td>

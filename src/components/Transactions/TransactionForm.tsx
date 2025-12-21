@@ -1,17 +1,30 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import type { TransactionType, TransactionDirection } from '../../types';
+import type { AssetClass, AssetSubClass, TransactionDirection } from '../../types';
 import './Transactions.css';
 
 const TransactionForm: React.FC = () => {
     const { addTransaction } = usePortfolio();
 
     const [ticker, setTicker] = useState('');
-    const [type, setType] = useState<TransactionType>('ETF');
+    const [assetClass, setAssetClass] = useState<AssetClass>('Stock');
+    const [assetSubClass, setAssetSubClass] = useState<AssetSubClass>('International');
     const [direction, setDirection] = useState<TransactionDirection>('Buy');
     const [amount, setAmount] = useState('');
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+
+    // Handle Class Change and reset Subclass default
+    const handleClassChange = (newClass: AssetClass) => {
+        setAssetClass(newClass);
+        // Set default subclass based on class
+        switch (newClass) {
+            case 'Stock': setAssetSubClass('International'); break;
+            case 'Bond': setAssetSubClass('Medium'); break;
+            case 'Commodity': setAssetSubClass('Gold'); break;
+            case 'Crypto': setAssetSubClass(''); break;
+        }
+    };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -21,11 +34,11 @@ const TransactionForm: React.FC = () => {
             id: crypto.randomUUID(),
             date,
             ticker: ticker.toUpperCase(),
-            type,
+            assetClass,
+            assetSubClass,
             direction,
             amount: Number(amount),
-            price: Number(price),
-            currency: 'EUR'
+            price: Number(price)
         });
 
         // Reset form
@@ -33,6 +46,9 @@ const TransactionForm: React.FC = () => {
         setAmount('');
         setPrice('');
         setDirection('Buy');
+        // Reset to default
+        setAssetClass('Stock');
+        setAssetSubClass('International');
     };
 
     return (
@@ -101,16 +117,49 @@ const TransactionForm: React.FC = () => {
                 </div>
 
                 <div className="form-group">
-                    <label>Type</label>
+                    <label>Class</label>
                     <select
                         className="form-select"
-                        value={type}
-                        onChange={(e) => setType(e.target.value as TransactionType)}
+                        value={assetClass}
+                        onChange={(e) => handleClassChange(e.target.value as AssetClass)}
                     >
-                        <option value="ETF">ETF</option>
+                        <option value="Stock">Stock</option>
                         <option value="Bond">Bond</option>
+                        <option value="Commodity">Commodity</option>
+                        <option value="Crypto">Crypto</option>
                     </select>
                 </div>
+
+                {/* Subclass Dropdown - Conditional */}
+                {assetClass !== 'Crypto' && (
+                    <div className="form-group">
+                        <label>Subclass</label>
+                        <select
+                            className="form-select"
+                            value={assetSubClass}
+                            onChange={(e) => setAssetSubClass(e.target.value as AssetSubClass)}
+                        >
+                            {assetClass === 'Stock' && (
+                                <>
+                                    <option value="International">International</option>
+                                    <option value="Local">Local</option>
+                                </>
+                            )}
+                            {assetClass === 'Bond' && (
+                                <>
+                                    <option value="Short">Short Term</option>
+                                    <option value="Medium">Medium Term</option>
+                                    <option value="Long">Long Term</option>
+                                </>
+                            )}
+                            {assetClass === 'Commodity' && (
+                                <>
+                                    <option value="Gold">Gold</option>
+                                </>
+                            )}
+                        </select>
+                    </div>
+                )}
 
                 <div className="form-group">
                     <label>Quantity</label>

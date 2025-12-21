@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, useContext, useMemo, useEffect } from 'react';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, Target, TransactionType, PortfolioSummary } from '../types';
+import type { Transaction, Asset, Target, AssetClass, PortfolioSummary, AssetSubClass } from '../types';
 
 interface PortfolioContextType {
     transactions: Transaction[];
@@ -31,6 +31,36 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [transactions, setTransactions] = useLocalStorage<Transaction[]>('portfolio_transactions', []);
     const [targets, setTargets] = useLocalStorage<Target[]>('portfolio_targets_v2', DEFAULT_TARGETS);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
+
+    // Migration Effect: Convert legacy 'type' to 'assetClass'/'assetSubClass'
+    useEffect(() => {
+        let hasChanges = false;
+        const migratedTransactions = transactions.map((tx: any) => {
+            if (tx.type) {
+                hasChanges = true;
+                const newTx = { ...tx };
+
+                // Map legacy types
+                if (tx.type === 'ETF') {
+                    newTx.assetClass = 'Stock';
+                    newTx.assetSubClass = 'International';
+                } else if (tx.type === 'Bond') {
+                    newTx.assetClass = 'Bond';
+                    newTx.assetSubClass = 'Medium';
+                }
+
+                // Remove legacy property
+                delete newTx.type;
+                return newTx;
+            }
+            return tx;
+        });
+
+        if (hasChanges) {
+            console.log('Migrating transactions to new Asset Class structure...');
+            setTransactions(migratedTransactions);
+        }
+    }, [transactions, setTransactions]);
 
     const updateMarketData = (ticker: string, price: number, lastUpdated: string) => {
         setMarketData(prev => ({
@@ -131,7 +161,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 const quantity = direction === 'Buy' ? tx.amount : -tx.amount;
                 assetMap.set(ticker, {
                     ticker: ticker,
-                    type: tx.type,
+                    assetClass: tx.assetClass,
+                    assetSubClass: tx.assetSubClass,
                     quantity: quantity,
                     averagePrice: tx.price,
                     currentValue: quantity * tx.price,
@@ -169,26 +200,30 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const totalGainPercentage = totalCost !== 0 ? (totalGain / totalCost) * 100 : 0;
 
         // Calculate allocation
-        const allocationByType: { [key in TransactionType]: number } = {
-            'ETF': 0,
-            'Bond': 0
+        const allocation: { [key in AssetClass]?: number } = {
+            'Stock': 0,
+            'Bond': 0,
+            'Commodity': 0,
+            'Crypto': 0
         };
 
         assetsList.forEach(asset => {
-            allocationByType[asset.type] += asset.currentValue;
+            if (allocation[asset.assetClass] !== undefined) {
+                allocation[asset.assetClass]! += asset.currentValue;
+            }
         });
 
         // Convert to percentage
-        const etfPerc = totalValue > 0 ? (allocationByType['ETF'] / totalValue) * 100 : 0;
-        const bondPerc = totalValue > 0 ? (allocationByType['Bond'] / totalValue) * 100 : 0;
+        if (totalValue > 0) {
+            (Object.keys(allocation) as AssetClass[]).forEach(key => {
+                allocation[key] = (allocation[key]! / totalValue) * 100;
+            });
+        }
 
         const summaryData: PortfolioSummary = {
             totalValue,
             totalCost,
-            allocation: {
-                'ETF': etfPerc,
-                'Bond': bondPerc
-            },
+            allocation,
             totalGain,
             totalGainPercentage
         };
