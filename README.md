@@ -1,73 +1,44 @@
-# React + TypeScript + Vite
+# Portfolio Rebalancer
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This project is an **Agentic Development Experiment** created with **Antigravity** and **Gemini PRO**.
 
-Currently, two official plugins are available:
+It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
+Tasks included:
+- Architecture refactoring (Unified Frontend/Backend)
+- Complex feature implementation (Multi-source scraping, Inline editing)
+- UI/UX layout and design optimization
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Project Overview
 
-## React Compiler
+Portfolio Rebalancer is a React+Express application designed to help investors track and rebalance their portfolios efficiently.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### Key Features
+- **Smart Rebalancing**: Calculates exactly how much to buy/sell to meet target allocations.
+- **Multi-Source Price Scraping**:
+    - **JustETF**: For standard ETFs.
+    - **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
+- **Asset Classification**: Hierarchical organization (Class -> Subclass) for better grouping.
+- **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
 
-## Expanding the ESLint configuration
+## Screenshots
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Dashboard
+The central hub showing real-time asset allocation, total value, and actionable rebalancing recommendations.
+![Dashboard](screenshots/dashboard.png)
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Transactions
+A detailed history of all trades with inline editing capabilities for quick corrections.
+![Transactions](screenshots/transactions.png)
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Settings
+Configuration page to set target portfolio allocations and choose price sources for each asset.
+![Settings](screenshots/settings.png)
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## Tech Stack
+- **Frontend**: React, TypeScript, Vite
+- **Backend**: Node.js, Express
+- **Scraping**: Puppeteer
+- **Styles**: Vanilla CSS (Variables & Responsive Layout)
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
-
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+---
+*Experiment conducted with Antigravity*
