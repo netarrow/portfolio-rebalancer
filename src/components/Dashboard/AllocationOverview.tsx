@@ -24,11 +24,14 @@ const AllocationOverview: React.FC = () => {
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
                 <div className="allocation-row" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
                     <div style={{ flex: 1 }}>Asset</div>
-                    <div style={{ width: '80px', textAlign: 'right' }}>Price</div>
-                    <div style={{ width: '100px', textAlign: 'right' }}>Gain</div>
-                    <div style={{ width: '80px', textAlign: 'right' }}>Target</div>
-                    <div style={{ width: '80px', textAlign: 'right' }}>Actual</div>
-                    <div style={{ width: '120px', textAlign: 'right' }}>Action</div>
+                    <div style={{ width: '100px', textAlign: 'right' }}>Qty</div>
+                    <div style={{ width: '120px', textAlign: 'right' }}>Avg Price</div>
+                    <div style={{ width: '120px', textAlign: 'right' }}>Mkt Price</div>
+                    <div style={{ width: '120px', textAlign: 'right' }}>Value</div>
+                    <div style={{ width: '120px', textAlign: 'right' }}>Gain</div>
+                    <div style={{ width: '100px', textAlign: 'right' }}>Target</div>
+                    <div style={{ width: '100px', textAlign: 'right' }}>Actual</div>
+                    <div style={{ width: '140px', textAlign: 'right' }}>Action</div>
                 </div>
 
                 {allTickers.length === 0 ? (
@@ -56,6 +59,9 @@ const AllocationOverview: React.FC = () => {
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
                                 rebalanceAmount={rebalanceAmount}
+                                currentValue={asset?.currentValue || 0}
+                                quantity={asset?.quantity || 0}
+                                averagePrice={asset?.averagePrice || 0}
                                 currentPrice={asset?.currentPrice || 0}
                                 gain={asset?.gain || 0}
                                 gainPerc={asset?.gainPercentage || 0}
@@ -75,12 +81,15 @@ interface RowProps {
     currentPerc: number;
     targetPerc: number;
     rebalanceAmount: number;
+    currentValue: number;
+    quantity: number;
+    averagePrice: number;
     currentPrice: number;
     gain: number;
     gainPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, currentPrice, gain, gainPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc }) => {
     const diff = currentPerc - targetPerc;
 
     const colorMap: Record<string, string> = {
@@ -106,11 +115,23 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, assetClass, assetSubClass, 
                 </div>
             </div>
 
-            <div style={{ width: '80px', textAlign: 'right' }}>
+            <div style={{ width: '100px', textAlign: 'right' }}>
+                {parseFloat(quantity.toFixed(4))}
+            </div>
+
+            <div style={{ width: '120px', textAlign: 'right' }}>
+                €{averagePrice.toFixed(2)}
+            </div>
+
+            <div style={{ width: '120px', textAlign: 'right' }}>
                 €{currentPrice.toFixed(2)}
             </div>
 
-            <div style={{ width: '100px', textAlign: 'right', fontSize: '0.9rem' }}>
+            <div style={{ width: '120px', textAlign: 'right' }}>
+                €{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+
+            <div style={{ width: '120px', textAlign: 'right', fontSize: '0.9rem' }}>
                 <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                     {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
                 </div>
@@ -119,18 +140,18 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, assetClass, assetSubClass, 
                 </div>
             </div>
 
-            <div style={{ width: '80px', textAlign: 'right' }}>
+            <div style={{ width: '100px', textAlign: 'right' }}>
                 {targetPerc}%
             </div>
 
-            <div style={{ width: '80px', textAlign: 'right' }}>
+            <div style={{ width: '100px', textAlign: 'right' }}>
                 <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
                 <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
                     {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
                 </div>
             </div>
 
-            <div style={{ width: '120px', textAlign: 'right' }}>
+            <div style={{ width: '140px', textAlign: 'right' }}>
                 <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                     {Math.abs(rebalanceAmount) < 5 ? ( // Threshold to ignore small dust
                         <span className="trend-neutral">OK</span>
