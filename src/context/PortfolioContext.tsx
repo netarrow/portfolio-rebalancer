@@ -9,7 +9,7 @@ interface PortfolioContextType {
     summary: PortfolioSummary;
     addTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
-    updateTarget: (ticker: string, percentage: number) => void;
+    updateTarget: (ticker: string, percentage: number, source?: 'ETF' | 'MOT') => void;
     refreshPrices: () => Promise<void>;
     resetPortfolio: () => void;
 }
@@ -47,20 +47,20 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTransactions((prev) => prev.filter((t) => t.id !== id));
     };
 
-    const updateTarget = (ticker: string, percentage: number) => {
+    const updateTarget = (ticker: string, percentage: number, source?: 'ETF' | 'MOT') => {
         setTargets((prev) => {
             // Ensure specific ticker is updated, or add if missing
             const exists = prev.find(t => t.ticker === ticker);
 
-            if (percentage === 0) {
-                // Remove target if 0 (cleanup)
+            if (percentage === 0 && (!source || source === 'ETF')) {
+                // Remove target only if 0 AND source is default (cleanup)
                 return prev.filter(t => t.ticker !== ticker);
             }
 
             if (exists) {
-                return prev.map(t => t.ticker === ticker ? { ...t, targetPercentage: percentage } : t);
+                return prev.map(t => t.ticker === ticker ? { ...t, targetPercentage: percentage, source: source || t.source } : t);
             }
-            return [...prev, { ticker, targetPercentage: percentage }];
+            return [...prev, { ticker, targetPercentage: percentage, source: source || 'ETF' }];
         });
     };
 
@@ -79,7 +79,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const uniqueTickers = Array.from(new Set(transactions.map(t => t.ticker)));
 
         await Promise.all(uniqueTickers.map(async (ticker) => {
-            const data = await fetchAssetPrice(ticker);
+            // Find target source if available
+            const target = targets.find(t => t.ticker === ticker);
+            const source = target?.source || 'ETF';
+
+            const data = await fetchAssetPrice(ticker, source);
             if (data) {
                 updateMarketData(ticker, data.currentPrice, data.lastUpdated);
             }

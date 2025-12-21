@@ -16,13 +16,13 @@ app.use(cors());
 
 // --- API ROUTES ---
 app.get('/api/price', async (req, res) => {
-    const { isin } = req.query;
+    const { isin, source = 'ETF' } = req.query;
 
     if (!isin || typeof isin !== 'string') {
         return res.status(400).json({ error: 'ISIN is required' });
     }
 
-    console.log(`Fetching price for ISIN: ${isin}`);
+    console.log(`Fetching price for ISIN: ${isin} from ${source}`);
 
     let browser;
     try {
@@ -34,16 +34,42 @@ app.get('/api/price', async (req, res) => {
 
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        const url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
+        let url, priceSelector, currencySelector;
 
-        const priceSelector = '[data-testid="realtime-quotes_price-value"]';
-        const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
+        if (source === 'MOT') {
+             url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
+             
+             // Cookie popup handling for Borsa Italiana
+             await page.goto(url, { waitUntil: 'domcontentloaded' });
+             
+             try {
+                const cookieSelector = '#ccc-recommended-settings';
+                await page.waitForSelector(cookieSelector, { timeout: 3000 });
+                await page.click(cookieSelector);
+             } catch (e) {
+                // Ignore if cookie banner not found
+             }
+             
+             priceSelector = '.t-text.-black-warm-60.-formatPrice strong';
+             // Currency is usually implied as EUR for BTP on MOT, but let's default or inspect if robust
+             currencySelector = null; // Will default to EUR
+        } else {
+             // Default JustETF
+             url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
+             await page.goto(url, { waitUntil: 'domcontentloaded' });
+             
+             priceSelector = '[data-testid="realtime-quotes_price-value"]';
+             currencySelector = '[data-testid="realtime-quotes_price-currency"]';
+        }
 
         await page.waitForSelector(priceSelector, { timeout: 10000 });
 
         const priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
-        const currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+        let currency = 'EUR';
+        
+        if (currencySelector) {
+            currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+        }
 
         console.log(`Found price: ${priceText} ${currency}`);
 

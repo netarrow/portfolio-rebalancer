@@ -43,4 +43,5 @@ export interface PortfolioSummary {
 export interface Target {
   ticker: string;
   targetPercentage: number; // 0-100
+  source?: 'ETF' | 'MOT';
 }
