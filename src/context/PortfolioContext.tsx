@@ -8,6 +8,7 @@ interface PortfolioContextType {
     assets: Asset[];
     summary: PortfolioSummary;
     addTransaction: (transaction: Transaction) => void;
+    updateTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
     updateTarget: (ticker: string, percentage: number, source?: 'ETF' | 'MOT') => void;
     refreshPrices: () => Promise<void>;
@@ -231,12 +232,17 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { assets: assetsList, summary: summaryData };
     }, [transactions, marketData]);
 
+    const updateTransaction = (updatedTransaction: Transaction) => {
+        setTransactions((prev) => prev.map((t) => (t.id === updatedTransaction.id ? updatedTransaction : t)));
+    };
+
     const value = {
         transactions,
         targets,
         assets,
         summary,
         addTransaction,
+        updateTransaction,
         deleteTransaction,
         updateTarget,
         refreshPrices,

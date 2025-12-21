@@ -1,10 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
+import type { Transaction, AssetClass, AssetSubClass, TransactionDirection } from '../../types';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, deleteTransaction, refreshPrices } = usePortfolio();
-    const [updating, setUpdating] = React.useState(false);
+    const { transactions, assets, deleteTransaction, updateTransaction, refreshPrices } = usePortfolio();
+    const [updating, setUpdating] = useState(false);
+
+    // Editing State
+    const [editingId, setEditingId] = useState<string | null>(null);
+    const [editForm, setEditForm] = useState<Transaction | null>(null);
 
     const getAssetPrice = (ticker: string) => {
         const asset = assets.find(a => a.ticker === ticker);
@@ -15,6 +20,40 @@ const TransactionList: React.FC = () => {
         setUpdating(true);
         await refreshPrices();
         setUpdating(false);
+    };
+
+    const startEditing = (tx: Transaction) => {
+        setEditingId(tx.id);
+        setEditForm({ ...tx });
+    };
+
+    const cancelEditing = () => {
+        setEditingId(null);
+        setEditForm(null);
+    };
+
+    const saveEditing = () => {
+        if (editForm) {
+            updateTransaction(editForm);
+            setEditingId(null);
+            setEditForm(null);
+        }
+    };
+
+    const handleEditChange = (field: keyof Transaction, value: any) => {
+        if (!editForm) return;
+        setEditForm(prev => prev ? ({ ...prev, [field]: value }) : null);
+    };
+
+    // Helper for Class/Subclass change in edit mode
+    const handleEditClassChange = (newClass: AssetClass) => {
+        if (!editForm) return;
+        let defaultSub: AssetSubClass = 'International';
+        if (newClass === 'Bond') defaultSub = 'Medium';
+        if (newClass === 'Commodity') defaultSub = 'Gold';
+        if (newClass === 'Crypto') defaultSub = '';
+
+        setEditForm(prev => prev ? ({ ...prev, assetClass: newClass, assetSubClass: defaultSub }) : null);
     };
 
     // Sort by date desc
@@ -54,42 +93,150 @@ const TransactionList: React.FC = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        {sortedTransactions.map((tx) => (
-                            <tr key={tx.id}>
-                                <td>{tx.date}</td>
-                                <td style={{ fontWeight: 600 }}>{tx.ticker}</td>
-                                <td>
-                                    <span style={{
-                                        color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
-                                        fontWeight: 600
-                                    }}>
-                                        {tx.direction || 'Buy'}
-                                    </span>
-                                </td>
-                                <td>
-                                    <span className={`type-badge type-${(tx.assetClass || 'stock').toLowerCase()}`}>
-                                        {tx.assetClass}
-                                    </span>
-                                </td>
-                                <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                    {tx.assetSubClass || '-'}
-                                </td>
-                                <td>{tx.amount}</td>
-                                <td>{tx.price.toFixed(2)}</td>
-                                <td style={{ color: 'var(--text-muted)' }}>
-                                    {getAssetPrice(tx.ticker)?.toFixed(2) || '-'}
-                                </td>
-                                <td>{(tx.amount * tx.price).toFixed(2)}</td>
-                                <td>
-                                    <button
-                                        className="btn-delete"
-                                        onClick={() => deleteTransaction(tx.id)}
-                                    >
-                                        Delete
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
+                        {sortedTransactions.map((tx) => {
+                            const isEditing = editingId === tx.id;
+
+                            if (isEditing && editForm) {
+                                return (
+                                    <tr key={tx.id} className="editing-row">
+                                        <td>
+                                            <input
+                                                type="date"
+                                                value={editForm.date}
+                                                onChange={e => handleEditChange('date', e.target.value)}
+                                                className="edit-input"
+                                            />
+                                        </td>
+                                        <td>
+                                            <input
+                                                type="text"
+                                                value={editForm.ticker}
+                                                onChange={e => handleEditChange('ticker', e.target.value.toUpperCase())}
+                                                className="edit-input"
+                                                style={{ width: '80px' }}
+                                            />
+                                        </td>
+                                        <td>
+                                            <select
+                                                value={editForm.direction}
+                                                onChange={e => handleEditChange('direction', e.target.value as TransactionDirection)}
+                                                className="edit-input"
+                                            >
+                                                <option value="Buy">Buy</option>
+                                                <option value="Sell">Sell</option>
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <select
+                                                value={editForm.assetClass}
+                                                onChange={e => handleEditClassChange(e.target.value as AssetClass)}
+                                                className="edit-input"
+                                            >
+                                                <option value="Stock">Stock</option>
+                                                <option value="Bond">Bond</option>
+                                                <option value="Commodity">Comp</option>
+                                                <option value="Crypto">Crypto</option>
+                                            </select>
+                                        </td>
+                                        <td>
+                                            {editForm.assetClass !== 'Crypto' && (
+                                                <select
+                                                    value={editForm.assetSubClass}
+                                                    onChange={e => handleEditChange('assetSubClass', e.target.value as AssetSubClass)}
+                                                    className="edit-input"
+                                                >
+                                                    {editForm.assetClass === 'Stock' && (
+                                                        <>
+                                                            <option value="International">Intl</option>
+                                                            <option value="Local">Local</option>
+                                                        </>
+                                                    )}
+                                                    {editForm.assetClass === 'Bond' && (
+                                                        <>
+                                                            <option value="Short">Short</option>
+                                                            <option value="Medium">Medium</option>
+                                                            <option value="Long">Long</option>
+                                                        </>
+                                                    )}
+                                                    {editForm.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
+                                                </select>
+                                            )}
+                                        </td>
+                                        <td>
+                                            <input
+                                                type="number"
+                                                value={editForm.amount}
+                                                onChange={e => handleEditChange('amount', Number(e.target.value))}
+                                                className="edit-input"
+                                                style={{ width: '60px' }}
+                                            />
+                                        </td>
+                                        <td>
+                                            <input
+                                                type="number"
+                                                value={editForm.price}
+                                                onChange={e => handleEditChange('price', Number(e.target.value))}
+                                                className="edit-input"
+                                                style={{ width: '80px' }}
+                                            />
+                                        </td>
+                                        <td style={{ color: 'var(--text-muted)' }}>-</td>
+                                        <td>{(editForm.amount * editForm.price).toFixed(2)}</td>
+                                        <td>
+                                            <div style={{ display: 'flex', gap: '5px' }}>
+                                                <button className="btn-save" onClick={saveEditing}>Save</button>
+                                                <button className="btn-cancel" onClick={cancelEditing}>X</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )
+                            }
+
+                            return (
+                                <tr key={tx.id}>
+                                    <td>{tx.date}</td>
+                                    <td style={{ fontWeight: 600 }}>{tx.ticker}</td>
+                                    <td>
+                                        <span style={{
+                                            color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
+                                            fontWeight: 600
+                                        }}>
+                                            {tx.direction || 'Buy'}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span className={`type-badge type-${(tx.assetClass || 'stock').toLowerCase()}`}>
+                                            {tx.assetClass}
+                                        </span>
+                                    </td>
+                                    <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                        {tx.assetSubClass || '-'}
+                                    </td>
+                                    <td>{tx.amount}</td>
+                                    <td>{tx.price.toFixed(2)}</td>
+                                    <td style={{ color: 'var(--text-muted)' }}>
+                                        {getAssetPrice(tx.ticker)?.toFixed(2) || '-'}
+                                    </td>
+                                    <td>{(tx.amount * tx.price).toFixed(2)}</td>
+                                    <td>
+                                        <div style={{ display: 'flex', gap: '5px' }}>
+                                            <button
+                                                className="btn-edit"
+                                                onClick={() => startEditing(tx)}
+                                            >
+                                                Edit
+                                            </button>
+                                            <button
+                                                className="btn-delete"
+                                                onClick={() => deleteTransaction(tx.id)}
+                                            >
+                                                Del
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             )}

@@ -3,44 +3,44 @@ import React from 'react';
 type View = 'dashboard' | 'transactions' | 'settings';
 
 interface LayoutProps {
-    currentView: View;
-    onNavigate: (view: View) => void;
-    children: React.ReactNode;
+  currentView: View;
+  onNavigate: (view: View) => void;
+  children: React.ReactNode;
 }
 
 const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) => {
-    return (
-        <div className="layout">
-            <header className="navbar">
-                <div className="navbar-brand">
-                    <h1>Portfolio Rebalancer</h1>
-                </div>
-                <nav className="navbar-links">
-                    <button
-                        className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
-                        onClick={() => onNavigate('dashboard')}
-                    >
-                        Dashboard
-                    </button>
-                    <button
-                        className={`nav-link ${currentView === 'transactions' ? 'active' : ''}`}
-                        onClick={() => onNavigate('transactions')}
-                    >
-                        Transactions
-                    </button>
-                    <button
-                        className={`nav-link ${currentView === 'settings' ? 'active' : ''}`}
-                        onClick={() => onNavigate('settings')}
-                    >
-                        Settings
-                    </button>
-                </nav>
-            </header>
-            <main className="content">
-                {children}
-            </main>
+  return (
+    <div className="layout">
+      <header className="navbar">
+        <div className="navbar-brand">
+          <h1>Portfolio Rebalancer</h1>
+        </div>
+        <nav className="navbar-links">
+          <button
+            className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
+            onClick={() => onNavigate('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            className={`nav-link ${currentView === 'transactions' ? 'active' : ''}`}
+            onClick={() => onNavigate('transactions')}
+          >
+            Transactions
+          </button>
+          <button
+            className={`nav-link ${currentView === 'settings' ? 'active' : ''}`}
+            onClick={() => onNavigate('settings')}
+          >
+            Settings
+          </button>
+        </nav>
+      </header>
+      <main className={`content ${currentView === 'transactions' ? 'full-width' : ''}`}>
+        {children}
+      </main>
 
-            <style>{`
+      <style>{`
         .layout {
           min-height: 100vh;
           display: flex;
@@ -100,6 +100,11 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           width: 100%;
         }
 
+        .content.full-width {
+            max-width: 100%;
+            padding: var(--space-6) var(--space-4);
+        }
+
         @media (max-width: 768px) {
           .navbar {
             padding: var(--space-4);
@@ -112,8 +117,8 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           }
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 };
 
 export default Layout;

@@ -146,3 +146,50 @@
   background-color: var(--color-danger);
   color: white;
 }
+
+/* Edit Mode Styles */
+.edit-input {
+    background-color: var(--bg-app);
+    border: 1px solid var(--color-primary);
+    color: var(--text-primary);
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    width: 100%;
+}
+
+.btn-edit {
+    background: transparent;
+    border: 1px solid var(--color-primary);
+    color: var(--color-primary);
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: 0.75rem;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.btn-edit:hover {
+    background-color: var(--color-primary);
+    color: white;
+}
+
+.btn-save {
+    background-color: var(--color-success);
+    color: white;
+    border: none;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
+
+.btn-cancel {
+    background-color: var(--bg-card);
+    color: var(--text-secondary);
+    border: none;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    cursor: pointer;
+}
