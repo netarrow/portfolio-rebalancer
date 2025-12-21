@@ -1,12 +1,20 @@
 import express from 'express';
 import cors from 'cors';
 import puppeteer from 'puppeteer';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = 3001;
+const isProduction = process.env.NODE_ENV === 'production';
 
+// Common middleware
 app.use(cors());
 
+// --- API ROUTES ---
 app.get('/api/price', async (req, res) => {
     const { isin } = req.query;
 
@@ -19,22 +27,19 @@ app.get('/api/price', async (req, res) => {
     let browser;
     try {
         browser = await puppeteer.launch({
-            headless: 'new', // Use new headless mode
+            headless: 'new',
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
         const page = await browser.newPage();
 
-        // Set a realistic User-Agent
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
         const url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
         await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-        // Selector from our manual verification
         const priceSelector = '[data-testid="realtime-quotes_price-value"]';
         const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
 
-        // Wait for the price element to appear (timeout 10s)
         await page.waitForSelector(priceSelector, { timeout: 10000 });
 
         const priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
@@ -65,6 +70,37 @@ app.get('/api/price', async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Proxy server listening at http://localhost:${port}`);
-});
+// --- FRONTEND SERVING ---
+async function setupServer() {
+    if (isProduction) {
+        // Production: Serve static files from 'dist'
+        // Assuming 'dist' is in the project root found by resizing relative path
+        const distPath = path.resolve(__dirname, '../dist');
+        app.use(express.static(distPath));
+        
+        // SPA Fallback
+        app.get('*', (req, res) => {
+            res.sendFile(path.join(distPath, 'index.html'));
+        });
+        console.log('Running in PRODUCTION mode (serving from /dist)');
+    } else {
+        // Development: Use Vite Middleware
+        console.log('Running in DEVELOPMENT mode (using Vite Middleware)');
+        const { createServer: createViteServer } = await import('vite');
+        
+        const vite = await createViteServer({
+            server: { middlewareMode: true },
+            appType: 'spa', // serve index.html for unknown routes
+            root: path.resolve(__dirname, '..') // Project root
+        });
+
+        // Use vite's connect instance as middleware
+        app.use(vite.middlewares);
+    }
+
+    app.listen(port, () => {
+        console.log(`Server listening at http://localhost:${port}`);
+    });
+}
+
+setupServer();

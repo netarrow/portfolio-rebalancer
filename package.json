@@ -4,11 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node server/index.js",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "proxy": "node server/proxy.js"
+    "start": "NODE_ENV=production node server/index.js"
   },
   "dependencies": {
     "axios": "^1.13.2",
