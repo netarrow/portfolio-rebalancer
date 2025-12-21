@@ -51,6 +51,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTargets((prev) => {
             // Ensure specific ticker is updated, or add if missing
             const exists = prev.find(t => t.ticker === ticker);
+
+            if (percentage === 0) {
+                // Remove target if 0 (cleanup)
+                return prev.filter(t => t.ticker !== ticker);
+            }
+
             if (exists) {
                 return prev.map(t => t.ticker === ticker ? { ...t, targetPercentage: percentage } : t);
             }
