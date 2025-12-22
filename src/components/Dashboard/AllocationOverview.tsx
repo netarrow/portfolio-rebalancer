@@ -42,6 +42,10 @@ const AllocationOverview: React.FC = () => {
                         const currentValue = asset ? asset.currentValue : 0;
                         const currentPerc = summary.totalValue > 0 ? (currentValue / summary.totalValue) * 100 : 0;
                         const targetPerc = getTarget(ticker);
+                        const quantity = asset?.quantity || 0;
+
+                        // Filter: Hide if we don't hold it AND don't target it
+                        if (quantity <= 0 && targetPerc <= 0) return null;
 
                         // Rebalance Calc
                         const targetValue = summary.totalValue * (targetPerc / 100);
@@ -91,11 +95,8 @@ interface RowProps {
     gainPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, source, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc }) => {
     const diff = currentPerc - targetPerc;
-    const url = source === 'MOT'
-        ? `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${ticker}.html?lang=it`
-        : `https://www.justetf.com/en/etf-profile.html?isin=${ticker}`;
 
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf', // Reuse existing class names for now or map to new ones

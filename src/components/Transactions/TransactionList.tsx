@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import type { Transaction, AssetClass, AssetSubClass, TransactionDirection } from '../../types';
+import type { Transaction, TransactionDirection } from '../../types';
 import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
@@ -57,14 +57,9 @@ const TransactionList: React.FC = () => {
     };
 
     // Helper for Class/Subclass change in edit mode
-    const handleEditClassChange = (newClass: AssetClass) => {
-        if (!editForm) return;
-        let defaultSub: AssetSubClass = 'International';
-        if (newClass === 'Bond') defaultSub = 'Medium';
-        if (newClass === 'Commodity') defaultSub = 'Gold';
-        if (newClass === 'Crypto') defaultSub = '';
-
-        setEditForm(prev => prev ? ({ ...prev, assetClass: newClass, assetSubClass: defaultSub }) : null);
+    const getAssetName = (ticker: string) => {
+        const target = targets.find(t => t.ticker === ticker);
+        return target?.label || '';
     };
 
     // Sort by date desc
@@ -103,8 +98,7 @@ const TransactionList: React.FC = () => {
                             <th>Date</th>
                             <th>Ticker</th>
                             <th>Side</th>
-                            <th>Class</th>
-                            <th>Subclass</th>
+                            <th>Name</th>
                             <th>Qty</th>
                             <th>Price (Exec)</th>
                             <th>Price (Mkt)</th>
@@ -147,40 +141,7 @@ const TransactionList: React.FC = () => {
                                             </select>
                                         </td>
                                         <td>
-                                            <select
-                                                value={editForm.assetClass}
-                                                onChange={e => handleEditClassChange(e.target.value as AssetClass)}
-                                                className="edit-input"
-                                            >
-                                                <option value="Stock">Stock</option>
-                                                <option value="Bond">Bond</option>
-                                                <option value="Commodity">Comp</option>
-                                                <option value="Crypto">Crypto</option>
-                                            </select>
-                                        </td>
-                                        <td>
-                                            {editForm.assetClass !== 'Crypto' && (
-                                                <select
-                                                    value={editForm.assetSubClass}
-                                                    onChange={e => handleEditChange('assetSubClass', e.target.value as AssetSubClass)}
-                                                    className="edit-input"
-                                                >
-                                                    {editForm.assetClass === 'Stock' && (
-                                                        <>
-                                                            <option value="International">Intl</option>
-                                                            <option value="Local">Local</option>
-                                                        </>
-                                                    )}
-                                                    {editForm.assetClass === 'Bond' && (
-                                                        <>
-                                                            <option value="Short">Short</option>
-                                                            <option value="Medium">Medium</option>
-                                                            <option value="Long">Long</option>
-                                                        </>
-                                                    )}
-                                                    {editForm.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
-                                                </select>
-                                            )}
+                                            <span style={{ color: 'var(--text-secondary)' }}>-</span>
                                         </td>
                                         <td>
                                             <input
@@ -224,13 +185,8 @@ const TransactionList: React.FC = () => {
                                             {tx.direction || 'Buy'}
                                         </span>
                                     </td>
-                                    <td>
-                                        <span className={`type-badge type-${(tx.assetClass || 'stock').toLowerCase()}`}>
-                                            {tx.assetClass}
-                                        </span>
-                                    </td>
                                     <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                        {tx.assetSubClass || '-'}
+                                        {getAssetName(tx.ticker) || '-'}
                                     </td>
                                     <td>{tx.amount}</td>
                                     <td>{tx.price.toFixed(2)}</td>

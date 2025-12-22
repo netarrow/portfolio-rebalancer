@@ -1,25 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
+import type { AssetClass, AssetSubClass } from '../../types';
 
 const TargetSettings: React.FC = () => {
-    const { targets, updateTarget, assets } = usePortfolio();
+    const { targets, updateTarget, assets, resetPortfolio } = usePortfolio();
+    const [showConfirmReset, setShowConfirmReset] = useState(false);
 
     // Get unique tickers from assets (plus any already in targets even if 0 items)
     const assetTickers = assets.map(a => a.ticker);
     const targetTickers = targets.map(t => t.ticker);
     const allTickers = Array.from(new Set([...assetTickers, ...targetTickers])).sort();
 
-    const getTarget = (ticker: string) => targets.find(t => t.ticker === ticker) || { ticker, targetPercentage: 0, source: 'ETF' };
+    const getTarget = (ticker: string) => targets.find(t => t.ticker === ticker) || { ticker, targetPercentage: 0, source: 'ETF', assetClass: 'Stock', assetSubClass: 'International' };
 
     const total = targets.reduce((sum, t) => sum + t.targetPercentage, 0);
 
-    const handleUpdate = (ticker: string, field: 'percentage' | 'source' | 'label', value: string) => {
+    const handleUpdate = (ticker: string, field: 'percentage' | 'source' | 'label' | 'assetClass' | 'assetSubClass', value: string) => {
         const current = getTarget(ticker);
         const newPerc = field === 'percentage' ? Number(value) : current.targetPercentage;
         const newSource = field === 'source' ? value as 'ETF' | 'MOT' : (current.source || 'ETF');
         const newLabel = field === 'label' ? value : current.label;
-        updateTarget(ticker, newPerc, newSource, newLabel);
+        const newClass = field === 'assetClass' ? value as AssetClass : (current.assetClass || 'Stock');
+
+        let newSubClass = field === 'assetSubClass' ? value as AssetSubClass : (current.assetSubClass || 'International');
+
+        // Reset subclass if class changes to something incompatible (basic logic)
+        if (field === 'assetClass') {
+            if (value === 'Bond') newSubClass = 'Medium';
+            else if (value === 'Commodity') newSubClass = 'Gold';
+            else if (value === 'Crypto') newSubClass = ''; // Just a placeholder or empty
+            else newSubClass = 'International';
+        }
+
+        updateTarget(ticker, newPerc, newSource, newLabel, newClass, newSubClass);
     };
 
     return (
@@ -35,7 +49,7 @@ const TargetSettings: React.FC = () => {
                 allTickers.map(ticker => {
                     const target = getTarget(ticker);
                     return (
-                        <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+                        <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
                             <label style={{ margin: 0 }}>{ticker}</label>
 
                             <div>
@@ -47,6 +61,48 @@ const TargetSettings: React.FC = () => {
                                     value={target.label || ''}
                                     onChange={(e) => handleUpdate(ticker, 'label', e.target.value)}
                                 />
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem' }}>Asset Class</label>
+                                <select
+                                    className="form-select"
+                                    value={target.assetClass || 'Stock'}
+                                    onChange={(e) => handleUpdate(ticker, 'assetClass', e.target.value)}
+                                >
+                                    <option value="Stock">Stock</option>
+                                    <option value="Bond">Bond</option>
+                                    <option value="Commodity">Cmdty</option>
+                                    <option value="Crypto">Crypto</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem' }}>Subclass</label>
+                                {target.assetClass !== 'Crypto' ? (
+                                    <select
+                                        className="form-select"
+                                        value={target.assetSubClass || 'International'}
+                                        onChange={(e) => handleUpdate(ticker, 'assetSubClass', e.target.value)}
+                                    >
+                                        {target.assetClass === 'Stock' && (
+                                            <>
+                                                <option value="International">Intl</option>
+                                                <option value="Local">Local</option>
+                                            </>
+                                        )}
+                                        {target.assetClass === 'Bond' && (
+                                            <>
+                                                <option value="Short">Short</option>
+                                                <option value="Medium">Medium</option>
+                                                <option value="Long">Long</option>
+                                            </>
+                                        )}
+                                        {target.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
+                                    </select>
+                                ) : (
+                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</span>
+                                )}
                             </div>
 
                             <div>
@@ -87,6 +143,63 @@ const TargetSettings: React.FC = () => {
                 fontWeight: 600
             }}>
                 Total: {total.toFixed(1)}%
+            </div>
+
+            <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-color)' }}>
+                <h3 style={{ color: 'var(--color-danger)', fontSize: '1rem', marginBottom: 'var(--space-2)' }}>Danger Zone</h3>
+
+                {!showConfirmReset ? (
+                    <button
+                        onClick={() => setShowConfirmReset(true)}
+                        style={{
+                            backgroundColor: 'transparent',
+                            border: '1px solid var(--color-danger)',
+                            color: 'var(--color-danger)',
+                            padding: 'var(--space-2) var(--space-4)',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600
+                        }}
+                    >
+                        Delete All Data
+                    </button>
+                ) : (
+                    <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)' }}>
+                        <span style={{ color: 'var(--color-danger)', fontWeight: 500 }}>Are you sure? This cannot be undone.</span>
+                        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+                            <button
+                                onClick={() => {
+                                    resetPortfolio();
+                                    setShowConfirmReset(false);
+                                }}
+                                style={{
+                                    backgroundColor: 'var(--color-danger)',
+                                    color: 'white',
+                                    border: 'none',
+                                    padding: 'var(--space-1) var(--space-3)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    cursor: 'pointer',
+                                    fontWeight: 600
+                                }}
+                            >
+                                Yes, Delete All
+                            </button>
+                            <button
+                                onClick={() => setShowConfirmReset(false)}
+                                style={{
+                                    backgroundColor: 'var(--bg-card)',
+                                    color: 'var(--text-primary)',
+                                    border: '1px solid var(--border-color)',
+                                    padding: 'var(--space-1) var(--space-3)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     );

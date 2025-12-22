@@ -71,9 +71,9 @@ const ImportTransactionsModal: React.FC<ImportModalProps> = ({ onClose, onImport
                 cleanRow.price = Number(row[priceIdx]);
                 cleanRow.direction = typeIdx !== -1 ? parseDirection(row[typeIdx]) : 'Buy';
 
-                // Defaults
-                cleanRow.assetClass = 'Stock';
-                cleanRow.assetSubClass = 'International';
+                // Defaults (Class/Subclass handled by Settings now)
+                // cleanRow.assetClass = 'Stock'; 
+                // cleanRow.assetSubClass = 'International';
 
                 parsed.push(cleanRow as Transaction);
             }

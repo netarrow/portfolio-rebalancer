@@ -10,7 +10,7 @@ interface PortfolioContextType {
     addTransaction: (transaction: Transaction) => void;
     updateTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
-    updateTarget: (ticker: string, percentage: number, source?: 'ETF' | 'MOT', label?: string) => void;
+    updateTarget: (ticker: string, percentage: number, source?: 'ETF' | 'MOT', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     refreshPrices: () => Promise<void>;
     resetPortfolio: () => void;
 }
@@ -33,35 +33,49 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [targets, setTargets] = useLocalStorage<Target[]>('portfolio_targets_v2', DEFAULT_TARGETS);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
 
-    // Migration Effect: Convert legacy 'type' to 'assetClass'/'assetSubClass'
+    // Migration Effect 2: Move assetClass/assetSubClass from Transactions to Targets
     useEffect(() => {
-        let hasChanges = false;
-        const migratedTransactions = transactions.map((tx: any) => {
-            if (tx.type) {
-                hasChanges = true;
-                const newTx = { ...tx };
+        let targetsChanged = false;
+        const newTargets = [...targets];
 
-                // Map legacy types
-                if (tx.type === 'ETF') {
-                    newTx.assetClass = 'Stock';
-                    newTx.assetSubClass = 'International';
-                } else if (tx.type === 'Bond') {
-                    newTx.assetClass = 'Bond';
-                    newTx.assetSubClass = 'Medium';
+        const uniqueTickers = Array.from(new Set(transactions.map(t => t.ticker)));
+
+        uniqueTickers.forEach(ticker => {
+            const targetIndex = newTargets.findIndex(t => t.ticker === ticker);
+            // Look for existing class in transactions (take last one as source of truth)
+            const lastTx = [...transactions].reverse().find(t => t.ticker === ticker && (t.assetClass as any));
+
+            if (lastTx && (lastTx.assetClass as any)) {
+                if (targetIndex === -1) {
+                    // Create new target if missing, with migrated class
+                    newTargets.push({
+                        ticker,
+                        targetPercentage: 0,
+                        source: 'ETF',
+                        assetClass: lastTx.assetClass as AssetClass,
+                        assetSubClass: lastTx.assetSubClass as AssetSubClass
+                    });
+                    targetsChanged = true;
+                    console.log(`Migrated class for ${ticker}: ${lastTx.assetClass}`);
+                } else {
+                    // Update existing target if missing class
+                    if (!newTargets[targetIndex].assetClass) {
+                        newTargets[targetIndex] = {
+                            ...newTargets[targetIndex],
+                            assetClass: lastTx.assetClass as AssetClass,
+                            assetSubClass: lastTx.assetSubClass as AssetSubClass
+                        };
+                        targetsChanged = true;
+                        console.log(`Updated class for ${ticker}: ${lastTx.assetClass}`);
+                    }
                 }
-
-                // Remove legacy property
-                delete newTx.type;
-                return newTx;
             }
-            return tx;
         });
 
-        if (hasChanges) {
-            console.log('Migrating transactions to new Asset Class structure...');
-            setTransactions(migratedTransactions);
+        if (targetsChanged) {
+            setTargets(newTargets);
         }
-    }, [transactions, setTransactions]);
+    }, [transactions, targets, setTargets]);
 
     const updateMarketData = (ticker: string, price: number, lastUpdated: string) => {
         setMarketData(prev => ({
@@ -78,13 +92,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTransactions((prev) => prev.filter((t) => t.id !== id));
     };
 
-    const updateTarget = (ticker: string, percentage: number, source?: 'ETF' | 'MOT', label?: string) => {
+    const updateTarget = (ticker: string, percentage: number, source?: 'ETF' | 'MOT', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
         setTargets((prev) => {
             // Ensure specific ticker is updated, or add if missing
             const exists = prev.find(t => t.ticker === ticker);
 
-            if (percentage === 0 && (!source || source === 'ETF') && !label) {
-                // Remove target only if 0, source is default, AND NO LABEL (cleanup)
+            if (percentage === 0 && (!source || source === 'ETF') && !label && !assetClass) {
+                // Remove target only if 0, source is default, AND NO LABEL/CLASS (cleanup)
                 return prev.filter(t => t.ticker !== ticker);
             }
 
@@ -93,10 +107,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     ...t,
                     targetPercentage: percentage,
                     source: source || t.source,
-                    label: label !== undefined ? label : t.label // Update label if provided
+                    label: label !== undefined ? label : t.label, // Update label if provided
+                    assetClass: assetClass || t.assetClass,
+                    assetSubClass: assetSubClass || t.assetSubClass
                 } : t);
             }
-            return [...prev, { ticker, targetPercentage: percentage, source: source || 'ETF', label }];
+            return [...prev, { ticker, targetPercentage: percentage, source: source || 'ETF', label, assetClass, assetSubClass }];
         });
     };
 
@@ -146,7 +162,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 if (direction === 'Buy') {
                     const totalQuantity = existing.quantity + tx.amount;
                     // Weighted Average Price
-                    newAveragePrice = ((existing.quantity * existing.averagePrice) + (tx.amount * tx.price)) / totalQuantity;
+                    if (totalQuantity !== 0) {
+                        newAveragePrice = ((existing.quantity * existing.averagePrice) + (tx.amount * tx.price)) / totalQuantity;
+                    } else {
+                        newAveragePrice = 0;
+                    }
                     newQuantity = totalQuantity;
                 } else {
                     // Sell
@@ -165,11 +185,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             } else {
                 // New asset
                 const quantity = direction === 'Buy' ? tx.amount : -tx.amount;
+                // Fetch class from target logic will be done in the next step (assetsList mapping)
+                // But we need a placeholder here for the map.
                 assetMap.set(ticker, {
                     ticker: ticker,
                     label: undefined, // Will be filled below if target exists
-                    assetClass: tx.assetClass,
-                    assetSubClass: tx.assetSubClass,
+                    assetClass: 'Stock', // Default, superseded by target below
+                    assetSubClass: 'International', // Default
                     quantity: quantity,
                     averagePrice: tx.price,
                     currentValue: quantity * tx.price,
@@ -185,9 +207,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const effectivePrice = marketInfo ? marketInfo.price : (asset.currentPrice || asset.averagePrice);
             const lastUpdated = marketInfo ? marketInfo.lastUpdated : undefined;
 
-            // Inject label from target
+            // Inject data from target
             const target = targets.find(t => t.ticker === asset.ticker);
             const label = target?.label;
+            const assetClass = target?.assetClass || 'Stock';
+            const assetSubClass = target?.assetSubClass || 'International';
 
             const currentValue = asset.quantity * effectivePrice;
             const totalCost = asset.quantity * asset.averagePrice;
@@ -197,6 +221,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return {
                 ...asset,
                 label,
+                assetClass,
+                assetSubClass,
                 currentPrice: effectivePrice,
                 currentValue: currentValue,
                 lastUpdated,
@@ -206,8 +232,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
 
         // Calculate totals
-        const totalValue = assetsList.reduce((sum, asset) => sum + asset.currentValue, 0);
-        const totalCost = assetsList.reduce((sum, asset) => sum + (asset.quantity * asset.averagePrice), 0);
+        const totalValue = assetsList.reduce((sum, asset) => sum + (asset.currentValue || 0), 0);
+        const totalCost = assetsList.reduce((sum, asset) => sum + (asset.quantity * asset.averagePrice || 0), 0);
         const totalGain = totalValue - totalCost;
         const totalGainPercentage = totalCost !== 0 ? (totalGain / totalCost) * 100 : 0;
 

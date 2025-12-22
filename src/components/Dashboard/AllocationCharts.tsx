@@ -37,7 +37,7 @@ const AllocationCharts: React.FC = () => {
     // 1. Group by Asset Class
     const classData = useMemo(() => {
         const grouped: Record<string, number> = {};
-        assets.forEach(asset => {
+        assets.filter(a => a.currentValue > 0).forEach(asset => {
             const cls = asset.assetClass || 'Other';
             grouped[cls] = (grouped[cls] || 0) + asset.currentValue;
         });
@@ -50,7 +50,7 @@ const AllocationCharts: React.FC = () => {
     // 2. Group by Asset SubClass
     const subClassData = useMemo(() => {
         const grouped: Record<string, number> = {};
-        assets.forEach(asset => {
+        assets.filter(a => a.currentValue > 0).forEach(asset => {
             const sub = asset.assetSubClass || 'Other';
             // Optional: combine Class + Subclass for uniqueness if needed, but simple name is fine for now
             grouped[sub] = (grouped[sub] || 0) + asset.currentValue;
@@ -64,6 +64,7 @@ const AllocationCharts: React.FC = () => {
     // 3. Group by Asset Name (Ticker or Label)
     const nameData = useMemo(() => {
         return assets
+            .filter(a => a.currentValue > 0)
             .map(a => ({ name: a.label || a.ticker, value: a.currentValue }))
             .sort((a, b) => b.value - a.value);
     }, [assets]);

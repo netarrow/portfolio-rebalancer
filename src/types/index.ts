@@ -10,8 +10,8 @@ export type AssetSubClass =
 export interface Transaction {
   id: string;
   ticker: string;
-  assetClass: AssetClass;
-  assetSubClass?: AssetSubClass;
+  assetClass?: AssetClass; // Deprecated: moved to Target
+  assetSubClass?: AssetSubClass; // Deprecated: moved to Target
   amount: number;
   price: number;
   date: string;
@@ -35,6 +35,8 @@ export interface Asset {
 export interface Target {
   ticker: string;
   label?: string;
+  assetClass?: AssetClass;
+  assetSubClass?: AssetSubClass;
   targetPercentage: number; // 0-100
   source?: 'ETF' | 'MOT';
 }
