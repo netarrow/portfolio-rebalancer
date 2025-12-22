@@ -19,6 +19,9 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
     - **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
 - **Asset Classification**: Hierarchical organization (Class -> Subclass) for better grouping.
 - **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
+- **Transactions Import**: Import transactions from Excel files (.xlsx).
+- **Custom Labels**: Assign custom display names to assets (e.g. rename an ISIN to "S&P 500").
+- **Asset Links**: Direct links to JustETF or Borsa Italiana MOT from the transaction history.
 
 ## Screenshots
 
@@ -27,11 +30,11 @@ The central hub showing real-time asset allocation, total value, and actionable 
 ![Dashboard](screenshots/dashboard.png)
 
 ### Transactions
-A detailed history of all trades with inline editing capabilities for quick corrections.
+A detailed history of all trades with inline editing capabilities and **Excel Import**.
 ![Transactions](screenshots/transactions.png)
 
 ### Settings
-Configuration page to set target portfolio allocations and choose price sources for each asset.
+Configuration page to set target portfolio allocations, choose price sources for each asset, and **assign custom labels**.
 ![Settings](screenshots/settings.png)
 
 ## Tech Stack
