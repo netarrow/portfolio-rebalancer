@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, AssetClass, AssetSubClass, TransactionDirection } from '../../types';
+import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, targets, deleteTransaction, updateTransaction, refreshPrices } = usePortfolio();
+    const { transactions, assets, targets, deleteTransaction, updateTransaction, refreshPrices, addTransaction } = usePortfolio();
     const [updating, setUpdating] = useState(false);
+    const [showImport, setShowImport] = useState(false);
 
     // Editing State
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -74,14 +76,23 @@ const TransactionList: React.FC = () => {
         <div className="transaction-list-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
                 <h2>History</h2>
-                <button
-                    onClick={handleRefresh}
-                    disabled={updating}
-                    className="btn-primary"
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.8rem' }}
-                >
-                    {updating ? 'Updating...' : 'Update Prices'}
-                </button>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                    <button
+                        onClick={() => setShowImport(true)}
+                        className="btn-secondary"
+                        style={{ fontSize: '0.9rem', padding: '0.4rem 0.8rem' }}
+                    >
+                        Import Excel
+                    </button>
+                    <button
+                        onClick={handleRefresh}
+                        disabled={updating}
+                        className="btn-primary"
+                        style={{ fontSize: '0.9rem', padding: '0.4rem 0.8rem' }}
+                    >
+                        {updating ? 'Updating...' : 'Update Prices'}
+                    </button>
+                </div>
             </div>
             {transactions.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)' }}>No transactions yet.</p>
@@ -257,6 +268,15 @@ const TransactionList: React.FC = () => {
                         })}
                     </tbody>
                 </table>
+            )}
+
+            {showImport && (
+                <ImportTransactionsModal
+                    onClose={() => setShowImport(false)}
+                    onImport={(newTransactions) => {
+                        newTransactions.forEach(addTransaction);
+                    }}
+                />
             )}
         </div>
     );
