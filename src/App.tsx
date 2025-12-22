@@ -7,6 +7,7 @@ type View = 'dashboard' | 'transactions' | 'settings';
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
 import SummaryCards from './components/Dashboard/SummaryCards';
+import AllocationCharts from './components/Dashboard/AllocationCharts';
 import AllocationOverview from './components/Dashboard/AllocationOverview';
 import TargetSettings from './components/Settings/TargetSettings';
 
@@ -14,6 +15,7 @@ import TargetSettings from './components/Settings/TargetSettings';
 const DashboardView = () => (
   <div className="dashboard-container">
     <SummaryCards />
+    <AllocationCharts />
     <AllocationOverview />
   </div>
 );
