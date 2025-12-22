@@ -54,6 +54,7 @@ const AllocationOverview: React.FC = () => {
                             <AllocationRow
                                 key={ticker}
                                 ticker={ticker}
+                                label={asset?.label}
                                 assetClass={assetClass}
                                 assetSubClass={assetSubClass}
                                 currentPerc={currentPerc}
@@ -76,6 +77,7 @@ const AllocationOverview: React.FC = () => {
 
 interface RowProps {
     ticker: string;
+    label?: string;
     assetClass: string;
     assetSubClass?: string;
     currentPerc: number;
@@ -89,8 +91,11 @@ interface RowProps {
     gainPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, source, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc }) => {
     const diff = currentPerc - targetPerc;
+    const url = source === 'MOT'
+        ? `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${ticker}.html?lang=it`
+        : `https://www.justetf.com/en/etf-profile.html?isin=${ticker}`;
 
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf', // Reuse existing class names for now or map to new ones
@@ -108,7 +113,8 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, assetClass, assetSubClass, 
             <div className="allocation-type" style={{ flex: 1 }}>
                 <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
                 <div>
-                    <strong>{ticker}</strong>
+                    <strong>{label || ticker}</strong>
+                    {label && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{ticker}</div>}
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
                         {assetClass} {assetSubClass ? `• ${assetSubClass}` : ''}
                     </div>

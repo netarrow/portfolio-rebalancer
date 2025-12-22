@@ -4,7 +4,7 @@ import type { Transaction, AssetClass, AssetSubClass, TransactionDirection } fro
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, deleteTransaction, updateTransaction, refreshPrices } = usePortfolio();
+    const { transactions, assets, targets, deleteTransaction, updateTransaction, refreshPrices } = usePortfolio();
     const [updating, setUpdating] = useState(false);
 
     // Editing State
@@ -14,6 +14,15 @@ const TransactionList: React.FC = () => {
     const getAssetPrice = (ticker: string) => {
         const asset = assets.find(a => a.ticker === ticker);
         return asset?.currentPrice;
+    };
+
+    const getSourceUrl = (ticker: string) => {
+        const target = targets.find(t => t.ticker === ticker);
+        const source = target?.source || 'ETF';
+        if (source === 'MOT') {
+            return `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${ticker}.html?lang=it`;
+        }
+        return `https://www.justetf.com/en/etf-profile.html?isin=${ticker}`;
     };
 
     const handleRefresh = async () => {
@@ -215,9 +224,18 @@ const TransactionList: React.FC = () => {
                                     <td>{tx.amount}</td>
                                     <td>{tx.price.toFixed(2)}</td>
                                     <td style={{ color: 'var(--text-muted)' }}>
-                                        {getAssetPrice(tx.ticker)?.toFixed(2) || '-'}
+                                        <a
+                                            href={getSourceUrl(tx.ticker)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}
+                                        >
+                                            {getAssetPrice(tx.ticker)?.toFixed(2) || '-'}
+                                        </a>
                                     </td>
-                                    <td>{(tx.amount * tx.price).toFixed(2)}</td>
+                                    <td>
+                                        {((getAssetPrice(tx.ticker) || 0) * tx.amount).toFixed(2)}
+                                    </td>
                                     <td>
                                         <div style={{ display: 'flex', gap: '5px' }}>
                                             <button

@@ -14,11 +14,12 @@ const TargetSettings: React.FC = () => {
 
     const total = targets.reduce((sum, t) => sum + t.targetPercentage, 0);
 
-    const handleUpdate = (ticker: string, field: 'percentage' | 'source', value: string) => {
+    const handleUpdate = (ticker: string, field: 'percentage' | 'source' | 'label', value: string) => {
         const current = getTarget(ticker);
         const newPerc = field === 'percentage' ? Number(value) : current.targetPercentage;
         const newSource = field === 'source' ? value as 'ETF' | 'MOT' : (current.source || 'ETF');
-        updateTarget(ticker, newPerc, newSource);
+        const newLabel = field === 'label' ? value : current.label;
+        updateTarget(ticker, newPerc, newSource, newLabel);
     };
 
     return (
@@ -34,8 +35,19 @@ const TargetSettings: React.FC = () => {
                 allTickers.map(ticker => {
                     const target = getTarget(ticker);
                     return (
-                        <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+                        <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
                             <label style={{ margin: 0 }}>{ticker}</label>
+
+                            <div>
+                                <label style={{ fontSize: '0.7rem' }}>Label Name</label>
+                                <input
+                                    type="text"
+                                    className="form-input"
+                                    placeholder="Optional Display Name"
+                                    value={target.label || ''}
+                                    onChange={(e) => handleUpdate(ticker, 'label', e.target.value)}
+                                />
+                            </div>
 
                             <div>
                                 <label style={{ fontSize: '0.7rem' }}>Target %</label>

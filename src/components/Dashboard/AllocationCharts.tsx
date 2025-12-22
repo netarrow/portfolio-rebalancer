@@ -61,10 +61,10 @@ const AllocationCharts: React.FC = () => {
             .sort((a, b) => b.value - a.value);
     }, [assets]);
 
-    // 3. Group by Asset Name (Ticker)
+    // 3. Group by Asset Name (Ticker or Label)
     const nameData = useMemo(() => {
         return assets
-            .map(a => ({ name: a.ticker, value: a.currentValue }))
+            .map(a => ({ name: a.label || a.ticker, value: a.currentValue }))
             .sort((a, b) => b.value - a.value);
     }, [assets]);
 

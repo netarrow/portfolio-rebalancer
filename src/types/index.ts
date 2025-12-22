@@ -20,6 +20,7 @@ export interface Transaction {
 
 export interface Asset {
   ticker: string;
+  label?: string;
   assetClass: AssetClass;
   assetSubClass?: AssetSubClass;
   quantity: number;
@@ -33,6 +34,7 @@ export interface Asset {
 
 export interface Target {
   ticker: string;
+  label?: string;
   targetPercentage: number; // 0-100
   source?: 'ETF' | 'MOT';
 }
@@ -45,8 +47,4 @@ export interface PortfolioSummary {
   totalGainPercentage: number;
 }
 
-export interface Target {
-  ticker: string;
-  targetPercentage: number; // 0-100
-  source?: 'ETF' | 'MOT';
-}
+

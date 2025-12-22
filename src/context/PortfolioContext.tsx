@@ -10,7 +10,7 @@ interface PortfolioContextType {
     addTransaction: (transaction: Transaction) => void;
     updateTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
-    updateTarget: (ticker: string, percentage: number, source?: 'ETF' | 'MOT') => void;
+    updateTarget: (ticker: string, percentage: number, source?: 'ETF' | 'MOT', label?: string) => void;
     refreshPrices: () => Promise<void>;
     resetPortfolio: () => void;
 }
@@ -78,20 +78,25 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTransactions((prev) => prev.filter((t) => t.id !== id));
     };
 
-    const updateTarget = (ticker: string, percentage: number, source?: 'ETF' | 'MOT') => {
+    const updateTarget = (ticker: string, percentage: number, source?: 'ETF' | 'MOT', label?: string) => {
         setTargets((prev) => {
             // Ensure specific ticker is updated, or add if missing
             const exists = prev.find(t => t.ticker === ticker);
 
-            if (percentage === 0 && (!source || source === 'ETF')) {
-                // Remove target only if 0 AND source is default (cleanup)
+            if (percentage === 0 && (!source || source === 'ETF') && !label) {
+                // Remove target only if 0, source is default, AND NO LABEL (cleanup)
                 return prev.filter(t => t.ticker !== ticker);
             }
 
             if (exists) {
-                return prev.map(t => t.ticker === ticker ? { ...t, targetPercentage: percentage, source: source || t.source } : t);
+                return prev.map(t => t.ticker === ticker ? {
+                    ...t,
+                    targetPercentage: percentage,
+                    source: source || t.source,
+                    label: label !== undefined ? label : t.label // Update label if provided
+                } : t);
             }
-            return [...prev, { ticker, targetPercentage: percentage, source: source || 'ETF' }];
+            return [...prev, { ticker, targetPercentage: percentage, source: source || 'ETF', label }];
         });
     };
 
@@ -162,6 +167,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 const quantity = direction === 'Buy' ? tx.amount : -tx.amount;
                 assetMap.set(ticker, {
                     ticker: ticker,
+                    label: undefined, // Will be filled below if target exists
                     assetClass: tx.assetClass,
                     assetSubClass: tx.assetSubClass,
                     quantity: quantity,
@@ -179,6 +185,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const effectivePrice = marketInfo ? marketInfo.price : (asset.currentPrice || asset.averagePrice);
             const lastUpdated = marketInfo ? marketInfo.lastUpdated : undefined;
 
+            // Inject label from target
+            const target = targets.find(t => t.ticker === asset.ticker);
+            const label = target?.label;
+
             const currentValue = asset.quantity * effectivePrice;
             const totalCost = asset.quantity * asset.averagePrice;
             const gain = currentValue - totalCost;
@@ -186,6 +196,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
             return {
                 ...asset,
+                label,
                 currentPrice: effectivePrice,
                 currentValue: currentValue,
                 lastUpdated,
