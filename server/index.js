@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3001;
-const isProduction = process.env.NODE_ENV === 'production';
+const isProduction = false //process.env.NODE_ENV === 'production';
 
 // Common middleware
 app.use(cors());
