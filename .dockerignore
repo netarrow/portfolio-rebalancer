@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+Dockerfile
+.dockerignore
+.git
+.gitignore
+README.md
+LICENSE
+.vscode
+dist
+# Ignore local env files if any, though we might need them or handle envs via Azure
+.env
