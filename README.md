@@ -45,7 +45,7 @@ Configuration page to set target portfolio allocations, manage **Unused Assets**
 
 ## Tech Stack
 - **Frontend**: React 19, TypeScript, Vite, Recharts
-- **Backend**: Node.js, Express
+- **Backend**: Node.js, Express, Docker
 - **Scraping**: Puppeteer
 - **Styles**: Vanilla CSS (Variables & Responsive Layout)
 
