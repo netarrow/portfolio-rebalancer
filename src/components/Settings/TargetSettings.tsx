@@ -5,6 +5,7 @@ import type { AssetClass, AssetSubClass } from '../../types';
 
 const TargetSettings: React.FC = () => {
     const { targets, updateTarget, assets, resetPortfolio } = usePortfolio();
+    const [showUnused, setShowUnused] = useState(false);
     const [showConfirmReset, setShowConfirmReset] = useState(false);
 
     // Get unique tickers from assets (plus any already in targets even if 0 items)
@@ -36,6 +37,95 @@ const TargetSettings: React.FC = () => {
         updateTarget(ticker, newPerc, newSource, newLabel, newClass, newSubClass);
     };
 
+    const renderAssetRow = (ticker: string) => {
+        const target = getTarget(ticker);
+        return (
+            <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+                <label style={{ margin: 0 }}>{ticker}</label>
+
+                <div>
+                    <label style={{ fontSize: '0.7rem' }}>Label Name</label>
+                    <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Optional Display Name"
+                        value={target.label || ''}
+                        onChange={(e) => handleUpdate(ticker, 'label', e.target.value)}
+                    />
+                </div>
+
+                <div>
+                    <label style={{ fontSize: '0.7rem' }}>Asset Class</label>
+                    <select
+                        className="form-select"
+                        value={target.assetClass || 'Stock'}
+                        onChange={(e) => handleUpdate(ticker, 'assetClass', e.target.value)}
+                    >
+                        <option value="Stock">Stock</option>
+                        <option value="Bond">Bond</option>
+                        <option value="Commodity">Cmdty</option>
+                        <option value="Crypto">Crypto</option>
+                    </select>
+                </div>
+
+                <div>
+                    <label style={{ fontSize: '0.7rem' }}>Subclass</label>
+                    {target.assetClass !== 'Crypto' ? (
+                        <select
+                            className="form-select"
+                            value={target.assetSubClass || 'International'}
+                            onChange={(e) => handleUpdate(ticker, 'assetSubClass', e.target.value)}
+                        >
+                            {target.assetClass === 'Stock' && (
+                                <>
+                                    <option value="International">Intl</option>
+                                    <option value="Local">Local</option>
+                                </>
+                            )}
+                            {target.assetClass === 'Bond' && (
+                                <>
+                                    <option value="Short">Short</option>
+                                    <option value="Medium">Medium</option>
+                                    <option value="Long">Long</option>
+                                </>
+                            )}
+                            {target.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
+                        </select>
+                    ) : (
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</span>
+                    )}
+                </div>
+
+                <div>
+                    <label style={{ fontSize: '0.7rem' }}>Target %</label>
+                    <input
+                        type="number"
+                        className="form-input"
+                        value={target.targetPercentage}
+                        onChange={(e) => handleUpdate(ticker, 'percentage', e.target.value)}
+                        min="0"
+                        max="100"
+                    />
+                </div>
+
+                <div>
+                    <label style={{ fontSize: '0.7rem' }}>Source</label>
+                    <select
+                        className="form-select"
+                        value={target.source || 'ETF'}
+                        onChange={(e) => handleUpdate(ticker, 'source', e.target.value)}
+                    >
+                        <option value="ETF">ETF</option>
+                        <option value="MOT">MOT</option>
+                    </select>
+                </div>
+            </div>
+        );
+    };
+
+    const activeTickers = allTickers.filter(t => getTarget(t).targetPercentage > 0);
+    const unusedTickers = allTickers.filter(t => getTarget(t).targetPercentage === 0);
+
     return (
         <div className="transaction-form-card" style={{ maxWidth: '700px', margin: '0 auto' }}>
             <h2>Target Allocation & Source</h2>
@@ -46,91 +136,37 @@ const TargetSettings: React.FC = () => {
             {allTickers.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)' }}>No assets found. Add transactions first to see them here.</p>
             ) : (
-                allTickers.map(ticker => {
-                    const target = getTarget(ticker);
-                    return (
-                        <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
-                            <label style={{ margin: 0 }}>{ticker}</label>
+                <>
+                    {activeTickers.map(renderAssetRow)}
 
-                            <div>
-                                <label style={{ fontSize: '0.7rem' }}>Label Name</label>
-                                <input
-                                    type="text"
-                                    className="form-input"
-                                    placeholder="Optional Display Name"
-                                    value={target.label || ''}
-                                    onChange={(e) => handleUpdate(ticker, 'label', e.target.value)}
-                                />
-                            </div>
+                    {unusedTickers.length > 0 && (
+                        <div style={{ marginTop: 'var(--space-6)' }}>
+                            <button
+                                onClick={() => setShowUnused(!showUnused)}
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: 'var(--text-secondary)',
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '0.5rem',
+                                    padding: 0,
+                                    fontSize: '0.9rem'
+                                }}
+                            >
+                                <span>{showUnused ? '▼' : '▶'}</span>
+                                Unused Assets ({unusedTickers.length})
+                            </button>
 
-                            <div>
-                                <label style={{ fontSize: '0.7rem' }}>Asset Class</label>
-                                <select
-                                    className="form-select"
-                                    value={target.assetClass || 'Stock'}
-                                    onChange={(e) => handleUpdate(ticker, 'assetClass', e.target.value)}
-                                >
-                                    <option value="Stock">Stock</option>
-                                    <option value="Bond">Bond</option>
-                                    <option value="Commodity">Cmdty</option>
-                                    <option value="Crypto">Crypto</option>
-                                </select>
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: '0.7rem' }}>Subclass</label>
-                                {target.assetClass !== 'Crypto' ? (
-                                    <select
-                                        className="form-select"
-                                        value={target.assetSubClass || 'International'}
-                                        onChange={(e) => handleUpdate(ticker, 'assetSubClass', e.target.value)}
-                                    >
-                                        {target.assetClass === 'Stock' && (
-                                            <>
-                                                <option value="International">Intl</option>
-                                                <option value="Local">Local</option>
-                                            </>
-                                        )}
-                                        {target.assetClass === 'Bond' && (
-                                            <>
-                                                <option value="Short">Short</option>
-                                                <option value="Medium">Medium</option>
-                                                <option value="Long">Long</option>
-                                            </>
-                                        )}
-                                        {target.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
-                                    </select>
-                                ) : (
-                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</span>
-                                )}
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: '0.7rem' }}>Target %</label>
-                                <input
-                                    type="number"
-                                    className="form-input"
-                                    value={target.targetPercentage}
-                                    onChange={(e) => handleUpdate(ticker, 'percentage', e.target.value)}
-                                    min="0"
-                                    max="100"
-                                />
-                            </div>
-
-                            <div>
-                                <label style={{ fontSize: '0.7rem' }}>Source</label>
-                                <select
-                                    className="form-select"
-                                    value={target.source || 'ETF'}
-                                    onChange={(e) => handleUpdate(ticker, 'source', e.target.value)}
-                                >
-                                    <option value="ETF">ETF</option>
-                                    <option value="MOT">MOT</option>
-                                </select>
-                            </div>
+                            {showUnused && (
+                                <div style={{ marginTop: 'var(--space-4)', borderLeft: '2px solid var(--border-color)', paddingLeft: 'var(--space-4)' }}>
+                                    {unusedTickers.map(renderAssetRow)}
+                                </div>
+                            )}
                         </div>
-                    );
-                })
+                    )}
+                </>
             )}
 
             <div style={{
