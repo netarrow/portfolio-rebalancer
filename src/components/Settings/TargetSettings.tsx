@@ -4,7 +4,7 @@ import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
 
 const TargetSettings: React.FC = () => {
-    const { targets, updateTarget, assets, resetPortfolio } = usePortfolio();
+    const { targets, updateTarget, assets, resetPortfolio, loadMockData } = usePortfolio();
     const [showUnused, setShowUnused] = useState(false);
     const [showConfirmReset, setShowConfirmReset] = useState(false);
 
@@ -179,6 +179,29 @@ const TargetSettings: React.FC = () => {
                 fontWeight: 600
             }}>
                 Total: {total.toFixed(1)}%
+            </div>
+
+            <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-color)' }}>
+                <h3 style={{ color: 'var(--text-primary)', fontSize: '1rem', marginBottom: 'var(--space-2)' }}>Developer Tools</h3>
+                <button
+                    onClick={() => {
+                        if (confirm('Replace current data with Mock Data? This overrides everything.')) {
+                            loadMockData();
+                        }
+                    }}
+                    style={{
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--color-primary)',
+                        color: 'var(--color-primary)',
+                        padding: 'var(--space-2) var(--space-4)',
+                        borderRadius: 'var(--radius-md)',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        marginRight: 'var(--space-3)'
+                    }}
+                >
+                    Load Mock Data (3 Test ISINs)
+                </button>
             </div>
 
             <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-color)' }}>

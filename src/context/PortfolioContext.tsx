@@ -14,6 +14,7 @@ interface PortfolioContextType {
     updateTransactionsBulk: (ids: string[], updates: Partial<Transaction>) => void;
     refreshPrices: () => Promise<void>;
     resetPortfolio: () => void;
+    loadMockData: () => void;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -283,6 +284,41 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
     };
 
+    const loadMockData = () => {
+        const timestamp = new Date().toISOString();
+        const mockIsins = [
+            { ticker: 'IE00B4L5Y983', name: 'iShares Core MSCI World', class: 'Stock', subClass: 'International', type: 'ETF' },
+            { ticker: 'IE00BKM4GZ66', name: 'iShares Core MSCI EM IMI', class: 'Stock', subClass: 'International', type: 'ETF' },
+            { ticker: 'IE00BDBRDM35', name: 'iShares Glb Agg Bond EUR-H', class: 'Bond', subClass: 'International', type: 'ETF' }
+        ];
+
+        // Mock Transactions
+        const initialTransactions: Transaction[] = [
+            { id: String(Date.now() + 1), ticker: mockIsins[0].ticker, date: '2023-01-15', amount: 50, price: 78.50, direction: 'Buy' },
+            { id: String(Date.now() + 2), ticker: mockIsins[1].ticker, date: '2023-02-20', amount: 100, price: 28.30, direction: 'Buy' },
+            { id: String(Date.now() + 3), ticker: mockIsins[2].ticker, date: '2023-03-10', amount: 200, price: 4.88, direction: 'Buy' },
+            { id: String(Date.now() + 4), ticker: mockIsins[0].ticker, date: '2023-06-15', amount: 20, price: 82.10, direction: 'Buy' },
+        ];
+
+        // Mock Targets
+        const initialTargets: Target[] = [
+            { ticker: mockIsins[0].ticker, targetPercentage: 60, source: 'ETF', label: mockIsins[0].name, assetClass: 'Stock', assetSubClass: 'International' },
+            { ticker: mockIsins[1].ticker, targetPercentage: 10, source: 'ETF', label: mockIsins[1].name, assetClass: 'Stock', assetSubClass: 'International' },
+            { ticker: mockIsins[2].ticker, targetPercentage: 30, source: 'ETF', label: mockIsins[2].name, assetClass: 'Bond', assetSubClass: 'International' },
+        ];
+
+        setTransactions(initialTransactions);
+        setTargets(initialTargets);
+
+        // Soft mock prices so dashboard looks good immediately
+        const mockPrices = {
+            [mockIsins[0].ticker]: { price: 85.20, lastUpdated: timestamp },
+            [mockIsins[1].ticker]: { price: 29.50, lastUpdated: timestamp },
+            [mockIsins[2].ticker]: { price: 4.95, lastUpdated: timestamp }
+        };
+        setMarketData(mockPrices);
+    };
+
     const value = {
         transactions,
         targets,
@@ -294,7 +330,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteTransaction,
         updateTarget,
         refreshPrices,
-        resetPortfolio
+        resetPortfolio,
+        loadMockData
     };
 
     return (
