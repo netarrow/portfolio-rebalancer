@@ -12,6 +12,7 @@ const TransactionForm: React.FC = () => {
     const [amount, setAmount] = useState('');
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [portfolio, setPortfolio] = useState('');
 
 
 
@@ -26,7 +27,8 @@ const TransactionForm: React.FC = () => {
 
             direction,
             amount: Number(amount),
-            price: Number(price)
+            price: Number(price),
+            portfolio: portfolio || undefined
         });
 
         // Reset form
@@ -34,6 +36,10 @@ const TransactionForm: React.FC = () => {
         setAmount('');
         setPrice('');
         setDirection('Buy');
+        // Keep portfolio for next entry ease? Or reset? Let's reset for now or keep if user doing batch
+        // setPortfolio(''); 
+        // Actually users usually enter same portfolio multiple times, let's NOT reset portfolio
+
 
     };
 
@@ -127,6 +133,17 @@ const TransactionForm: React.FC = () => {
                         value={price}
                         onChange={(e) => setPrice(e.target.value)}
                         required
+                    />
+                </div>
+
+                <div className="form-group">
+                    <label>Portfolio (Optional)</label>
+                    <input
+                        type="text"
+                        className="form-input"
+                        placeholder="e.g. Directa"
+                        value={portfolio}
+                        onChange={(e) => setPortfolio(e.target.value)}
                     />
                 </div>
 

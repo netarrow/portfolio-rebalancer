@@ -5,11 +5,19 @@ import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, targets, deleteTransaction, updateTransaction, refreshPrices, addTransaction } = usePortfolio();
+    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction } = usePortfolio();
     const [updating, setUpdating] = useState(false);
     const [showImport, setShowImport] = useState(false);
 
-    // Editing State
+    // View State
+    const [groupByPortfolio, setGroupByPortfolio] = useState(false);
+
+    // Bulk Selection State
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    // Bulk Update State
+    const [bulkPortfolioName, setBulkPortfolioName] = useState('');
+
+    // Editing State (Single Row)
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState<Transaction | null>(null);
 
@@ -33,6 +41,38 @@ const TransactionList: React.FC = () => {
         setUpdating(false);
     };
 
+    // --- Bulk Selection Handlers ---
+    const toggleSelectAll = (subsetTransactions: Transaction[] = transactions) => {
+        const subsetIds = subsetTransactions.map(t => t.id);
+        const allSubsetSelected = subsetIds.length > 0 && subsetIds.every(id => selectedIds.has(id));
+
+        const newSet = new Set(selectedIds);
+        if (allSubsetSelected) {
+            subsetIds.forEach(id => newSet.delete(id));
+        } else {
+            subsetIds.forEach(id => newSet.add(id));
+        }
+        setSelectedIds(newSet);
+    };
+
+    const toggleSelectRow = (id: string) => {
+        const newSet = new Set(selectedIds);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setSelectedIds(newSet);
+    };
+
+    const handleBulkUpdate = () => {
+        if (selectedIds.size === 0) return;
+        updateTransactionsBulk(Array.from(selectedIds), { portfolio: bulkPortfolioName || undefined });
+        setSelectedIds(new Set()); // Reset selection
+        setBulkPortfolioName(''); // Reset input
+    };
+
+    // --- Single Edit Handlers ---
     const startEditing = (tx: Transaction) => {
         setEditingId(tx.id);
         setEditForm({ ...tx });
@@ -56,7 +96,6 @@ const TransactionList: React.FC = () => {
         setEditForm(prev => prev ? ({ ...prev, [field]: value }) : null);
     };
 
-    // Helper for Class/Subclass change in edit mode
     const getAssetName = (ticker: string) => {
         const target = targets.find(t => t.ticker === ticker);
         return target?.label || '';
@@ -67,11 +106,194 @@ const TransactionList: React.FC = () => {
         new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 
+    const groupedTransactions = sortedTransactions.reduce((acc, tx) => {
+        const key = tx.portfolio || 'Unassigned';
+        if (!acc[key]) acc[key] = [];
+        acc[key].push(tx);
+        return acc;
+    }, {} as Record<string, Transaction[]>);
+
+    const renderTable = (txs: Transaction[]) => (
+        <table className="transaction-table">
+            <thead>
+                <tr>
+                    <th style={{ width: '40px' }}>
+                        <input
+                            type="checkbox"
+                            onChange={() => toggleSelectAll(txs)}
+                            checked={txs.length > 0 && txs.every(t => selectedIds.has(t.id))}
+                        />
+                    </th>
+                    <th>Date</th>
+                    <th>Ticker</th>
+                    <th>Side</th>
+                    <th>Portfolio</th>
+                    <th>Name</th>
+                    <th>Qty</th>
+                    <th>Price (Exec)</th>
+                    <th>Price (Mkt)</th>
+                    <th>Total</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {txs.map((tx) => {
+                    const isEditing = editingId === tx.id;
+                    const isSelected = selectedIds.has(tx.id);
+
+                    if (isEditing && editForm) {
+                        return (
+                            <tr key={tx.id} className="editing-row">
+                                <td></td>
+                                <td>
+                                    <input
+                                        type="date"
+                                        value={editForm.date}
+                                        onChange={e => handleEditChange('date', e.target.value)}
+                                        className="edit-input"
+                                    />
+                                </td>
+                                <td>
+                                    <input
+                                        type="text"
+                                        value={editForm.ticker}
+                                        onChange={e => handleEditChange('ticker', e.target.value.toUpperCase())}
+                                        className="edit-input"
+                                        style={{ width: '80px' }}
+                                    />
+                                </td>
+                                <td>
+                                    <select
+                                        value={editForm.direction}
+                                        onChange={e => handleEditChange('direction', e.target.value as TransactionDirection)}
+                                        className="edit-input"
+                                    >
+                                        <option value="Buy">Buy</option>
+                                        <option value="Sell">Sell</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    <input
+                                        type="text"
+                                        value={editForm.portfolio || ''}
+                                        onChange={e => handleEditChange('portfolio', e.target.value)}
+                                        className="edit-input"
+                                        style={{ width: '80px' }}
+                                        placeholder="Default"
+                                    />
+                                </td>
+                                <td>
+                                    <span style={{ color: 'var(--text-secondary)' }}>-</span>
+                                </td>
+                                <td>
+                                    <input
+                                        type="number"
+                                        value={editForm.amount}
+                                        onChange={e => handleEditChange('amount', Number(e.target.value))}
+                                        className="edit-input"
+                                        style={{ width: '60px' }}
+                                    />
+                                </td>
+                                <td>
+                                    <input
+                                        type="number"
+                                        value={editForm.price}
+                                        onChange={e => handleEditChange('price', Number(e.target.value))}
+                                        className="edit-input"
+                                        style={{ width: '80px' }}
+                                    />
+                                </td>
+                                <td style={{ color: 'var(--text-muted)' }}>-</td>
+                                <td>{(editForm.amount * editForm.price).toFixed(2)}</td>
+                                <td>
+                                    <div style={{ display: 'flex', gap: '5px' }}>
+                                        <button className="btn-save" onClick={saveEditing}>Save</button>
+                                        <button className="btn-cancel" onClick={cancelEditing}>X</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        )
+                    }
+
+                    return (
+                        <tr key={tx.id} style={isSelected ? { backgroundColor: 'var(--bg-app)' } : undefined}>
+                            <td>
+                                <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleSelectRow(tx.id)}
+                                />
+                            </td>
+                            <td>{tx.date}</td>
+                            <td style={{ fontWeight: 600 }}>{tx.ticker}</td>
+                            <td>
+                                <span style={{
+                                    color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
+                                    fontWeight: 600
+                                }}>
+                                    {tx.direction || 'Buy'}
+                                </span>
+                            </td>
+                            <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                {tx.portfolio || '-'}
+                            </td>
+                            <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                {getAssetName(tx.ticker) || '-'}
+                            </td>
+                            <td>{tx.amount}</td>
+                            <td>{tx.price.toFixed(2)}</td>
+                            <td style={{ color: 'var(--text-muted)' }}>
+                                <a
+                                    href={getSourceUrl(tx.ticker)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}
+                                >
+                                    {getAssetPrice(tx.ticker)?.toFixed(2) || '-'}
+                                </a>
+                            </td>
+                            <td>
+                                {((tx.price || 0) * tx.amount).toFixed(2)}
+                            </td>
+                            <td>
+                                <div style={{ display: 'flex', gap: '5px' }}>
+                                    <button
+                                        className="btn-edit"
+                                        onClick={() => startEditing(tx)}
+                                    >
+                                        Edit
+                                    </button>
+                                    <button
+                                        className="btn-delete"
+                                        onClick={() => deleteTransaction(tx.id)}
+                                    >
+                                        Del
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                    );
+                })}
+            </tbody>
+        </table>
+    );
+
     return (
         <div className="transaction-list-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
                 <h2>History</h2>
-                <div style={{ display: 'flex', gap: '1rem' }}>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    <button
+                        onClick={() => setGroupByPortfolio(!groupByPortfolio)}
+                        className="btn-secondary"
+                        style={{
+                            fontSize: '0.9rem',
+                            padding: '0.4rem 0.8rem',
+                            backgroundColor: groupByPortfolio ? 'var(--border-color)' : undefined
+                        }}
+                    >
+                        {groupByPortfolio ? 'Show All' : 'Group by Portfolio'}
+                    </button>
                     <button
                         onClick={() => setShowImport(true)}
                         className="btn-secondary"
@@ -89,141 +311,81 @@ const TransactionList: React.FC = () => {
                     </button>
                 </div>
             </div>
+
+            {/* Bulk Action Bar - Sticky when items selected */}
+            {selectedIds.size > 0 && (
+                <div style={{
+                    position: 'sticky',
+                    top: '1rem',
+                    zIndex: 10,
+                    backgroundColor: 'var(--bg-card)',
+                    border: '1px solid var(--color-primary)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '0.8rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '1rem',
+                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                }}>
+                    <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>
+                        {selectedIds.size} selected
+                    </span>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <input
+                            type="text"
+                            placeholder="Set Portfolio Name"
+                            value={bulkPortfolioName}
+                            onChange={e => setBulkPortfolioName(e.target.value)}
+                            className="form-input"
+                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem' }}
+                        />
+                        <button
+                            className="btn-primary"
+                            onClick={handleBulkUpdate}
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem' }}
+                        >
+                            Update
+                        </button>
+                        <button
+                            className="btn-secondary"
+                            onClick={() => setSelectedIds(new Set())}
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem' }}
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
+
             {transactions.length === 0 ? (
                 <p style={{ color: 'var(--text-muted)' }}>No transactions yet.</p>
             ) : (
-                <table className="transaction-table">
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Ticker</th>
-                            <th>Side</th>
-                            <th>Name</th>
-                            <th>Qty</th>
-                            <th>Price (Exec)</th>
-                            <th>Price (Mkt)</th>
-                            <th>Total</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {sortedTransactions.map((tx) => {
-                            const isEditing = editingId === tx.id;
-
-                            if (isEditing && editForm) {
-                                return (
-                                    <tr key={tx.id} className="editing-row">
-                                        <td>
-                                            <input
-                                                type="date"
-                                                value={editForm.date}
-                                                onChange={e => handleEditChange('date', e.target.value)}
-                                                className="edit-input"
-                                            />
-                                        </td>
-                                        <td>
-                                            <input
-                                                type="text"
-                                                value={editForm.ticker}
-                                                onChange={e => handleEditChange('ticker', e.target.value.toUpperCase())}
-                                                className="edit-input"
-                                                style={{ width: '80px' }}
-                                            />
-                                        </td>
-                                        <td>
-                                            <select
-                                                value={editForm.direction}
-                                                onChange={e => handleEditChange('direction', e.target.value as TransactionDirection)}
-                                                className="edit-input"
-                                            >
-                                                <option value="Buy">Buy</option>
-                                                <option value="Sell">Sell</option>
-                                            </select>
-                                        </td>
-                                        <td>
-                                            <span style={{ color: 'var(--text-secondary)' }}>-</span>
-                                        </td>
-                                        <td>
-                                            <input
-                                                type="number"
-                                                value={editForm.amount}
-                                                onChange={e => handleEditChange('amount', Number(e.target.value))}
-                                                className="edit-input"
-                                                style={{ width: '60px' }}
-                                            />
-                                        </td>
-                                        <td>
-                                            <input
-                                                type="number"
-                                                value={editForm.price}
-                                                onChange={e => handleEditChange('price', Number(e.target.value))}
-                                                className="edit-input"
-                                                style={{ width: '80px' }}
-                                            />
-                                        </td>
-                                        <td style={{ color: 'var(--text-muted)' }}>-</td>
-                                        <td>{(editForm.amount * editForm.price).toFixed(2)}</td>
-                                        <td>
-                                            <div style={{ display: 'flex', gap: '5px' }}>
-                                                <button className="btn-save" onClick={saveEditing}>Save</button>
-                                                <button className="btn-cancel" onClick={cancelEditing}>X</button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )
-                            }
-
-                            return (
-                                <tr key={tx.id}>
-                                    <td>{tx.date}</td>
-                                    <td style={{ fontWeight: 600 }}>{tx.ticker}</td>
-                                    <td>
-                                        <span style={{
-                                            color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
-                                            fontWeight: 600
-                                        }}>
-                                            {tx.direction || 'Buy'}
-                                        </span>
-                                    </td>
-                                    <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                        {getAssetName(tx.ticker) || '-'}
-                                    </td>
-                                    <td>{tx.amount}</td>
-                                    <td>{tx.price.toFixed(2)}</td>
-                                    <td style={{ color: 'var(--text-muted)' }}>
-                                        <a
-                                            href={getSourceUrl(tx.ticker)}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}
-                                        >
-                                            {getAssetPrice(tx.ticker)?.toFixed(2) || '-'}
-                                        </a>
-                                    </td>
-                                    <td>
-                                        {((tx.price || 0) * tx.amount).toFixed(2)}
-                                    </td>
-                                    <td>
-                                        <div style={{ display: 'flex', gap: '5px' }}>
-                                            <button
-                                                className="btn-edit"
-                                                onClick={() => startEditing(tx)}
-                                            >
-                                                Edit
-                                            </button>
-                                            <button
-                                                className="btn-delete"
-                                                onClick={() => deleteTransaction(tx.id)}
-                                            >
-                                                Del
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+                <>
+                    {groupByPortfolio ? (
+                        Object.entries(groupedTransactions).map(([portfolio, txs]) => (
+                            <div key={portfolio} style={{ marginBottom: '2rem' }}>
+                                <h3 style={{
+                                    padding: '0.5rem 0',
+                                    borderBottom: '2px solid var(--border-color)',
+                                    marginBottom: '1rem',
+                                    color: 'var(--color-primary)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between'
+                                }}>
+                                    <span>{portfolio}</span>
+                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>
+                                        {txs.length} transactions
+                                    </span>
+                                </h3>
+                                {renderTable(txs)}
+                            </div>
+                        ))
+                    ) : (
+                        renderTable(sortedTransactions)
+                    )}
+                </>
             )}
 
             {showImport && (

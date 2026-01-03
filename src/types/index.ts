@@ -16,6 +16,7 @@ export interface Transaction {
   price: number;
   date: string;
   direction: TransactionDirection;
+  portfolio?: string;
 }
 
 export interface Asset {
