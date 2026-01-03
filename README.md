@@ -3,6 +3,9 @@
 This project is an **Agentic Development Experiment** created with **Antigravity** and **Gemini PRO**.
 
 It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
+
+> **Note**: While **Antigravity (Gemini PRO)** was used for the actual production and coding, **Codex (GPT 5.2 Plus)** was employed as a control agent to analyze the codebase and provide architectural insights.
+
 Tasks included:
 - Architecture refactoring (Unified Frontend/Backend)
 - Complex feature implementation (Multi-source scraping, Inline editing)
@@ -14,14 +17,17 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 
 ### Key Features
 - **Smart Rebalancing**: Calculates exactly how much to buy/sell to meet target allocations.
+- **Multi-Portfolio Support**: Group transactions by portfolio (e.g., "Directa", "Degiro") with a dedicated toggle view.
+- **Transactions Management**:
+    - **Bulk Updates**: Select multiple transactions to update properties (like Portfolio) in one go.
+    - **Excel Import**: Import transactions directly from `.xlsx` files.
+    - **Inline Editing**: Quickly edit transaction details without leaving the list.
+- **Asset Classification**: Hierarchical organization (Class -> Subclass) for better grouping and cleanup of unused assets (collapsed by default).
 - **Multi-Source Price Scraping**:
     - **JustETF**: For standard ETFs.
     - **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
-- **Asset Classification**: Hierarchical organization (Class -> Subclass) for better grouping.
 - **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
-- **Transactions Import**: Import transactions from Excel files (.xlsx).
-- **Custom Labels**: Assign custom display names to assets (e.g. rename an ISIN to "S&P 500").
-- **Asset Links**: Direct links to JustETF or Borsa Italiana MOT from the transaction history.
+- **Custom Labels**: Assign custom display names to assets.
 
 ## Screenshots
 
@@ -30,15 +36,15 @@ The central hub showing real-time asset allocation, total value, and actionable 
 ![Dashboard](screenshots/dashboard.png)
 
 ### Transactions
-A detailed history of all trades with inline editing capabilities and **Excel Import**.
+A detailed history of all trades with **Grouping by Portfolio**, bulk editing, and inline modifications.
 ![Transactions](screenshots/transactions.png)
 
 ### Settings
-Configuration page to set target portfolio allocations, choose price sources for each asset, and **assign custom labels**.
+Configuration page to set target portfolio allocations, manage **Unused Assets** (0% allocation), and choose price sources.
 ![Settings](screenshots/settings.png)
 
 ## Tech Stack
-- **Frontend**: React, TypeScript, Vite
+- **Frontend**: React 19, TypeScript, Vite, Recharts
 - **Backend**: Node.js, Express
 - **Scraping**: Puppeteer
 - **Styles**: Vanilla CSS (Variables & Responsive Layout)
