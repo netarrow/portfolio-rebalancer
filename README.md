@@ -40,7 +40,7 @@ A detailed history of all trades with **Grouping by Portfolio**, bulk editing, a
 ![Transactions](screenshots/transactions.png)
 
 ### Settings
-Configuration page to set target portfolio allocations, manage **Unused Assets** (0% allocation), and choose price sources.
+Configuration page to set target portfolio allocations, manage **Unused Assets** (0% allocation), and choose price sources. Includes **Developer Tools** to load mock data for testing.
 ![Settings](screenshots/settings.png)
 
 ## Tech Stack
