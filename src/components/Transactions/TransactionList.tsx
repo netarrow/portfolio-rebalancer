@@ -201,7 +201,7 @@ const TransactionList: React.FC = () => {
                                         </a>
                                     </td>
                                     <td>
-                                        {((getAssetPrice(tx.ticker) || 0) * tx.amount).toFixed(2)}
+                                        {((tx.price || 0) * tx.amount).toFixed(2)}
                                     </td>
                                     <td>
                                         <div style={{ display: 'flex', gap: '5px' }}>
