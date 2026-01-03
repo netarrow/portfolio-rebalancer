@@ -30,11 +30,8 @@ RUN npm run build
 EXPOSE 80
 
 # Environment variables
-# Helper to tell Puppeteer to skip downloading Chrome if we want to use the installed google-chrome-stable, 
-# BUT usually Puppeteer uses its own revision.
-# Installing google-chrome-stable mainly ensures all shared libs are present.
-# However, to be safe and use Puppeteer's internal generic chrome, we just let it download in 'npm install'.
-# We also set PORT to 80.
+# Default to production/80 for the container (Azure/Deployment)
+# Can be overridden at runtime for local dev (e.g., -e PORT=3001 -e NODE_ENV=development)
 ENV PORT=80
 ENV NODE_ENV=production
 

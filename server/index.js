@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const port = process.env.PORT || 3001;
-const isProduction = false //process.env.NODE_ENV === 'production';
+const isProduction = process.env.NODE_ENV === 'production';
 
 // Common middleware
 app.use(cors());
@@ -105,7 +105,8 @@ async function setupServer() {
         app.use(express.static(distPath));
         
         // SPA Fallback
-        app.get('*', (req, res) => {
+        // SPA Fallback
+        app.get(/.*/, (req, res) => {
             res.sendFile(path.join(distPath, 'index.html'));
         });
         console.log('Running in PRODUCTION mode (serving from /dist)');
