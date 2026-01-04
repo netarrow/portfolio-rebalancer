@@ -320,56 +320,80 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const loadMockData = () => {
         const timestamp = new Date().toISOString();
+        const mockPortfolioId = 'mock-p1';
+        const mockPortfolioId2 = 'mock-p2';
+
         const mockIsins = [
+            // Growth Portfolio Assets
             { ticker: 'IE00B4L5Y983', name: 'iShares Core MSCI World', class: 'Stock', subClass: 'International', type: 'ETF' },
             { ticker: 'IE00BKM4GZ66', name: 'iShares Core MSCI EM IMI', class: 'Stock', subClass: 'International', type: 'ETF' },
-            { ticker: 'IE00BDBRDM35', name: 'iShares Glb Agg Bond EUR-H', class: 'Bond', subClass: 'International', type: 'ETF' }
+            { ticker: 'IE00BDBRDM35', name: 'iShares Glb Agg Bond EUR-H', class: 'Bond', subClass: 'International', type: 'ETF' },
+            // Emergency Fund Assets (Money Market)
+            { ticker: 'LU0290358497', name: 'Xtrackers II EUR Overnight Rate Swap', class: 'Cash', subClass: 'Local', type: 'ETF' }, // XEON
+            { ticker: 'LU1190417599', name: 'Lyxor Smart Overnight Return', class: 'Cash', subClass: 'Local', type: 'ETF' } // CSH2
         ];
 
         // Mock Transactions
         const initialTransactions: Transaction[] = [
-            { id: String(Date.now() + 1), ticker: mockIsins[0].ticker, date: '2023-01-15', amount: 50, price: 78.50, direction: 'Buy' },
-            { id: String(Date.now() + 2), ticker: mockIsins[1].ticker, date: '2023-02-20', amount: 100, price: 28.30, direction: 'Buy' },
-            { id: String(Date.now() + 3), ticker: mockIsins[2].ticker, date: '2023-03-10', amount: 200, price: 4.88, direction: 'Buy' },
-            { id: String(Date.now() + 4), ticker: mockIsins[0].ticker, date: '2023-06-15', amount: 20, price: 82.10, direction: 'Buy' },
+            // Growth Portfolio
+            { id: String(Date.now() + 1), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-01-15', amount: 50, price: 88.50, direction: 'Buy' },
+            { id: String(Date.now() + 2), portfolioId: mockPortfolioId, ticker: mockIsins[1].ticker, date: '2024-02-20', amount: 100, price: 29.30, direction: 'Buy' },
+            { id: String(Date.now() + 3), portfolioId: mockPortfolioId, ticker: mockIsins[2].ticker, date: '2024-03-10', amount: 200, price: 4.95, direction: 'Buy' },
+            { id: String(Date.now() + 4), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-06-15', amount: 20, price: 92.10, direction: 'Buy' },
+            // Emergency Fund
+            { id: String(Date.now() + 5), portfolioId: mockPortfolioId2, ticker: mockIsins[3].ticker, date: '2024-01-10', amount: 10, price: 140.20, direction: 'Buy' },
+            { id: String(Date.now() + 6), portfolioId: mockPortfolioId2, ticker: mockIsins[4].ticker, date: '2024-01-10', amount: 12, price: 119.50, direction: 'Buy' },
         ];
 
         // Mock Asset Settings
-        const initialSettings: AssetDefinition[] = [
-            { ticker: mockIsins[0].ticker, source: 'ETF', label: mockIsins[0].name, assetClass: 'Stock', assetSubClass: 'International' },
-            { ticker: mockIsins[1].ticker, source: 'ETF', label: mockIsins[1].name, assetClass: 'Stock', assetSubClass: 'International' },
-            { ticker: mockIsins[2].ticker, source: 'ETF', label: mockIsins[2].name, assetClass: 'Bond', assetSubClass: 'International' },
-        ];
+        const initialSettings: AssetDefinition[] = mockIsins.map(m => ({
+            ticker: m.ticker,
+            source: 'ETF',
+            label: m.name,
+            assetClass: m.class as any,
+            assetSubClass: m.subClass as any
+        }));
 
-        // Mock Allocations (Apply to a default portfolio or create one)
-        const mockAllocations = {
+        // Mock Allocations
+        const growthAllocations = {
             [mockIsins[0].ticker]: 60,
             [mockIsins[1].ticker]: 10,
             [mockIsins[2].ticker]: 30
         };
 
+        const emergencyAllocations = {
+            [mockIsins[3].ticker]: 60,
+            [mockIsins[4].ticker]: 40
+        };
+
         setTransactions(initialTransactions);
         setAssetSettings(initialSettings);
 
-        // Ensure at least one portfolio exists with these allocations
-        if (portfolios.length === 0) {
-            setPortfolios([{
-                id: 'mock-p1',
-                name: 'Growth Portfolio',
-                description: 'Mock Data Portfolio',
-                allocations: mockAllocations
-            }]);
-        } else {
-            // Update first portfolio
-            const p = portfolios[0];
-            updatePortfolio({ ...p, allocations: mockAllocations });
-        }
+        // Update or Create Portfolios
+        const mockGrowthPortfolio: Portfolio = {
+            id: mockPortfolioId,
+            name: 'Growth Portfolio',
+            description: 'Mock Data Portfolio',
+            allocations: growthAllocations
+        };
+
+        const mockEmergencyPortfolio: Portfolio = {
+            id: mockPortfolioId2,
+            name: 'Emergency Fund',
+            description: 'Low risk liquidity',
+            allocations: emergencyAllocations
+        };
+
+        // Replace portfolios to match the new transactions
+        setPortfolios([mockGrowthPortfolio, mockEmergencyPortfolio]);
 
         // Soft mock prices so dashboard looks good immediately
         const mockPrices = {
-            [mockIsins[0].ticker]: { price: 85.20, lastUpdated: timestamp },
-            [mockIsins[1].ticker]: { price: 29.50, lastUpdated: timestamp },
-            [mockIsins[2].ticker]: { price: 4.95, lastUpdated: timestamp }
+            [mockIsins[0].ticker]: { price: 96.20, lastUpdated: timestamp },
+            [mockIsins[1].ticker]: { price: 31.50, lastUpdated: timestamp },
+            [mockIsins[2].ticker]: { price: 5.05, lastUpdated: timestamp },
+            [mockIsins[3].ticker]: { price: 142.50, lastUpdated: timestamp },
+            [mockIsins[4].ticker]: { price: 121.10, lastUpdated: timestamp }
         };
         setMarketData(mockPrices);
     };
