@@ -53,6 +53,125 @@ app.get('/api/price', async (req, res) => {
              priceSelector = '.t-text.-black-warm-60.-formatPrice strong';
              // Currency is usually implied as EUR for BTP on MOT, but let's default or inspect if robust
              currencySelector = null; // Will default to EUR
+             // Currency is usually implied as EUR for BTP on MOT, but let's default or inspect if robust
+             currencySelector = null; // Will default to EUR
+        } else if (source === 'CPRAM') {
+             url = `https://cpram.com/ita/it/privati/products/${isin}`;
+             await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+             // Handle Splash Screen: Click "Sì, accetto e continuo"
+             try {
+                // Look for button with specific text
+                 const splashButton = await page.waitForFunction(
+                     () => {
+                         const buttons = Array.from(document.querySelectorAll('button, a'));
+                         return buttons.find(b => b.textContent.includes('Sì, accetto e continuo'));
+                     },
+                     { timeout: 5000 }
+                 );
+                 if (splashButton) {
+                     await splashButton.click();
+                     // Wait for splash to disappear or next content to load
+                     await new Promise(r => setTimeout(r, 3000));
+                 }
+             } catch (e) {
+                 console.log('CPRAM Splash screen not found or timed out', e.message);
+             }
+
+             // Handle Cookie Banner: Click "Accettare tutto"
+             try {
+                 const cookieButton = await page.waitForFunction(
+                     () => {
+                         const buttons = Array.from(document.querySelectorAll('button, a'));
+                         return buttons.find(b => b.textContent.includes('Accettare tutto'));
+                     },
+                     { timeout: 3000 }
+                 );
+                 if (cookieButton) {
+                     await cookieButton.click();
+                     await new Promise(r => setTimeout(r, 1000));
+                 }
+             } catch (e) {
+                  // Ignore if cookie banner not found
+             }
+
+             // Robust selector for price: Look for 'Valore dalla quota' label and find associated value
+             // We can use a function to find it dynamically to be more robust than a fixed selector
+             // But for now, let's use a function to evaluate the page content
+             priceSelector = null; // We will handle extraction manually below
+             
+             const extractedData = await page.evaluate(() => {
+                // Strategy 1: Find label 'Valore dalla quota' and traverse up 1-2 levels to find the card
+                const strategies = [
+                    () => {
+                         // Logic from browser subagent: label -> parent -> price
+                         const allEls = Array.from(document.querySelectorAll('*'));
+                         const label = allEls.find(el => el.textContent && el.textContent.trim() === 'Valore dalla quota');
+                         if (!label) return null;
+                         
+                         // The structure is typically: Card > text-wrapper > label
+                         // URL check confirmed structure.
+                         // Try going up to find the container that holds both label and value
+                         let container = label.parentElement;
+                         // Check if this container has the value
+                         let valueEl = container.querySelector('.headline-4');
+                         if (!valueEl && container.parentElement) {
+                             container = container.parentElement;
+                             valueEl = container.querySelector('.headline-4');
+                         }
+                         if (!valueEl && container.parentElement) {
+                             // Try one more level up
+                             container = container.parentElement;
+                             valueEl = container.querySelector('.headline-4');
+                         }
+
+                         return valueEl ? valueEl.textContent.trim() : null;
+                    },
+                    () => {
+                         // Strategy: Find 'headline-5' with text 'Valore dalla quota' (if it's a headline)
+                         const h5 = Array.from(document.querySelectorAll('.headline-5')).find(h => h.textContent.includes('Valore dalla quota') || h.textContent.includes('Valore'));
+                         if (h5) {
+                             // Look for sibling or cousin with headline-4
+                             const container = h5.closest('div'); 
+                             if (container && container.parentElement) {
+                                  const val = container.parentElement.querySelector('.headline-4');
+                                  return val ? val.textContent.trim() : null;
+                             }
+                         }
+                         return null;
+                    }
+                ];
+
+                for (const strategy of strategies) {
+                    try {
+                        const result = strategy();
+                        if (result) return result;
+                    } catch (e) {}
+                }
+                return null;
+             });
+
+             if (extractedData) {
+                 // Format is usually "2.110,35 €"
+                 // Create a fake element for the logic below to 'find'
+                 // OR simpler: just return this value directly
+                 console.log(`CPRAM Raw Price: ${extractedData}`);
+                 // Clean up for standard parsing logic below
+                 // We need to return here or adapt the common logic
+                 // Let's adapt by storing it in a variable that overrides selector logic
+                 
+                 // Reuse common logic:
+                 // priceText needs to be set.
+                 // The common logic does: quote = await page.$eval(priceSelector...)
+                 // Let's just mock the next step by injecting a custom script or logic branch? 
+                 // Actually better to just parse here and return, or setup a dummy selector if possible.
+                 // But since we already have the text, let's just make the common logic use it.
+                 // We will skip the 'waitForSelector(priceSelector)' if priceSelector is null.
+                 
+                 var manualPriceText = extractedData; 
+                 // Note: 'manualPriceText' is not declared in outer scope, so we should refactor slighty.
+             }
+
         } else {
              // Default JustETF
              url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
@@ -62,13 +181,29 @@ app.get('/api/price', async (req, res) => {
              currencySelector = '[data-testid="realtime-quotes_price-currency"]';
         }
 
-        await page.waitForSelector(priceSelector, { timeout: 10000 });
+        let priceText;
+        if (source === 'CPRAM') {
+            if (typeof manualPriceText !== 'undefined' && manualPriceText !== null) {
+                priceText = manualPriceText;
+            } else {
+                const debugPath = path.resolve(__dirname, '../cpram_debug.png');
+                await page.screenshot({ path: debugPath });
+                console.log(`Saved debug screenshot to ${debugPath}`);
+                throw new Error('CPRAM: Could not extract value via manual DOM traversal');
+            }
+        } else {
+            await page.waitForSelector(priceSelector, { timeout: 10000 });
+            priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
+        }
 
-        const priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
         let currency = 'EUR';
         
         if (currencySelector) {
             currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+        } else if (source === 'CPRAM' && priceText) {
+             if (priceText.includes('€')) currency = 'EUR';
+             else if (priceText.includes('$')) currency = 'USD';
+             // etc.
         }
 
         console.log(`Found price: ${priceText} ${currency}`);
@@ -77,7 +212,33 @@ app.get('/api/price', async (req, res) => {
              throw new Error('Price element empty');
         }
 
-        const cleanPrice = priceText.replace(/,/g, '.');
+        let cleanPrice = priceText
+            .replace(/EUR/g, '')
+            .replace(/€/g, '')
+            .replace(/\./g, '')  // Remove thousands separator (dots)
+            .replace(/,/g, '.')  // Replace decimal separator (comma) with dot
+            .trim();
+
+        // Special handling for JustETF format if needed (usually just comma/dot swap for European format)
+        // Check if the original source was JustETF which might use different formatting?
+        // JustETF usually: "123.45" or "123,45". The replace logic above assumes European "1.234,56" -> "1234.56"
+        // Let's be careful.
+        // JustETF (English) typically uses "." for decimal. 
+        // CPRAM (Italian) uses "." for thousands and "," for decimal.
+        
+        if (source === 'ETF') {
+            // JustETF English: "123.45 EUR" or "1,234.56"
+            // If it has commas as thousands separators, remove them.
+            // If it has dots as decimal, keep them.
+            cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim(); 
+        } else {
+            // MOT and CPRAM (Italian/European format): "1.234,56"
+            cleanPrice = priceText
+            .replace(/[^\d.,-]/g, '') // Remove currency symbols and text
+            .replace(/\./g, '')       // Remove thousands dots
+            .replace(/,/g, '.')       // Convert decimal comma to dot
+            .trim();
+        }
         const price = parseFloat(cleanPrice);
 
         res.json({

@@ -48,7 +48,7 @@ export interface AssetDefinition {
   assetClass?: AssetClass;
   assetSubClass?: AssetSubClass;
   // targetPercentage: number; // Removed: moved to Portfolio.allocations
-  source?: 'ETF' | 'MOT';
+  source?: 'ETF' | 'MOT' | 'CPRAM';
 }
 
 // Deprecated alias for compatibility until full refactor
