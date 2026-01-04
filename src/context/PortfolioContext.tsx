@@ -12,7 +12,7 @@ interface PortfolioContextType {
     addTransaction: (transaction: Transaction) => void;
     updateTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
-    updateAssetSettings: (ticker: string, source?: 'ETF' | 'MOT', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
+    updateAssetSettings: (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     updatePortfolioAllocation: (portfolioId: string, ticker: string, percentage: number) => void;
     updateTransactionsBulk: (ids: string[], updates: Partial<Transaction>) => void;
     refreshPrices: () => Promise<void>;
@@ -223,7 +223,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTransactions((prev) => prev.filter((t) => t.id !== id));
     };
 
-    const updateAssetSettings = (ticker: string, source?: 'ETF' | 'MOT', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
+    const updateAssetSettings = (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
         setAssetSettings((prev) => {
             const exists = prev.find(t => t.ticker === ticker);
 

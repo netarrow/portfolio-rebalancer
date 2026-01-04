@@ -6,7 +6,7 @@ interface MarketData {
     lastUpdated: string;
 }
 
-export const fetchAssetPrice = async (isin: string, source: 'ETF' | 'MOT' = 'ETF'): Promise<MarketData | null> => {
+export const fetchAssetPrice = async (isin: string, source: 'ETF' | 'MOT' | 'CPRAM' = 'ETF'): Promise<MarketData | null> => {
     try {
         // Call our local API (relative path)
         const response = await axios.get(`/api/price?isin=${isin}&source=${source}`);
