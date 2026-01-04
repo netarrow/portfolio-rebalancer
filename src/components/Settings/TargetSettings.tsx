@@ -4,22 +4,19 @@ import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
 
 const TargetSettings: React.FC = () => {
-    const { targets, updateTarget, assets, resetPortfolio, loadMockData } = usePortfolio();
-    const [showUnused, setShowUnused] = useState(false);
+    const { assetSettings, updateAssetSettings, assets, resetPortfolio, loadMockData } = usePortfolio();
     const [showConfirmReset, setShowConfirmReset] = useState(false);
 
-    // Get unique tickers from assets (plus any already in targets even if 0 items)
+    // Get unique tickers from assets (plus any already in settings even if 0 items)
     const assetTickers = assets.map(a => a.ticker);
-    const targetTickers = targets.map(t => t.ticker);
-    const allTickers = Array.from(new Set([...assetTickers, ...targetTickers])).sort();
+    const settingTickers = assetSettings.map(t => t.ticker);
+    const allTickers = Array.from(new Set([...assetTickers, ...settingTickers])).sort();
 
-    const getTarget = (ticker: string) => targets.find(t => t.ticker === ticker) || { ticker, targetPercentage: 0, source: 'ETF', assetClass: 'Stock', assetSubClass: 'International' };
+    const getSetting = (ticker: string) => assetSettings.find(t => t.ticker === ticker) || { ticker, source: 'ETF', assetClass: 'Stock', assetSubClass: 'International' };
 
-    const total = targets.reduce((sum, t) => sum + t.targetPercentage, 0);
 
-    const handleUpdate = (ticker: string, field: 'percentage' | 'source' | 'label' | 'assetClass' | 'assetSubClass', value: string) => {
-        const current = getTarget(ticker);
-        const newPerc = field === 'percentage' ? Number(value) : current.targetPercentage;
+    const handleUpdate = (ticker: string, field: 'source' | 'label' | 'assetClass' | 'assetSubClass', value: string) => {
+        const current = getSetting(ticker);
         const newSource = field === 'source' ? value as 'ETF' | 'MOT' : (current.source || 'ETF');
         const newLabel = field === 'label' ? value : current.label;
         const newClass = field === 'assetClass' ? value as AssetClass : (current.assetClass || 'Stock');
@@ -34,13 +31,13 @@ const TargetSettings: React.FC = () => {
             else newSubClass = 'International';
         }
 
-        updateTarget(ticker, newPerc, newSource, newLabel, newClass, newSubClass);
+        updateAssetSettings(ticker, newSource, newLabel, newClass, newSubClass);
     };
 
     const renderAssetRow = (ticker: string) => {
-        const target = getTarget(ticker);
+        const setting = getSetting(ticker);
         return (
-            <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+            <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
                 <label style={{ margin: 0 }}>{ticker}</label>
 
                 <div>
@@ -49,16 +46,17 @@ const TargetSettings: React.FC = () => {
                         type="text"
                         className="form-input"
                         placeholder="Optional Display Name"
-                        value={target.label || ''}
+                        value={setting.label || ''}
                         onChange={(e) => handleUpdate(ticker, 'label', e.target.value)}
                     />
                 </div>
+
 
                 <div>
                     <label style={{ fontSize: '0.7rem' }}>Asset Class</label>
                     <select
                         className="form-select"
-                        value={target.assetClass || 'Stock'}
+                        value={setting.assetClass || 'Stock'}
                         onChange={(e) => handleUpdate(ticker, 'assetClass', e.target.value)}
                     >
                         <option value="Stock">Stock</option>
@@ -70,26 +68,26 @@ const TargetSettings: React.FC = () => {
 
                 <div>
                     <label style={{ fontSize: '0.7rem' }}>Subclass</label>
-                    {target.assetClass !== 'Crypto' ? (
+                    {setting.assetClass !== 'Crypto' ? (
                         <select
                             className="form-select"
-                            value={target.assetSubClass || 'International'}
+                            value={setting.assetSubClass || 'International'}
                             onChange={(e) => handleUpdate(ticker, 'assetSubClass', e.target.value)}
                         >
-                            {target.assetClass === 'Stock' && (
+                            {setting.assetClass === 'Stock' && (
                                 <>
                                     <option value="International">Intl</option>
                                     <option value="Local">Local</option>
                                 </>
                             )}
-                            {target.assetClass === 'Bond' && (
+                            {setting.assetClass === 'Bond' && (
                                 <>
                                     <option value="Short">Short</option>
                                     <option value="Medium">Medium</option>
                                     <option value="Long">Long</option>
                                 </>
                             )}
-                            {target.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
+                            {setting.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
                         </select>
                     ) : (
                         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</span>
@@ -97,22 +95,10 @@ const TargetSettings: React.FC = () => {
                 </div>
 
                 <div>
-                    <label style={{ fontSize: '0.7rem' }}>Target %</label>
-                    <input
-                        type="number"
-                        className="form-input"
-                        value={target.targetPercentage}
-                        onChange={(e) => handleUpdate(ticker, 'percentage', e.target.value)}
-                        min="0"
-                        max="100"
-                    />
-                </div>
-
-                <div>
                     <label style={{ fontSize: '0.7rem' }}>Source</label>
                     <select
                         className="form-select"
-                        value={target.source || 'ETF'}
+                        value={setting.source || 'ETF'}
                         onChange={(e) => handleUpdate(ticker, 'source', e.target.value)}
                     >
                         <option value="ETF">ETF</option>
@@ -123,14 +109,14 @@ const TargetSettings: React.FC = () => {
         );
     };
 
-    const activeTickers = allTickers.filter(t => getTarget(t).targetPercentage > 0);
-    const unusedTickers = allTickers.filter(t => getTarget(t).targetPercentage === 0);
+    const activeTickers = allTickers; // Show all
 
     return (
-        <div className="transaction-form-card" style={{ maxWidth: '700px', margin: '0 auto' }}>
-            <h2>Target Allocation & Source</h2>
+        <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
+            <h2>Asset Registry & Settings</h2>
             <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-6)' }}>
-                Define target allocation and price source (ETF/MOT) for each asset.
+                Configure asset labels, classes and price sources.
+                <br /><small>Target allocations are now configured per-portfolio in the Portfolios tab.</small>
             </p>
 
             {allTickers.length === 0 ? (
@@ -138,48 +124,8 @@ const TargetSettings: React.FC = () => {
             ) : (
                 <>
                     {activeTickers.map(renderAssetRow)}
-
-                    {unusedTickers.length > 0 && (
-                        <div style={{ marginTop: 'var(--space-6)' }}>
-                            <button
-                                onClick={() => setShowUnused(!showUnused)}
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: 'var(--text-secondary)',
-                                    cursor: 'pointer',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '0.5rem',
-                                    padding: 0,
-                                    fontSize: '0.9rem'
-                                }}
-                            >
-                                <span>{showUnused ? '▼' : '▶'}</span>
-                                Unused Assets ({unusedTickers.length})
-                            </button>
-
-                            {showUnused && (
-                                <div style={{ marginTop: 'var(--space-4)', borderLeft: '2px solid var(--border-color)', paddingLeft: 'var(--space-4)' }}>
-                                    {unusedTickers.map(renderAssetRow)}
-                                </div>
-                            )}
-                        </div>
-                    )}
                 </>
             )}
-
-            <div style={{
-                marginTop: 'var(--space-4)',
-                padding: 'var(--space-3)',
-                backgroundColor: 'var(--bg-app)',
-                borderRadius: 'var(--radius-md)',
-                textAlign: 'center',
-                color: Math.abs(total - 100) < 0.1 ? 'var(--color-success)' : 'var(--color-warning)', // Float tolerance
-                fontWeight: 600
-            }}>
-                Total: {total.toFixed(1)}%
-            </div>
 
             <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-color)' }}>
                 <h3 style={{ color: 'var(--text-primary)', fontSize: '1rem', marginBottom: 'var(--space-2)' }}>Developer Tools</h3>

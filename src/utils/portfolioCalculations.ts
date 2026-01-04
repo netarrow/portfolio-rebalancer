@@ -1,8 +1,8 @@
-import type { Transaction, Asset, Target, PortfolioSummary, AssetClass, AssetSubClass } from '../types';
+import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition } from '../types';
 
 export const calculateAssets = (
     transactions: Transaction[],
-    targets: Target[],
+    targets: AssetDefinition[],
     marketData: Record<string, { price: number; lastUpdated: string }>
 ): { assets: Asset[], summary: PortfolioSummary } => {
     const assetMap = new Map<string, Asset>();

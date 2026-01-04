@@ -1,31 +1,73 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
+import { calculateAssets } from '../../utils/portfolioCalculations';
 import './Dashboard.css';
 
 const AllocationOverview: React.FC = () => {
-    const { summary, targets, assets } = usePortfolio();
+    const { portfolios, transactions, assetSettings, marketData } = usePortfolio();
 
-    const getTarget = (ticker: string) => targets.find(t => t.ticker === ticker)?.targetPercentage || 0;
+    // 1. Group transactions by Portfolio
+    // We only care about explicit portfolios, or maybe we want an "Unassigned" one?
+    // User request: "ripetuta per ogni portafoglio ... specifici portafogli configurati" implies configured portfolios.
+    // We will iterate `portfolios`.
 
-    // We iterate over ASSETS to show allocation.
-    // Note: if a target exists but no asset (quantity=0), it won't show up here unless we merge lists. 
-    // For rebalancing, we usually want to see everything we PLAN to hold.
-    // Let's union assets and targets.
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+            {portfolios.length === 0 ? (
+                <div className="allocation-card">
+                    <p style={{ padding: 'var(--space-4)', color: 'var(--text-muted)' }}>
+                        No portfolios configured. Create a portfolio to see allocation analysis.
+                    </p>
+                </div>
+            ) : (
+                portfolios.map(portfolio => (
+                    <PortfolioAllocationTable
+                        key={portfolio.id}
+                        portfolio={portfolio}
+                        allTransactions={transactions}
+                        assetSettings={assetSettings}
+                        marketData={marketData}
+                    />
+                ))
+            )}
+        </div>
+    );
+};
+
+interface AllocationTableProps {
+    portfolio: import('../../types').Portfolio;
+    allTransactions: import('../../types').Transaction[];
+    assetSettings: import('../../types').AssetDefinition[];
+    marketData: Record<string, { price: number, lastUpdated: string }>;
+}
+
+const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData }) => {
+    // Filter Txs for this portfolio
+    const portfolioTxs = useMemo(() => {
+        return allTransactions.filter(t => t.portfolioId === portfolio.id);
+    }, [allTransactions, portfolio.id]);
+
+    // Calculate Assets for this portfolio
+    const { assets, summary } = useMemo(() => {
+        // We import calculateAssets dynamically or assume it's available (it is imported at top of file in original, wait, I need to check imports)
+        // I'll ensure imports are correct below.
+        return calculateAssets(portfolioTxs, assetSettings, marketData);
+    }, [portfolioTxs, assetSettings, marketData]);
+
+    const allocations = portfolio.allocations || {};
 
     const assetTickers = assets.map(a => a.ticker);
-    const targetTickers = targets.map(t => t.ticker);
+    const targetTickers = Object.keys(allocations);
     const allTickers = Array.from(new Set([...assetTickers, ...targetTickers])).sort();
 
     return (
         <div className="allocation-card">
-            <h3 className="section-title">Asset Allocation</h3>
+            <h3 className="section-title">Rebalancing: {portfolio.name}</h3>
 
-            {/* Table-like structure for specific assets */}
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
                 <div className="allocation-row" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
                     <div style={{ flex: 1 }}>Asset</div>
                     <div style={{ width: '100px', textAlign: 'right' }}>Qty</div>
-                    <div style={{ width: '120px', textAlign: 'right' }}>Avg Price</div>
                     <div style={{ width: '120px', textAlign: 'right' }}>Mkt Price</div>
                     <div style={{ width: '120px', textAlign: 'right' }}>Value</div>
                     <div style={{ width: '120px', textAlign: 'right' }}>Gain</div>
@@ -35,13 +77,13 @@ const AllocationOverview: React.FC = () => {
                 </div>
 
                 {allTickers.length === 0 ? (
-                    <p style={{ padding: 'var(--space-4)', color: 'var(--text-muted)' }}>No assets or targets defined.</p>
+                    <p style={{ padding: 'var(--space-4)', color: 'var(--text-muted)' }}>No activity or targets.</p>
                 ) : (
                     allTickers.map(ticker => {
                         const asset = assets.find(a => a.ticker === ticker);
                         const currentValue = asset ? asset.currentValue : 0;
                         const currentPerc = summary.totalValue > 0 ? (currentValue / summary.totalValue) * 100 : 0;
-                        const targetPerc = getTarget(ticker);
+                        const targetPerc = allocations[ticker] || 0;
                         const quantity = asset?.quantity || 0;
 
                         // Filter: Hide if we don't hold it AND don't target it
@@ -51,14 +93,16 @@ const AllocationOverview: React.FC = () => {
                         const targetValue = summary.totalValue * (targetPerc / 100);
                         const rebalanceAmount = targetValue - currentValue;
 
-                        const assetClass = asset?.assetClass || 'Stock';
-                        const assetSubClass = asset?.assetSubClass || '';
+                        const setting = assetSettings.find(s => s.ticker === ticker);
+                        const assetClass = setting?.assetClass || asset?.assetClass || 'Stock';
+                        const assetSubClass = setting?.assetSubClass || asset?.assetSubClass || '';
+                        const label = setting?.label || asset?.label;
 
                         return (
                             <AllocationRow
                                 key={ticker}
                                 ticker={ticker}
-                                label={asset?.label}
+                                label={label}
                                 assetClass={assetClass}
                                 assetSubClass={assetSubClass}
                                 currentPerc={currentPerc}
