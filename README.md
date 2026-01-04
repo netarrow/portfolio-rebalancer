@@ -2,12 +2,15 @@
 
 This project is an **Agentic Development Experiment** created with **Antigravity** and **Gemini PRO**.
 
+**Codex (GPT 5.2 Plus)** was employed as a control agent to analyze the codebase and provide architectural, compliance and security insights.
+
 It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
 
-> **Note**: While **Antigravity (Gemini PRO)** was used for the actual production and coding, **Codex (GPT 5.2 Plus)** was employed as a control agent to analyze the codebase and provide architectural insights.
+Considering is a personal usage tool, there are many semplification. Like local storage only, online scraping and not usage of official quote API. But if you are ok with these you can also use the tool accepting that is provided as-is.
 
 Tasks included:
 - Architecture refactoring (Unified Frontend/Backend)
+- Dockerization 
 - Complex feature implementation (Multi-source scraping, Inline editing)
 - UI/UX layout and design optimization
 
