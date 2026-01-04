@@ -209,10 +209,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     const deletePortfolio = (id: string) => {
+        const portfolioToDelete = portfolios.find(p => p.id === id);
+        const nameToDelete = portfolioToDelete?.name;
+
         setPortfolios(prev => prev.filter(p => p.id !== id));
-        // Optional: Remove portfolioId from transactions? Or keep as orphan? 
-        // For strict integrity, we should probably unset it.
-        setTransactions(prev => prev.map(t => t.portfolioId === id ? { ...t, portfolioId: undefined } : t));
+        // Also clear the legacy 'portfolio' field to prevent the migration effect from re-creating it
+        setTransactions(prev => prev.map(t =>
+            (t.portfolioId === id || (nameToDelete && t.portfolio === nameToDelete))
+                ? { ...t, portfolioId: undefined, portfolio: undefined }
+                : t
+        ));
     };
 
     const addTransaction = (transaction: Transaction) => {
