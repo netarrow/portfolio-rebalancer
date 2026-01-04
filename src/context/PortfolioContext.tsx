@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useMemo, useEffect } from 'react';
+import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, Target, AssetClass, PortfolioSummary, AssetSubClass } from '../types';
 
@@ -15,6 +16,7 @@ interface PortfolioContextType {
     refreshPrices: () => Promise<void>;
     resetPortfolio: () => void;
     loadMockData: () => void;
+    marketData: Record<string, { price: number, lastUpdated: string }>;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -146,130 +148,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Derive Assets and Summary
     const { assets, summary } = useMemo(() => {
-        const assetMap = new Map<string, Asset>();
-
-        // Process transactions to build assets
-        transactions.forEach(tx => {
-            // normalize ticker
-            const ticker = tx.ticker.toUpperCase();
-            const existing = assetMap.get(ticker);
-
-            // Default to Buy if undefined (migration safety)
-            const direction = tx.direction || 'Buy';
-
-            if (existing) {
-                let newQuantity = existing.quantity;
-                let newAveragePrice = existing.averagePrice;
-
-                if (direction === 'Buy') {
-                    const totalQuantity = existing.quantity + tx.amount;
-                    // Weighted Average Price
-                    if (totalQuantity !== 0) {
-                        newAveragePrice = ((existing.quantity * existing.averagePrice) + (tx.amount * tx.price)) / totalQuantity;
-                    } else {
-                        newAveragePrice = 0;
-                    }
-                    newQuantity = totalQuantity;
-                } else {
-                    // Sell
-                    newQuantity = existing.quantity - tx.amount;
-                    // Average Price doesn't change on Sell
-                }
-
-                assetMap.set(ticker, {
-                    ...existing,
-                    quantity: newQuantity,
-                    averagePrice: newAveragePrice,
-                    // Temporary currentValue, updated below
-                    currentValue: newQuantity * existing.averagePrice,
-                    currentPrice: tx.price
-                });
-            } else {
-                // New asset
-                const quantity = direction === 'Buy' ? tx.amount : -tx.amount;
-                // Fetch class from target logic will be done in the next step (assetsList mapping)
-                // But we need a placeholder here for the map.
-                assetMap.set(ticker, {
-                    ticker: ticker,
-                    label: undefined, // Will be filled below if target exists
-                    assetClass: 'Stock', // Default, superseded by target below
-                    assetSubClass: 'International', // Default
-                    quantity: quantity,
-                    averagePrice: tx.price,
-                    currentValue: quantity * tx.price,
-                    currentPrice: tx.price
-                });
-            }
-        });
-
-        // Calculate final stats using Market Data if available
-        const assetsList = Array.from(assetMap.values()).map(asset => {
-            // Prefer market data if available
-            const marketInfo = marketData[asset.ticker];
-            const effectivePrice = marketInfo ? marketInfo.price : (asset.currentPrice || asset.averagePrice);
-            const lastUpdated = marketInfo ? marketInfo.lastUpdated : undefined;
-
-            // Inject data from target
-            const target = targets.find(t => t.ticker === asset.ticker);
-            const label = target?.label;
-            const assetClass = target?.assetClass || 'Stock';
-            const assetSubClass = target?.assetSubClass || 'International';
-
-            const currentValue = asset.quantity * effectivePrice;
-            const totalCost = asset.quantity * asset.averagePrice;
-            const gain = currentValue - totalCost;
-            const gainPercentage = totalCost !== 0 ? (gain / totalCost) * 100 : 0;
-
-            return {
-                ...asset,
-                label,
-                assetClass,
-                assetSubClass,
-                currentPrice: effectivePrice,
-                currentValue: currentValue,
-                lastUpdated,
-                gain,
-                gainPercentage
-            };
-        });
-
-        // Calculate totals
-        const totalValue = assetsList.reduce((sum, asset) => sum + (asset.currentValue || 0), 0);
-        const totalCost = assetsList.reduce((sum, asset) => sum + (asset.quantity * asset.averagePrice || 0), 0);
-        const totalGain = totalValue - totalCost;
-        const totalGainPercentage = totalCost !== 0 ? (totalGain / totalCost) * 100 : 0;
-
-        // Calculate allocation
-        const allocation: { [key in AssetClass]?: number } = {
-            'Stock': 0,
-            'Bond': 0,
-            'Commodity': 0,
-            'Crypto': 0
-        };
-
-        assetsList.forEach(asset => {
-            if (allocation[asset.assetClass] !== undefined) {
-                allocation[asset.assetClass]! += asset.currentValue;
-            }
-        });
-
-        // Convert to percentage
-        if (totalValue > 0) {
-            (Object.keys(allocation) as AssetClass[]).forEach(key => {
-                allocation[key] = (allocation[key]! / totalValue) * 100;
-            });
-        }
-
-        const summaryData: PortfolioSummary = {
-            totalValue,
-            totalCost,
-            allocation,
-            totalGain,
-            totalGainPercentage
-        };
-
-        return { assets: assetsList, summary: summaryData };
-    }, [transactions, marketData]);
+        // Dynamic import to avoid circular dependency if any, though likely safe.
+        // Actually we can import it directly at top level if no circular dependency, 
+        // but let's assume valid scope.
+        return calculateAssets(transactions, targets, marketData);
+    }, [transactions, targets, marketData]);
 
     const updateTransaction = (updatedTransaction: Transaction) => {
         setTransactions((prev) => prev.map((t) => (t.id === updatedTransaction.id ? updatedTransaction : t)));
@@ -331,7 +214,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateTarget,
         refreshPrices,
         resetPortfolio,
-        loadMockData
+        loadMockData,
+        marketData
     };
 
     return (
