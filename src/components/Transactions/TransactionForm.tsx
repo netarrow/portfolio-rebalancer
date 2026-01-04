@@ -4,7 +4,7 @@ import type { TransactionDirection } from '../../types';
 import './Transactions.css';
 
 const TransactionForm: React.FC = () => {
-    const { addTransaction } = usePortfolio();
+    const { addTransaction, portfolios } = usePortfolio();
 
     const [ticker, setTicker] = useState('');
 
@@ -12,9 +12,7 @@ const TransactionForm: React.FC = () => {
     const [amount, setAmount] = useState('');
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [portfolio, setPortfolio] = useState('');
-
-
+    const [portfolioId, setPortfolioId] = useState('');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -24,11 +22,10 @@ const TransactionForm: React.FC = () => {
             id: crypto.randomUUID(),
             date,
             ticker: ticker.toUpperCase(),
-
             direction,
             amount: Number(amount),
             price: Number(price),
-            portfolio: portfolio || undefined
+            portfolioId: portfolioId || undefined
         });
 
         // Reset form
@@ -36,11 +33,8 @@ const TransactionForm: React.FC = () => {
         setAmount('');
         setPrice('');
         setDirection('Buy');
-        // Keep portfolio for next entry ease? Or reset? Let's reset for now or keep if user doing batch
-        // setPortfolio(''); 
-        // Actually users usually enter same portfolio multiple times, let's NOT reset portfolio
-
-
+        // Keep portfolio for next entry ease? Or reset?
+        // setPortfolioId(''); 
     };
 
     return (
@@ -108,8 +102,6 @@ const TransactionForm: React.FC = () => {
                     />
                 </div>
 
-
-
                 <div className="form-group">
                     <label>Quantity</label>
                     <input
@@ -138,13 +130,23 @@ const TransactionForm: React.FC = () => {
 
                 <div className="form-group">
                     <label>Portfolio (Optional)</label>
-                    <input
-                        type="text"
+                    <select
                         className="form-input"
-                        placeholder="e.g. Directa"
-                        value={portfolio}
-                        onChange={(e) => setPortfolio(e.target.value)}
-                    />
+                        value={portfolioId}
+                        onChange={(e) => setPortfolioId(e.target.value)}
+                    >
+                        <option value="">Select Portfolio...</option>
+                        {portfolios.map(p => (
+                            <option key={p.id} value={p.id}>
+                                {p.name}
+                            </option>
+                        ))}
+                    </select>
+                    {portfolios.length === 0 && (
+                        <p style={{ marginTop: '5px', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            No portfolios available. Go to the Portfolios page to create one.
+                        </p>
+                    )}
                 </div>
 
                 <button type="submit" className="btn-submit">Add Transaction</button>

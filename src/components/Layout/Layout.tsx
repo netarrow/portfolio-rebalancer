@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios';
 
 interface LayoutProps {
   currentView: View;
@@ -27,6 +27,12 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             onClick={() => onNavigate('transactions')}
           >
             Transactions
+          </button>
+          <button
+            className={`nav-link ${currentView === 'portfolios' ? 'active' : ''}`}
+            onClick={() => onNavigate('portfolios')}
+          >
+            Portfolios
           </button>
           <button
             className={`nav-link ${currentView === 'settings' ? 'active' : ''}`}

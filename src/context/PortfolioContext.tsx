@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useMemo, useEffect } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, Target, AssetClass, PortfolioSummary, AssetSubClass } from '../types';
+import type { Transaction, Asset, Target, AssetClass, PortfolioSummary, AssetSubClass, Portfolio } from '../types';
 
 interface PortfolioContextType {
     transactions: Transaction[];
     targets: Target[];
     assets: Asset[];
+    portfolios: Portfolio[];
     summary: PortfolioSummary;
     addTransaction: (transaction: Transaction) => void;
     updateTransaction: (transaction: Transaction) => void;
@@ -17,6 +18,9 @@ interface PortfolioContextType {
     resetPortfolio: () => void;
     loadMockData: () => void;
     marketData: Record<string, { price: number, lastUpdated: string }>;
+    addPortfolio: (portfolio: Portfolio) => void;
+    updatePortfolio: (portfolio: Portfolio) => void;
+    deletePortfolio: (id: string) => void;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -35,7 +39,58 @@ const DEFAULT_TARGETS: Target[] = [];
 export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [transactions, setTransactions] = useLocalStorage<Transaction[]>('portfolio_transactions', []);
     const [targets, setTargets] = useLocalStorage<Target[]>('portfolio_targets_v2', DEFAULT_TARGETS);
+    const [portfolios, setPortfolios] = useLocalStorage<Portfolio[]>('portfolio_list', []);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
+
+    // Migration Effect 3: Migrate free-text portfolios to Portfolio entities
+    useEffect(() => {
+        let portfoliosChanged = false;
+        let transactionsChanged = false;
+        const newPortfolios = [...portfolios];
+        const newTransactions = [...transactions];
+
+        const uniquePortfolioNames = Array.from(new Set(transactions.map(t => t.portfolio).filter(Boolean))) as string[];
+
+        uniquePortfolioNames.forEach(name => {
+            // Check if portfolio already exists by name
+            let portfolio = newPortfolios.find(p => p.name === name);
+
+            if (!portfolio) {
+                // Create new portfolio
+                portfolio = {
+                    id: String(Date.now() + Math.random()),
+                    name: name,
+                    description: 'Migrated from transaction'
+                };
+                newPortfolios.push(portfolio);
+                portfoliosChanged = true;
+                console.log(`Created migrated portfolio: ${name}`);
+            }
+        });
+
+        // Link transactions to portfolio IDs
+        newTransactions.forEach((t, index) => {
+            if (t.portfolio && !t.portfolioId) {
+                const portfolio = newPortfolios.find(p => p.name === t.portfolio);
+                if (portfolio) {
+                    newTransactions[index] = {
+                        ...t,
+                        portfolioId: portfolio.id
+                        // We keep t.portfolio for now or could clear it. 
+                        // Keeping it for safety but portfolioId is the new source of truth for the relationship.
+                    };
+                    transactionsChanged = true;
+                }
+            }
+        });
+
+        if (portfoliosChanged) {
+            setPortfolios(newPortfolios);
+        }
+        if (transactionsChanged) {
+            setTransactions(newTransactions);
+        }
+    }, [transactions, portfolios, setPortfolios, setTransactions]);
 
     // Migration Effect 2: Move assetClass/assetSubClass from Transactions to Targets
     useEffect(() => {
@@ -88,6 +143,21 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
     };
 
+    const addPortfolio = (portfolio: Portfolio) => {
+        setPortfolios(prev => [...prev, portfolio]);
+    };
+
+    const updatePortfolio = (portfolio: Portfolio) => {
+        setPortfolios(prev => prev.map(p => p.id === portfolio.id ? portfolio : p));
+    };
+
+    const deletePortfolio = (id: string) => {
+        setPortfolios(prev => prev.filter(p => p.id !== id));
+        // Optional: Remove portfolioId from transactions? Or keep as orphan? 
+        // For strict integrity, we should probably unset it.
+        setTransactions(prev => prev.map(t => t.portfolioId === id ? { ...t, portfolioId: undefined } : t));
+    };
+
     const addTransaction = (transaction: Transaction) => {
         setTransactions((prev) => [...prev, transaction]);
     };
@@ -123,6 +193,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const resetPortfolio = () => {
         setTransactions([]);
         setTargets(DEFAULT_TARGETS);
+        setPortfolios([]);
         setMarketData({});
     };
 
@@ -215,7 +286,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         refreshPrices,
         resetPortfolio,
         loadMockData,
-        marketData
+        marketData,
+        portfolios,
+        addPortfolio,
+        updatePortfolio,
+        deletePortfolio
     };
 
     return (
