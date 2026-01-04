@@ -5,7 +5,7 @@ import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction } = usePortfolio();
+    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios } = usePortfolio();
     const [updating, setUpdating] = useState(false);
     const [showImport, setShowImport] = useState(false);
 
@@ -15,7 +15,7 @@ const TransactionList: React.FC = () => {
     // Bulk Selection State
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     // Bulk Update State
-    const [bulkPortfolioName, setBulkPortfolioName] = useState('');
+    const [bulkPortfolioId, setBulkPortfolioId] = useState('');
 
     // Editing State (Single Row)
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -67,9 +67,9 @@ const TransactionList: React.FC = () => {
 
     const handleBulkUpdate = () => {
         if (selectedIds.size === 0) return;
-        updateTransactionsBulk(Array.from(selectedIds), { portfolio: bulkPortfolioName || undefined });
+        updateTransactionsBulk(Array.from(selectedIds), { portfolioId: bulkPortfolioId || undefined });
         setSelectedIds(new Set()); // Reset selection
-        setBulkPortfolioName(''); // Reset input
+        setBulkPortfolioId(''); // Reset input
     };
 
     // --- Single Edit Handlers ---
@@ -106,8 +106,14 @@ const TransactionList: React.FC = () => {
         new Date(b.date).getTime() - new Date(a.date).getTime()
     );
 
+    const getPortfolioName = (id?: string) => {
+        if (!id) return 'Unassigned';
+        const p = portfolios.find(p => p.id === id);
+        return p ? p.name : 'Unassigned';
+    };
+
     const groupedTransactions = sortedTransactions.reduce((acc, tx) => {
-        const key = tx.portfolio || 'Unassigned';
+        const key = getPortfolioName(tx.portfolioId);
         if (!acc[key]) acc[key] = [];
         acc[key].push(tx);
         return acc;
@@ -235,7 +241,7 @@ const TransactionList: React.FC = () => {
                                 </span>
                             </td>
                             <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                {tx.portfolio || '-'}
+                                {getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}
                             </td>
                             <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                                 {getAssetName(tx.ticker) || '-'}
@@ -332,14 +338,19 @@ const TransactionList: React.FC = () => {
                         {selectedIds.size} selected
                     </span>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                        <input
-                            type="text"
-                            placeholder="Set Portfolio Name"
-                            value={bulkPortfolioName}
-                            onChange={e => setBulkPortfolioName(e.target.value)}
+                        <select
+                            value={bulkPortfolioId}
+                            onChange={e => setBulkPortfolioId(e.target.value)}
                             className="form-input"
-                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem' }}
-                        />
+                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', width: '200px' }}
+                        >
+                            <option value="">Select Portfolio...</option>
+                            {portfolios.map(p => (
+                                <option key={p.id} value={p.id}>
+                                    {p.name}
+                                </option>
+                            ))}
+                        </select>
                         <button
                             className="btn-primary"
                             onClick={handleBulkUpdate}

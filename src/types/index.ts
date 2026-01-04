@@ -7,6 +7,12 @@ export type AssetSubClass =
   | 'Gold'                        // Commodity
   | '';                           // Crypto/None
 
+export interface Portfolio {
+  id: string;
+  name: string;
+  description?: string;
+}
+
 export interface Transaction {
   id: string;
   ticker: string;
@@ -16,7 +22,8 @@ export interface Transaction {
   price: number;
   date: string;
   direction: TransactionDirection;
-  portfolio?: string;
+  portfolio?: string; // Deprecated: property name kept for compatibility during migration, but content should be ignored in favor of portfolioId
+  portfolioId?: string;
 }
 
 export interface Asset {
