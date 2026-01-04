@@ -11,18 +11,19 @@ export interface Portfolio {
   id: string;
   name: string;
   description?: string;
+  allocations?: Record<string, number>; // Ticker -> Percentage (0-100)
 }
 
 export interface Transaction {
   id: string;
   ticker: string;
-  assetClass?: AssetClass; // Deprecated: moved to Target
-  assetSubClass?: AssetSubClass; // Deprecated: moved to Target
+  assetClass?: AssetClass; // Deprecated: moved to AssetDefinition
+  assetSubClass?: AssetSubClass; // Deprecated: moved to AssetDefinition
   amount: number;
   price: number;
   date: string;
   direction: TransactionDirection;
-  portfolio?: string; // Deprecated: property name kept for compatibility during migration, but content should be ignored in favor of portfolioId
+  portfolio?: string; // Deprecated: property name kept for compatibility during migration
   portfolioId?: string;
 }
 
@@ -40,14 +41,18 @@ export interface Asset {
   gainPercentage?: number;
 }
 
-export interface Target {
+// Formerly "Target", now acts as Asset Registry/Settings
+export interface AssetDefinition {
   ticker: string;
   label?: string;
   assetClass?: AssetClass;
   assetSubClass?: AssetSubClass;
-  targetPercentage: number; // 0-100
+  // targetPercentage: number; // Removed: moved to Portfolio.allocations
   source?: 'ETF' | 'MOT';
 }
+
+// Deprecated alias for compatibility until full refactor
+export type Target = AssetDefinition & { targetPercentage?: number };
 
 export interface PortfolioSummary {
   totalValue: number;

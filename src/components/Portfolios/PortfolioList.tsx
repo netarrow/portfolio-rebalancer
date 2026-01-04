@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import PortfolioForm from './PortfolioForm';
+import PortfolioAllocations from './PortfolioAllocations';
 import type { Portfolio } from '../../types';
 
 const PortfolioList: React.FC = () => {
     const { portfolios, addPortfolio, updatePortfolio, deletePortfolio, transactions } = usePortfolio();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingPortfolio, setEditingPortfolio] = useState<Portfolio | null>(null);
+    const [allocatingPortfolioId, setAllocatingPortfolioId] = useState<string | null>(null);
 
     const handleCreate = (data: Omit<Portfolio, 'id'>) => {
         addPortfolio({
@@ -82,6 +84,14 @@ const PortfolioList: React.FC = () => {
                                         ✏️
                                     </button>
                                     <button
+                                        className="btn-icon"
+                                        onClick={() => setAllocatingPortfolioId(portfolio.id)}
+                                        title="Allocations"
+                                        aria-label="Manage allocations"
+                                    >
+                                        📊
+                                    </button>
+                                    <button
                                         className="btn-icon delete"
                                         onClick={() => handleDelete(portfolio.id, portfolio.name)}
                                         title="Delete"
@@ -111,6 +121,13 @@ const PortfolioList: React.FC = () => {
                     initialData={editingPortfolio}
                     onSubmit={editingPortfolio ? handleUpdate : handleCreate}
                     onCancel={closeModal}
+                />
+            )}
+
+            {allocatingPortfolioId && (
+                <PortfolioAllocations
+                    portfolioId={allocatingPortfolioId}
+                    onClose={() => setAllocatingPortfolioId(null)}
                 />
             )}
 

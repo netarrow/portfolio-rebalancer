@@ -34,9 +34,33 @@ const CustomTooltip = ({ active, payload }: any) => {
 };
 
 // Sub-component for a single row of charts
-const DistributionRow: React.FC<{ title: string; assets: Asset[] }> = ({ title, assets }) => {
+interface DistributionRowProps {
+    title: string;
+    assets: Asset[];
+    portfolio?: import('../../types').Portfolio;
+    assetSettings?: import('../../types').AssetDefinition[];
+}
+
+const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfolio, assetSettings }) => {
     // Colors (consistent palette)
     const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
+
+    // Target Calculation (By Class)
+    const targetClassData = useMemo(() => {
+        if (!portfolio || !portfolio.allocations || !assetSettings) return null;
+
+        const grouped: Record<string, number> = {};
+        Object.entries(portfolio.allocations).forEach(([ticker, percent]) => {
+            const setting = assetSettings.find(s => s.ticker === ticker);
+            const cls = setting?.assetClass || 'Other';
+            grouped[cls] = (grouped[cls] || 0) + percent;
+        });
+
+        // Normalize or just show as is (should sum to 100)
+        return Object.entries(grouped)
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value);
+    }, [portfolio, assetSettings]);
 
     // 1. Group by Asset Class
     const classData = useMemo(() => {
@@ -88,6 +112,35 @@ const DistributionRow: React.FC<{ title: string; assets: Asset[] }> = ({ title, 
                 {title}
             </h3>
             <div className="charts-grid">
+                {/* Target By Class (Only if portfolio exists) */}
+                {targetClassData && targetClassData.length > 0 && (
+                    <div className="chart-card">
+                        <h4>Target (Class)</h4>
+                        <div style={{ width: '100%', height: 250 }}>
+                            <ResponsiveContainer>
+                                <PieChart>
+                                    <Pie
+                                        data={targetClassData}
+                                        cx="50%"
+                                        cy="50%"
+                                        labelLine={false}
+                                        label={renderCustomizedLabel}
+                                        outerRadius={80}
+                                        fill="#8884d8"
+                                        dataKey="value"
+                                    >
+                                        {targetClassData.map((_, index) => (
+                                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        ))}
+                                    </Pie>
+                                    <Tooltip content={<CustomTooltip />} />
+                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                </PieChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                )}
+
                 {/* By Class */}
                 <div className="chart-card">
                     <h4>By Class</h4>
@@ -174,66 +227,53 @@ const DistributionRow: React.FC<{ title: string; assets: Asset[] }> = ({ title, 
 };
 
 const AllocationCharts: React.FC = () => {
-    const { transactions, targets, marketData } = usePortfolio();
+    const { transactions, assetSettings, marketData, portfolios } = usePortfolio();
 
     // 1. Total / All
     const totalAssets = useMemo(() => {
-        return calculateAssets(transactions, targets, marketData).assets;
-    }, [transactions, targets, marketData]);
-
-    // 2. Individual Portfolios
-    const portfolioGroups = useMemo(() => {
-        const groups: { name: string; assets: Asset[] }[] = [];
-
-        // Find unique portfolios
-        const portfolios = new Set<string>();
-        transactions.forEach(t => {
-            // Treat empty/undefined as 'Unassigned' but only if meaningful
-            if (t.portfolio) {
-                portfolios.add(t.portfolio);
-            } else {
-                portfolios.add('Unassigned');
-            }
-        });
-
-        // Convert set to array and sort
-        const sortedPortfolios = Array.from(portfolios).sort();
-
-        // Calculate assets for each
-        sortedPortfolios.forEach(pName => {
-            const filteredTxs = transactions.filter(t => {
-                const txP = t.portfolio || 'Unassigned';
-                return txP === pName;
-            });
-
-            if (filteredTxs.length > 0) {
-                const { assets } = calculateAssets(filteredTxs, targets, marketData);
-                groups.push({ name: pName, assets });
-            }
-        });
-
-        return groups;
-    }, [transactions, targets, marketData]);
+        return calculateAssets(transactions, assetSettings, marketData).assets;
+    }, [transactions, assetSettings, marketData]);
 
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
-        return null;
+        return null; // Or show empty state
     }
+
+    // Helper to get assets for a portfolio
+    const getPortfolioAssets = (pid: string) => {
+        const filteredTxs = transactions.filter(t => t.portfolioId === pid);
+        return calculateAssets(filteredTxs, assetSettings, marketData).assets;
+    };
 
     return (
         <div className="charts-section">
             <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '2rem' }}>Portfolio Distribution</h2>
 
             {/* Global View */}
-            <DistributionRow title="Total / All Portfolios" assets={totalAssets} />
+            <DistributionRow
+                title="Total / All Portfolios"
+                assets={totalAssets}
+            // No portfolio passed here, so no Target chart
+            />
 
             {/* Individual Views */}
-            {portfolioGroups.map(group => (
-                <DistributionRow
-                    key={group.name}
-                    title={`Portfolio: ${group.name}`}
-                    assets={group.assets}
-                />
-            ))}
+            {portfolios.map(p => {
+                const pAssets = getPortfolioAssets(p.id);
+                // Only show if there are assets OR allocations
+                const hasAssets = pAssets.some(a => a.currentValue > 0);
+                const hasAllocations = p.allocations && Object.keys(p.allocations).length > 0;
+
+                if (!hasAssets && !hasAllocations) return null;
+
+                return (
+                    <DistributionRow
+                        key={p.id}
+                        title={`Portfolio: ${p.name}`}
+                        assets={pAssets}
+                        portfolio={p}
+                        assetSettings={assetSettings}
+                    />
+                );
+            })}
         </div>
     );
 };
