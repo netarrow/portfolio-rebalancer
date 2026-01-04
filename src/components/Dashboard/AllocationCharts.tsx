@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { usePortfolio } from '../../context/PortfolioContext';
+import { calculateAssets } from '../../utils/portfolioCalculations';
+import type { Asset } from '../../types';
 import './Dashboard.css';
 
 const RADIAN = Math.PI / 180;
@@ -31,8 +33,10 @@ const CustomTooltip = ({ active, payload }: any) => {
     return null;
 };
 
-const AllocationCharts: React.FC = () => {
-    const { assets, summary } = usePortfolio();
+// Sub-component for a single row of charts
+const DistributionRow: React.FC<{ title: string; assets: Asset[] }> = ({ title, assets }) => {
+    // Colors (consistent palette)
+    const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
 
     // 1. Group by Asset Class
     const classData = useMemo(() => {
@@ -52,7 +56,6 @@ const AllocationCharts: React.FC = () => {
         const grouped: Record<string, number> = {};
         assets.filter(a => a.currentValue > 0).forEach(asset => {
             const sub = asset.assetSubClass || 'Other';
-            // Optional: combine Class + Subclass for uniqueness if needed, but simple name is fine for now
             grouped[sub] = (grouped[sub] || 0) + asset.currentValue;
         });
 
@@ -61,7 +64,7 @@ const AllocationCharts: React.FC = () => {
             .sort((a, b) => b.value - a.value);
     }, [assets]);
 
-    // 3. Group by Asset Name (Ticker or Label)
+    // 3. Group by Asset Name
     const nameData = useMemo(() => {
         return assets
             .filter(a => a.currentValue > 0)
@@ -69,17 +72,21 @@ const AllocationCharts: React.FC = () => {
             .sort((a, b) => b.value - a.value);
     }, [assets]);
 
-
-    // Colors (consistent palette)
-    // Matches Dashboard.css logic usually, but defined here for Recharts
-    const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
-
-    if (summary.totalValue === 0) return null;
+    if (assets.length === 0 || assets.every(a => a.currentValue === 0)) {
+        return null;
+    }
 
     return (
-        <div className="charts-section">
-            <h3 className="section-title">Portfolio Distribution</h3>
-
+        <div style={{ marginBottom: '3rem' }}>
+            <h3 className="section-title" style={{
+                fontSize: '1.2rem',
+                color: 'var(--color-primary)',
+                borderBottom: '1px solid var(--border-color)',
+                paddingBottom: '0.5rem',
+                marginBottom: '1rem'
+            }}>
+                {title}
+            </h3>
             <div className="charts-grid">
                 {/* By Class */}
                 <div className="chart-card">
@@ -162,6 +169,71 @@ const AllocationCharts: React.FC = () => {
                     </div>
                 </div>
             </div>
+        </div>
+    );
+};
+
+const AllocationCharts: React.FC = () => {
+    const { transactions, targets, marketData } = usePortfolio();
+
+    // 1. Total / All
+    const totalAssets = useMemo(() => {
+        return calculateAssets(transactions, targets, marketData).assets;
+    }, [transactions, targets, marketData]);
+
+    // 2. Individual Portfolios
+    const portfolioGroups = useMemo(() => {
+        const groups: { name: string; assets: Asset[] }[] = [];
+
+        // Find unique portfolios
+        const portfolios = new Set<string>();
+        transactions.forEach(t => {
+            // Treat empty/undefined as 'Unassigned' but only if meaningful
+            if (t.portfolio) {
+                portfolios.add(t.portfolio);
+            } else {
+                portfolios.add('Unassigned');
+            }
+        });
+
+        // Convert set to array and sort
+        const sortedPortfolios = Array.from(portfolios).sort();
+
+        // Calculate assets for each
+        sortedPortfolios.forEach(pName => {
+            const filteredTxs = transactions.filter(t => {
+                const txP = t.portfolio || 'Unassigned';
+                return txP === pName;
+            });
+
+            if (filteredTxs.length > 0) {
+                const { assets } = calculateAssets(filteredTxs, targets, marketData);
+                groups.push({ name: pName, assets });
+            }
+        });
+
+        return groups;
+    }, [transactions, targets, marketData]);
+
+    if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
+        return null;
+    }
+
+    return (
+        <div className="charts-section">
+            <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '2rem' }}>Portfolio Distribution</h2>
+
+            {/* Global View */}
+            <DistributionRow title="Total / All Portfolios" assets={totalAssets} />
+
+            {/* Individual Views */}
+            {portfolioGroups.map(group => (
+                <DistributionRow
+                    key={group.name}
+                    title={`Portfolio: ${group.name}`}
+                    assets={group.assets}
+                />
+            ))}
         </div>
     );
 };
