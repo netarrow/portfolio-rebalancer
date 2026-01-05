@@ -20,9 +20,11 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 
 ### Key Features
 - **Smart Rebalancing**: Calculates exactly how much to buy/sell to meet target allocations.
-- **Multi-Portfolio Support**: Group transactions by portfolio (e.g., "Directa", "Degiro") with a dedicated toggle view.
+- **Multi-Portfolio Support**: Create distinct portfolios (e.g., "Retirement", "Trading") and assigns transactions to them.
+    - **Per-Portfolio Allocations**: Define specific asset allocation targets for each portfolio independently in the Settings.
+    - **Portfolio Filtering**: Toggle the dashboard and transaction views to focus on a single portfolio or view the aggregate.
 - **Transactions Management**:
-    - **Bulk Updates**: Select multiple transactions to update properties (like Portfolio) in one go.
+    - **Bulk Updates**: Select multiple transactions to update properties (like Portfolio) in one go via a bulk edit toolbar.
     - **Excel Import**: Import transactions directly from `.xlsx` files.
     - **Inline Editing**: Quickly edit transaction details without leaving the list.
 - **Asset Classification**: Hierarchical organization (Class -> Subclass) for better grouping and cleanup of unused assets (collapsed by default).
@@ -35,15 +37,19 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 ## Screenshots
 
 ### Dashboard
-The central hub showing real-time asset allocation, total value, and actionable rebalancing recommendations.
+The central hub showing real-time asset allocation, total value, and actionable rebalancing recommendations. Now features an enhanced allocation table with detailed metrics per asset.
 ![Dashboard](screenshots/dashboard.png)
 
 ### Transactions
-A detailed history of all trades with **Grouping by Portfolio**, bulk editing, and inline modifications.
+A detailed history of all trades with **Grouping by Portfolio**, bulk editing, and inline modifications. Use the bulk selection to easily move transactions between portfolios.
 ![Transactions](screenshots/transactions.png)
 
 ### Settings
-Configuration page to set target portfolio allocations, manage **Unused Assets** (0% allocation), and choose price sources. Includes **Developer Tools** to load mock data for testing.
+Configuration page to manage:
+- **Portfolio Targets**: Define target percentages for each asset class within each portfolio.
+- **Unused Assets**: Manage or hide assets with 0% allocation.
+- **Price Sources**: Configure scraping sources/URLs.
+Includes **Developer Tools** to load mock data for testing.
 ![Settings](screenshots/settings.png)
 
 ## Tech Stack
