@@ -31,6 +31,7 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 - **Multi-Source Price Scraping**:
     - **JustETF**: For standard ETFs.
     - **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
+    - **CPRAM**: Custom Puppeteer for active funds
 - **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
 - **Custom Labels**: Assign custom display names to assets.
 
@@ -39,6 +40,10 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 ### Dashboard
 The central hub showing real-time asset allocation, total value, and actionable rebalancing recommendations. Now features an enhanced allocation table with detailed metrics per asset.
 ![Dashboard](screenshots/dashboard.png)
+<br/>
+![Dashboard Detail](screenshots/dashboard1.png)
+![Dashboard Allocation](screenshots/dashboard2.png)
+![Dashboard Rebalancing](screenshots/dashboard3.png)
 
 ### Transactions
 A detailed history of all trades with **Grouping by Portfolio**, bulk editing, and inline modifications. Use the bulk selection to easily move transactions between portfolios.
@@ -51,6 +56,12 @@ Configuration page to manage:
 - **Price Sources**: Configure scraping sources/URLs.
 Includes **Developer Tools** to load mock data for testing.
 ![Settings](screenshots/settings.png)
+
+#### Portfolio Management
+![Portfolios](screenshots/portfolios.png)
+
+#### Portfolio Targets
+![Portfolio Targets](screenshots/portfolio_targets.png)
 
 ## Tech Stack
 - **Frontend**: React 19, TypeScript, Vite, Recharts
