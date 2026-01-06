@@ -39,7 +39,6 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 
 ### Dashboard
 The central hub showing real-time asset allocation, total value, and actionable rebalancing recommendations. Now features an enhanced allocation table with detailed metrics per asset.
-![Dashboard](screenshots/dashboard.png)
 <br/>
 ![Dashboard Detail](screenshots/dashboard1.png)
 ![Dashboard Allocation](screenshots/dashboard2.png)
