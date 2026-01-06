@@ -4,36 +4,46 @@ import { calculateAssets } from '../../utils/portfolioCalculations';
 import './Dashboard.css';
 
 const BrokerPerformance: React.FC = () => {
-    const { transactions, assetSettings, marketData } = usePortfolio();
+    const { transactions, assetSettings, marketData, brokers: brokerList } = usePortfolio();
 
     const brokerStats = useMemo(() => {
-        // 1. Identify all unique brokers
-        const brokers = Array.from(new Set(transactions.map(t => t.broker || 'Unassigned')));
+        // 1. Identify all unique brokers keys (ID or Name)
+        // We prioritize brokerId, fallback to broker string, or 'Unassigned'
+        const uniqueKeys = Array.from(new Set(transactions.map(t => t.brokerId || t.broker || 'Unassigned')));
 
-        // 2. Calculate summary for each broker
-        const stats = brokers.map(broker => {
-            // Filter transactions for this broker
-            // 'Unassigned' matches undefined/null/empty string in original data if we normalized it, 
-            // but here we just check raw data.
+        // 2. Calculate summary for each broker key
+        const stats = uniqueKeys.map(key => {
+            // Filter transactions for this broker key
             const brokerTxs = transactions.filter(t => {
-                const b = t.broker || 'Unassigned';
-                return b === broker;
+                const tKey = t.brokerId || t.broker || 'Unassigned';
+                return tKey === key;
             });
 
             if (brokerTxs.length === 0) return null;
 
             const { summary } = calculateAssets(brokerTxs, assetSettings, marketData);
 
+            // Determine display name
+            let displayName = 'Unassigned';
+            const brokerEntity = brokerList.find(b => b.id === key);
+
+            if (brokerEntity) {
+                displayName = brokerEntity.name;
+            } else {
+                // Fallback: if key is not an ID, it might be the legacy name itself
+                displayName = key === 'Unassigned' ? 'Unassigned' : key;
+            }
+
             return {
-                broker,
+                broker: displayName,
                 ...summary
             };
-        }).filter(s => s !== null && s.totalValue > 0); // Hide empty or zero value brokers?
+        }).filter(s => s !== null && s.totalValue > 0);
 
         // Sort by Total Value desc
         return stats.sort((a, b) => (b?.totalValue || 0) - (a?.totalValue || 0));
 
-    }, [transactions, assetSettings, marketData]);
+    }, [transactions, assetSettings, marketData, brokerList]);
 
     if (brokerStats.length === 0) return null;
 
