@@ -202,14 +202,19 @@ const TransactionList: React.FC = () => {
                                     </select>
                                 </td>
                                 <td>
-                                    <input
-                                        type="text"
-                                        value={editForm.portfolio || ''}
-                                        onChange={e => handleEditChange('portfolio', e.target.value)}
+                                    <select
+                                        value={editForm.portfolioId || ''}
+                                        onChange={e => handleEditChange('portfolioId', e.target.value)}
                                         className="edit-input"
                                         style={{ width: '80px' }}
-                                        placeholder="Default"
-                                    />
+                                    >
+                                        <option value="">-</option>
+                                        {portfolios.map(p => (
+                                            <option key={p.id} value={p.id}>
+                                                {p.name}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </td>
                                 <td>
                                     <select
