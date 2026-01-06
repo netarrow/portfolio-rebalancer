@@ -25,8 +25,12 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
     - **Portfolio Filtering**: Toggle the dashboard and transaction views to focus on a single portfolio or view the aggregate.
 - **Transactions Management**:
     - **Bulk Updates**: Select multiple transactions to update properties (like Portfolio) in one go via a bulk edit toolbar.
-    - **Excel Import**: Import transactions directly from `.xlsx` files.
+    - **Excel Import**: Import transactions directly from `.xlsx` files (now supports "Broker" column).
     - **Inline Editing**: Quickly edit transaction details without leaving the list.
+    - **Flexible Grouping**: Group transactions by Portfolio or Broker for easier analysis.
+- **Broker Integration**:
+    - **Performance Tracking**: Dedicated dashboard section for Value, Cost, and Return per Broker.
+    - **Distribution Charts**: Visualize capital spread across different brokers.
 - **Asset Classification**: Hierarchical organization (Class -> Subclass) for better grouping and cleanup of unused assets (collapsed by default).
 - **Multi-Source Price Scraping**:
     - **JustETF**: For standard ETFs.
@@ -74,7 +78,7 @@ Manage target allocations and external data sources.
 
 ## Privacy Policy (Summary)
 
-- **Data storage**: Portfolio data (transactions, targets, market data) is saved only in your browser's `localStorage` under the keys `portfolio_transactions`, `portfolio_targets_v2`, and `portfolio_market_data`. No portfolio data is sent to our server or to third parties.
+- **Data storage**: Portfolio data (transactions including broker details, targets, market data) is saved only in your browser's `localStorage` under the keys `portfolio_transactions`, `portfolio_targets_v2`, and `portfolio_market_data`. No portfolio data is sent to our server or to third parties.
 - **Cookies**: The app does not set or read cookies for its own functionality. The backend Puppeteer script only dismisses third-party cookie banners (e.g., on Borsa Italiana) while scraping prices; it does not create cookies for users.
 - **Device responsibility**: Because data lives in your browser, its protection depends on your device/browser security (login protections, screen lock, user profiles, antivirus). If a device or browser profile is shared, others may see the same saved data.
 - **Removal of data**: You can erase all locally stored portfolio data from the **Settings** page using the existing "Clear all data" button; clearing your browser cache/localStorage or using private/incognito mode also removes it.
