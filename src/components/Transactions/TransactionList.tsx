@@ -10,12 +10,13 @@ const TransactionList: React.FC = () => {
     const [showImport, setShowImport] = useState(false);
 
     // View State
-    const [groupByPortfolio, setGroupByPortfolio] = useState(false);
+    const [groupBy, setGroupBy] = useState<'None' | 'Portfolio' | 'Broker'>('None');
 
     // Bulk Selection State
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
     // Bulk Update State
     const [bulkPortfolioId, setBulkPortfolioId] = useState('');
+    const [bulkBroker, setBulkBroker] = useState('');
 
     // Editing State (Single Row)
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -67,9 +68,16 @@ const TransactionList: React.FC = () => {
 
     const handleBulkUpdate = () => {
         if (selectedIds.size === 0) return;
-        updateTransactionsBulk(Array.from(selectedIds), { portfolioId: bulkPortfolioId || undefined });
+        const updates: Partial<Transaction> = {};
+        if (bulkPortfolioId) updates.portfolioId = bulkPortfolioId;
+        if (bulkBroker) updates.broker = bulkBroker;
+
+        if (Object.keys(updates).length === 0) return;
+
+        updateTransactionsBulk(Array.from(selectedIds), updates);
         setSelectedIds(new Set()); // Reset selection
         setBulkPortfolioId(''); // Reset input
+        setBulkBroker('');
     };
 
     // --- Single Edit Handlers ---
@@ -113,7 +121,13 @@ const TransactionList: React.FC = () => {
     };
 
     const groupedTransactions = sortedTransactions.reduce((acc, tx) => {
-        const key = getPortfolioName(tx.portfolioId);
+        let key = 'Unassigned';
+        if (groupBy === 'Portfolio') {
+            key = getPortfolioName(tx.portfolioId);
+        } else if (groupBy === 'Broker') {
+            key = tx.broker || 'No Broker';
+        }
+
         if (!acc[key]) acc[key] = [];
         acc[key].push(tx);
         return acc;
@@ -134,6 +148,7 @@ const TransactionList: React.FC = () => {
                     <th>Ticker</th>
                     <th>Side</th>
                     <th>Portfolio</th>
+                    <th>Broker</th>
                     <th>Name</th>
                     <th>Qty</th>
                     <th>Price (Exec)</th>
@@ -186,6 +201,16 @@ const TransactionList: React.FC = () => {
                                         className="edit-input"
                                         style={{ width: '80px' }}
                                         placeholder="Default"
+                                    />
+                                </td>
+                                <td>
+                                    <input
+                                        type="text"
+                                        value={editForm.broker || ''}
+                                        onChange={e => handleEditChange('broker', e.target.value)}
+                                        className="edit-input"
+                                        style={{ width: '80px' }}
+                                        placeholder="-"
                                     />
                                 </td>
                                 <td>
@@ -244,6 +269,9 @@ const TransactionList: React.FC = () => {
                                 {getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}
                             </td>
                             <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+                                {tx.broker || '-'}
+                            </td>
+                            <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                                 {getAssetName(tx.ticker) || '-'}
                             </td>
                             <td>{tx.amount}</td>
@@ -290,15 +318,19 @@ const TransactionList: React.FC = () => {
                 <h2>History</h2>
                 <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                     <button
-                        onClick={() => setGroupByPortfolio(!groupByPortfolio)}
+                        onClick={() => {
+                            if (groupBy === 'None') setGroupBy('Portfolio');
+                            else if (groupBy === 'Portfolio') setGroupBy('Broker');
+                            else setGroupBy('None');
+                        }}
                         className="btn-secondary"
                         style={{
                             fontSize: '0.9rem',
                             padding: '0.4rem 0.8rem',
-                            backgroundColor: groupByPortfolio ? 'var(--border-color)' : undefined
+                            backgroundColor: groupBy !== 'None' ? 'var(--border-color)' : undefined
                         }}
                     >
-                        {groupByPortfolio ? 'Show All' : 'Group by Portfolio'}
+                        Group By: {groupBy}
                     </button>
                     <button
                         onClick={() => setShowImport(true)}
@@ -351,6 +383,14 @@ const TransactionList: React.FC = () => {
                                 </option>
                             ))}
                         </select>
+                        <input
+                            type="text"
+                            placeholder="Set Broker..."
+                            value={bulkBroker}
+                            onChange={e => setBulkBroker(e.target.value)}
+                            className="form-input"
+                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', width: '150px' }}
+                        />
                         <button
                             className="btn-primary"
                             onClick={handleBulkUpdate}
@@ -373,9 +413,9 @@ const TransactionList: React.FC = () => {
                 <p style={{ color: 'var(--text-muted)' }}>No transactions yet.</p>
             ) : (
                 <>
-                    {groupByPortfolio ? (
-                        Object.entries(groupedTransactions).map(([portfolio, txs]) => (
-                            <div key={portfolio} style={{ marginBottom: '2rem' }}>
+                    {groupBy !== 'None' ? (
+                        Object.keys(groupedTransactions).sort().map((groupKey) => (
+                            <div key={groupKey} style={{ marginBottom: '2rem' }}>
                                 <h3 style={{
                                     padding: '0.5rem 0',
                                     borderBottom: '2px solid var(--border-color)',
@@ -385,12 +425,12 @@ const TransactionList: React.FC = () => {
                                     alignItems: 'center',
                                     justifyContent: 'space-between'
                                 }}>
-                                    <span>{portfolio}</span>
+                                    <span>{groupKey}</span>
                                     <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>
-                                        {txs.length} transactions
+                                        {groupedTransactions[groupKey].length} transactions
                                     </span>
                                 </h3>
-                                {renderTable(txs)}
+                                {renderTable(groupedTransactions[groupKey])}
                             </div>
                         ))
                     ) : (

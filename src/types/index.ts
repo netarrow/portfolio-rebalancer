@@ -25,6 +25,7 @@ export interface Transaction {
   direction: TransactionDirection;
   portfolio?: string; // Deprecated: property name kept for compatibility during migration
   portfolioId?: string;
+  broker?: string;
 }
 
 export interface Asset {

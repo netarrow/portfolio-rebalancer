@@ -34,6 +34,7 @@ const ImportTransactionsModal: React.FC<ImportModalProps> = ({ onClose, onImport
             const qtyIdx = header.findIndex(h => h.includes('quantity') || h.includes('qty'));
             const priceIdx = header.findIndex(h => h.includes('price'));
             const typeIdx = header.findIndex(h => h.includes('type'));
+            const brokerIdx = header.findIndex(h => h.includes('broker'));
 
             if (dateIdx === -1 || isinIdx === -1 || qtyIdx === -1 || priceIdx === -1) {
                 setError('Missing required columns (Date, ISIN, Quantity, Price)');
@@ -70,6 +71,9 @@ const ImportTransactionsModal: React.FC<ImportModalProps> = ({ onClose, onImport
                 cleanRow.amount = Number(row[qtyIdx]);
                 cleanRow.price = Number(row[priceIdx]);
                 cleanRow.direction = typeIdx !== -1 ? parseDirection(row[typeIdx]) : 'Buy';
+                if (brokerIdx !== -1 && row[brokerIdx]) {
+                    cleanRow.broker = String(row[brokerIdx]);
+                }
 
                 // Defaults (Class/Subclass handled by Settings now)
                 // cleanRow.assetClass = 'Stock'; 
