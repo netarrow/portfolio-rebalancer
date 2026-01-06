@@ -13,6 +13,7 @@ const TransactionForm: React.FC = () => {
     const [price, setPrice] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [portfolioId, setPortfolioId] = useState('');
+    const [broker, setBroker] = useState('');
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -25,13 +26,15 @@ const TransactionForm: React.FC = () => {
             direction,
             amount: Number(amount),
             price: Number(price),
-            portfolioId: portfolioId || undefined
+            portfolioId: portfolioId || undefined,
+            broker: broker || undefined
         });
 
         // Reset form
         setTicker('');
         setAmount('');
         setPrice('');
+        setBroker('');
         setDirection('Buy');
         // Keep portfolio for next entry ease? Or reset?
         // setPortfolioId(''); 
@@ -147,6 +150,17 @@ const TransactionForm: React.FC = () => {
                             No portfolios available. Go to the Portfolios page to create one.
                         </p>
                     )}
+                </div>
+
+                <div className="form-group">
+                    <label>Broker (Optional)</label>
+                    <input
+                        type="text"
+                        className="form-input"
+                        placeholder="e.g. Degiro, IBKR"
+                        value={broker}
+                        onChange={(e) => setBroker(e.target.value)}
+                    />
                 </div>
 
                 <button type="submit" className="btn-submit">Add Transaction</button>
