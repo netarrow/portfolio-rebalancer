@@ -245,6 +245,54 @@ const AllocationCharts: React.FC = () => {
             .sort((a, b) => b.value - a.value);
     }, [portfolios, transactions, assetSettings, marketData]);
 
+    // 3. Broker Contribution
+    const brokerContributionData = useMemo(() => {
+        const brokerMap: Record<string, number> = {};
+
+        // Algo: We need to tally up quantity per ticker PER BROKER.
+        // Then multiply by current price.
+        // 1. Group Txs by Broker -> Ticker
+        const items: Record<string, Record<string, number>> = {}; // broker -> ticker -> qty
+
+        transactions.forEach(tx => {
+            const broker = tx.broker || 'Unassigned';
+            const multiplier = tx.direction === 'Sell' ? -1 : 1;
+
+            if (!items[broker]) items[broker] = {};
+            items[broker][tx.ticker] = (items[broker][tx.ticker] || 0) + (tx.amount * multiplier);
+        });
+
+        // 2. Calculate value
+        Object.entries(items).forEach(([broker, tickers]) => {
+            let brokerTotal = 0;
+            Object.entries(tickers).forEach(([ticker, qty]) => {
+                if (qty <= 0) return; // Ignore zero/negative positions per broker (simplified)
+
+                const priceData = marketData[ticker];
+                let price = priceData?.price || 0;
+
+                // Fallback to average price from assets if market data missing? 
+                // Hard to get avg price per broker without more complex logic. 
+                // Let's rely on marketData or last transaction price?
+                if (!price) {
+                    // Try find from totalAssets (calculated earlier)
+                    const asset = totalAssets.find(a => a.ticker === ticker);
+                    price = asset?.currentPrice || 0;
+                }
+
+                brokerTotal += qty * price;
+            });
+            if (brokerTotal > 0) {
+                brokerMap[broker] = brokerTotal;
+            }
+        });
+
+        return Object.entries(brokerMap)
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value);
+
+    }, [transactions, marketData, totalAssets]);
+
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
         return null; // Or show empty state
     }
@@ -260,7 +308,7 @@ const AllocationCharts: React.FC = () => {
             <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '2rem' }}>Portfolio Distribution</h2>
 
             {/* Portfolio Contribution Chart */}
-            {portfolioContributionData.length > 0 && (
+            {(portfolioContributionData.length > 0 || brokerContributionData.length > 0) && (
                 <div style={{ marginBottom: '3rem' }}>
                     <h3 className="section-title" style={{
                         fontSize: '1.2rem',
@@ -269,34 +317,66 @@ const AllocationCharts: React.FC = () => {
                         paddingBottom: '0.5rem',
                         marginBottom: '1rem'
                     }}>
-                        Portfolios vs Total Invested
+                        Invested Capital Distribution
                     </h3>
                     <div className="charts-grid">
-                        <div className="chart-card">
-                            <h4>Value by Portfolio</h4>
-                            <div style={{ width: '100%', height: 250 }}>
-                                <ResponsiveContainer>
-                                    <PieChart>
-                                        <Pie
-                                            data={portfolioContributionData}
-                                            cx="50%"
-                                            cy="50%"
-                                            labelLine={false}
-                                            label={renderCustomizedLabel}
-                                            outerRadius={80}
-                                            fill="#8884d8"
-                                            dataKey="value"
-                                        >
-                                            {portfolioContributionData.map((_, index) => (
-                                                <Cell key={`cell-${index}`} fill={['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][index % 7]} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip content={<CustomTooltip />} />
-                                        <Legend wrapperStyle={{ fontSize: '12px' }} />
-                                    </PieChart>
-                                </ResponsiveContainer>
+                        {/* By Portfolio */}
+                        {portfolioContributionData.length > 0 && (
+                            <div className="chart-card">
+                                <h4>Value by Portfolio</h4>
+                                <div style={{ width: '100%', height: 250 }}>
+                                    <ResponsiveContainer>
+                                        <PieChart>
+                                            <Pie
+                                                data={portfolioContributionData}
+                                                cx="50%"
+                                                cy="50%"
+                                                labelLine={false}
+                                                label={renderCustomizedLabel}
+                                                outerRadius={80}
+                                                fill="#8884d8"
+                                                dataKey="value"
+                                            >
+                                                {portfolioContributionData.map((_, index) => (
+                                                    <Cell key={`cell-${index}`} fill={['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][index % 7]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip content={<CustomTooltip />} />
+                                            <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
                             </div>
-                        </div>
+                        )}
+
+                        {/* By Broker */}
+                        {brokerContributionData.length > 0 && (
+                            <div className="chart-card">
+                                <h4>Value by Broker</h4>
+                                <div style={{ width: '100%', height: 250 }}>
+                                    <ResponsiveContainer>
+                                        <PieChart>
+                                            <Pie
+                                                data={brokerContributionData}
+                                                cx="50%"
+                                                cy="50%"
+                                                labelLine={false}
+                                                label={renderCustomizedLabel}
+                                                outerRadius={80}
+                                                fill="#8884d8"
+                                                dataKey="value"
+                                            >
+                                                {brokerContributionData.map((_, index) => (
+                                                    <Cell key={`cell-${index}`} fill={['#EC4899', '#8B5CF6', '#F59E0B', '#10B981', '#3B82F6', '#6366F1', '#14B8A6'][(index + 3) % 7]} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip content={<CustomTooltip />} />
+                                            <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
