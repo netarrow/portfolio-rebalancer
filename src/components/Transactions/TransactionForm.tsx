@@ -4,7 +4,7 @@ import type { TransactionDirection } from '../../types';
 import './Transactions.css';
 
 const TransactionForm: React.FC = () => {
-    const { addTransaction, portfolios } = usePortfolio();
+    const { addTransaction, portfolios, brokers } = usePortfolio();
 
     const [ticker, setTicker] = useState('');
 
@@ -27,7 +27,7 @@ const TransactionForm: React.FC = () => {
             amount: Number(amount),
             price: Number(price),
             portfolioId: portfolioId || undefined,
-            broker: broker || undefined
+            brokerId: broker || undefined
         });
 
         // Reset form
@@ -154,13 +154,18 @@ const TransactionForm: React.FC = () => {
 
                 <div className="form-group">
                     <label>Broker (Optional)</label>
-                    <input
-                        type="text"
+                    <select
                         className="form-input"
-                        placeholder="e.g. Degiro, IBKR"
                         value={broker}
                         onChange={(e) => setBroker(e.target.value)}
-                    />
+                    >
+                        <option value="">Select Broker...</option>
+                        {brokers.map(b => (
+                            <option key={b.id} value={b.id}>
+                                {b.name}
+                            </option>
+                        ))}
+                    </select>
                 </div>
 
                 <button type="submit" className="btn-submit">Add Transaction</button>

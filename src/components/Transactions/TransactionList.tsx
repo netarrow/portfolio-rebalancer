@@ -5,7 +5,7 @@ import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios } = usePortfolio();
+    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios, brokers } = usePortfolio();
     const [updating, setUpdating] = useState(false);
     const [showImport, setShowImport] = useState(false);
 
@@ -70,7 +70,7 @@ const TransactionList: React.FC = () => {
         if (selectedIds.size === 0) return;
         const updates: Partial<Transaction> = {};
         if (bulkPortfolioId) updates.portfolioId = bulkPortfolioId;
-        if (bulkBroker) updates.broker = bulkBroker;
+        if (bulkBroker) updates.brokerId = bulkBroker;
 
         if (Object.keys(updates).length === 0) return;
 
@@ -120,12 +120,20 @@ const TransactionList: React.FC = () => {
         return p ? p.name : 'Unassigned';
     };
 
+    const getBrokerName = (id?: string, legacyName?: string) => {
+        if (id) {
+            const b = brokers.find(b => b.id === id);
+            if (b) return b.name;
+        }
+        return legacyName || '-';
+    };
+
     const groupedTransactions = sortedTransactions.reduce((acc, tx) => {
         let key = 'Unassigned';
         if (groupBy === 'Portfolio') {
             key = getPortfolioName(tx.portfolioId);
         } else if (groupBy === 'Broker') {
-            key = tx.broker || 'No Broker';
+            key = getBrokerName(tx.brokerId, tx.broker) === '-' ? 'No Broker' : getBrokerName(tx.brokerId, tx.broker);
         }
 
         if (!acc[key]) acc[key] = [];
@@ -204,14 +212,19 @@ const TransactionList: React.FC = () => {
                                     />
                                 </td>
                                 <td>
-                                    <input
-                                        type="text"
-                                        value={editForm.broker || ''}
-                                        onChange={e => handleEditChange('broker', e.target.value)}
+                                    <select
+                                        value={editForm.brokerId || ''}
+                                        onChange={e => handleEditChange('brokerId', e.target.value)}
                                         className="edit-input"
                                         style={{ width: '80px' }}
-                                        placeholder="-"
-                                    />
+                                    >
+                                        <option value="">-</option>
+                                        {brokers.map(b => (
+                                            <option key={b.id} value={b.id}>
+                                                {b.name}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </td>
                                 <td>
                                     <span style={{ color: 'var(--text-secondary)' }}>-</span>
@@ -269,7 +282,7 @@ const TransactionList: React.FC = () => {
                                 {getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}
                             </td>
                             <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                {tx.broker || '-'}
+                                {getBrokerName(tx.brokerId, tx.broker)}
                             </td>
                             <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                                 {getAssetName(tx.ticker) || '-'}
@@ -383,14 +396,19 @@ const TransactionList: React.FC = () => {
                                 </option>
                             ))}
                         </select>
-                        <input
-                            type="text"
-                            placeholder="Set Broker..."
+                        <select
                             value={bulkBroker}
                             onChange={e => setBulkBroker(e.target.value)}
                             className="form-input"
                             style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', width: '150px' }}
-                        />
+                        >
+                            <option value="">Set Broker...</option>
+                            {brokers.map(b => (
+                                <option key={b.id} value={b.id}>
+                                    {b.name}
+                                </option>
+                            ))}
+                        </select>
                         <button
                             className="btn-primary"
                             onClick={handleBulkUpdate}
