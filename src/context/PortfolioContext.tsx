@@ -1,7 +1,10 @@
 import React, { createContext, useContext, useMemo, useEffect } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, Target, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker } from '../types';
+
+// Legacy Type for Migration
+type Target = AssetDefinition & { targetPercentage?: number };
 
 interface PortfolioContextType {
     transactions: Transaction[];
@@ -59,7 +62,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const newPortfolios = [...portfolios];
         const newTransactions = [...transactions];
 
-        const uniquePortfolioNames = Array.from(new Set(transactions.map(t => t.portfolio).filter(Boolean))) as string[];
+        const uniquePortfolioNames = Array.from(new Set(transactions.map(t => (t as any).portfolio).filter(Boolean))) as string[];
 
         uniquePortfolioNames.forEach(name => {
             // Check if portfolio already exists by name
@@ -80,8 +83,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Link transactions to portfolio IDs
         newTransactions.forEach((t, index) => {
-            if (t.portfolio && !t.portfolioId) {
-                const portfolio = newPortfolios.find(p => p.name === t.portfolio);
+            if ((t as any).portfolio && !t.portfolioId) {
+                const portfolio = newPortfolios.find(p => p.name === (t as any).portfolio);
                 if (portfolio) {
                     newTransactions[index] = {
                         ...t,
@@ -112,8 +115,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // 1. Find all unique broker names from transactions that don't have brokerId yet
         const uniqueBrokerNames = Array.from(new Set(
             transactions
-                .filter(t => t.broker && !t.brokerId)
-                .map(t => t.broker)
+                .filter(t => (t as any).broker && !t.brokerId)
+                .map(t => (t as any).broker)
         )) as string[];
 
         uniqueBrokerNames.forEach(name => {
@@ -137,8 +140,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // 2. Link transactions to broker IDs
         newTransactions.forEach((t, index) => {
-            if (t.broker && !t.brokerId) {
-                const broker = newBrokers.find(b => b.name === t.broker);
+            if ((t as any).broker && !t.brokerId) {
+                const broker = newBrokers.find(b => b.name === (t as any).broker);
                 if (broker) {
                     newTransactions[index] = {
                         ...t,
@@ -226,23 +229,23 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         uniqueTickers.forEach(ticker => {
             const settingIndex = newSettings.findIndex(t => t.ticker === ticker);
             // Look for existing class in transactions (take last one as source of truth)
-            const lastTx = [...transactions].reverse().find(t => t.ticker === ticker && (t.assetClass as any));
+            const lastTx = [...transactions].reverse().find(t => t.ticker === ticker && (t as any).assetClass);
 
-            if (lastTx && (lastTx.assetClass as any)) {
+            if (lastTx && (lastTx as any).assetClass) {
                 if (settingIndex === -1) {
                     newSettings.push({
                         ticker,
                         source: 'ETF',
-                        assetClass: lastTx.assetClass as AssetClass,
-                        assetSubClass: lastTx.assetSubClass as AssetSubClass
+                        assetClass: (lastTx as any).assetClass as AssetClass,
+                        assetSubClass: (lastTx as any).assetSubClass as AssetSubClass
                     });
                     settingsChanged = true;
                 } else {
                     if (!newSettings[settingIndex].assetClass) {
                         newSettings[settingIndex] = {
                             ...newSettings[settingIndex],
-                            assetClass: lastTx.assetClass as AssetClass,
-                            assetSubClass: lastTx.assetSubClass as AssetSubClass
+                            assetClass: (lastTx as any).assetClass as AssetClass,
+                            assetSubClass: (lastTx as any).assetSubClass as AssetSubClass
                         };
                         settingsChanged = true;
                     }
@@ -277,8 +280,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setPortfolios(prev => prev.filter(p => p.id !== id));
         // Also clear the legacy 'portfolio' field to prevent the migration effect from re-creating it
         setTransactions(prev => prev.map(t =>
-            (t.portfolioId === id || (nameToDelete && t.portfolio === nameToDelete))
-                ? { ...t, portfolioId: undefined, portfolio: undefined }
+            (t.portfolioId === id || (nameToDelete && (t as any).portfolio === nameToDelete))
+                ? { ...t, portfolioId: undefined, portfolio: undefined } as any
                 : t
         ));
     };
@@ -410,7 +413,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ];
 
         // Mock Transactions
-        const initialTransactions: Transaction[] = [
+        const initialTransactions: any[] = [
             // Growth Portfolio
             { id: String(Date.now() + 1), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-01-15', amount: 50, price: 88.50, direction: 'Buy', broker: 'Degiro' },
             { id: String(Date.now() + 2), portfolioId: mockPortfolioId, ticker: mockIsins[1].ticker, date: '2024-02-20', amount: 100, price: 29.30, direction: 'Buy', broker: 'Degiro' },

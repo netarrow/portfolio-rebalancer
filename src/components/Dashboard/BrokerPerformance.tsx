@@ -7,15 +7,14 @@ const BrokerPerformance: React.FC = () => {
     const { transactions, assetSettings, marketData, brokers: brokerList } = usePortfolio();
 
     const brokerStats = useMemo(() => {
-        // 1. Identify all unique brokers keys (ID or Name)
-        // We prioritize brokerId, fallback to broker string, or 'Unassigned'
-        const uniqueKeys = Array.from(new Set(transactions.map(t => t.brokerId || t.broker || 'Unassigned')));
+        // 1. Identify all unique brokers keys (ID)
+        const uniqueKeys = Array.from(new Set(transactions.map(t => t.brokerId || 'Unassigned')));
 
         // 2. Calculate summary for each broker key
         const stats = uniqueKeys.map(key => {
             // Filter transactions for this broker key
             const brokerTxs = transactions.filter(t => {
-                const tKey = t.brokerId || t.broker || 'Unassigned';
+                const tKey = t.brokerId || 'Unassigned';
                 return tKey === key;
             });
 
