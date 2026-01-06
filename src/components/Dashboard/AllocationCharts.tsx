@@ -227,7 +227,7 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
 };
 
 const AllocationCharts: React.FC = () => {
-    const { transactions, assetSettings, marketData, portfolios } = usePortfolio();
+    const { transactions, assetSettings, marketData, portfolios, brokers } = usePortfolio();
 
     // 1. Total / All
     const totalAssets = useMemo(() => {
@@ -249,41 +249,48 @@ const AllocationCharts: React.FC = () => {
     const brokerContributionData = useMemo(() => {
         const brokerMap: Record<string, number> = {};
 
-        // Algo: We need to tally up quantity per ticker PER BROKER.
-        // Then multiply by current price.
-        // 1. Group Txs by Broker -> Ticker
-        const items: Record<string, Record<string, number>> = {}; // broker -> ticker -> qty
+        // Algo: Tally up quantity per ticker PER BROKER.
+        const items: Record<string, Record<string, number>> = {}; // brokerKey -> ticker -> qty
 
         transactions.forEach(tx => {
-            const broker = tx.broker || 'Unassigned';
+            // Priority: brokerId -> broker -> 'Unassigned'
+            const key = tx.brokerId || tx.broker || 'Unassigned';
             const multiplier = tx.direction === 'Sell' ? -1 : 1;
 
-            if (!items[broker]) items[broker] = {};
-            items[broker][tx.ticker] = (items[broker][tx.ticker] || 0) + (tx.amount * multiplier);
+            if (!items[key]) items[key] = {};
+            items[key][tx.ticker] = (items[key][tx.ticker] || 0) + (tx.amount * multiplier);
         });
 
         // 2. Calculate value
-        Object.entries(items).forEach(([broker, tickers]) => {
+        Object.entries(items).forEach(([key, tickers]) => {
             let brokerTotal = 0;
+
+            // Resolve Display Name
+            let displayName = 'Unassigned';
+            const brokerEntity = brokers.find(b => b.id === key);
+            if (brokerEntity) {
+                displayName = brokerEntity.name;
+            } else {
+                displayName = key === 'Unassigned' ? 'Unassigned' : key;
+            }
+
             Object.entries(tickers).forEach(([ticker, qty]) => {
-                if (qty <= 0) return; // Ignore zero/negative positions per broker (simplified)
+                if (qty <= 0) return;
 
                 const priceData = marketData[ticker];
                 let price = priceData?.price || 0;
 
-                // Fallback to average price from assets if market data missing? 
-                // Hard to get avg price per broker without more complex logic. 
-                // Let's rely on marketData or last transaction price?
                 if (!price) {
-                    // Try find from totalAssets (calculated earlier)
                     const asset = totalAssets.find(a => a.ticker === ticker);
                     price = asset?.currentPrice || 0;
                 }
 
                 brokerTotal += qty * price;
             });
+
             if (brokerTotal > 0) {
-                brokerMap[broker] = brokerTotal;
+                // Aggregate by Display Name
+                brokerMap[displayName] = (brokerMap[displayName] || 0) + brokerTotal;
             }
         });
 
@@ -291,7 +298,7 @@ const AllocationCharts: React.FC = () => {
             .map(([name, value]) => ({ name, value }))
             .sort((a, b) => b.value - a.value);
 
-    }, [transactions, marketData, totalAssets]);
+    }, [transactions, marketData, totalAssets, brokers]);
 
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
         return null; // Or show empty state
