@@ -102,6 +102,63 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     }, [transactions, portfolios, setPortfolios, setTransactions]);
 
+    // Migration Effect 4: Migrate free-text brokers to Broker entities
+    useEffect(() => {
+        let brokersChanged = false;
+        let transactionsChanged = false;
+        const newBrokers = [...brokers];
+        const newTransactions = [...transactions];
+
+        // 1. Find all unique broker names from transactions that don't have brokerId yet
+        const uniqueBrokerNames = Array.from(new Set(
+            transactions
+                .filter(t => t.broker && !t.brokerId)
+                .map(t => t.broker)
+        )) as string[];
+
+        uniqueBrokerNames.forEach(name => {
+            // Check if broker already exists by name
+            let broker = newBrokers.find(b => b.name === name);
+
+            if (!broker) {
+                // Create new broker
+                broker = {
+                    id: String(Date.now() + Math.random()), // Simple ID generation
+                    name: name,
+                    description: 'Migrated from transaction',
+                    currentLiquidity: undefined,
+                    minLiquidityPercentage: undefined
+                };
+                newBrokers.push(broker);
+                brokersChanged = true;
+                console.log(`Created migrated broker: ${name}`);
+            }
+        });
+
+        // 2. Link transactions to broker IDs
+        newTransactions.forEach((t, index) => {
+            if (t.broker && !t.brokerId) {
+                const broker = newBrokers.find(b => b.name === t.broker);
+                if (broker) {
+                    newTransactions[index] = {
+                        ...t,
+                        brokerId: broker.id
+                        // We keep t.broker for compatibility or could deprecate it.
+                        // brokerId is now the source of truth.
+                    };
+                    transactionsChanged = true;
+                }
+            }
+        });
+
+        if (brokersChanged) {
+            setBrokers(newBrokers);
+        }
+        if (transactionsChanged) {
+            setTransactions(newTransactions);
+        }
+    }, [transactions, brokers, setBrokers, setTransactions]);
+
     // Migration Effect: Transform old Targets (global %) to AssetSettings + Portfolio Allocations
     useEffect(() => {
         if (oldTargets.length > 0 && assetSettings.length === 0) {
