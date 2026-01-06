@@ -8,9 +8,11 @@ It was built in a **few hours** while multitasking, demonstrating the capabiliti
 
 Considering is a personal usage tool, there are many semplification. Like local storage only, online scraping and not usage of official quote API. But if you are ok with these you can also use the tool accepting that is provided as-is.
 
-Tasks included:
+Tasks managed by the AI included:
 - Architecture refactoring (Unified Frontend/Backend)
 - Dockerization 
+- Data Model Refactoring & Migration
+- Automated Agentic Verification (Browser orchestration for E2E testing and documentation)
 - Complex feature implementation (Multi-source scraping, Inline editing)
 - UI/UX layout and design optimization
 
