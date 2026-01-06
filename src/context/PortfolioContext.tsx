@@ -1,13 +1,14 @@
 import React, { createContext, useContext, useMemo, useEffect } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, Target, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition } from '../types';
+import type { Transaction, Asset, Target, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker } from '../types';
 
 interface PortfolioContextType {
     transactions: Transaction[];
     assetSettings: AssetDefinition[];
     assets: Asset[];
     portfolios: Portfolio[];
+    brokers: Broker[];
     summary: PortfolioSummary;
     addTransaction: (transaction: Transaction) => void;
     updateTransaction: (transaction: Transaction) => void;
@@ -22,6 +23,9 @@ interface PortfolioContextType {
     addPortfolio: (portfolio: Portfolio) => void;
     updatePortfolio: (portfolio: Portfolio) => void;
     deletePortfolio: (id: string) => void;
+    addBroker: (broker: Broker) => void;
+    updateBroker: (broker: Broker) => void;
+    deleteBroker: (id: string) => void;
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
 }
@@ -45,6 +49,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Legacy state for migration only
     const [oldTargets, setOldTargets] = useLocalStorage<Target[]>('portfolio_targets_v2', []);
     const [portfolios, setPortfolios] = useLocalStorage<Portfolio[]>('portfolio_list', []);
+    const [brokers, setBrokers] = useLocalStorage<Broker[]>('portfolio_brokers', []);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
 
     // Migration Effect 3: Migrate free-text portfolios to Portfolio entities
@@ -221,6 +226,18 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ));
     };
 
+    const addBroker = (broker: Broker) => {
+        setBrokers(prev => [...prev, broker]);
+    };
+
+    const updateBroker = (broker: Broker) => {
+        setBrokers(prev => prev.map(b => b.id === broker.id ? broker : b));
+    };
+
+    const deleteBroker = (id: string) => {
+        setBrokers(prev => prev.filter(b => b.id !== id));
+    };
+
     const addTransaction = (transaction: Transaction) => {
         setTransactions((prev) => [...prev, transaction]);
     };
@@ -272,7 +289,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const resetPortfolio = () => {
         setTransactions([]);
         setAssetSettings([]);
+        setAssetSettings([]);
         setPortfolios([]);
+        setBrokers([]);
         setMarketData({});
         setOldTargets([]);
     };
@@ -418,7 +437,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         portfolios,
         addPortfolio,
         updatePortfolio,
-        deletePortfolio
+        deletePortfolio,
+        brokers,
+        addBroker,
+        updateBroker,
+        deleteBroker
     };
 
     return (
