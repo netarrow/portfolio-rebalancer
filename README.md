@@ -46,7 +46,9 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 
 ### Dashboard
 The main hub for your portfolio insights.
-![Dashboard Overview](screenshots/dashboard_page.png)
+![Dashboard Top](screenshots/dashboard_top.png)
+![Dashboard Middle](screenshots/dashboard_middle.png)
+![Dashboard Bottom](screenshots/dashboard_bottom.png)
 - **Financial Summary**: Total Value, Total Cost, and P&L.
 - **Broker Performance**: Breakdown of value and return per broker.
 - **Allocation Overview**: Asset distribution charts (Portfolio Size, Broker Share, Asset Class).
