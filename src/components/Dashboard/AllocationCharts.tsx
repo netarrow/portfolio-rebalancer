@@ -234,6 +234,17 @@ const AllocationCharts: React.FC = () => {
         return calculateAssets(transactions, assetSettings, marketData).assets;
     }, [transactions, assetSettings, marketData]);
 
+    // 2. Portfolio Contribution
+    const portfolioContributionData = useMemo(() => {
+        return portfolios.map(p => {
+            const pTxs = transactions.filter(t => t.portfolioId === p.id); // Filter by ID
+            const { summary } = calculateAssets(pTxs, assetSettings, marketData);
+            return { name: p.name, value: summary.totalValue };
+        })
+            .filter(d => d.value > 0)
+            .sort((a, b) => b.value - a.value);
+    }, [portfolios, transactions, assetSettings, marketData]);
+
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
         return null; // Or show empty state
     }
@@ -247,6 +258,48 @@ const AllocationCharts: React.FC = () => {
     return (
         <div className="charts-section">
             <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '2rem' }}>Portfolio Distribution</h2>
+
+            {/* Portfolio Contribution Chart */}
+            {portfolioContributionData.length > 0 && (
+                <div style={{ marginBottom: '3rem' }}>
+                    <h3 className="section-title" style={{
+                        fontSize: '1.2rem',
+                        color: 'var(--color-primary)',
+                        borderBottom: '1px solid var(--border-color)',
+                        paddingBottom: '0.5rem',
+                        marginBottom: '1rem'
+                    }}>
+                        Portfolios vs Total Invested
+                    </h3>
+                    <div className="charts-grid">
+                        <div className="chart-card">
+                            <h4>Value by Portfolio</h4>
+                            <div style={{ width: '100%', height: 250 }}>
+                                <ResponsiveContainer>
+                                    <PieChart>
+                                        <Pie
+                                            data={portfolioContributionData}
+                                            cx="50%"
+                                            cy="50%"
+                                            labelLine={false}
+                                            label={renderCustomizedLabel}
+                                            outerRadius={80}
+                                            fill="#8884d8"
+                                            dataKey="value"
+                                        >
+                                            {portfolioContributionData.map((_, index) => (
+                                                <Cell key={`cell-${index}`} fill={['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][index % 7]} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip content={<CustomTooltip />} />
+                                        <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Global View */}
             <DistributionRow

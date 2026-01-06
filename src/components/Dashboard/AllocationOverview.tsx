@@ -62,7 +62,11 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
 
     return (
         <div className="allocation-card">
-            <h3 className="section-title">Rebalancing: {portfolio.name}</h3>
+            <h3 className="section-title">
+                Rebalancing: {portfolio.name} <span style={{ fontSize: '0.9em', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
+                    ({summary.totalValue.toLocaleString('en-IE', { style: 'currency', currency: 'EUR' })})
+                </span>
+            </h3>
 
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
                 <div className="allocation-row" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
