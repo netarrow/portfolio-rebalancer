@@ -10,6 +10,7 @@ import SummaryCards from './components/Dashboard/SummaryCards';
 import AllocationCharts from './components/Dashboard/AllocationCharts';
 import AllocationOverview from './components/Dashboard/AllocationOverview';
 import BrokerPerformance from './components/Dashboard/BrokerPerformance';
+import LiquidityOverview from './components/Dashboard/LiquidityOverview';
 import TargetSettings from './components/Settings/TargetSettings';
 import PortfolioList from './components/Portfolios/PortfolioList';
 import BrokerList from './components/Brokers/BrokerList';
@@ -18,6 +19,7 @@ import BrokerList from './components/Brokers/BrokerList';
 const DashboardView = () => (
   <div className="dashboard-container">
     <SummaryCards />
+    <LiquidityOverview />
     <BrokerPerformance />
     <AllocationCharts />
     <AllocationOverview />

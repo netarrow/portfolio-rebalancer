@@ -253,8 +253,8 @@ const AllocationCharts: React.FC = () => {
         const items: Record<string, Record<string, number>> = {}; // brokerKey -> ticker -> qty
 
         transactions.forEach(tx => {
-            // Priority: brokerId -> broker -> 'Unassigned'
-            const key = tx.brokerId || tx.broker || 'Unassigned';
+            // Priority: brokerId -> 'Unassigned'
+            const key = tx.brokerId || 'Unassigned';
             const multiplier = tx.direction === 'Sell' ? -1 : 1;
 
             if (!items[key]) items[key] = {};

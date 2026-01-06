@@ -120,12 +120,12 @@ const TransactionList: React.FC = () => {
         return p ? p.name : 'Unassigned';
     };
 
-    const getBrokerName = (id?: string, legacyName?: string) => {
+    const getBrokerName = (id?: string) => {
         if (id) {
             const b = brokers.find(b => b.id === id);
             if (b) return b.name;
         }
-        return legacyName || '-';
+        return '-';
     };
 
     const groupedTransactions = sortedTransactions.reduce((acc, tx) => {
@@ -133,7 +133,7 @@ const TransactionList: React.FC = () => {
         if (groupBy === 'Portfolio') {
             key = getPortfolioName(tx.portfolioId);
         } else if (groupBy === 'Broker') {
-            key = getBrokerName(tx.brokerId, tx.broker) === '-' ? 'No Broker' : getBrokerName(tx.brokerId, tx.broker);
+            key = getBrokerName(tx.brokerId) === '-' ? 'No Broker' : getBrokerName(tx.brokerId);
         }
 
         if (!acc[key]) acc[key] = [];
@@ -287,7 +287,7 @@ const TransactionList: React.FC = () => {
                                 {getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}
                             </td>
                             <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-                                {getBrokerName(tx.brokerId, tx.broker)}
+                                {getBrokerName(tx.brokerId)}
                             </td>
                             <td style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
                                 {getAssetName(tx.ticker) || '-'}
