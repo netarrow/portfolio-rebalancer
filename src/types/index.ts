@@ -25,15 +25,11 @@ export interface Portfolio {
 export interface Transaction {
   id: string;
   ticker: string;
-  assetClass?: AssetClass; // Deprecated: moved to AssetDefinition
-  assetSubClass?: AssetSubClass; // Deprecated: moved to AssetDefinition
   amount: number;
   price: number;
   date: string;
   direction: TransactionDirection;
-  portfolio?: string; // Deprecated: property name kept for compatibility during migration
   portfolioId?: string;
-  broker?: string; // Deprecated: use brokerId
   brokerId?: string;
 }
 
@@ -55,14 +51,8 @@ export interface Asset {
 export interface AssetDefinition {
   ticker: string;
   label?: string;
-  assetClass?: AssetClass;
-  assetSubClass?: AssetSubClass;
-  // targetPercentage: number; // Removed: moved to Portfolio.allocations
   source?: 'ETF' | 'MOT' | 'CPRAM';
 }
-
-// Deprecated alias for compatibility until full refactor
-export type Target = AssetDefinition & { targetPercentage?: number };
 
 export interface PortfolioSummary {
   totalValue: number;
