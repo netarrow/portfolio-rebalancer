@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
+import Swal from 'sweetalert2';
 
 const TargetSettings: React.FC = () => {
     const { assetSettings, updateAssetSettings, assets, resetPortfolio, loadMockData } = usePortfolio();
@@ -132,9 +133,24 @@ const TargetSettings: React.FC = () => {
                 <h3 style={{ color: 'var(--text-primary)', fontSize: '1rem', marginBottom: 'var(--space-2)' }}>Developer Tools</h3>
                 <button
                     onClick={() => {
-                        if (confirm('Replace current data with Mock Data? This overrides everything.')) {
-                            loadMockData();
-                        }
+                        Swal.fire({
+                            title: 'Load Mock Data?',
+                            text: "This will replace all your current data with test data. This action cannot be undone!",
+                            icon: 'warning',
+                            showCancelButton: true,
+                            confirmButtonColor: '#3085d6',
+                            cancelButtonColor: '#d33',
+                            confirmButtonText: 'Yes, overwrite everything!'
+                        }).then((result) => {
+                            if (result.isConfirmed) {
+                                loadMockData();
+                                Swal.fire(
+                                    'Loaded!',
+                                    'Mock data has been loaded.',
+                                    'success'
+                                );
+                            }
+                        });
                     }}
                     style={{
                         backgroundColor: 'var(--bg-card)',
