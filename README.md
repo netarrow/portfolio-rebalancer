@@ -35,31 +35,35 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 - **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
 - **Custom Labels**: Assign custom display names to assets.
 
-## Screenshots
+## Application Overview
 
 ### Dashboard
-The central hub showing real-time asset allocation, total value, and actionable rebalancing recommendations. Now features an enhanced allocation table with detailed metrics per asset.
-<br/>
-![Dashboard Detail](screenshots/dashboard1.png)
-![Dashboard Allocation](screenshots/dashboard2.png)
-![Dashboard Rebalancing](screenshots/dashboard3.png)
+The main hub for your portfolio insights.
+![Dashboard Overview](screenshots/dashboard_page.png)
+- **Financial Summary**: Total Value, Total Cost, and P&L.
+- **Broker Performance**: Breakdown of value and return per broker.
+- **Allocation Overview**: Asset distribution charts (Portfolio Size, Broker Share, Asset Class).
+- **Rebalancing Tables**: Per-portfolio breakdown of assets with drift analysis.
 
 ### Transactions
-A detailed history of all trades with **Grouping by Portfolio**, bulk editing, and inline modifications. Use the bulk selection to easily move transactions between portfolios.
-![Transactions](screenshots/transactions.png)
+Comprehensive history of all your investment activities.
+![Transactions List](screenshots/transactions_page.png)
+- **Full History**: View all buys and sells.
+- **Broker Tracking**: See which broker executed each trade.
+- **Grouping**: Group transactions by Portfolio or Broker for easier analysis.
+- **Bulk Edit**: Update multiple transactions at once (e.g., assign broker, move portfolio).
 
-### Settings
-Configuration page to manage:
-- **Portfolio Targets**: Define target percentages for each asset class within each portfolio.
-- **Unused Assets**: Manage or hide assets with 0% allocation.
-- **Price Sources**: Configure scraping sources/URLs.
-Includes **Developer Tools** to load mock data for testing.
-![Settings](screenshots/settings.png)
+### Portfolio Management
+Organize your investments into distinct portfolios (e.g., "Retirement", "Risky Bets").
+![Portfolios View](screenshots/portfolios_page.png)
+- **Isolation**: Each portfolio tracks its own contribution to your wealth.
+- **Goals**: Set different strategies for different portfolios.
 
-#### Portfolio Management
-![Portfolios](screenshots/portfolios.png)
-
-#### Portfolio Targets
+### Settings & Configuration
+Manage target allocations and external data sources.
+![Settings Page](screenshots/settings_page.png)
+- **Asset Definitions**: Define asset classes (Stock, Bond, etc.) for each ISIN.
+- **Mock Data**: Quickly load sample data to test the application features.
 ![Portfolio Targets](screenshots/portfolio_targets.png)
 
 ## Tech Stack

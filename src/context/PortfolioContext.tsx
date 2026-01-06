@@ -336,13 +336,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Mock Transactions
         const initialTransactions: Transaction[] = [
             // Growth Portfolio
-            { id: String(Date.now() + 1), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-01-15', amount: 50, price: 88.50, direction: 'Buy' },
-            { id: String(Date.now() + 2), portfolioId: mockPortfolioId, ticker: mockIsins[1].ticker, date: '2024-02-20', amount: 100, price: 29.30, direction: 'Buy' },
-            { id: String(Date.now() + 3), portfolioId: mockPortfolioId, ticker: mockIsins[2].ticker, date: '2024-03-10', amount: 200, price: 4.95, direction: 'Buy' },
-            { id: String(Date.now() + 4), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-06-15', amount: 20, price: 92.10, direction: 'Buy' },
+            { id: String(Date.now() + 1), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-01-15', amount: 50, price: 88.50, direction: 'Buy', broker: 'Degiro' },
+            { id: String(Date.now() + 2), portfolioId: mockPortfolioId, ticker: mockIsins[1].ticker, date: '2024-02-20', amount: 100, price: 29.30, direction: 'Buy', broker: 'Degiro' },
+            { id: String(Date.now() + 3), portfolioId: mockPortfolioId, ticker: mockIsins[2].ticker, date: '2024-03-10', amount: 200, price: 4.95, direction: 'Buy', broker: 'Trade Republic' },
+            { id: String(Date.now() + 4), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-06-15', amount: 20, price: 92.10, direction: 'Buy', broker: 'Degiro' },
             // Emergency Fund
-            { id: String(Date.now() + 5), portfolioId: mockPortfolioId2, ticker: mockIsins[3].ticker, date: '2024-01-10', amount: 10, price: 140.20, direction: 'Buy' },
-            { id: String(Date.now() + 6), portfolioId: mockPortfolioId2, ticker: mockIsins[4].ticker, date: '2024-01-10', amount: 12, price: 119.50, direction: 'Buy' },
+            { id: String(Date.now() + 5), portfolioId: mockPortfolioId2, ticker: mockIsins[3].ticker, date: '2024-01-10', amount: 10, price: 140.20, direction: 'Buy', broker: 'Directa' },
+            { id: String(Date.now() + 6), portfolioId: mockPortfolioId2, ticker: mockIsins[4].ticker, date: '2024-01-10', amount: 12, price: 119.50, direction: 'Buy', broker: 'Directa' },
         ];
 
         // Mock Asset Settings
