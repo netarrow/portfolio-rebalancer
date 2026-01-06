@@ -1,5 +1,13 @@
 export type TransactionDirection = 'Buy' | 'Sell';
 
+export interface Broker {
+  id: string;
+  name: string;
+  description?: string;
+  currentLiquidity?: number;
+  minLiquidityPercentage?: number;
+}
+
 export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto';
 export type AssetSubClass =
   | 'International' | 'Local'     // Stock
