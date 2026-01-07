@@ -5,7 +5,9 @@ export interface Broker {
   name: string;
   description?: string;
   currentLiquidity?: number;
+  minLiquidityType?: 'percent' | 'fixed';
   minLiquidityPercentage?: number;
+  minLiquidityAmount?: number;
 }
 
 export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto';
@@ -52,6 +54,8 @@ export interface AssetDefinition {
   ticker: string;
   label?: string;
   source?: 'ETF' | 'MOT' | 'CPRAM';
+  assetClass?: AssetClass;
+  assetSubClass?: AssetSubClass;
 }
 
 export interface PortfolioSummary {

@@ -97,8 +97,15 @@ const BrokerList: React.FC = () => {
                                         <span className="stat-value">€{broker.currentLiquidity?.toLocaleString()}</span>
                                     </div>
                                     <div className="stat">
-                                        <span className="stat-label">Min %</span>
-                                        <span className="stat-value">{broker.minLiquidityPercentage}%</span>
+                                        <span className="stat-label">
+                                            {broker.minLiquidityType === 'fixed' ? 'Min Amount' : 'Min %'}
+                                        </span>
+                                        <span className="stat-value">
+                                            {broker.minLiquidityType === 'fixed'
+                                                ? `€${broker.minLiquidityAmount?.toLocaleString() || 0}`
+                                                : `${broker.minLiquidityPercentage || 0}%`
+                                            }
+                                        </span>
                                     </div>
                                 </div>
                             </div>

@@ -11,19 +11,31 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [currentLiquidity, setCurrentLiquidity] = useState<number | ''>('');
+
+    // Liquidity Target
+    const [liquidityType, setLiquidityType] = useState<'percent' | 'fixed'>('percent');
     const [minLiquidityPercentage, setMinLiquidityPercentage] = useState<number | ''>('');
+    const [minLiquidityAmount, setMinLiquidityAmount] = useState<number | ''>('');
 
     useEffect(() => {
         if (initialData) {
             setName(initialData.name);
             setDescription(initialData.description || '');
             setCurrentLiquidity(initialData.currentLiquidity !== undefined ? initialData.currentLiquidity : '');
+
+            // Default to 'percent' if undefined, unless we want to infer?
+            // If type is not set, check if amount is set? Legacy defaults to percent.
+            const type = initialData.minLiquidityType || 'percent';
+            setLiquidityType(type);
             setMinLiquidityPercentage(initialData.minLiquidityPercentage !== undefined ? initialData.minLiquidityPercentage : '');
+            setMinLiquidityAmount(initialData.minLiquidityAmount !== undefined ? initialData.minLiquidityAmount : '');
         } else {
             setName('');
             setDescription('');
             setCurrentLiquidity('');
+            setLiquidityType('percent');
             setMinLiquidityPercentage('');
+            setMinLiquidityAmount('');
         }
     }, [initialData]);
 
@@ -33,7 +45,9 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
             name,
             description,
             currentLiquidity: currentLiquidity === '' ? undefined : Number(currentLiquidity),
-            minLiquidityPercentage: minLiquidityPercentage === '' ? undefined : Number(minLiquidityPercentage)
+            minLiquidityType: liquidityType,
+            minLiquidityPercentage: minLiquidityPercentage === '' ? undefined : Number(minLiquidityPercentage),
+            minLiquidityAmount: minLiquidityAmount === '' ? undefined : Number(minLiquidityAmount)
         });
     };
 
@@ -67,34 +81,76 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
                         />
                     </div>
 
-                    <div className="form-row">
-                        <div className="form-group">
-                            <label htmlFor="currentLiquidity">Current Liquidity (€)</label>
-                            <input
-                                type="number"
-                                id="currentLiquidity"
-                                value={currentLiquidity}
-                                onChange={(e) => setCurrentLiquidity(e.target.value === '' ? '' : Number(e.target.value))}
-                                placeholder="0.00"
-                                step="0.01"
-                                className="form-input"
-                            />
+                    <div className="form-group">
+                        <label htmlFor="currentLiquidity">Current Liquidity (€)</label>
+                        <input
+                            type="number"
+                            id="currentLiquidity"
+                            value={currentLiquidity}
+                            onChange={(e) => setCurrentLiquidity(e.target.value === '' ? '' : Number(e.target.value))}
+                            placeholder="0.00"
+                            step="0.01"
+                            className="form-input"
+                        />
+                    </div>
+
+                    <div className="form-group">
+                        <label style={{ display: 'block', marginBottom: '0.5rem' }}>Minimum Liquidity Target</label>
+
+                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
+                            <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="liquidityType"
+                                    value="percent"
+                                    checked={liquidityType === 'percent'}
+                                    onChange={() => setLiquidityType('percent')}
+                                />
+                                Percentage of Value
+                            </label>
+                            <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="liquidityType"
+                                    value="fixed"
+                                    checked={liquidityType === 'fixed'}
+                                    onChange={() => setLiquidityType('fixed')}
+                                />
+                                Fixed Amount
+                            </label>
                         </div>
 
-                        <div className="form-group">
-                            <label htmlFor="minLiquidityPercentage">Min Liquidity (%)</label>
-                            <input
-                                type="number"
-                                id="minLiquidityPercentage"
-                                value={minLiquidityPercentage}
-                                onChange={(e) => setMinLiquidityPercentage(e.target.value === '' ? '' : Number(e.target.value))}
-                                placeholder="0"
-                                step="0.1"
-                                min="0"
-                                max="100"
-                                className="form-input"
-                            />
-                        </div>
+                        {liquidityType === 'percent' ? (
+                            <div className="input-with-suffix">
+                                <input
+                                    type="number"
+                                    id="minLiquidityPercentage"
+                                    value={minLiquidityPercentage}
+                                    onChange={(e) => setMinLiquidityPercentage(e.target.value === '' ? '' : Number(e.target.value))}
+                                    placeholder="e.g. 5"
+                                    step="0.1"
+                                    min="0"
+                                    max="100"
+                                    className="form-input"
+                                />
+                                <span className="input-suffix">%</span>
+                            </div>
+                        ) : (
+                            <div className="input-with-suffix">
+                                <span className="input-prefix">€</span>
+                                <input
+                                    type="number"
+                                    id="minLiquidityAmount"
+                                    value={minLiquidityAmount}
+                                    onChange={(e) => setMinLiquidityAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                                    placeholder="e.g. 1000"
+                                    step="1"
+                                    min="0"
+                                    className="form-input"
+                                    style={{ paddingLeft: '1.8rem' }}
+                                />
+                            </div>
+                        )}
                     </div>
 
                     <div className="form-actions">
@@ -107,6 +163,26 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
                     </div>
                 </form>
             </div>
+
+            <style>{`
+                .input-with-suffix {
+                    position: relative;
+                }
+                .input-suffix {
+                    position: absolute;
+                    right: 12px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    color: var(--text-secondary);
+                }
+                .input-prefix {
+                    position: absolute;
+                    left: 10px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    color: var(--text-secondary);
+                }
+            `}</style>
 
             <style>{`
                 .modal-overlay {
