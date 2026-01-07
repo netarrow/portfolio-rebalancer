@@ -54,7 +54,7 @@ app.get('/api/price', async (req, res) => {
                     if (await page.$(sel)) {
                         console.log(`MOT: Clicking cookie banner: ${sel}`);
                         await page.click(sel);
-                        await new Promise(r => setTimeout(r, 1000));
+                        await new Promise(r => setTimeout(r, 3000));
                         break;
                     }
                 }
@@ -66,7 +66,7 @@ app.get('/api/price', async (req, res) => {
              priceSelector = 'span.-formatPrice strong';
              
              try {
-                await page.waitForSelector(priceSelector, { timeout: 10000 });
+                await page.waitForSelector(priceSelector, { timeout: 30000 });
                 // CRITICAL FIX: Actually extract the price!
                 priceText = await page.$eval(priceSelector, el => el.textContent.trim());
              } catch(e) {
@@ -93,7 +93,7 @@ app.get('/api/price', async (req, res) => {
                  if (splashButton) {
                      await splashButton.click();
                      // Wait for splash to disappear or next content to load
-                     await new Promise(r => setTimeout(r, 3000));
+                     await new Promise(r => setTimeout(r, 5000));
                  }
              } catch (e) {
                  console.log('CPRAM Splash screen not found or timed out', e.message);
@@ -110,7 +110,7 @@ app.get('/api/price', async (req, res) => {
                  );
                  if (cookieButton) {
                      await cookieButton.click();
-                     await new Promise(r => setTimeout(r, 1000));
+                     await new Promise(r => setTimeout(r, 3000));
                  }
              } catch (e) {
                   // Ignore if cookie banner not found
@@ -121,7 +121,7 @@ app.get('/api/price', async (req, res) => {
              
              try {
                 // Wait for the data to be rendered
-                await page.waitForSelector('.headline-4', { timeout: 15000 });
+                await page.waitForSelector('.headline-4', { timeout: 30000 });
              } catch (e) {
                  console.warn('CPRAM: Timeout waiting for .headline-4 elements.');
              }
@@ -161,7 +161,7 @@ app.get('/api/price', async (req, res) => {
              
              // For JustETF, we use standard selector waiting
              try {
-                await page.waitForSelector(priceSelector, { timeout: 10000 });
+                await page.waitForSelector(priceSelector, { timeout: 30000 });
                 priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
              } catch (e) {
                  console.warn(`JustETF: Could not find price selector for ${isin}`);
