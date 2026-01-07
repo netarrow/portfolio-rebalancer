@@ -102,55 +102,28 @@ app.get('/api/price', async (req, res) => {
              }
 
              // Robust selector for price: Look for 'Valore dalla quota' label and find associated value
-             priceSelector = null; 
+             priceSelector = null;
+             
+             try {
+                // Wait for the data to be rendered
+                await page.waitForSelector('.headline-4', { timeout: 15000 });
+             } catch (e) {
+                 console.warn('CPRAM: Timeout waiting for .headline-4 elements.');
+             }
              
              const extractedData = await page.evaluate(() => {
-                // Strategy 1: Find label 'Valore dalla quota' and traverse up 1-2 levels to find the card
-                const strategies = [
-                    () => {
-                         // Logic from browser subagent: label -> parent -> price
-                         const allEls = Array.from(document.querySelectorAll('*'));
-                         const label = allEls.find(el => el.textContent && el.textContent.trim() === 'Valore dalla quota');
-                         if (!label) return null;
-                         
-                         // The structure is typically: Card > text-wrapper > label
-                         // URL check confirmed structure.
-                         // Try going up to find the container that holds both label and value
-                         let container = label.parentElement;
-                         // Check if this container has the value
-                         let valueEl = container.querySelector('.headline-4');
-                         if (!valueEl && container.parentElement) {
-                             container = container.parentElement;
-                             valueEl = container.querySelector('.headline-4');
-                         }
-                         if (!valueEl && container.parentElement) {
-                             // Try one more level up
-                             container = container.parentElement;
-                             valueEl = container.querySelector('.headline-4');
-                         }
-
-                         return valueEl ? valueEl.textContent.trim() : null;
-                    },
-                    () => {
-                         // Strategy: Find 'headline-5' with text 'Valore dalla quota' (if it's a headline)
-                         const h5 = Array.from(document.querySelectorAll('.headline-5')).find(h => h.textContent.includes('Valore dalla quota') || h.textContent.includes('Valore'));
-                         if (h5) {
-                             // Look for sibling or cousin with headline-4
-                             const container = h5.closest('div'); 
-                             if (container && container.parentElement) {
-                                  const val = container.parentElement.querySelector('.headline-4');
-                                  return val ? val.textContent.trim() : null;
-                             }
-                         }
-                         return null;
+                // Find all summary blocks (they incorrectly share id="list-item")
+                const items = document.querySelectorAll('#list-item');
+                
+                for (const item of items) {
+                    // Check if this block contains our target label
+                    if (item.textContent.includes('Valore dalla quota')) {
+                        // The price is in the class 'headline-4' within this block
+                        const valueEl = item.querySelector('.headline-4');
+                        if (valueEl) {
+                            return valueEl.textContent.trim();
+                        }
                     }
-                ];
-
-                for (const strategy of strategies) {
-                    try {
-                        const result = strategy();
-                        if (result) return result;
-                    } catch (e) {}
                 }
                 return null;
              });
@@ -160,8 +133,7 @@ app.get('/api/price', async (req, res) => {
                  // Store properly to be picked up below
                  priceText = extractedData;
              } else {
-                 console.warn('CPRAM: Could not extract value via manual DOM traversal. Returning null price.');
-                 // Do not throw error, do not screenshot. Just let priceText be undefined.
+                 console.warn('CPRAM: Could not extract value via label search. Returning null price.');
              }
 
         } else {
