@@ -206,7 +206,7 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                                     cx="50%"
                                     cy="50%"
                                     labelLine={false}
-                                    // label={renderCustomizedLabel} // Might be too crowded for names
+                                    label={renderCustomizedLabel}
                                     outerRadius={80}
                                     fill="#8884d8"
                                     dataKey="value"
@@ -300,8 +300,22 @@ const AllocationCharts: React.FC = () => {
 
     }, [transactions, marketData, totalAssets, brokers]);
 
+    // 4. Invested vs Liquidity Data
+    const investedVsLiquidityData = useMemo(() => {
+        const investedAmount = totalAssets.reduce((sum, a) => sum + a.currentValue, 0);
+        const liquidityAmount = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+
+        return [
+            { name: 'Invested', value: investedAmount },
+            { name: 'Liquidity', value: liquidityAmount }
+        ].filter(d => d.value > 0);
+    }, [totalAssets, brokers]);
+
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
-        return null; // Or show empty state
+        // Even if no assets, if we have liquidity we might want to show it?
+        // But the checks below rely on portfolioContributionData etc.
+        // Let's check if we have ANYTHING to show.
+        if (investedVsLiquidityData.length === 0) return null;
     }
 
     // Helper to get assets for a portfolio
@@ -327,6 +341,33 @@ const AllocationCharts: React.FC = () => {
                         Invested Capital Distribution
                     </h3>
                     <div className="charts-grid">
+                        {/* Invested vs Liquidity */}
+                        <div className="chart-card">
+                            <h4>Invested vs Liquidity</h4>
+                            <div style={{ width: '100%', height: 250 }}>
+                                <ResponsiveContainer>
+                                    <PieChart>
+                                        <Pie
+                                            data={investedVsLiquidityData}
+                                            cx="50%"
+                                            cy="50%"
+                                            labelLine={false}
+                                            label={renderCustomizedLabel}
+                                            outerRadius={80}
+                                            fill="#8884d8"
+                                            dataKey="value"
+                                        >
+                                            {investedVsLiquidityData.map((entry, index) => (
+                                                <Cell key={`cell-${index}`} fill={entry.name === 'Invested' ? '#3B82F6' : '#10B981'} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip content={<CustomTooltip />} />
+                                        <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
                         {/* By Portfolio */}
                         {portfolioContributionData.length > 0 && (
                             <div className="chart-card">

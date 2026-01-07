@@ -6,7 +6,9 @@ This project is an **Agentic Development Experiment** created with **Antigravity
 
 It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
 
-Considering is a personal usage tool, there are many semplification. Like local storage only, online scraping and not usage of official quote API. But if you are ok with these you can also use the tool accepting that is provided as-is.
+Considering is a personal usage tool, there are many semplification.
+Like local storage only, online scraping and not usage of official quote API, single currency EUR. 
+But if you are ok with these you can also use the tool accepting that is provided as-is.
 
 Tasks managed by the AI included:
 - Architecture refactoring (Unified Frontend/Backend)
@@ -61,6 +63,12 @@ Comprehensive history of all your investment activities.
 - **Broker Tracking**: See which broker executed each trade.
 - **Grouping**: Group transactions by Portfolio or Broker for easier analysis.
 - **Bulk Edit**: Update multiple transactions at once (e.g., assign broker, move portfolio).
+
+### Brokers
+Manage your brokers and liquidity.
+![Brokers Page](screenshots/brokers_page.png)
+- **Liquidity Tracking**: Monitor available cash per broker.
+- **Minimum Thresholds**: Set and track minimum liquidity requirements.
 
 ### Portfolio Management
 Organize your investments into distinct portfolios (e.g., "Retirement", "Risky Bets").
