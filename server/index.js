@@ -38,29 +38,44 @@ app.get('/api/price', async (req, res) => {
         });
         const page = await browser.newPage();
 
-        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36');
 
         let url, priceSelector, currencySelector, priceText;
 
         if (source === 'MOT') {
              url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
              
-             // Cookie popup handling for Borsa Italiana
+             // Cookie popup handling for Borsa Italiana - robust check
              await page.goto(url, { waitUntil: 'domcontentloaded' });
              
              try {
-                const cookieSelector = '#ccc-recommended-settings';
-                await page.waitForSelector(cookieSelector, { timeout: 3000 });
-                await page.click(cookieSelector);
+                const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
+                for (const sel of cookieSelectors) {
+                    if (await page.$(sel)) {
+                        console.log(`MOT: Clicking cookie banner: ${sel}`);
+                        await page.click(sel);
+                        await new Promise(r => setTimeout(r, 1000));
+                        break;
+                    }
+                }
              } catch (e) {
-                // Ignore if cookie banner not found
+                // Ignore
              }
              
-             priceSelector = '.t-text.-black-warm-60.-formatPrice strong';
-             // Currency is usually implied as EUR for BTP on MOT, but let's default or inspect if robust
-             currencySelector = null; // Will default to EUR
-             // Currency is usually implied as EUR for BTP on MOT, but let's default or inspect if robust
-             currencySelector = null; // Will default to EUR
+             // Robust selector: span.-formatPrice strong (removed color dependency)
+             priceSelector = 'span.-formatPrice strong';
+             
+             try {
+                await page.waitForSelector(priceSelector, { timeout: 10000 });
+                // CRITICAL FIX: Actually extract the price!
+                priceText = await page.$eval(priceSelector, el => el.textContent.trim());
+             } catch(e) {
+                 console.warn('MOT: Timeout waiting for price selector or extraction failed', e.message);
+                 await page.screenshot({ path: 'debug_mot_error.png' });
+             }
+
+             // Currency is usually implied as EUR for BTP on MOT
+             currencySelector = null; 
         } else if (source === 'CPRAM') {
              url = `https://cpram.com/ita/it/privati/products/${isin}`;
              await page.goto(url, { waitUntil: 'domcontentloaded' });
