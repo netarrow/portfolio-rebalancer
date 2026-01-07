@@ -34,7 +34,7 @@ app.get('/api/price', async (req, res) => {
 
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        let url, priceSelector, currencySelector;
+        let url, priceSelector, currencySelector, priceText;
 
         if (source === 'MOT') {
              url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
@@ -96,9 +96,7 @@ app.get('/api/price', async (req, res) => {
              }
 
              // Robust selector for price: Look for 'Valore dalla quota' label and find associated value
-             // We can use a function to find it dynamically to be more robust than a fixed selector
-             // But for now, let's use a function to evaluate the page content
-             priceSelector = null; // We will handle extraction manually below
+             priceSelector = null; 
              
              const extractedData = await page.evaluate(() => {
                 // Strategy 1: Find label 'Valore dalla quota' and traverse up 1-2 levels to find the card
@@ -152,24 +150,12 @@ app.get('/api/price', async (req, res) => {
              });
 
              if (extractedData) {
-                 // Format is usually "2.110,35 €"
-                 // Create a fake element for the logic below to 'find'
-                 // OR simpler: just return this value directly
                  console.log(`CPRAM Raw Price: ${extractedData}`);
-                 // Clean up for standard parsing logic below
-                 // We need to return here or adapt the common logic
-                 // Let's adapt by storing it in a variable that overrides selector logic
-                 
-                 // Reuse common logic:
-                 // priceText needs to be set.
-                 // The common logic does: quote = await page.$eval(priceSelector...)
-                 // Let's just mock the next step by injecting a custom script or logic branch? 
-                 // Actually better to just parse here and return, or setup a dummy selector if possible.
-                 // But since we already have the text, let's just make the common logic use it.
-                 // We will skip the 'waitForSelector(priceSelector)' if priceSelector is null.
-                 
-                 var manualPriceText = extractedData; 
-                 // Note: 'manualPriceText' is not declared in outer scope, so we should refactor slighty.
+                 // Store properly to be picked up below
+                 priceText = extractedData;
+             } else {
+                 console.warn('CPRAM: Could not extract value via manual DOM traversal. Returning null price.');
+                 // Do not throw error, do not screenshot. Just let priceText be undefined.
              }
 
         } else {
@@ -179,21 +165,14 @@ app.get('/api/price', async (req, res) => {
              
              priceSelector = '[data-testid="realtime-quotes_price-value"]';
              currencySelector = '[data-testid="realtime-quotes_price-currency"]';
-        }
-
-        let priceText;
-        if (source === 'CPRAM') {
-            if (typeof manualPriceText !== 'undefined' && manualPriceText !== null) {
-                priceText = manualPriceText;
-            } else {
-                const debugPath = path.resolve(__dirname, '../cpram_debug.png');
-                await page.screenshot({ path: debugPath });
-                console.log(`Saved debug screenshot to ${debugPath}`);
-                throw new Error('CPRAM: Could not extract value via manual DOM traversal');
-            }
-        } else {
-            await page.waitForSelector(priceSelector, { timeout: 10000 });
-            priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
+             
+             // For JustETF, we use standard selector waiting
+             try {
+                await page.waitForSelector(priceSelector, { timeout: 10000 });
+                priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
+             } catch (e) {
+                 console.warn(`JustETF: Could not find price selector for ${isin}`);
+             }
         }
 
         let currency = 'EUR';
@@ -209,6 +188,14 @@ app.get('/api/price', async (req, res) => {
         console.log(`Found price: ${priceText} ${currency}`);
 
         if (!priceText) {
+             if (source === 'CPRAM') {
+                 console.warn(`CPRAM: Price not found for ${isin}. Returning null.`);
+                 return res.json({
+                     currentPrice: null,
+                     currency: currency,
+                     lastUpdated: new Date().toISOString()
+                 });
+             }
              throw new Error('Price element empty');
         }
 
