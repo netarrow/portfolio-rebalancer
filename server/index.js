@@ -22,6 +22,12 @@ app.get('/api/price', async (req, res) => {
         return res.status(400).json({ error: 'ISIN is required' });
     }
 
+    // ISIN Validation: 2 uppercase letters + 9 alphanumeric + 1 check digit
+    const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
+    if (!isinRegex.test(isin)) {
+        return res.status(400).json({ error: 'Invalid ISIN format' });
+    }
+
     console.log(`Fetching price for ISIN: ${isin} from ${source}`);
 
     let browser;

@@ -11,8 +11,9 @@ export const fetchAssetPrice = async (isin: string, source: 'ETF' | 'MOT' | 'CPR
         // Call our local API (relative path)
         const response = await axios.get(`/api/price?isin=${isin}&source=${source}`);
         return response.data;
-    } catch (error) {
+    } catch (error: any) {
         console.error(`Error fetching price for ${isin}:`, error);
-        return null;
+        // Propagate error to let caller handle notification
+        throw error;
     }
 };
