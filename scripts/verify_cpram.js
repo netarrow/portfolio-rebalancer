@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const ISIN = 'LU1530899142'; // Requested for verification
-const PORT = 3001;
+const PORT = process.env.PORT || 3001;
 const BASE_URL = `http://localhost:${PORT}/api/price`;
 
 async function verifyCpram() {
