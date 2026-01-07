@@ -364,16 +364,38 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Get unique tickers
         const uniqueTickers = Array.from(new Set(transactions.map(t => t.ticker)));
 
+        // Track errors for reporting
+        const errors: string[] = [];
+
         await Promise.all(uniqueTickers.map(async (ticker) => {
             // Find asset setting source if available
             const setting = assetSettings.find(t => t.ticker === ticker);
             const source = setting?.source || 'ETF';
 
-            const data = await fetchAssetPrice(ticker, source);
-            if (data) {
-                updateMarketData(ticker, data.currentPrice, data.lastUpdated);
+            try {
+                const data = await fetchAssetPrice(ticker, source);
+                if (data) {
+                    updateMarketData(ticker, data.currentPrice, data.lastUpdated);
+                }
+            } catch (err: any) {
+                const msg = err.response?.data?.error || err.message || 'Unknown error';
+                errors.push(`${ticker}: ${msg}`);
             }
         }));
+
+        if (errors.length > 0) {
+            // Dynamic import for Swal to avoid potential heavy bundle load if not needed elsewhere immediately
+            // But it's already used in TargetSettings, so import might be fine. 
+            // Better to use import() since it's an event handler.
+            const Swal = (await import('sweetalert2')).default;
+
+            Swal.fire({
+                icon: 'error',
+                title: 'Price Update Issues',
+                html: `Some assets failed to update:<br/><ul style="text-align:left; font-size:0.9em;">${errors.map(e => `<li>${e}</li>`).join('')}</ul>`,
+                confirmButtonColor: '#d33'
+            });
+        }
     };
 
     // Derive Assets and Summary
