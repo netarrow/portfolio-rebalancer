@@ -75,13 +75,13 @@ Organize your investments into distinct portfolios (e.g., "Retirement", "Risky B
 ![Portfolios View](screenshots/portfolios_page.png)
 - **Isolation**: Each portfolio tracks its own contribution to your wealth.
 - **Goals**: Set different strategies for different portfolios.
+![Portfolio Targets](screenshots/portfolio_targets.png)
 
 ### Settings & Configuration
 Manage target allocations and external data sources.
 ![Settings Page](screenshots/settings_page.png)
 - **Asset Definitions**: Define asset classes (Stock, Bond, etc.) for each ISIN.
 - **Mock Data**: Quickly load sample data to test the application features.
-![Portfolio Targets](screenshots/portfolio_targets.png)
 
 ## Tech Stack
 - **Frontend**: React 19, TypeScript, Vite, Recharts
