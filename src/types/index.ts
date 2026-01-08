@@ -22,6 +22,7 @@ export interface Portfolio {
   name: string;
   description?: string;
   allocations?: Record<string, number>; // Ticker -> Percentage (0-100)
+  liquidity?: number; // Cash available for rebalancing
 }
 
 export interface Transaction {
