@@ -3,6 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import PortfolioForm from './PortfolioForm';
 import PortfolioAllocations from './PortfolioAllocations';
 import type { Portfolio } from '../../types';
+import Swal from 'sweetalert2';
 
 const PortfolioList: React.FC = () => {
     const { portfolios, addPortfolio, updatePortfolio, deletePortfolio, transactions } = usePortfolio();
@@ -30,10 +31,24 @@ const PortfolioList: React.FC = () => {
     };
 
     const handleDelete = (id: string, name: string) => {
-        const confirmMsg = `Are you sure you want to delete portfolio "${name}"? Transactions associated with this portfolio will be unlinked.`;
-        if (window.confirm(confirmMsg)) {
-            deletePortfolio(id);
-        }
+        Swal.fire({
+            title: 'Are you sure?',
+            text: `Are you sure you want to delete portfolio "${name}"? Transactions associated with this portfolio will be unlinked.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Yes, delete it!'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                deletePortfolio(id);
+                Swal.fire(
+                    'Deleted!',
+                    'Your portfolio has been deleted.',
+                    'success'
+                );
+            }
+        });
     };
 
     const openCreateModal = () => {

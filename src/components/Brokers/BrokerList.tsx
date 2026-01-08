@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import BrokerForm from './BrokerForm';
 import type { Broker } from '../../types';
+import Swal from 'sweetalert2';
 
 const BrokerList: React.FC = () => {
     const { brokers, addBroker, updateBroker, deleteBroker } = usePortfolio();
@@ -28,10 +29,24 @@ const BrokerList: React.FC = () => {
     };
 
     const handleDelete = (id: string, name: string) => {
-        const confirmMsg = `Are you sure you want to delete broker "${name}"?`;
-        if (window.confirm(confirmMsg)) {
-            deleteBroker(id);
-        }
+        Swal.fire({
+            title: 'Are you sure?',
+            text: `Are you sure you want to delete broker "${name}"?`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            cancelButtonColor: '#3085d6',
+            confirmButtonText: 'Yes, delete it!'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                deleteBroker(id);
+                Swal.fire(
+                    'Deleted!',
+                    'Your broker has been deleted.',
+                    'success'
+                );
+            }
+        });
     };
 
     const openCreateModal = () => {

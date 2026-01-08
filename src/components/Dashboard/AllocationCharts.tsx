@@ -3,6 +3,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets } from '../../utils/portfolioCalculations';
 import type { Asset } from '../../types';
+import PortfolioPyramid from './PortfolioPyramid';
 import './Dashboard.css';
 
 const RADIAN = Math.PI / 180;
@@ -423,6 +424,27 @@ const AllocationCharts: React.FC = () => {
                                         </PieChart>
                                     </ResponsiveContainer>
                                 </div>
+                            </div>
+                        )}
+
+                        {/* Portfolio Pyramid */}
+                        {portfolioContributionData.length > 0 && (
+                            <div className="chart-card" style={{ gridColumn: '1 / -1' }}>
+                                <h4>Total Wealth Distribution (Portfolios + Liquidity)</h4>
+                                <PortfolioPyramid
+                                    data={[
+                                        ...portfolioContributionData.map((d, i) => ({
+                                            ...d,
+                                            color: ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][i % 7]
+                                        })),
+                                        // Append Liquidity if > 0
+                                        ...(investedVsLiquidityData.find(d => d.name === 'Liquidity') ? [{
+                                            name: 'Total Liquidity',
+                                            value: investedVsLiquidityData.find(d => d.name === 'Liquidity')?.value || 0,
+                                            color: '#64748B' // Slate-500 for distinct "Cash" look, or reused Green? Let's use Slate/Gray to differentiate from Invested.
+                                        }] : [])
+                                    ]}
+                                />
                             </div>
                         )}
                     </div>

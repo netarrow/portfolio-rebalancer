@@ -88,10 +88,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 if (portfolio) {
                     newTransactions[index] = {
                         ...t,
-                        portfolioId: portfolio.id
-                        // We keep t.portfolio for now or could clear it. 
-                        // Keeping it for safety but portfolioId is the new source of truth for the relationship.
-                    };
+                        portfolioId: portfolio.id,
+                        // Clear legacy field to prevent resurrection during migration checks
+                        portfolio: undefined
+                    } as any;
                     transactionsChanged = true;
                 }
             }
@@ -145,10 +145,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 if (broker) {
                     newTransactions[index] = {
                         ...t,
-                        brokerId: broker.id
-                        // We keep t.broker for compatibility or could deprecate it.
-                        // brokerId is now the source of truth.
-                    };
+                        brokerId: broker.id,
+                        // Clear legacy field
+                        broker: undefined
+                    } as any;
                     transactionsChanged = true;
                 }
             }
