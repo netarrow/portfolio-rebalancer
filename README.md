@@ -25,6 +25,8 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 
 ### Key Features
 - **Smart Rebalancing**: Calculates exactly how much to buy/sell to meet target allocations.
+    -   **New Liquidity**: Option to inject fresh capital and simulate how it should be distributed.
+    -   **Flexible Modes**: Choose between **Total Rebalancing** (Buy/Sell to perfect target) or **Buy Only** (allocate capital without selling existing positions).
 - **Multi-Portfolio Support**: Create distinct portfolios (e.g., "Retirement", "Trading") and assigns transactions to them.
     - **Per-Portfolio Allocations**: Define specific asset allocation targets for each portfolio independently in the Settings.
     - **Portfolio Filtering**: Toggle the dashboard and transaction views to focus on a single portfolio or view the aggregate.
