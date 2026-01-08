@@ -315,23 +315,30 @@ const AllocationCharts: React.FC = () => {
 
     // 5. Goal Distribution (New Logic)
     const goalDistributionData = useMemo(() => {
-        const goalMap: Record<string, number> = {
-            'Speculative': 0,
-            'Growth': 0,
-            'Protection': 0,
-            'Emergency Fund': 0
+        const goalMap: Record<string, { value: number; breakdown: Record<string, number> }> = {
+            'Speculative': { value: 0, breakdown: {} },
+            'Growth': { value: 0, breakdown: {} },
+            'Protection': { value: 0, breakdown: {} },
+            'Emergency Fund': { value: 0, breakdown: {} }
         };
 
         // 1. Assets
         totalAssets.forEach(asset => {
             if (asset.currentValue <= 0) return;
             const goal = getAssetGoal(asset.assetClass, asset.assetSubClass);
-            goalMap[goal] += asset.currentValue;
+            goalMap[goal].value += asset.currentValue;
+
+            // Breakdown Label: e.g. "Bond (Short)" or "Stock (International)"
+            const label = `${asset.assetClass}${asset.assetSubClass ? ` (${asset.assetSubClass})` : ''}`;
+            goalMap[goal].breakdown[label] = (goalMap[goal].breakdown[label] || 0) + asset.currentValue;
         });
 
         // 2. Liquidity -> Emergency Fund
         const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
-        goalMap['Emergency Fund'] += totalLiquidity;
+        if (totalLiquidity > 0) {
+            goalMap['Emergency Fund'].value += totalLiquidity;
+            goalMap['Emergency Fund'].breakdown['Liquidity'] = (goalMap['Emergency Fund'].breakdown['Liquidity'] || 0) + totalLiquidity;
+        }
 
         // Colors for Goals
         const goalColors: Record<string, string> = {
@@ -341,21 +348,15 @@ const AllocationCharts: React.FC = () => {
             'Emergency Fund': '#F59E0B' // Amber/Yellow
         };
 
-        // Filter and sort for the pyramid (Bottom-up usually, but pyramid component might handle order)
-        // User wants: Speculative (Top) -> Growth -> Protection -> Emergency Fund (Bottom)
-        // The PortfolioPyramid tends to show largest at bottom? 
-        // Let's pass them in the order we want them to appear if the component supports it.
-        // Or if it sorts by value, we might just pass them and let it sort.
-        // Assuming Standard Pyramid: Largest Base.
-        // User Req: "graph ... must re-elaborate ... aggregati per goal".
-        // Let's return the data structure expected by PortfolioPyramid.
-
         return Object.entries(goalMap)
-            .filter(([_, value]) => value > 0)
-            .map(([name, value]) => ({
+            .filter(([_, data]) => data.value > 0)
+            .map(([name, data]) => ({
                 name,
-                value,
-                color: goalColors[name] || '#9CA3AF'
+                value: data.value,
+                color: goalColors[name] || '#9CA3AF',
+                breakdown: Object.entries(data.breakdown)
+                    .map(([label, val]) => ({ label, value: val }))
+                    .sort((a, b) => b.value - a.value)
             }))
             .sort((a, b) => b.value - a.value); // Standard largest at bottom behavior matches "Pyramid" usually.
 

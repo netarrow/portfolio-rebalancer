@@ -7,6 +7,7 @@ interface PortfolioPyramidProps {
         name: string;
         value: number;
         color: string;
+        breakdown?: { label: string; value: number }[];
     }[];
 }
 
@@ -14,7 +15,7 @@ const PortfolioPyramid: React.FC<PortfolioPyramidProps> = ({ data }) => {
     // Data must be sorted for the pyramid look.
     // Largest at bottom means in a horizontal bar chart (where Category 0 is top),
     // we want Smallest -> Largest.
-    const { chartData, categories, colors } = useMemo(() => {
+    const { chartData, categories, colors, sortedData } = useMemo(() => {
         // Sort: Smallest to Largest
         const sorted = [...data].sort((a, b) => a.value - b.value);
 
@@ -24,13 +25,12 @@ const PortfolioPyramid: React.FC<PortfolioPyramidProps> = ({ data }) => {
                 data: sorted.map(d => d.value)
             }],
             categories: sorted.map(d => d.name),
-            colors: sorted.map(d => d.color)
+            colors: sorted.map(d => d.color),
+            sortedData: sorted
         };
     }, [data]);
 
-    if (data.length === 0) return null;
-
-    const options: ApexOptions = {
+    const options: ApexOptions = useMemo(() => ({
         chart: {
             type: 'bar',
             height: 350,
@@ -86,14 +86,47 @@ const PortfolioPyramid: React.FC<PortfolioPyramidProps> = ({ data }) => {
         },
         tooltip: {
             theme: 'dark',
-            y: {
-                formatter: function (val) {
-                    return `€${val.toLocaleString('en-IE', { minimumFractionDigits: 2 })}`;
+            custom: function ({ dataPointIndex }: { dataPointIndex: number }) {
+                // dataPointIndex corresponds to the index in the series array.
+                const item = sortedData[dataPointIndex];
+
+                if (!item) return '';
+
+                const totalValue = item.value;
+                const totalFormatted = totalValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                let breakdownHtml = '';
+                if (item.breakdown && item.breakdown.length > 0) {
+                    breakdownHtml = `
+                        <div style="margin-top: 8px; border-top: 1px solid #444; padding-top: 4px;">
+                            ${item.breakdown.map((b: { label: string; value: number }) => `
+                                <div style="display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 2px;">
+                                    <span style="color: #ccc; margin-right: 12px;">${b.label}:</span>
+                                    <span style="color: #fff;">€${b.value.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
                 }
+
+                // Mimic standard ApexCharts dark tooltip style
+                return `
+                    <div class="arrow_box" style="padding: 10px; background: #1e1e1e; border: 1px solid #333;">
+                        <div style="font-weight: 600; font-size: 13px; color: ${item.color}; margin-bottom: 2px;">
+                            ${item.name}
+                        </div>
+                        <div style="font-size: 14px; font-weight: bold; color: #fff;">
+                            €${totalFormatted}
+                        </div>
+                        ${breakdownHtml}
+                    </div>
+                `;
             }
         },
         legend: { show: false }
-    };
+    }), [categories, colors, data, sortedData]);
+
+    if (data.length === 0) return null;
 
     return (
         <div className="portfolio-pyramid-container" style={{ width: '100%', minHeight: '350px' }}>
