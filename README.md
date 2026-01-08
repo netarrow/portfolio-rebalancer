@@ -1,4 +1,4 @@
-# Portfolio Rebalancer
+# Portfolio Rebalancer - Introduction
 
 This project is an **Agentic Development Experiment** created with **Antigravity** and **Gemini PRO**.
 
@@ -6,19 +6,18 @@ This project is an **Agentic Development Experiment** created with **Antigravity
 
 It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
  
-The goal of this tool was both to have a tool I was looking for, replacing a too much complex Excel.
+The goal was to create the tool I was looking for, replacing an overly complex Excel spreadsheet.
 
-But also took the chance to test also agentic development, and this was tested in extreme mode: all configured in "always proceed", I only owned orchestration at high level specifing features I wanted, and what I wanted to achived, and very limited architectural constraints and tecnical direction.
+It also served as an opportunity to test agentic development in **"extreme mode"**: with the agent configured to "always proceed," I only handled high-level orchestration—specifying desired features and goals—while providing very limited architectural constraints and technical direction.
 
-After that AI was free to code from skratch and completely, execute commands, tests, documenting, take screenshot automatically, deploy. It was even capable to automatically analize sites to build custom scrapers.
+The AI was free to code from scratch, execute commands, write and run tests, write documentation, take screenshots automatically, and deploy. It was even capable of automatically analyzing websites to build custom scrapers.
+The AI searched for external packages, investigated errors and issues on the web, and identified and implemented workarounds independently.
 
 All this was impressive.
 
-Considering is a personal usage tool, there are many semplification.
+Since this is a tool for personal use, there are several simplifications, such as using local storage only, relying on web scraping instead of official quote APIs, and supporting only a single currency (EUR).
 
-Like local storage only, online scraping and not usage of official quote API, single currency EUR. 
-
-But if you are ok with these you can also use the tool accepting that is provided as-is.
+However, if you are comfortable with these limitations, you are welcome to use the tool as-is.
 
 Tasks managed by the AI included:
 - Architecture refactoring (Unified Frontend/Backend)
@@ -27,7 +26,7 @@ Tasks managed by the AI included:
 - Automated Agentic Verification (Browser orchestration for E2E testing and documentation)
 - Mock data generation and upgrade during data structure change
 - Complex feature implementation (Multi-source scraping, Inline editing)
-- UI/UX layout and design optimization, with charts generation, customization
+- UI/UX layout and design optimization, including chart generation and customization
 
 ## Project Overview
 
