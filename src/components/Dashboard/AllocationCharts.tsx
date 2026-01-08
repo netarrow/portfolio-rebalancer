@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets } from '../../utils/portfolioCalculations';
+import { getAssetGoal } from '../../utils/goalCalculations';
 import type { Asset } from '../../types';
 import PortfolioPyramid from './PortfolioPyramid';
 import './Dashboard.css';
@@ -312,6 +313,54 @@ const AllocationCharts: React.FC = () => {
         ].filter(d => d.value > 0);
     }, [totalAssets, brokers]);
 
+    // 5. Goal Distribution (New Logic)
+    const goalDistributionData = useMemo(() => {
+        const goalMap: Record<string, number> = {
+            'Speculative': 0,
+            'Growth': 0,
+            'Protection': 0,
+            'Emergency Fund': 0
+        };
+
+        // 1. Assets
+        totalAssets.forEach(asset => {
+            if (asset.currentValue <= 0) return;
+            const goal = getAssetGoal(asset.assetClass, asset.assetSubClass);
+            goalMap[goal] += asset.currentValue;
+        });
+
+        // 2. Liquidity -> Emergency Fund
+        const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+        goalMap['Emergency Fund'] += totalLiquidity;
+
+        // Colors for Goals
+        const goalColors: Record<string, string> = {
+            'Speculative': '#EC4899', // Pink
+            'Growth': '#3B82F6',      // Blue
+            'Protection': '#10B981',  // Green
+            'Emergency Fund': '#F59E0B' // Amber/Yellow
+        };
+
+        // Filter and sort for the pyramid (Bottom-up usually, but pyramid component might handle order)
+        // User wants: Speculative (Top) -> Growth -> Protection -> Emergency Fund (Bottom)
+        // The PortfolioPyramid tends to show largest at bottom? 
+        // Let's pass them in the order we want them to appear if the component supports it.
+        // Or if it sorts by value, we might just pass them and let it sort.
+        // Assuming Standard Pyramid: Largest Base.
+        // User Req: "graph ... must re-elaborate ... aggregati per goal".
+        // Let's return the data structure expected by PortfolioPyramid.
+
+        return Object.entries(goalMap)
+            .filter(([_, value]) => value > 0)
+            .map(([name, value]) => ({
+                name,
+                value,
+                color: goalColors[name] || '#9CA3AF'
+            }))
+            .sort((a, b) => b.value - a.value); // Standard largest at bottom behavior matches "Pyramid" usually.
+
+    }, [totalAssets, brokers]);
+
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
         // Even if no assets, if we have liquidity we might want to show it?
         // But the checks below rely on portfolioContributionData etc.
@@ -428,22 +477,11 @@ const AllocationCharts: React.FC = () => {
                         )}
 
                         {/* Portfolio Pyramid */}
-                        {portfolioContributionData.length > 0 && (
+                        {goalDistributionData.length > 0 && (
                             <div className="chart-card" style={{ gridColumn: '1 / -1' }}>
                                 <h4>Total Wealth Distribution (Portfolios + Liquidity)</h4>
                                 <PortfolioPyramid
-                                    data={[
-                                        ...portfolioContributionData.map((d, i) => ({
-                                            ...d,
-                                            color: ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][i % 7]
-                                        })),
-                                        // Append Liquidity if > 0
-                                        ...(investedVsLiquidityData.find(d => d.name === 'Liquidity') ? [{
-                                            name: 'Total Liquidity',
-                                            value: investedVsLiquidityData.find(d => d.name === 'Liquidity')?.value || 0,
-                                            color: '#64748B' // Slate-500 for distinct "Cash" look, or reused Green? Let's use Slate/Gray to differentiate from Invested.
-                                        }] : [])
-                                    ]}
+                                    data={goalDistributionData}
                                 />
                             </div>
                         )}

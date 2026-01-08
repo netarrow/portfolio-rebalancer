@@ -5,6 +5,8 @@ This project is an **Agentic Development Experiment** created with **Antigravity
 **Codex (GPT 5.2 Plus)** was employed as a control agent to analyze the codebase and provide architectural, compliance and security insights.
 
 It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
+ 
+The goal of this tool was both to have a tool I was looking for
 
 Considering is a personal usage tool, there are many semplification.
 Like local storage only, online scraping and not usage of official quote API, single currency EUR. 
