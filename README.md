@@ -6,10 +6,18 @@ This project is an **Agentic Development Experiment** created with **Antigravity
 
 It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
  
-The goal of this tool was both to have a tool I was looking for
+The goal of this tool was both to have a tool I was looking for, replacing a too much complex Excel.
+
+But also took the chance to test also agentic development, and this was tested in extreme mode: all configured in "always proceed", I only owned orchestration at high level specifing features I wanted, and what I wanted to achived, and very limited architectural constraints and tecnical direction.
+
+After that AI was free to code from skratch and completely, execute commands, tests, documenting, take screenshot automatically, deploy. It was even capable to automatically analize sites to build custom scrapers.
+
+All this was impressive.
 
 Considering is a personal usage tool, there are many semplification.
+
 Like local storage only, online scraping and not usage of official quote API, single currency EUR. 
+
 But if you are ok with these you can also use the tool accepting that is provided as-is.
 
 Tasks managed by the AI included:
@@ -19,7 +27,7 @@ Tasks managed by the AI included:
 - Automated Agentic Verification (Browser orchestration for E2E testing and documentation)
 - Mock data generation and upgrade during data structure change
 - Complex feature implementation (Multi-source scraping, Inline editing)
-- UI/UX layout and design optimization
+- UI/UX layout and design optimization, with charts generation, customization
 
 ## Project Overview
 
