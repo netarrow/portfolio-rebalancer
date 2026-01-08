@@ -41,6 +41,12 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
     - **JustETF**: For standard ETFs.
     - **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
     - **CPRAM**: Custom Puppeteer for active funds
+- **Liquidity Management**:
+    -   **Broker Tracking**: dedicated view to manage cash/liquidity per broker.
+    -   **Thresholds**: Set minimum liquidity comparisons (%) to ensure cash buffers.
+- **Visual Enhancements**:
+    -   **Centered Pyramid**: "Invested Capital Distribution" now uses a centered funnel/pyramid visualization for immediate clarity.
+    -   **Premium UI**: Optimized spacing, hidden axes, and centered labels.
 - **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
 - **Custom Labels**: Assign custom display names to assets.
 
