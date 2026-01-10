@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast';
 
 interface LayoutProps {
   currentView: View;
@@ -39,6 +39,12 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             onClick={() => onNavigate('brokers')}
           >
             Brokers
+          </button>
+          <button
+            className={`nav-link ${currentView === 'forecast' ? 'active' : ''}`}
+            onClick={() => onNavigate('forecast')}
+          >
+            Forecast
           </button>
           <button
             className={`nav-link ${currentView === 'settings' ? 'active' : ''}`}
