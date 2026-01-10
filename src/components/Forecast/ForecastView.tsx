@@ -1,68 +1,41 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateForecastWithState, type ForecastPortfolioInput } from '../../utils/forecastCalculations';
+import { calculatePortfolioPerformance } from '../../utils/portfolioCalculations';
 
 const ForecastView: React.FC = () => {
-    const { portfolios, brokers, assets, marketData } = usePortfolio();
+    const { portfolios, brokers, marketData, transactions } = usePortfolio();
 
     // Inputs
     const [timeHorizon, setTimeHorizon] = useState<number>(10);
-    const [monthlySavings, setMonthlySavings] = useState<number>(1000);
+    const [monthlyIncome, setMonthlyIncome] = useState<number>(3000);
     const [monthlyExpenses, setMonthlyExpenses] = useState<number>(2000);
-    const [portfolioReturns, setPortfolioReturns] = useState<Record<string, number>>({});
 
-    // Initialize default returns if not set
-    useEffect(() => {
-        if (portfolios.length > 0 && Object.keys(portfolioReturns).length === 0) {
-            const defaults: Record<string, number> = {};
-            portfolios.forEach(p => {
-                defaults[p.id] = 5; // Default 5%
-            });
-            setPortfolioReturns(defaults);
-        }
-    }, [portfolios]);
+    // Calculated returns (Read-Only)
+    const portfolioPerformance = useMemo(() => {
+        const perf: Record<string, { cagr: number; years: number }> = {};
 
-    const handleReturnChange = (id: string, value: number) => {
-        setPortfolioReturns(prev => ({
-            ...prev,
-            [id]: value
-        }));
-    };
+        portfolios.forEach(p => {
+            // Filter transactions for this portfolio
+            // Note: Currently transaction.portfolioId is the way to link.
+            const pTx = transactions.filter(t => t.portfolioId === p.id);
+            const { cagr, yearsElapsed } = calculatePortfolioPerformance(pTx, marketData);
 
-    // Calculate current values for portfolios to pass to forecast
-    const enrichedPortfolios: ForecastPortfolioInput[] = useMemo(() => {
-        return portfolios.map(p => {
-            // Calculate total value of this portfolio based on assets
-            // We need a helper or do it here. 
-            // Assets need to be filtered by portfolio. 
-            // Currently assets don't have explicit portfolio link in `Asset` interface in `index.ts`?
-            // Wait, `Asset` is derived from transactions. 
-            // Transactions have `portfolioId`. 
-            // BUT `Asset` (calculated) doesn't explicitly store `portfolioId`? 
-            // Let's check `portfolioCalculations.ts` or just filter transactions again?
-            // Less efficient but safer: Filter assets matching transactions of this portfolio?
-            // Actually `assets` in context are aggregated by ticker. 
-            // If the same ticker is in multiple portfolios, `assets` array merges them?
-            // Checking `PortfolioContext.tsx`: `calculateAssets` aggregates by ticker.
-            // So `assets` in context are GLOBAL.
-            // We need PER PORTFOLIO value.
-            // We can re-calculate or just sum `allocations` * `price`? 
-            // No, `allocations` are just targets.
-            // We need to sum the actual holdings.
-            // We should use `transactions` to match portfolioId.
-            // But `transactions` is available in context.
-            // Let's use `transactions` to sum values.
-            return {
-                ...p,
-                currentValue: 0 // Placeholder, we will calculate below
+            // Fallback for empty/new portfolios to a conservative default?
+            // Or just 0.
+            perf[p.id] = {
+                cagr: isNaN(cagr) ? 0 : cagr,
+                years: yearsElapsed
             };
         });
-    }, [portfolios]);
+
+        return perf;
+    }, [portfolios, transactions, marketData]);
+
 
     // We need to calculate Current Portfolio Value properly.
     // Since `assets` are global, we might need to derive per-portfolio value from transactions + current prices.
-    const { transactions } = usePortfolio();
 
     const currentPortfolioValues = useMemo(() => {
         const values: Record<string, number> = {};
@@ -108,14 +81,21 @@ const ForecastView: React.FC = () => {
             currentValue: currentPortfolioValues[p.id] || 0
         }));
 
+        // Construct returns map from calculated performance
+        const returnsSearchMap: Record<string, number> = {};
+        portfolios.forEach(p => {
+            returnsSearchMap[p.id] = portfolioPerformance[p.id]?.cagr || 0;
+        });
+
         return calculateForecastWithState(
             inputPortfolios,
             brokers,
-            monthlySavings,
+            monthlyIncome,
+            monthlyExpenses,
             timeHorizon,
-            portfolioReturns
+            returnsSearchMap
         );
-    }, [portfolios, currentPortfolioValues, brokers, monthlySavings, timeHorizon, portfolioReturns]);
+    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance]);
 
     // Chart Config
     const chartOptions = {
@@ -174,11 +154,11 @@ const ForecastView: React.FC = () => {
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '1rem' }}>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Monthly Savings (€)</label>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Monthly Income (€)</label>
                     <input
                         type="number"
-                        value={monthlySavings}
-                        onChange={e => setMonthlySavings(Number(e.target.value))}
+                        value={monthlyIncome}
+                        onChange={e => setMonthlyIncome(Number(e.target.value))}
                         style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                 </div>
@@ -194,19 +174,31 @@ const ForecastView: React.FC = () => {
                     <small style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>For reference/tracking</small>
                 </div>
 
-                <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>Expected Returns (%)</h3>
-                {portfolios.map(p => (
-                    <div key={p.id} className="form-group" style={{ marginBottom: '0.75rem' }}>
-                        <label style={{ display: 'block', marginBottom: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>{p.name}</label>
-                        <input
-                            type="number"
-                            value={portfolioReturns[p.id] || 0}
-                            onChange={e => handleReturnChange(p.id, Number(e.target.value))}
-                            step="0.1"
-                            style={{ width: '100%', padding: '0.4rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
-                        />
-                    </div>
-                ))}
+                <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>Historical Performance</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {portfolios.map(p => {
+                        const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0 };
+                        return (
+                            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-input)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
+                                <div>
+                                    <div style={{ color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 500 }}>{p.name}</div>
+                                    <div style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>
+                                        {perf.years < 1 ? 'Last <1 year' : `${perf.years.toFixed(1)} years`}
+                                    </div>
+                                </div>
+                                <div style={{ textAlign: 'right' }}>
+                                    <div style={{ color: perf.cagr >= 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 600 }}>
+                                        {perf.cagr > 0 ? '+' : ''}{perf.cagr.toFixed(2)}%
+                                    </div>
+                                    <div style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>Ann. Return</div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '1rem', fontStyle: 'italic' }}>
+                    * Projections use these historical annual returns.
+                </div>
             </div>
 
             {/* Results Area */}
