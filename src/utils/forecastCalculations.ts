@@ -16,6 +16,7 @@ export const calculateForecastWithState = (
     portfolios: ForecastPortfolioInput[],
     brokers: Broker[],
     monthlySavings: number,
+    monthlyExpenses: number,
     timeHorizonYears: number,
     portfolioReturns: Record<string, number>
 ): ForecastResult[] => {
@@ -36,7 +37,44 @@ export const calculateForecastWithState = (
     }));
 
     for (let month = 1; month <= months; month++) {
-        let monthlyInflow = monthlySavings;
+        // Net Monthly Inflow = Savings - Expenses
+        // Assuming "Savings" input means "Income/Available" and "Expenses" reduces it.
+        // If result is negative, we drain liquidity? For now let's floor at 0 to avoid complexity unless asked.
+        // Actually, user said "take expenses into account". 
+        // Simple Interpretation: Investable = Max(0, Savings - Expenses)
+        let monthlyInflow = monthlySavings - monthlyExpenses;
+
+        if (monthlyInflow < 0) {
+            // Negative Cashflow: Withdraw from Liquidity first
+            let deficit = -monthlyInflow;
+
+            // Try to cover deficit with broker liquidity
+            brokerState.forEach(broker => {
+                if (deficit <= 0) return;
+
+                if (broker.liquidity > 0) {
+                    const contribution = Math.min(broker.liquidity, deficit);
+                    broker.liquidity -= contribution;
+                    deficit -= contribution;
+                }
+            });
+
+            // If deficit remains, what do we do? 
+            // 1. Sell assets? (Complex rebalancing)
+            // 2. Go into negative liquidity (Debt)?
+            // For now, let's allow negative liquidity on the first broker (or spread it) to represent debt/shortfall.
+            // This ensures Net Worth drops.
+            if (deficit > 0) {
+                // Force debit on first broker or spread?
+                // Let's just put remaining debt on the first broker found, or a "Main" one.
+                // Simple approach: Apply to first broker.
+                if (brokerState.length > 0) {
+                    brokerState[0].liquidity -= deficit;
+                }
+            }
+            // Inflow is now fully handled (absorbed by liquidity/debt)
+            monthlyInflow = 0;
+        }
 
         // 2. Liquidity Check & Replenishment
         // We need to know which broker holds which portfolio or if liquidity is global.
@@ -47,35 +85,27 @@ export const calculateForecastWithState = (
         let totalLiquidity = 0;
         let totalInvested = 0;
 
-        // Update Broker Liquidity from Inflow
-        // Strategy: Fill brokers proportionally or priority? 
-        // Simple strategy: Iterate and fill up to min requirement.
+        // Update Broker Liquidity from Inflow (Only if positive)
+        if (monthlyInflow > 0) {
+            brokerState.forEach(broker => {
+                let minReq = 0;
+                if (broker.minLiquidityType === 'fixed') {
+                    minReq = broker.minLiquidityAmount || 0;
+                } else if (broker.minLiquidityType === 'percent') {
+                    // SIMPLIFICATION: If 'percent', assume it's % of (Liquidity + Proportional Portfolio Value).
+                    // Let's assume we just fill the "Fixed" requirements first as they are absolute.
+                    minReq = broker.minLiquidityAmount || 0;
+                }
 
-        brokerState.forEach(broker => {
-            let minReq = 0;
-            if (broker.minLiquidityType === 'fixed') {
-                minReq = broker.minLiquidityAmount || 0;
-            } else if (broker.minLiquidityType === 'percent') {
-                // This is tricky: % of what? Usually % of total assets held at that broker.
-                // We don't easily know total assets per broker without summing all assets.
-                // For this forecast, that might be too complex to simulate accurately per broker 
-                // without mapping every asset to a broker.
-                // SIMPLIFICATION: If 'percent', assume it's % of (Liquidity + Proportional Portfolio Value).
-                // OR: Just ignore percent for now and rely on fixed, OR ask user for a "Global Liquidity Target".
-                // Given the prompt: "risparmio deve prima di tutto assicurarsi che le liquidità minime sui broker siano mantenute"
-                // I will try to estimate.
-                // Let's assume we just fill the "Fixed" requirements first as they are absolute.
-                minReq = broker.minLiquidityAmount || 0;
-            }
-
-            const current = broker.liquidity;
-            if (current < minReq) {
-                const deficit = minReq - current;
-                const contribution = Math.min(monthlyInflow, deficit);
-                broker.liquidity += contribution;
-                monthlyInflow -= contribution;
-            }
-        });
+                const current = broker.liquidity;
+                if (current < minReq) {
+                    const deficit = minReq - current;
+                    const contribution = Math.min(monthlyInflow, deficit);
+                    broker.liquidity += contribution;
+                    monthlyInflow -= contribution;
+                }
+            });
+        }
 
         // 3. Investment of Surplus
         if (monthlyInflow > 0) {
