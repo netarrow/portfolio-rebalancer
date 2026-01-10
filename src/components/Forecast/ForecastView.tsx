@@ -8,9 +8,9 @@ const ForecastView: React.FC = () => {
     const { portfolios, brokers, marketData, transactions } = usePortfolio();
 
     // Inputs
-    const [timeHorizon, setTimeHorizon] = useState<number>(10);
-    const [monthlyIncome, setMonthlyIncome] = useState<number>(3000);
-    const [monthlyExpenses, setMonthlyExpenses] = useState<number>(2000);
+    const [timeHorizon, setTimeHorizon] = useState<number | ''>('');
+    const [monthlyIncome, setMonthlyIncome] = useState<number | ''>('');
+    const [monthlyExpenses, setMonthlyExpenses] = useState<number | ''>('');
 
     // Calculated returns (Read-Only)
     const portfolioPerformance = useMemo(() => {
@@ -90,9 +90,9 @@ const ForecastView: React.FC = () => {
         return calculateForecastWithState(
             inputPortfolios,
             brokers,
-            monthlyIncome,
-            monthlyExpenses,
-            timeHorizon,
+            Number(monthlyIncome) || 0,
+            Number(monthlyExpenses) || 0,
+            Number(timeHorizon) || 10,
             returnsSearchMap
         );
     }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance]);
@@ -148,7 +148,8 @@ const ForecastView: React.FC = () => {
                     <input
                         type="number"
                         value={timeHorizon}
-                        onChange={e => setTimeHorizon(Number(e.target.value))}
+                        onChange={e => setTimeHorizon(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="10"
                         style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                 </div>
@@ -158,7 +159,8 @@ const ForecastView: React.FC = () => {
                     <input
                         type="number"
                         value={monthlyIncome}
-                        onChange={e => setMonthlyIncome(Number(e.target.value))}
+                        onChange={e => setMonthlyIncome(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="0"
                         style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                 </div>
@@ -168,7 +170,8 @@ const ForecastView: React.FC = () => {
                     <input
                         type="number"
                         value={monthlyExpenses}
-                        onChange={e => setMonthlyExpenses(Number(e.target.value))}
+                        onChange={e => setMonthlyExpenses(e.target.value === '' ? '' : Number(e.target.value))}
+                        placeholder="0"
                         style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                     <small style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>For reference/tracking</small>
