@@ -54,7 +54,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           </button>
         </nav>
       </header>
-      <main className={`content ${currentView === 'transactions' ? 'full-width' : ''}`}>
+      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' ? 'full-width' : ''}`}>
         {children}
       </main>
 
