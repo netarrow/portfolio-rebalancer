@@ -18,7 +18,8 @@ export const calculateForecastWithState = (
     monthlySavings: number,
     monthlyExpenses: number,
     timeHorizonYears: number,
-    portfolioReturns: Record<string, number>
+    portfolioReturns: Record<string, number>,
+    yearlyExpenses: { year: number; amount: number }[] = []
 ): ForecastResult[] => {
     const months = timeHorizonYears * 12;
     const results: ForecastResult[] = [];
@@ -43,6 +44,19 @@ export const calculateForecastWithState = (
         // Actually, user said "take expenses into account". 
         // Simple Interpretation: Investable = Max(0, Savings - Expenses)
         let monthlyInflow = monthlySavings - monthlyExpenses;
+
+        // Apply Yearly Expenses (in the first month of the specific year)
+        // month 1 = Year 1, month 13 = Year 2, etc.
+        const currentYear = Math.ceil(month / 12);
+        const isStartOfYear = (month - 1) % 12 === 0;
+
+        if (isStartOfYear) {
+            const expensesForYear = yearlyExpenses
+                .filter(e => e.year === currentYear)
+                .reduce((sum, e) => sum + e.amount, 0);
+
+            monthlyInflow -= expensesForYear;
+        }
 
         if (monthlyInflow < 0) {
             // Negative Cashflow: Withdraw from Liquidity first
