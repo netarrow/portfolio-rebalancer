@@ -7,7 +7,8 @@ export interface ForecastResult {
     liquidityValue: number;
     portfolios: Record<string, number>;
     cashflow: number;
-    failed?: boolean;
+    insolvent?: boolean;
+    ruleBreach?: boolean;
     failureReason?: string;
 }
 
@@ -49,7 +50,8 @@ export const calculateForecastWithState = (
         primaryGoal: p.primaryGoal || 'Growth' // Default fallback
     }));
 
-    let hasFailed = false;
+    let hasInsolvency = false;
+    let hasRuleBreach = false;
     let failureReason = '';
 
     for (let month = 1; month <= months; month++) {
@@ -102,9 +104,23 @@ export const calculateForecastWithState = (
             const eligibleTotalValue = eligiblePortfolios.reduce((sum, p) => sum + p.value, 0);
 
             if (eligibleTotalValue < expenseAmount) {
-                // FAILURE: Insufficient funds in eligible portfolios
-                hasFailed = true;
-                failureReason = `Insufficient funds in ${allowedTypes?.join(', ') || 'All Portfolios'} for Year ${currentYear}. Needed €${expenseAmount.toFixed(0)}, available €${eligibleTotalValue.toFixed(0)}.`;
+                // Check Global Solvency (All Portfolios + Liquidity)
+                const allPortfoliosValue = portfolioState.reduce((sum, p) => sum + p.value, 0);
+                const allLiquidity = brokerState.reduce((sum, b) => sum + b.liquidity, 0);
+                const totalGlobal = allPortfoliosValue + allLiquidity;
+
+                if (totalGlobal < expenseAmount) {
+                    // INSOLVENCY: Impossible to pay even if we broke all rules
+                    hasInsolvency = true;
+                    failureReason = `Insolvency Year ${currentYear}: Needed €${expenseAmount.toFixed(0)}, available €${totalGlobal.toFixed(0)}.`;
+                } else {
+                    // RULE BREACH: Can pay, but unauthorized
+                    hasRuleBreach = true;
+                    // Only overwrite reason if it's the first breach, or if we escalate to insolvency later
+                    if (!failureReason || !hasInsolvency) {
+                        failureReason = `Risk Warning Year ${currentYear}: Insufficient funds in ${allowedTypes?.join(', ') || 'All Allowed Protocols'}. Needed €${expenseAmount.toFixed(0)}.`;
+                    }
+                }
             }
 
             if (eligibleTotalValue > 0) {
@@ -114,9 +130,19 @@ export const calculateForecastWithState = (
                     p.value -= withdraw;
                 });
             } else {
-                // Fallback: Force debt on main broker
-                if (brokerState.length > 0) {
-                    brokerState[0].liquidity -= expenseAmount;
+                // Fallback: If we are here, we either breached rules or are insolvent.
+                // Logic: Iterate ALL portfolios if eligible are empty/insufficient, to show the impact on Net Worth.
+                if (portfolioState.length > 0) {
+                    const totalP = portfolioState.reduce((sum, p) => sum + p.value, 0);
+                    if (totalP > 0) {
+                        portfolioState.forEach(p => {
+                            const share = (p.value / totalP) * expenseAmount;
+                            p.value -= Math.min(p.value, share);
+                        });
+                    } else {
+                        // Debt on broker
+                        if (brokerState.length > 0) brokerState[0].liquidity -= expenseAmount;
+                    }
                 }
             }
         }
@@ -151,10 +177,6 @@ export const calculateForecastWithState = (
                         p.value -= withdraw;
                     });
                 }
-                // If still deficit after draining everything, it's true debt (negative liquidity on main broker?)
-                // For now, if portfolios are empty, we just let it go. 
-                // Alternatively we could track negative liquidity.
-                // Let's stop here as requested ("ridistribuito sui diversi portafogli")
             }
 
             // Inflow is now fully handled
@@ -224,7 +246,8 @@ export const calculateForecastWithState = (
                 return acc;
             }, {} as Record<string, number>),
             cashflow: currentCashflow,
-            failed: hasFailed,
+            insolvent: hasInsolvency,
+            ruleBreach: hasRuleBreach,
             failureReason: failureReason || undefined
         });
     }

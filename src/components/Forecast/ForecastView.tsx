@@ -221,24 +221,43 @@ const ForecastView: React.FC = () => {
         }))
     ];
 
-    const finalResult = forecastData[forecastData.length - 1] || { totalValue: 0, investedValue: 0, liquidityValue: 0, failed: false, failureReason: '' };
+    const finalResult = forecastData[forecastData.length - 1] || { totalValue: 0, investedValue: 0, liquidityValue: 0, insolvent: false, ruleBreach: false, failureReason: '' };
     const startValue = forecastData[0]?.totalValue || 0;
-    const failureDetected = forecastData.find(d => d.failed);
+
+    // Find first occurrence of issues
+    const insolvencyDetected = forecastData.find(d => d.insolvent);
+    const ruleBreachDetected = forecastData.find(d => d.ruleBreach);
 
     const sustainabilityStatus = useMemo(() => {
         if (!startValue) return { status: 'Unknown', color: 'var(--text-tertiary)', icon: '?' };
 
-        if (failureDetected) {
+        if (insolvencyDetected) {
             return {
                 status: 'Failed',
-                label: 'Failed - Insufficient Funds',
-                tooltip: failureDetected.failureReason,
+                label: 'Failed - Insolvency',
+                tooltip: insolvencyDetected.failureReason,
                 color: '#EF4444',
                 icon: (
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
                         <line x1="12" y1="9" x2="12" y2="13"></line>
                         <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                )
+            };
+        }
+
+        if (ruleBreachDetected) {
+            return {
+                status: 'Risky',
+                label: 'Risky - Rule Hazard',
+                tooltip: ruleBreachDetected.failureReason,
+                color: '#ea580c', // Orange-600
+                icon: (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2a10 10 0 1 0 10 10H12V2z"></path>
+                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
                     </svg>
                 )
             };
@@ -281,7 +300,7 @@ const ForecastView: React.FC = () => {
                 )
             };
         }
-    }, [startValue, finalResult.totalValue, failureDetected]);
+    }, [startValue, finalResult.totalValue, insolvencyDetected, ruleBreachDetected]);
 
     return (
         <div className="forecast-container" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 320px) 1fr 280px', gap: '1.5rem', width: '100%', maxWidth: '100%' }}>
