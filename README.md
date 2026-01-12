@@ -55,6 +55,10 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 - **Liquidity Management**:
     -   **Broker Tracking**: dedicated view to manage cash/liquidity per broker.
     -   **Thresholds**: Set minimum liquidity comparisons (%) to ensure cash buffers.
+- **Financial Forecast**:
+    - **Projection**: Estimate net worth and liquidity over a custom time horizon.
+    - **Sustainability Checks**: Automatically flags plans as "OK", "Risky" (rule breach), or "Failed" (insolvency).
+    - **Custom Expenses**: Add one-off annual expenses to refine the simulation.
 - **Visual Enhancements**:
     -   **Centered Pyramid**: "Invested Capital Distribution" now uses a centered funnel/pyramid visualization for immediate clarity.
     -   **Premium UI**: Optimized spacing, hidden axes, and centered labels.
@@ -86,6 +90,17 @@ Manage your brokers and liquidity.
 ![Brokers Page](screenshots/brokers_page.png)
 - **Liquidity Tracking**: Monitor available cash per broker.
 - **Minimum Thresholds**: Set and track minimum liquidity requirements.
+
+### Forecast
+Project your financial future based on current assets, savings, and expenses.
+![Forecast OK](screenshots/forecast_ok.png)
+- **Sustainability Analysis**: Checks if your plan survives your time horizon.
+    - **OK**: All expenses covered, liquidity maintained.
+    - **Risky**: Expenses covered, but rules (e.g., minimum liquidity) breached.
+    ![Forecast Risky](screenshots/forecast_riskyplan.png)
+    - **Failed**: Insolvency reached before the end of the horizon.
+    ![Forecast Failed](screenshots/forecast_failed.png)
+- **Simulation**: Visualize net worth growth and liquidity usage over time.
 
 ### Portfolio Management
 Organize your investments into distinct portfolios (e.g., "Retirement", "Risky Bets").
