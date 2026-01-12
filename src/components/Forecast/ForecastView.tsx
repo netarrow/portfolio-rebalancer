@@ -143,7 +143,18 @@ const ForecastView: React.FC = () => {
         fill: { type: 'gradient' },
         dataLabels: { enabled: false },
         stroke: { curve: 'smooth' as 'smooth', width: 2 },
-        tooltip: { theme: 'dark' }
+        tooltip: {
+            theme: 'dark',
+            x: {
+                formatter: (val: string, opts: any) => {
+                    const data = forecastData[opts.dataPointIndex];
+                    return data ? `${val} (Total: €${Math.round(data.totalValue).toLocaleString()})` : val;
+                }
+            },
+            y: {
+                formatter: (val: number) => `€${Math.round(val).toLocaleString()}`
+            }
+        }
     };
 
     const chartSeries = [

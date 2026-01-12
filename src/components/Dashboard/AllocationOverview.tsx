@@ -177,6 +177,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                 <div className="allocation-row" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
                     <div style={{ flex: 1 }}>Asset</div>
                     <div style={{ width: '100px', textAlign: 'right' }}>Qty</div>
+                    <div style={{ width: '100px', textAlign: 'right' }}>Pmc</div>
                     <div style={{ width: '110px', textAlign: 'right' }}>Mkt Price</div>
                     <div style={{ width: '110px', textAlign: 'right' }}>Value</div>
                     <div style={{ width: '110px', textAlign: 'right' }}>Gain</div>
