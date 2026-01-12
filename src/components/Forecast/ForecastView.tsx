@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateForecastWithState, type ForecastPortfolioInput } from '../../utils/forecastCalculations';
+import { calculateForecastWithState } from '../../utils/forecastCalculations';
 import { calculatePortfolioPerformance } from '../../utils/portfolioCalculations';
 
 const ForecastView: React.FC = () => {
@@ -11,6 +11,27 @@ const ForecastView: React.FC = () => {
     const [timeHorizon, setTimeHorizon] = useState<number | ''>('');
     const [monthlyIncome, setMonthlyIncome] = useState<number | ''>('');
     const [monthlyExpenses, setMonthlyExpenses] = useState<number | ''>('');
+    const [yearlyExpenses, setYearlyExpenses] = useState<{ id: string; year: number; amount: number; description: string }[]>([]);
+    const [newExpYear, setNewExpYear] = useState<number | ''>('');
+    const [newExpAmount, setNewExpAmount] = useState<number | ''>('');
+    const [newExpDesc, setNewExpDesc] = useState('');
+
+    const handleAddExpense = () => {
+        if (!newExpYear || !newExpAmount) return;
+        setYearlyExpenses([...yearlyExpenses, {
+            id: crypto.randomUUID(),
+            year: Number(newExpYear),
+            amount: Number(newExpAmount),
+            description: newExpDesc || 'Expense'
+        }]);
+        setNewExpYear('');
+        setNewExpAmount('');
+        setNewExpDesc('');
+    };
+
+    const handleRemoveExpense = (id: string) => {
+        setYearlyExpenses(yearlyExpenses.filter(e => e.id !== id));
+    };
 
     // Calculated returns (Read-Only)
     const portfolioPerformance = useMemo(() => {
@@ -93,9 +114,10 @@ const ForecastView: React.FC = () => {
             Number(monthlyIncome) || 0,
             Number(monthlyExpenses) || 0,
             Number(timeHorizon) || 10,
-            returnsSearchMap
+            returnsSearchMap,
+            yearlyExpenses.map(e => ({ year: e.year, amount: e.amount }))
         );
-    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance]);
+    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses]);
 
     // Chart Config
     const chartOptions = {
@@ -117,7 +139,7 @@ const ForecastView: React.FC = () => {
                 style: { colors: '#9ca3af' }
             }
         },
-        colors: ['#10b981', '#3b82f6', '#8b5cf6'],
+        colors: undefined, // Let ApexCharts use default palette or provide a larger one if needed
         fill: { type: 'gradient' },
         dataLabels: { enabled: false },
         stroke: { curve: 'smooth' as 'smooth', width: 2 },
@@ -129,10 +151,10 @@ const ForecastView: React.FC = () => {
             name: 'Total Liquidity',
             data: forecastData.map(d => Math.round(d.liquidityValue))
         },
-        {
-            name: 'Invested Capital',
-            data: forecastData.map(d => Math.round(d.investedValue))
-        }
+        ...portfolios.map(p => ({
+            name: p.name,
+            data: forecastData.map(d => Math.round(d.portfolios[p.id] || 0))
+        }))
     ];
 
     const finalResult = forecastData[forecastData.length - 1] || { totalValue: 0, investedValue: 0, liquidityValue: 0 };
@@ -175,6 +197,59 @@ const ForecastView: React.FC = () => {
                         style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
                     <small style={{ color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>For reference/tracking</small>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Planned Annual Expenses</label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <input
+                            type="number"
+                            value={newExpYear}
+                            onChange={e => setNewExpYear(e.target.value === '' ? '' : Number(e.target.value))}
+                            placeholder="Year (e.g. 5)"
+                            style={{ padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)', width: '100%' }}
+                        />
+                        <input
+                            type="number"
+                            value={newExpAmount}
+                            onChange={e => setNewExpAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                            placeholder="Amount (€)"
+                            style={{ padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)', width: '100%' }}
+                        />
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                        <input
+                            type="text"
+                            value={newExpDesc}
+                            onChange={e => setNewExpDesc(e.target.value)}
+                            placeholder="Description (optional)"
+                            style={{ flex: 1, padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+                        />
+                        <button
+                            onClick={handleAddExpense}
+                            style={{ padding: '0.5rem 1rem', background: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                        >
+                            Add
+                        </button>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        {yearlyExpenses.sort((a, b) => a.year - b.year).map(expense => (
+                            <div key={expense.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-input)', padding: '0.5rem', borderRadius: 'var(--radius-md)', fontSize: '0.9rem' }}>
+                                <div>
+                                    <span style={{ fontWeight: 600, color: 'var(--color-accent)' }}>Year {expense.year}:</span>
+                                    <span style={{ marginLeft: '0.5rem', color: 'var(--text-primary)' }}>€{expense.amount.toLocaleString()}</span>
+                                    {expense.description && <span style={{ marginLeft: '0.5rem', color: 'var(--text-tertiary)', fontSize: '0.8rem' }}>({expense.description})</span>}
+                                </div>
+                                <button
+                                    onClick={() => handleRemoveExpense(expense.id)}
+                                    style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.5rem' }}
+                                >
+                                    &times;
+                                </button>
+                            </div>
+                        ))}
+                    </div>
                 </div>
 
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>Historical Performance</h3>
