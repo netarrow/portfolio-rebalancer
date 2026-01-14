@@ -65,6 +65,24 @@ export const calculateAssets = (
         }
     });
 
+    // 2. Add "Ghost Assets" from targets that haven't been touched by transactions yet
+    targets.forEach(target => {
+        const ticker = target.ticker.toUpperCase();
+        if (!assetMap.has(ticker)) {
+            // Found a defined asset with no transactions
+            assetMap.set(ticker, {
+                ticker: ticker,
+                label: target.label,
+                assetClass: target.assetClass || 'Stock',
+                assetSubClass: target.assetSubClass || 'International',
+                quantity: 0,
+                averagePrice: 0,
+                currentValue: 0,
+                currentPrice: 0
+            });
+        }
+    });
+
     // Calculate final stats using Market Data if available
     const assetsList = Array.from(assetMap.values()).map(asset => {
         // Prefer market data if available
