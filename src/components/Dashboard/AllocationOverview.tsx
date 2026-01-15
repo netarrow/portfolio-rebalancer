@@ -176,15 +176,16 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
                 <div className="allocation-row" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
                     <div style={{ flex: 1 }}>Asset</div>
-                    <div style={{ width: '100px', textAlign: 'right' }}>Qty</div>
-                    <div style={{ width: '100px', textAlign: 'right' }}>Pmc</div>
-                    <div style={{ width: '110px', textAlign: 'right' }}>Mkt Price</div>
-                    <div style={{ width: '110px', textAlign: 'right' }}>Value</div>
-                    <div style={{ width: '110px', textAlign: 'right' }}>Gain</div>
-                    <div style={{ width: '80px', textAlign: 'right' }}>Target</div>
-                    <div style={{ width: '80px', textAlign: 'right' }}>Actual</div>
-                    <div style={{ width: '130px', textAlign: 'right' }}>Action</div>
-                    <div style={{ width: '130px', textAlign: 'right' }}>Buy Only</div>
+                    <div style={{ width: '100px', textAlign: 'center' }}>Qty</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Pmc</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Mkt Price</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Value</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Gain</div>
+                    <div style={{ width: '80px', textAlign: 'center' }}>Target</div>
+                    <div style={{ width: '80px', textAlign: 'center' }}>Actual</div>
+                    <div style={{ width: '130px', textAlign: 'center' }}>Action</div>
+                    <div style={{ width: '130px', textAlign: 'center' }}>Buy Only</div>
+                    <div style={{ width: '90px', textAlign: 'center' }}>Post Buy %</div>
                 </div>
 
                 {allTickers.length === 0 ? (
@@ -193,6 +194,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                     allTickers.map(ticker => {
                         const asset = assets.find(a => a.ticker === ticker);
                         const currentValue = asset ? asset.currentValue : 0;
+                        const currentPrice = asset?.currentPrice || 0;
 
                         // Actual % should be based on TOTAL (Invested + Liquidity) or just Invested?
                         // Usually Rebalancing compares Target % vs (Asset / TotalCapital).
@@ -207,11 +209,38 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                         if (quantity <= 0 && targetPerc <= 0) return null;
 
                         // Rebalance Calc
-                        // Target Value = TotalCapital * Target%
+                        // 1. Ideal Monetary Diff
                         const targetValue = totalPortfolioValue * (targetPerc / 100);
-                        const rebalanceAmount = targetValue - currentValue;
+                        const idealDiff = targetValue - currentValue;
 
-                        const buyOnlyAmount = buyOnlyAllocations[ticker] || 0;
+                        // 2. Integer Share Optimization (Executability)
+                        let rebalanceShares = 0;
+                        let rebalanceAmount = idealDiff; // Default to ideal if no price (shouldn't happen for active assets)
+
+                        if (currentPrice > 0) {
+                            // Round to nearest share
+                            rebalanceShares = Math.round(idealDiff / currentPrice);
+                            rebalanceAmount = rebalanceShares * currentPrice;
+                        }
+
+                        const buyOnlyAmountIdeal = buyOnlyAllocations[ticker] || 0;
+                        let buyOnlyShares = 0;
+                        let buyOnlyAmount = buyOnlyAmountIdeal;
+
+                        if (currentPrice > 0) {
+                            // Buy Only is already conceptually "shares" in previous logic, but stored as amount.
+                            // Let's recover shares:
+                            buyOnlyShares = Math.round(buyOnlyAmountIdeal / currentPrice);
+                            buyOnlyAmount = buyOnlyAmountIdeal; // It is already integer-aligned from computation
+                        }
+
+
+                        // Projected % after Buy Only
+                        // Assumption: Buy Only action consumes existing Liquidity, so TotalPortfolioValue (Equity + Cash) is constant.
+                        // projectedPerc = (NewEquity / TotalPortfolioValue) * 100
+                        const projectedPerc = totalPortfolioValue > 0
+                            ? ((currentValue + buyOnlyAmount) / totalPortfolioValue) * 100
+                            : 0;
 
                         const setting = assetSettings.find(s => s.ticker === ticker);
                         const assetClass = setting?.assetClass || asset?.assetClass || 'Stock';
@@ -228,13 +257,16 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
                                 rebalanceAmount={rebalanceAmount}
+                                rebalanceShares={rebalanceShares}
                                 buyOnlyAmount={buyOnlyAmount}
+                                buyOnlyShares={buyOnlyShares}
                                 currentValue={asset?.currentValue || 0}
                                 quantity={asset?.quantity || 0}
                                 averagePrice={asset?.averagePrice || 0}
                                 currentPrice={asset?.currentPrice || 0}
                                 gain={asset?.gain || 0}
                                 gainPerc={asset?.gainPercentage || 0}
+                                projectedPerc={projectedPerc}
                             />
                         );
                     })
@@ -252,27 +284,28 @@ interface RowProps {
     currentPerc: number;
     targetPerc: number;
     rebalanceAmount: number;
+    rebalanceShares: number; // ADDED
     buyOnlyAmount: number;
+    buyOnlyShares: number; // ADDED
     currentValue: number;
     quantity: number;
     averagePrice: number;
     currentPrice: number;
     gain: number;
     gainPerc: number;
+    projectedPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, buyOnlyAmount, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, projectedPerc }) => {
     const diff = currentPerc - targetPerc;
 
     const colorMap: Record<string, string> = {
-        'Stock': 'dot-etf', // Reuse existing class names for now or map to new ones
+        'Stock': 'dot-etf',
         'Bond': 'dot-bond',
         'Commodity': 'dot-commodity',
         'Crypto': 'dot-crypto'
     };
 
-    // Fallback if css classes aren't updated yet, but 'dot-etf' / 'dot-bond' exist
-    // We should ideally update CSS to have generic classes like 'dot-blue', 'dot-green', etc. or class-specific
     const colorClass = colorMap[assetClass] || 'dot-neutral';
 
     return (
@@ -288,23 +321,23 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSub
                 </div>
             </div>
 
-            <div style={{ width: '100px', textAlign: 'right' }}>
+            <div style={{ width: '100px', textAlign: 'center' }}>
                 {parseFloat(quantity.toFixed(4))}
             </div>
 
-            <div style={{ width: '110px', textAlign: 'right' }}>
+            <div style={{ width: '110px', textAlign: 'center' }}>
                 €{averagePrice.toFixed(2)}
             </div>
 
-            <div style={{ width: '110px', textAlign: 'right' }}>
+            <div style={{ width: '110px', textAlign: 'center' }}>
                 €{currentPrice.toFixed(2)}
             </div>
 
-            <div style={{ width: '110px', textAlign: 'right' }}>
+            <div style={{ width: '110px', textAlign: 'center' }}>
                 €{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </div>
 
-            <div style={{ width: '110px', textAlign: 'right', fontSize: '0.9rem' }}>
+            <div style={{ width: '110px', textAlign: 'center', fontSize: '0.9rem' }}>
                 <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                     {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
                 </div>
@@ -313,39 +346,49 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSub
                 </div>
             </div>
 
-            <div style={{ width: '80px', textAlign: 'right' }}>
+            <div style={{ width: '80px', textAlign: 'center' }}>
                 {targetPerc}%
             </div>
 
-            <div style={{ width: '80px', textAlign: 'right' }}>
+            <div style={{ width: '80px', textAlign: 'center' }}>
                 <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
                 <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
                     {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
                 </div>
             </div>
 
-            <div style={{ width: '130px', textAlign: 'right' }}>
+            <div style={{ width: '130px', textAlign: 'center' }}>
                 <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                    {Math.abs(rebalanceAmount) < 5 ? ( // Threshold to ignore small dust
+                    {rebalanceShares === 0 ? (
                         <span className="trend-neutral">OK</span>
                     ) : (
-                        <>
-                            {rebalanceAmount > 0 ? 'Buy' : 'Sell'} €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                        </>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                            <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                            </span>
+                        </div>
                     )}
                 </div>
             </div>
 
-            <div style={{ width: '130px', textAlign: 'right' }}>
+            <div style={{ width: '130px', textAlign: 'center' }}>
                 <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
-                    {buyOnlyAmount < 5 ? (
+                    {buyOnlyShares === 0 ? (
                         <span className="trend-neutral">-</span>
                     ) : (
-                        <>
-                            Buy €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                        </>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                            <span>Buy {Math.abs(buyOnlyShares)}</span>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                            </span>
+                        </div>
                     )}
                 </div>
+            </div>
+
+            <div style={{ width: '90px', textAlign: 'center' }}>
+                <div style={{ color: 'var(--text-muted)' }}>{projectedPerc.toFixed(1)}%</div>
             </div>
         </div>
     );
