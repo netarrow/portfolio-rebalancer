@@ -361,8 +361,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Also cleaner separation.
         const { fetchAssetPrice } = await import('../services/marketData');
 
-        // Get unique tickers
-        const uniqueTickers = Array.from(new Set(transactions.map(t => t.ticker)));
+        // Get unique tickers from both transactions and assetSettings (unmanaged assets)
+        const uniqueTickers = Array.from(new Set([
+            ...transactions.map(t => t.ticker),
+            ...assetSettings.map(a => a.ticker)
+        ]));
 
         // Track errors for reporting
         const errors: string[] = [];
