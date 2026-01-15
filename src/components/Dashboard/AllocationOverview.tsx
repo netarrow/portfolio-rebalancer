@@ -314,10 +314,6 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSub
                 <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
                 <div>
                     <strong>{label || ticker}</strong>
-                    {label && <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{ticker}</div>}
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                        {assetClass} {assetSubClass ? `• ${assetSubClass}` : ''}
-                    </div>
                 </div>
             </div>
 
