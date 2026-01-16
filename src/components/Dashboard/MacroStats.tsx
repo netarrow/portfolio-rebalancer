@@ -4,6 +4,7 @@ import { getAssetGoal } from '../../utils/goalCalculations';
 import type { FinancialGoal } from '../../utils/goalCalculations';
 import type { AssetClass } from '../../types';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import PortfolioPyramid from './PortfolioPyramid';
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'];
 
@@ -48,9 +49,11 @@ const MacroStats: React.FC = () => {
         // Prepare Data for Charts & Recommendations
         const macros = Object.entries(macroValues).map(([key, value]) => {
             const target = macroAllocations[key as AssetClass] || 0;
-            const currentPercent = (value / totalValue) * 100;
+            // Use totalInvested for Macro calculation to exclude Liquidity
+            const currentPercent = totalInvested > 0 ? (value / totalInvested) * 100 : 0;
             const diffPercent = currentPercent - target;
-            const diffValue = totalValue * (target / 100) - value; // Positive = Buy, Negative = Sell
+            // Calculate diff value based on invested capital
+            const diffValue = totalInvested * (target / 100) - value; // Positive = Buy, Negative = Sell
 
             return {
                 name: key,
@@ -80,11 +83,38 @@ const MacroStats: React.FC = () => {
             };
         });
 
-        return { totalValue, macros, goals };
+        // Goals Target (for Pyramid)
+        const goalColors: Record<string, string> = {
+            'Speculative': '#EC4899', // Pink
+            'Growth': '#3B82F6',      // Blue
+            'Protection': '#10B981',  // Green
+            'Emergency Fund': '#F59E0B', // Amber
+            'Liquidity': '#F59E0B' // Amber
+        };
+
+        const goalTargets = (() => {
+            const tempTargets: Record<string, number> = {};
+
+            Object.entries(goalAllocations).forEach(([key, inputTarget]) => {
+                const targetPercent = inputTarget || 0;
+                const targetValue = totalValue * (targetPercent / 100);
+
+                // Merge 'Liquidity' into 'Emergency Fund'
+                const normalizedKey = key === 'Liquidity' ? 'Emergency Fund' : key;
+                tempTargets[normalizedKey] = (tempTargets[normalizedKey] || 0) + targetValue;
+            });
+
+            return Object.entries(tempTargets).map(([key, value]) => ({
+                name: key,
+                value,
+                color: goalColors[key] || '#9CA3AF'
+            })).filter(d => d.value > 0);
+        })();
+
+
+        return { totalValue, macros, goals, goalTargets };
 
     }, [assets, brokers, macroAllocations, goalAllocations]);
-
-
 
 
     if (!stats) return null;
@@ -128,7 +158,7 @@ const MacroStats: React.FC = () => {
                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip formatter={(value: number) => `€${value.toLocaleString()}`} />
+                                <Tooltip formatter={(value: number) => `€${(value || 0).toLocaleString()}`} />
                                 <Legend />
                             </PieChart>
                         </ResponsiveContainer>
@@ -137,18 +167,19 @@ const MacroStats: React.FC = () => {
                         <thead>
                             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>
                                 <th style={{ padding: '0.5rem' }}>Class</th>
-                                <th>Actual</th>
-                                <th>Target</th>
-                                <th>Action</th>
+                                <th style={{ textAlign: 'right' }}>Actual</th>
+                                <th style={{ textAlign: 'right' }}>Target</th>
+                                <th style={{ textAlign: 'right' }}>Action</th>
                             </tr>
                         </thead>
                         <tbody>
                             {stats.macros.map(m => (
                                 <tr key={m.name} style={{ borderBottom: '1px solid var(--border-color)' }}>
                                     <td style={{ padding: '0.5rem' }}>{m.name}</td>
-                                    <td>{m.currentPercent.toFixed(1)}%</td>
-                                    <td>{m.targetPercent > 0 ? m.targetPercent + '%' : '-'}</td>
+                                    <td style={{ textAlign: 'right' }}>{m.currentPercent.toFixed(1)}%</td>
+                                    <td style={{ textAlign: 'right' }}>{m.targetPercent > 0 ? m.targetPercent + '%' : '-'}</td>
                                     <td style={{
+                                        textAlign: 'right',
                                         color: Math.abs(m.diffValue) < 50 ? 'var(--text-muted)' : (m.action === 'Buy' ? 'var(--color-success)' : 'var(--color-danger)'),
                                         fontWeight: 500
                                     }}>
@@ -162,45 +193,28 @@ const MacroStats: React.FC = () => {
 
                 {/* Goals Chart & Table */}
                 <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-                    <h3>Goal Allocation</h3>
-                    <div style={{ width: '100%', height: 250 }}>
-                        <ResponsiveContainer>
-                            <PieChart>
-                                <Pie
-                                    data={stats.goals}
-                                    dataKey="currentValue"
-                                    nameKey="name"
-                                    cx="50%"
-                                    cy="50%"
-                                    labelLine={false}
-                                    label={renderCustomizedLabel}
-                                    outerRadius={80}
-                                >
-                                    {stats.goals.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                                    ))}
-                                </Pie>
-                                <Tooltip formatter={(value: number) => `€${value.toLocaleString()}`} />
-                                <Legend />
-                            </PieChart>
-                        </ResponsiveContainer>
+                    <h3>Goal Allocation (Target)</h3>
+                    <div style={{ width: '100%', height: 250, display: 'flex', alignItems: 'center' }}>
+                        {/* Replaced Pie with Pyramid */}
+                        <PortfolioPyramid data={stats.goalTargets} />
                     </div>
                     <table style={{ width: '100%', marginTop: '1rem', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>
                                 <th style={{ padding: '0.5rem' }}>Goal</th>
-                                <th>Actual</th>
-                                <th>Target</th>
-                                <th>Action</th>
+                                <th style={{ textAlign: 'right' }}>Actual</th>
+                                <th style={{ textAlign: 'right' }}>Target</th>
+                                <th style={{ textAlign: 'right' }}>Action</th>
                             </tr>
                         </thead>
                         <tbody>
                             {stats.goals.map(g => (
                                 <tr key={g.name} style={{ borderBottom: '1px solid var(--border-color)' }}>
                                     <td style={{ padding: '0.5rem' }}>{g.name}</td>
-                                    <td>{g.currentPercent.toFixed(1)}%</td>
-                                    <td>{g.targetPercent > 0 ? g.targetPercent + '%' : '-'}</td>
+                                    <td style={{ textAlign: 'right' }}>{g.currentPercent.toFixed(1)}%</td>
+                                    <td style={{ textAlign: 'right' }}>{g.targetPercent > 0 ? g.targetPercent + '%' : '-'}</td>
                                     <td style={{
+                                        textAlign: 'right',
                                         color: Math.abs(g.diffValue) < 50 ? 'var(--text-muted)' : (g.action === 'Buy' ? 'var(--color-success)' : 'var(--color-danger)'),
                                         fontWeight: 500
                                     }}>
