@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { PortfolioProvider } from './context/PortfolioContext';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -21,8 +21,13 @@ const DashboardView = () => (
   <div className="dashboard-container">
     <SummaryCards />
     <BrokerPerformance />
-    <AllocationCharts />
     <AllocationOverview />
+  </div>
+);
+
+const StatsView = () => (
+  <div className="dashboard-container">
+    <AllocationCharts />
   </div>
 );
 
@@ -62,6 +67,7 @@ function App() {
       case 'portfolios': return <PortfoliosView />;
       case 'brokers': return <BrokersView />;
       case 'forecast': return <ForecastView />;
+      case 'stats': return <StatsView />;
       default: return <DashboardView />;
     }
   };
