@@ -1,15 +1,21 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import type { FinancialGoal } from '../../utils/goalCalculations';
 import type { AssetClass } from '../../types';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import PortfolioPyramid from './PortfolioPyramid';
+import ProposedDistributionModal from './ProposedDistributionModal';
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'];
 
 const MacroStats: React.FC = () => {
-    const { assets, brokers, macroAllocations, goalAllocations } = usePortfolio();
+    const { assets, brokers, macroAllocations, goalAllocations, updateGoalAllocation, updateMacroAllocation } = usePortfolio();
+
+    const [isGoalProposalOpen, setIsGoalProposalOpen] = useState(false);
+    const [isAssetProposalOpen, setIsAssetProposalOpen] = useState(false);
+    const [proposedGoalData, setProposedGoalData] = useState<Record<string, number>>({});
+    const [proposedAssetData, setProposedAssetData] = useState<Record<string, number>>({});
 
     // 1. Calculate Totals and Allocations
     const stats = useMemo(() => {
@@ -116,6 +122,85 @@ const MacroStats: React.FC = () => {
 
     }, [assets, brokers, macroAllocations, goalAllocations]);
 
+    const handleProposeGoal = () => {
+        // Based on Macro Allocations (Asset Class)
+        // Strategy: 
+        // Stock -> Growth
+        // Bond -> Protection
+        // Crypto/Commodity -> Speculative
+        // Remaining ? -> Emergency Fund (Assume 0 or user manages manually, usually Macro ignores Liquidity)
+
+        const proposal: Record<string, number> = {
+            'Growth': macroAllocations['Stock'] || 0,
+            'Protection': macroAllocations['Bond'] || 0,
+            'Speculative': (macroAllocations['Crypto'] || 0) + (macroAllocations['Commodity'] || 0),
+            'Emergency Fund': 0 // Macro doesn't cover this well as it excludes liquidity
+        };
+
+        // Normalize? Macro targets sum to 100 (ideally). 
+        // But Goal targets should include Liquidity/Emergency Fund which is OUTSIDE Macro (Invested) usually?
+        // Wait, Goal Allocation covers Total Net Worth (Invested + Liquidity).
+        // Macro Allocation covers Invested Only.
+        // So we cannot map 1:1 if we want to be precise.
+        // However, user asked for "Coherent distribution".
+
+        // Let's assume we keep the 'invested' proportions for goals, and leave Emergency Fund as is (current Goal setting).
+        const currentEmergency = goalAllocations['Emergency Fund'] || 0;
+        const currentLiquidity = goalAllocations['Liquidity'] || 0; // If any
+        const totalSafety = currentEmergency + currentLiquidity;
+
+        // Remaining text for invested part
+        const remainingForInvested = 100 - totalSafety;
+
+        // Now scale the Macro targets (sum=100 of invested) to fit into 'remainingForInvested'
+        proposal['Growth'] = (proposal['Growth'] / 100) * remainingForInvested;
+        proposal['Protection'] = (proposal['Protection'] / 100) * remainingForInvested;
+        proposal['Speculative'] = (proposal['Speculative'] / 100) * remainingForInvested;
+        proposal['Emergency Fund'] = currentEmergency; // Keep existing
+        if (goalAllocations['Liquidity']) proposal['Liquidity'] = currentLiquidity;
+
+        setProposedGoalData(proposal);
+        setIsGoalProposalOpen(true);
+    };
+
+    const handleProposeAsset = () => {
+        // Based on Goal Allocations
+        // Growth -> Stock
+        // Protection -> Bond
+        // Speculative -> Crypto (mostly)
+
+        // We need to ignore Emergency Fund / Liquidity as Asset/Macro Allocation is only for Invested.
+        const relevantGoals = {
+            'Growth': goalAllocations['Growth'] || 0,
+            'Protection': goalAllocations['Protection'] || 0,
+            'Speculative': goalAllocations['Speculative'] || 0
+        };
+
+        const totalRelevant = Object.values(relevantGoals).reduce((a, b) => a + b, 0);
+
+        if (totalRelevant === 0) {
+            import('sweetalert2').then(Swal => {
+                Swal.default.fire({
+                    icon: 'warning',
+                    title: 'Missing Goal Targets',
+                    text: 'Please set your Goal Allocations (Growth, Protection, etc.) first so we can propose a matching asset distribution.',
+                    confirmButtonColor: '#3B82F6'
+                });
+            });
+            return;
+        }
+
+        const proposal: Record<string, number> = {
+            'Stock': (relevantGoals['Growth'] / totalRelevant) * 100,
+            'Bond': (relevantGoals['Protection'] / totalRelevant) * 100,
+            'Crypto': (relevantGoals['Speculative'] / totalRelevant) * 100,
+            'Commodity': 0 // Default to 0 or split speculative? Hard to say.
+        };
+
+        setProposedAssetData(proposal);
+        setIsAssetProposalOpen(true);
+    };
+
 
     if (!stats) return null;
 
@@ -140,7 +225,16 @@ const MacroStats: React.FC = () => {
 
                 {/* Macro Chart & Table */}
                 <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-                    <h3>Asset Allocation</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3>Asset Allocation</h3>
+                        <button
+                            className="btn-text"
+                            onClick={handleProposeGoal}
+                            style={{ fontSize: '0.85rem', color: 'var(--color-primary)', textDecoration: 'underline', cursor: 'pointer', background: 'none', border: 'none', padding: 0, zIndex: 1000 }}
+                        >
+                            Propose Goal Distribution
+                        </button>
+                    </div>
                     <div style={{ width: '100%', height: 250 }}>
                         <ResponsiveContainer>
                             <PieChart>
@@ -158,7 +252,7 @@ const MacroStats: React.FC = () => {
                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
-                                <Tooltip formatter={(value: number) => `€${(value || 0).toLocaleString()}`} />
+                                <Tooltip formatter={(value: number | undefined) => `€${(value || 0).toLocaleString()}`} />
                                 <Legend />
                             </PieChart>
                         </ResponsiveContainer>
@@ -193,7 +287,16 @@ const MacroStats: React.FC = () => {
 
                 {/* Goals Chart & Table */}
                 <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-                    <h3>Goal Allocation (Target)</h3>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3>Goal Allocation (Target)</h3>
+                        <button
+                            className="btn-text"
+                            onClick={handleProposeAsset}
+                            style={{ fontSize: '0.85rem', color: 'var(--color-primary)', textDecoration: 'underline', cursor: 'pointer', background: 'none', border: 'none', padding: 0, zIndex: 1000 }}
+                        >
+                            Propose Asset Distribution
+                        </button>
+                    </div>
                     <div style={{ width: '100%', height: 250, display: 'flex', alignItems: 'center' }}>
                         {/* Replaced Pie with Pyramid */}
                         <PortfolioPyramid data={stats.goalTargets} />
@@ -226,6 +329,24 @@ const MacroStats: React.FC = () => {
                     </table>
                 </div>
             </div>
+
+            <ProposedDistributionModal
+                isOpen={isGoalProposalOpen}
+                onClose={() => setIsGoalProposalOpen(false)}
+                title="Propose Goal Distribution"
+                currentData={goalAllocations as any}
+                proposedData={proposedGoalData}
+                onApply={() => updateGoalAllocation(proposedGoalData as any)}
+            />
+
+            <ProposedDistributionModal
+                isOpen={isAssetProposalOpen}
+                onClose={() => setIsAssetProposalOpen(false)}
+                title="Propose Asset Distribution"
+                currentData={macroAllocations as any}
+                proposedData={proposedAssetData}
+                onApply={() => updateMacroAllocation(proposedAssetData as any)}
+            />
         </div>
     );
 };
