@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation } from '../types';
 
 // Legacy Type for Migration
 type Target = AssetDefinition & { targetPercentage?: number };
@@ -13,11 +13,15 @@ interface PortfolioContextType {
     portfolios: Portfolio[];
     brokers: Broker[];
     summary: PortfolioSummary;
+    macroAllocations: MacroAllocation;
+    goalAllocations: GoalAllocation;
     addTransaction: (transaction: Transaction) => void;
     updateTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
     updateAssetSettings: (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     updatePortfolioAllocation: (portfolioId: string, ticker: string, percentage: number) => void;
+    updateMacroAllocation: (allocations: MacroAllocation) => void;
+    updateGoalAllocation: (allocations: GoalAllocation) => void;
     updateTransactionsBulk: (ids: string[], updates: Partial<Transaction>) => void;
     refreshPrices: () => Promise<void>;
     resetPortfolio: () => void;
@@ -54,6 +58,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [portfolios, setPortfolios] = useLocalStorage<Portfolio[]>('portfolio_list', []);
     const [brokers, setBrokers] = useLocalStorage<Broker[]>('portfolio_brokers', []);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
+
+    // New State for Macro/Goal Targets
+    const [macroAllocations, setMacroAllocations] = useLocalStorage<MacroAllocation>('portfolio_macro_targets', {});
+    const [goalAllocations, setGoalAllocations] = useLocalStorage<GoalAllocation>('portfolio_goal_targets', {});
 
     // Migration Effect 3: Migrate free-text portfolios to Portfolio entities
     useEffect(() => {
@@ -338,6 +346,14 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
     };
 
+    const updateMacroAllocation = (allocations: MacroAllocation) => {
+        setMacroAllocations(allocations);
+    };
+
+    const updateGoalAllocation = (allocations: GoalAllocation) => {
+        setGoalAllocations(allocations);
+    };
+
     // Deprecated adapter
     const updateTarget = (ticker: string, percentage: number, source?: 'ETF' | 'MOT', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
         updateAssetSettings(ticker, source, label, assetClass, assetSubClass);
@@ -354,6 +370,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setBrokers([]);
         setMarketData({});
         setOldTargets([]);
+        setMacroAllocations({});
+        setGoalAllocations({});
     };
 
     const refreshPrices = async () => {
@@ -508,6 +526,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         assetSettings,
         assets,
         summary,
+        macroAllocations,
+        goalAllocations,
         addTransaction,
         updateTransaction,
         updateTransactionsBulk,
@@ -515,6 +535,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateTarget,
         updateAssetSettings,
         updatePortfolioAllocation,
+        updateMacroAllocation,
+        updateGoalAllocation,
         refreshPrices,
         resetPortfolio,
         loadMockData,

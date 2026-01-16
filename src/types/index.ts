@@ -17,6 +17,16 @@ export type AssetSubClass =
   | 'Gold'                        // Commodity
   | '';                           // Crypto/None
 
+export type FinancialGoal = 'Growth' | 'Protection' | 'Emergency Fund' | 'Speculative' | 'Liquidity';
+
+export type MacroAllocation = {
+  [key in AssetClass]?: number;
+};
+
+export type GoalAllocation = {
+  [key in FinancialGoal]?: number;
+};
+
 export interface Portfolio {
   id: string;
   name: string;
