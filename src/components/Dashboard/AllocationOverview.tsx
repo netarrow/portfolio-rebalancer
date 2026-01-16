@@ -184,6 +184,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                     <div style={{ width: '80px', textAlign: 'center' }}>Target</div>
                     <div style={{ width: '80px', textAlign: 'center' }}>Actual</div>
                     <div style={{ width: '130px', textAlign: 'center' }}>Action</div>
+                    <div style={{ width: '90px', textAlign: 'center' }}>Post Act %</div>
                     <div style={{ width: '130px', textAlign: 'center' }}>Buy Only</div>
                     <div style={{ width: '90px', textAlign: 'center' }}>Post Buy %</div>
                 </div>
@@ -242,6 +243,19 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                             ? ((currentValue + buyOnlyAmount) / totalPortfolioValue) * 100
                             : 0;
 
+                        // Projected % after Rebalancing (Buy/Sell)
+                        // This assumes full rebalancing: NewValue = CurrentValue + RebalanceAmount (Buy is +, Sell is -)
+                        // And usually Standard Rebalancing tends to keep Total Portfolio Value same (Sell X to Buy Y), 
+                        // UNLESS we are adding liquidity? 
+                        // Standard rebalance in this tool seems to be "Ideal Diff" based on CURRENT Total Value (Assets + Liq).
+                        // So if we execute it, the Asset Value becomes TargetValue.
+                        // So PostRebalance % should be virtually equal to Target %, unless integer share rounding makes it slightly different.
+                        // Let's calculate exactly based on integer shares:
+                        const postRebalanceValue = currentValue + rebalanceAmount;
+                        const postRebalancePerc = totalPortfolioValue > 0
+                            ? (postRebalanceValue / totalPortfolioValue) * 100
+                            : 0;
+
                         const setting = assetSettings.find(s => s.ticker === ticker);
                         const assetClass = setting?.assetClass || asset?.assetClass || 'Stock';
                         const assetSubClass = setting?.assetSubClass || asset?.assetSubClass || '';
@@ -266,6 +280,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                                 currentPrice={asset?.currentPrice || 0}
                                 gain={asset?.gain || 0}
                                 gainPerc={asset?.gainPercentage || 0}
+                                postRebalancePerc={postRebalancePerc}
                                 projectedPerc={projectedPerc}
                             />
                         );
@@ -293,10 +308,11 @@ interface RowProps {
     currentPrice: number;
     gain: number;
     gainPerc: number;
+    postRebalancePerc: number;
     projectedPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, projectedPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc }) => {
     const diff = currentPerc - targetPerc;
 
     const colorMap: Record<string, string> = {
@@ -366,6 +382,10 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSub
                         </div>
                     )}
                 </div>
+            </div>
+
+            <div style={{ width: '90px', textAlign: 'center' }}>
+                <div style={{ color: 'var(--text-muted)' }}>{postRebalancePerc.toFixed(1)}%</div>
             </div>
 
             <div style={{ width: '130px', textAlign: 'center' }}>
