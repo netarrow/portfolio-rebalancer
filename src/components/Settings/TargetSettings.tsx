@@ -3,6 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
 import Swal from 'sweetalert2';
+import MacroSettings from './MacroSettings';
 
 const TargetSettings: React.FC = () => {
     const { assetSettings, updateAssetSettings, assets, resetPortfolio, loadMockData } = usePortfolio();
@@ -113,9 +114,17 @@ const TargetSettings: React.FC = () => {
 
     const activeTickers = allTickers; // Show all
 
+    // ... (existing imports)
+
+    // Inside TargetSettings component, before return
     return (
         <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
+            <MacroSettings />
+
+            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
+
             <h2>Asset Registry & Settings</h2>
+            {/* ... existing content ... */}
             <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-6)' }}>
                 Configure asset labels, classes and price sources.
                 <br /><small>Target allocations are now configured per-portfolio in the Portfolios tab.</small>

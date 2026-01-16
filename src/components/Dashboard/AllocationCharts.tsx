@@ -5,6 +5,7 @@ import { calculateAssets } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import type { Asset } from '../../types';
 import PortfolioPyramid from './PortfolioPyramid';
+import MacroStats from './MacroStats';
 import './Dashboard.css';
 
 const RADIAN = Math.PI / 180;
@@ -375,9 +376,14 @@ const AllocationCharts: React.FC = () => {
         return calculateAssets(filteredTxs, assetSettings, marketData).assets;
     };
 
+    // ...
+
     return (
         <div className="charts-section">
             <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '2rem' }}>Portfolio Distribution</h2>
+
+            <MacroStats />
+            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
 
             {/* Portfolio Contribution Chart */}
             {(portfolioContributionData.length > 0 || brokerContributionData.length > 0) && (
