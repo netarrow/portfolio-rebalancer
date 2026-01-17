@@ -258,7 +258,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
 
                         const setting = assetSettings.find(s => s.ticker === ticker);
                         const assetClass = setting?.assetClass || asset?.assetClass || 'Stock';
-                        const assetSubClass = setting?.assetSubClass || asset?.assetSubClass || '';
+
                         const label = setting?.label || asset?.label;
 
                         return (
@@ -267,7 +267,6 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                                 ticker={ticker}
                                 label={label}
                                 assetClass={assetClass}
-                                assetSubClass={assetSubClass}
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
                                 rebalanceAmount={rebalanceAmount}
@@ -295,7 +294,8 @@ interface RowProps {
     ticker: string;
     label?: string;
     assetClass: string;
-    assetSubClass?: string;
+
+    // assetSubClass?: string; // UNUSED
     currentPerc: number;
     targetPerc: number;
     rebalanceAmount: number;
@@ -312,7 +312,7 @@ interface RowProps {
     projectedPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, assetSubClass, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc }) => {
     const diff = currentPerc - targetPerc;
 
     const colorMap: Record<string, string> = {
