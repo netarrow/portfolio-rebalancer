@@ -2,36 +2,92 @@ import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import type { FinancialGoal } from '../../utils/goalCalculations';
-import type { AssetClass } from '../../types';
+
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import PortfolioPyramid from './PortfolioPyramid';
-import ProposedDistributionModal from './ProposedDistributionModal';
+
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'];
 
 const MacroStats: React.FC = () => {
-    const { assets, brokers, macroAllocations, goalAllocations, updateGoalAllocation, updateMacroAllocation } = usePortfolio();
+    const { assets, brokers, macroAllocations, goalAllocations, portfolios, assetSettings } = usePortfolio();
 
-    const [isGoalProposalOpen, setIsGoalProposalOpen] = useState(false);
-    const [isAssetProposalOpen, setIsAssetProposalOpen] = useState(false);
-    const [proposedGoalData, setProposedGoalData] = useState<Record<string, number>>({});
-    const [proposedAssetData, setProposedAssetData] = useState<Record<string, number>>({});
+    const [addedCapital, setAddedCapital] = useState<Record<string, number>>({});
 
     // 1. Calculate Totals and Allocations
     const stats = useMemo(() => {
         const totalInvested = assets.reduce((sum, a) => sum + (a.currentValue || 0), 0);
-        const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
-        const totalValue = totalInvested + totalLiquidity;
+        const currentLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+
+        let simulatedInvestedTotal = 0;
+        let simulatedLiquidityTotal = 0;
+
+        // Process Simulated Capital Injection
+        const simulatedMacroAdditions: Record<string, number> = {};
+        const simulatedGoalAdditions: Record<string, number> = {};
+
+        portfolios.forEach(portfolio => {
+            const addedAmount = addedCapital[portfolio.id] || 0;
+            if (addedAmount <= 0) return;
+
+            let portfolioUsedAmount = 0;
+
+            if (portfolio.allocations) {
+                Object.entries(portfolio.allocations).forEach(([ticker, percentage]) => {
+                    const amount = addedAmount * (percentage / 100);
+                    portfolioUsedAmount += amount;
+
+                    // Find Asset Info
+                    // 1. Try finding in current assets
+                    const asset = assets.find(a => a.ticker === ticker);
+                    let assetClass = asset?.assetClass;
+                    let assetSubClass = asset?.assetSubClass;
+
+                    // 2. Fallback to settings
+                    if (!assetClass) {
+                        const setting = assetSettings.find(s => s.ticker === ticker);
+                        assetClass = setting?.assetClass;
+                        assetSubClass = setting?.assetSubClass;
+                    }
+
+                    if (assetClass) {
+                        // Add to Macro
+                        simulatedMacroAdditions[assetClass] = (simulatedMacroAdditions[assetClass] || 0) + amount;
+                        simulatedInvestedTotal += amount;
+
+                        // Add to Goal
+                        const goal = getAssetGoal(assetClass, assetSubClass);
+                        simulatedGoalAdditions[goal] = (simulatedGoalAdditions[goal] || 0) + amount;
+                    } else {
+                        // If we can't identify the asset, treat as unallocated/liquidity for safety? 
+                        // Or just ignore? Let's treat as Liquidity to preserve total value correctness.
+                        console.warn(`Could not identify class for ticker ${ticker} in portfolio ${portfolio.name}`);
+                        simulatedLiquidityTotal += amount;
+                    }
+                });
+            }
+
+            // Remainder (if allocations < 100%) goes to Liquidity
+            const remainder = addedAmount - portfolioUsedAmount;
+            if (remainder > 0) {
+                simulatedLiquidityTotal += remainder;
+            }
+        });
+
+        const effectiveLiquidity = currentLiquidity + simulatedLiquidityTotal;
+        // Total Value = Existing Invested + Existing Liquidity + All Simulated Added Capital
+        // (simulatedInvestedTotal is part of the added capital)
+        // (simulatedLiquidityTotal is the other part)
+        const totalValue = totalInvested + currentLiquidity + (simulatedInvestedTotal + simulatedLiquidityTotal);
 
         if (totalValue === 0) return null;
 
         // Init Aggregators
         // Use maps to store value
-        const macroValues: Record<AssetClass, number> = { 'Stock': 0, 'Bond': 0, 'Commodity': 0, 'Crypto': 0 };
-        // Explicitly type to allow 'Liquidity' which might not be in base type depending on update latency
+        const macroValues: Record<string, number> = { 'Stock': 0, 'Bond': 0, 'Commodity': 0, 'Crypto': 0 };
         const goalValues: Record<string, number> = { 'Growth': 0, 'Protection': 0, 'Emergency Fund': 0, 'Speculative': 0, 'Liquidity': 0 };
 
-        // Process Assets
+        // Process Existing Assets
         assets.forEach(asset => {
             if (!asset.currentValue) return;
 
@@ -47,19 +103,25 @@ const MacroStats: React.FC = () => {
             }
         });
 
-        // Add Liquidity to Goal (Explicitly 'Liquidity' category requested, though 'Emergency Fund' usually holds cash too)
-        // User asked for "liquidity, emergency fund, protection...". 
-        // Logic: Broker Cash -> Liquidity Goal. Liquid Assets (XEON) -> Emergency Fund Goal.
-        goalValues['Liquidity'] += totalLiquidity;
+        // Add Simulated Values
+        Object.entries(simulatedMacroAdditions).forEach(([key, value]) => {
+            if (macroValues[key] !== undefined) macroValues[key] += value;
+        });
+
+        Object.entries(simulatedGoalAdditions).forEach(([key, value]) => {
+            if (goalValues[key] !== undefined) goalValues[key] += value;
+        });
+
+        // Add Liquidity
+        goalValues['Liquidity'] += effectiveLiquidity;
 
         // Prepare Data for Charts & Recommendations
+        const totalInvestedWithSimulation = totalInvested + simulatedInvestedTotal;
         const macros = Object.entries(macroValues).map(([key, value]) => {
-            const target = macroAllocations[key as AssetClass] || 0;
-            // Use totalInvested for Macro calculation to exclude Liquidity
-            const currentPercent = totalInvested > 0 ? (value / totalInvested) * 100 : 0;
+            const target = (macroAllocations as any)[key] || 0;
+            const currentPercent = totalInvestedWithSimulation > 0 ? (value / totalInvestedWithSimulation) * 100 : 0;
             const diffPercent = currentPercent - target;
-            // Calculate diff value based on invested capital
-            const diffValue = totalInvested * (target / 100) - value; // Positive = Buy, Negative = Sell
+            const diffValue = totalInvestedWithSimulation * (target / 100) - value;
 
             return {
                 name: key,
@@ -98,19 +160,16 @@ const MacroStats: React.FC = () => {
             'Liquidity': '#F59E0B' // Amber
         };
 
-        const goalTargets = (() => {
-            const tempTargets: Record<string, number> = {};
+        const goalProjected = (() => {
+            const tempProjected: Record<string, number> = {};
 
-            Object.entries(goalAllocations).forEach(([key, inputTarget]) => {
-                const targetPercent = inputTarget || 0;
-                const targetValue = totalValue * (targetPercent / 100);
-
+            Object.entries(goalValues).forEach(([key, value]) => {
                 // Merge 'Liquidity' into 'Emergency Fund'
                 const normalizedKey = key === 'Liquidity' ? 'Emergency Fund' : key;
-                tempTargets[normalizedKey] = (tempTargets[normalizedKey] || 0) + targetValue;
+                tempProjected[normalizedKey] = (tempProjected[normalizedKey] || 0) + value;
             });
 
-            return Object.entries(tempTargets).map(([key, value]) => ({
+            return Object.entries(tempProjected).map(([key, value]) => ({
                 name: key,
                 value,
                 color: goalColors[key] || '#9CA3AF'
@@ -118,88 +177,11 @@ const MacroStats: React.FC = () => {
         })();
 
 
-        return { totalValue, macros, goals, goalTargets };
+        return { totalValue, macros, goals, goalProjected };
 
-    }, [assets, brokers, macroAllocations, goalAllocations]);
+    }, [assets, brokers, macroAllocations, goalAllocations, addedCapital, portfolios, assetSettings]);
 
-    const handleProposeGoal = () => {
-        // Based on Macro Allocations (Asset Class)
-        // Strategy: 
-        // Stock -> Growth
-        // Bond -> Protection
-        // Crypto/Commodity -> Speculative
-        // Remaining ? -> Emergency Fund (Assume 0 or user manages manually, usually Macro ignores Liquidity)
 
-        const proposal: Record<string, number> = {
-            'Growth': macroAllocations['Stock'] || 0,
-            'Protection': macroAllocations['Bond'] || 0,
-            'Speculative': (macroAllocations['Crypto'] || 0) + (macroAllocations['Commodity'] || 0),
-            'Emergency Fund': 0 // Macro doesn't cover this well as it excludes liquidity
-        };
-
-        // Normalize? Macro targets sum to 100 (ideally). 
-        // But Goal targets should include Liquidity/Emergency Fund which is OUTSIDE Macro (Invested) usually?
-        // Wait, Goal Allocation covers Total Net Worth (Invested + Liquidity).
-        // Macro Allocation covers Invested Only.
-        // So we cannot map 1:1 if we want to be precise.
-        // However, user asked for "Coherent distribution".
-
-        // Let's assume we keep the 'invested' proportions for goals, and leave Emergency Fund as is (current Goal setting).
-        const currentEmergency = goalAllocations['Emergency Fund'] || 0;
-        const currentLiquidity = goalAllocations['Liquidity'] || 0; // If any
-        const totalSafety = currentEmergency + currentLiquidity;
-
-        // Remaining text for invested part
-        const remainingForInvested = 100 - totalSafety;
-
-        // Now scale the Macro targets (sum=100 of invested) to fit into 'remainingForInvested'
-        proposal['Growth'] = (proposal['Growth'] / 100) * remainingForInvested;
-        proposal['Protection'] = (proposal['Protection'] / 100) * remainingForInvested;
-        proposal['Speculative'] = (proposal['Speculative'] / 100) * remainingForInvested;
-        proposal['Emergency Fund'] = currentEmergency; // Keep existing
-        if (goalAllocations['Liquidity']) proposal['Liquidity'] = currentLiquidity;
-
-        setProposedGoalData(proposal);
-        setIsGoalProposalOpen(true);
-    };
-
-    const handleProposeAsset = () => {
-        // Based on Goal Allocations
-        // Growth -> Stock
-        // Protection -> Bond
-        // Speculative -> Crypto (mostly)
-
-        // We need to ignore Emergency Fund / Liquidity as Asset/Macro Allocation is only for Invested.
-        const relevantGoals = {
-            'Growth': goalAllocations['Growth'] || 0,
-            'Protection': goalAllocations['Protection'] || 0,
-            'Speculative': goalAllocations['Speculative'] || 0
-        };
-
-        const totalRelevant = Object.values(relevantGoals).reduce((a, b) => a + b, 0);
-
-        if (totalRelevant === 0) {
-            import('sweetalert2').then(Swal => {
-                Swal.default.fire({
-                    icon: 'warning',
-                    title: 'Missing Goal Targets',
-                    text: 'Please set your Goal Allocations (Growth, Protection, etc.) first so we can propose a matching asset distribution.',
-                    confirmButtonColor: '#3B82F6'
-                });
-            });
-            return;
-        }
-
-        const proposal: Record<string, number> = {
-            'Stock': (relevantGoals['Growth'] / totalRelevant) * 100,
-            'Bond': (relevantGoals['Protection'] / totalRelevant) * 100,
-            'Crypto': (relevantGoals['Speculative'] / totalRelevant) * 100,
-            'Commodity': 0 // Default to 0 or split speculative? Hard to say.
-        };
-
-        setProposedAssetData(proposal);
-        setIsAssetProposalOpen(true);
-    };
 
 
     if (!stats) return null;
@@ -221,19 +203,45 @@ const MacroStats: React.FC = () => {
         <div className="macro-stats-section">
             <h2 className="section-title" style={{ fontSize: '1.5rem', margin: '2rem 0 1rem' }}>Macro Allocation Analysis</h2>
 
+            {/* Liquidity Simulation Input */}
+            <div className="card" style={{ padding: '1rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', marginBottom: '2rem' }}>
+                <h4 style={{ margin: '0 0 1rem', fontSize: '1rem' }}>Simulate Capital Injection</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
+                    {portfolios.map(p => (
+                        <div key={p.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>{p.name}</label>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <span style={{ color: 'var(--text-muted)' }}>€</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="0"
+                                    value={addedCapital[p.id] || ''}
+                                    onChange={(e) => setAddedCapital(prev => ({ ...prev, [p.id]: Number(e.target.value) }))}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.5rem',
+                                        borderRadius: 'var(--radius-md)',
+                                        border: '1px solid var(--border-color)',
+                                        backgroundColor: 'var(--bg-input)',
+                                        color: 'var(--text-primary)'
+                                    }}
+                                />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.75rem' }}>
+                    Add capital to specific portfolios to see how it affects your global allocation based on their targets.
+                </p>
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '2rem' }}>
 
                 {/* Macro Chart & Table */}
                 <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h3>Asset Allocation</h3>
-                        <button
-                            className="btn-text"
-                            onClick={handleProposeGoal}
-                            style={{ fontSize: '0.85rem', color: 'var(--color-primary)', textDecoration: 'underline', cursor: 'pointer', background: 'none', border: 'none', padding: 0, zIndex: 1000 }}
-                        >
-                            Propose Goal Distribution
-                        </button>
                     </div>
                     <div style={{ width: '100%', height: 250 }}>
                         <ResponsiveContainer>
@@ -248,7 +256,7 @@ const MacroStats: React.FC = () => {
                                     label={renderCustomizedLabel}
                                     outerRadius={80}
                                 >
-                                    {stats.macros.map((entry, index) => (
+                                    {stats.macros.map((_, index) => (
                                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                     ))}
                                 </Pie>
@@ -288,18 +296,11 @@ const MacroStats: React.FC = () => {
                 {/* Goals Chart & Table */}
                 <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3>Goal Allocation (Target)</h3>
-                        <button
-                            className="btn-text"
-                            onClick={handleProposeAsset}
-                            style={{ fontSize: '0.85rem', color: 'var(--color-primary)', textDecoration: 'underline', cursor: 'pointer', background: 'none', border: 'none', padding: 0, zIndex: 1000 }}
-                        >
-                            Propose Asset Distribution
-                        </button>
+                        <h3>Goal Allocation (Projected)</h3>
                     </div>
                     <div style={{ width: '100%', height: 250, display: 'flex', alignItems: 'center' }}>
                         {/* Replaced Pie with Pyramid */}
-                        <PortfolioPyramid data={stats.goalTargets} />
+                        <PortfolioPyramid data={stats.goalProjected} />
                     </div>
                     <table style={{ width: '100%', marginTop: '1rem', borderCollapse: 'collapse' }}>
                         <thead>
@@ -329,24 +330,6 @@ const MacroStats: React.FC = () => {
                     </table>
                 </div>
             </div>
-
-            <ProposedDistributionModal
-                isOpen={isGoalProposalOpen}
-                onClose={() => setIsGoalProposalOpen(false)}
-                title="Propose Goal Distribution"
-                currentData={goalAllocations as any}
-                proposedData={proposedGoalData}
-                onApply={() => updateGoalAllocation(proposedGoalData as any)}
-            />
-
-            <ProposedDistributionModal
-                isOpen={isAssetProposalOpen}
-                onClose={() => setIsAssetProposalOpen(false)}
-                title="Propose Asset Distribution"
-                currentData={macroAllocations as any}
-                proposedData={proposedAssetData}
-                onApply={() => updateMacroAllocation(proposedAssetData as any)}
-            />
         </div>
     );
 };
