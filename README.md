@@ -64,6 +64,9 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
     -   **Premium UI**: Optimized spacing, hidden axes, and centered labels.
 - **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
 - **Custom Labels**: Assign custom display names to assets.
+- **Data Management**:
+    - **Backup & Restore**: Export your entire portfolio data to a JSON file and restore it at any time (Settings page).
+    - **Safe Recovery**: Confirmation prompts to prevent accidental data overwrites during restore.
 
 ## Application Overview
 
@@ -102,17 +105,23 @@ Project your financial future based on current assets, savings, and expenses.
     ![Forecast Failed](screenshots/forecast_failed.png)
 - **Simulation**: Visualize net worth growth and liquidity usage over time.
 
+### Statistics & Analysis
+Deep dive into your portfolio's composition and macro-economic exposure.
+![Stats Allocations](screenshots/stats_allocations.png)
+- **Portfolio Pyramid**: Visual distribution of assets by risk/goal categories (Liquidity > Protection > Growth).
+- **Macro Allocation**: Aggregate view of exposure to Stocks, Bonds, Crypto, etc. versus your defined targets.
+
 ### Portfolio Management
 Organize your investments into distinct portfolios (e.g., "Retirement", "Risky Bets").
 ![Portfolios View](screenshots/portfolios_page.png)
 - **Isolation**: Each portfolio tracks its own contribution to your wealth.
 - **Goals**: Set different strategies for different portfolios.
-![Portfolio Targets](screenshots/portfolio_targets.png)
 
 ### Settings & Configuration
-Manage target allocations and external data sources.
+Manage target allocations, external data sources, and data safety.
 ![Settings Page](screenshots/settings_page.png)
 - **Asset Definitions**: Define asset classes (Stock, Bond, etc.) for each ISIN.
+- **Data Management**: Backup your entire database to JSON or restore from a previous backup.
 - **Mock Data**: Quickly load sample data to test the application features.
 
 ## Tech Stack
