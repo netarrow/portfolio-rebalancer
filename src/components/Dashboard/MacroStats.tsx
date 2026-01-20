@@ -297,7 +297,7 @@ const MacroStats: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h3>Goal Allocation (Projected)</h3>
                     </div>
-                    <div style={{ width: '100%', height: 250, display: 'flex', alignItems: 'center' }}>
+                    <div style={{ width: '100%', minHeight: 400, display: 'flex', alignItems: 'center', marginTop: '1rem' }}>
                         {/* Replaced Pie with Pyramid */}
                         <PortfolioPyramid data={stats.goalProjected} />
                     </div>

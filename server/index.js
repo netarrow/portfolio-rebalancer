@@ -12,7 +12,8 @@ const port = process.env.PORT || 3001;
 const isProduction = process.env.NODE_ENV === 'production';
 
 // Common middleware
-app.use(cors());
+const allowedOrigin = process.env.cors_domain || /^http:\/\/localhost(:\d+)?$/;
+app.use(cors({ origin: allowedOrigin }));
 
 app.use(express.json()); // Enable JSON body parsing
 
