@@ -14,227 +14,186 @@ const isProduction = process.env.NODE_ENV === 'production';
 // Common middleware
 app.use(cors());
 
+app.use(express.json()); // Enable JSON body parsing
+
 // --- API ROUTES ---
-app.get('/api/price', async (req, res) => {
-    const { isin, source = 'ETF' } = req.query;
+app.post('/api/price', async (req, res) => {
+    const { tokens } = req.body; // Expecting { tokens: [{ isin, source }, ...] }
 
-    if (!isin || typeof isin !== 'string') {
-        return res.status(400).json({ error: 'ISIN is required' });
+    if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
+        return res.status(400).json({ error: 'List of tokens (ISINs) is required' });
     }
 
-    // ISIN Validation: 2 uppercase letters + 9 alphanumeric + 1 check digit
-    const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
-    if (!isinRegex.test(isin)) {
-        return res.status(400).json({ error: 'Invalid ISIN format' });
-    }
-
-    console.log(`Fetching price for ISIN: ${isin} from ${source}`);
+    console.log(`Received bulk price request for ${tokens.length} assets`);
 
     let browser;
+    const results = [];
+
     try {
         browser = await puppeteer.launch({
             headless: 'new',
             args: ['--no-sandbox', '--disable-setuid-sandbox']
         });
-        const page = await browser.newPage();
 
+        // Use a single page for all requests to save resources, or new page per request?
+        // New page per request is safer for isolating sessions (cookies, etc), but slower.
+        // Let's try reusing one page first for speed, but reloading it. 
+        // Actually, for Borsa Italiana cookie limits etc, maybe new page is safer. 
+        // Given the requirement "unioca istanza di puppeter, in una unica sessione", reusing the browser is key.
+        // We can reuse the page object or create new ones from the same browser. 
+        // Creating new page per ISIN is fast enough and safer.
+        
+        // Let's process in sequence to avoid race conditions if we were to share a page, 
+        // or effectively parallelize with Promise.all if we use multiple pages. 
+        // For now, let's do sequential to be nice to the CPU and avoid detection spikes, 
+        // but fast sequential using the same browser instance.
+
+        const page = await browser.newPage();
         await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36');
 
-        let url, priceSelector, currencySelector, priceText;
+        for (const token of tokens) {
+            const { isin, source = 'ETF' } = token;
+            
+            // Re-validate per ISIN
+            const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
+            if (!isinRegex.test(isin)) {
+                results.push({ isin, error: 'Invalid ISIN format', success: false });
+                continue;
+            }
 
-        if (source === 'MOT') {
-             url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
-             
-             // Cookie popup handling for Borsa Italiana - robust check
-             await page.goto(url, { waitUntil: 'domcontentloaded' });
-             
-             try {
-                const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
-                for (const sel of cookieSelectors) {
-                    if (await page.$(sel)) {
-                        console.log(`MOT: Clicking cookie banner: ${sel}`);
-                        await page.click(sel);
-                        await new Promise(r => setTimeout(r, 3000));
-                        break;
-                    }
-                }
-             } catch (e) {
-                // Ignore
-             }
-             
-             // Robust selector: span.-formatPrice strong (removed color dependency)
-             priceSelector = 'span.-formatPrice strong';
-             
-             try {
-                await page.waitForSelector(priceSelector, { timeout: 30000 });
-                // CRITICAL FIX: Actually extract the price!
-                priceText = await page.$eval(priceSelector, el => el.textContent.trim());
-             } catch(e) {
-                 console.warn('MOT: Timeout waiting for price selector or extraction failed', e.message);
-                 await page.screenshot({ path: 'debug_mot_error.png' });
-             }
+            console.log(`Processing: ${isin} (${source})`);
+            
+            try {
+                let url, priceText;
+                let currency = 'EUR'; // Default
 
-             // Currency is usually implied as EUR for BTP on MOT
-             currencySelector = null; 
-        } else if (source === 'CPRAM') {
-             url = `https://cpram.com/ita/it/privati/products/${isin}`;
-             await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-             // Handle Splash Screen: Click "Sì, accetto e continuo"
-             try {
-                // Look for button with specific text
-                 const splashButton = await page.waitForFunction(
-                     () => {
-                         const buttons = Array.from(document.querySelectorAll('button, a'));
-                         return buttons.find(b => b.textContent.includes('Sì, accetto e continuo'));
-                     },
-                     { timeout: 5000 }
-                 );
-                 if (splashButton) {
-                     await splashButton.click();
-                     // Wait for splash to disappear or next content to load
-                     await new Promise(r => setTimeout(r, 5000));
-                 }
-             } catch (e) {
-                 console.log('CPRAM Splash screen not found or timed out', e.message);
-             }
-
-             // Handle Cookie Banner: Click "Accettare tutto"
-             try {
-                 const cookieButton = await page.waitForFunction(
-                     () => {
-                         const buttons = Array.from(document.querySelectorAll('button, a'));
-                         return buttons.find(b => b.textContent.includes('Accettare tutto'));
-                     },
-                     { timeout: 3000 }
-                 );
-                 if (cookieButton) {
-                     await cookieButton.click();
-                     await new Promise(r => setTimeout(r, 3000));
-                 }
-             } catch (e) {
-                  // Ignore if cookie banner not found
-             }
-
-             // Robust selector for price: Look for 'Valore dalla quota' label and find associated value
-             priceSelector = null;
-             
-             try {
-                // Wait for the data to be rendered
-                await page.waitForSelector('.headline-4', { timeout: 30000 });
-             } catch (e) {
-                 console.warn('CPRAM: Timeout waiting for .headline-4 elements.');
-             }
-             
-             const extractedData = await page.evaluate(() => {
-                // Find all summary blocks (they incorrectly share id="list-item")
-                const items = document.querySelectorAll('#list-item');
-                
-                for (const item of items) {
-                    // Check if this block contains our target label
-                    if (item.textContent.includes('Valore dalla quota')) {
-                        // The price is in the class 'headline-4' within this block
-                        const valueEl = item.querySelector('.headline-4');
-                        if (valueEl) {
-                            return valueEl.textContent.trim();
+                if (source === 'MOT') {
+                     url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
+                     
+                     await page.goto(url, { waitUntil: 'domcontentloaded' });
+                     
+                     // Cookie handling (only needed once per session technically, but safe to check)
+                     try {
+                        const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
+                        for (const sel of cookieSelectors) {
+                            if (await page.$(sel)) {
+                                await page.click(sel);
+                                await new Promise(r => setTimeout(r, 1000)); // Short wait
+                                break;
+                            }
                         }
-                    }
+                     } catch (e) {}
+                     
+                     const priceSelector = 'span.-formatPrice strong';
+                     try {
+                        await page.waitForSelector(priceSelector, { timeout: 10000 }); // Shorter timeout for bulk
+                        priceText = await page.$eval(priceSelector, el => el.textContent.trim());
+                     } catch(e) {
+                         // warning handled below
+                     }
+
+                } else if (source === 'CPRAM') {
+                     url = `https://cpram.com/ita/it/privati/products/${isin}`;
+                     await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+                     // Splash/Cookie handling
+                     // ... compacted for bulk ...
+                     // (Leaving simplified logic here assuming session cookies persist if we reused page, 
+                     // but CPRAM might be tricky. Let's re-run simplified clickers)
+                     
+                     try {
+                        // Accetto tutto
+                        const btns = await page.$$('button, a');
+                        for(const b of btns) {
+                            const t = await b.evaluate(el => el.textContent);
+                            if(t && (t.includes('Sì, accetto') || t.includes('Accettare tutto'))) {
+                                await b.click();
+                                await new Promise(r => setTimeout(r, 1000));
+                            }
+                        }
+                     } catch(e) {}
+
+                     try {
+                        await page.waitForSelector('.headline-4', { timeout: 10000 });
+                        const extractedData = await page.evaluate(() => {
+                           const items = document.querySelectorAll('#list-item');
+                           for (const item of items) {
+                               if (item.textContent.includes('Valore dalla quota')) {
+                                   const valueEl = item.querySelector('.headline-4');
+                                   if (valueEl) return valueEl.textContent.trim();
+                               }
+                           }
+                           return null;
+                        });
+                        if (extractedData) priceText = extractedData;
+                     } catch (e) {}
+
+                } else {
+                     // JustETF
+                     url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
+                     await page.goto(url, { waitUntil: 'domcontentloaded' });
+                     
+                     const priceSelector = '[data-testid="realtime-quotes_price-value"]';
+                     const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
+                     
+                     try {
+                        await page.waitForSelector(priceSelector, { timeout: 10000 });
+                        priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
+                        currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+                     } catch (e) {}
                 }
-                return null;
-             });
 
-             if (extractedData) {
-                 console.log(`CPRAM Raw Price: ${extractedData}`);
-                 // Store properly to be picked up below
-                 priceText = extractedData;
-             } else {
-                 console.warn('CPRAM: Could not extract value via label search. Returning null price.');
-             }
+                if (!priceText) {
+                    throw new Error('Price element empty or not found');
+                }
 
-        } else {
-             // Default JustETF
-             url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
-             await page.goto(url, { waitUntil: 'domcontentloaded' });
-             
-             priceSelector = '[data-testid="realtime-quotes_price-value"]';
-             currencySelector = '[data-testid="realtime-quotes_price-currency"]';
-             
-             // For JustETF, we use standard selector waiting
-             try {
-                await page.waitForSelector(priceSelector, { timeout: 30000 });
-                priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
-             } catch (e) {
-                 console.warn(`JustETF: Could not find price selector for ${isin}`);
-             }
+                // Parse Price
+                let cleanPrice;
+                if (source === 'ETF') {
+                    // JustETF English format usually
+                    cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim(); 
+                } else {
+                    // Italian format
+                    cleanPrice = priceText
+                    .replace(/[^\d.,-]/g, '')
+                    .replace(/\./g, '')
+                    .replace(/,/g, '.')
+                    .trim();
+                }
+                
+                const finalPrice = parseFloat(cleanPrice);
+                
+                if (isNaN(finalPrice)) throw new Error(`Failed to parse price: ${priceText}`);
+
+                results.push({
+                    isin,
+                    success: true,
+                    data: {
+                        currentPrice: finalPrice,
+                        currency: currency,
+                        lastUpdated: new Date().toISOString()
+                    }
+                });
+
+            } catch (err) {
+                console.warn(`Error processing ${isin}: ${err.message}`);
+                results.push({
+                    isin,
+                    success: false,
+                    error: err.message
+                });
+            }
         }
-
-        let currency = 'EUR';
         
-        if (currencySelector) {
-            currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
-        } else if (source === 'CPRAM' && priceText) {
-             if (priceText.includes('€')) currency = 'EUR';
-             else if (priceText.includes('$')) currency = 'USD';
-             // etc.
-        }
-
-        console.log(`Found price: ${priceText} ${currency}`);
-
-        if (!priceText) {
-             if (source === 'CPRAM') {
-                 console.warn(`CPRAM: Price not found for ${isin}. Returning null.`);
-                 return res.json({
-                     currentPrice: null,
-                     currency: currency,
-                     lastUpdated: new Date().toISOString()
-                 });
-             }
-             throw new Error('Price element empty');
-        }
-
-        let cleanPrice = priceText
-            .replace(/EUR/g, '')
-            .replace(/€/g, '')
-            .replace(/\./g, '')  // Remove thousands separator (dots)
-            .replace(/,/g, '.')  // Replace decimal separator (comma) with dot
-            .trim();
-
-        // Special handling for JustETF format if needed (usually just comma/dot swap for European format)
-        // Check if the original source was JustETF which might use different formatting?
-        // JustETF usually: "123.45" or "123,45". The replace logic above assumes European "1.234,56" -> "1234.56"
-        // Let's be careful.
-        // JustETF (English) typically uses "." for decimal. 
-        // CPRAM (Italian) uses "." for thousands and "," for decimal.
-        
-        if (source === 'ETF') {
-            // JustETF English: "123.45 EUR" or "1,234.56"
-            // If it has commas as thousands separators, remove them.
-            // If it has dots as decimal, keep them.
-            cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim(); 
-        } else {
-            // MOT and CPRAM (Italian/European format): "1.234,56"
-            cleanPrice = priceText
-            .replace(/[^\d.,-]/g, '') // Remove currency symbols and text
-            .replace(/\./g, '')       // Remove thousands dots
-            .replace(/,/g, '.')       // Convert decimal comma to dot
-            .trim();
-        }
-        const price = parseFloat(cleanPrice);
-
-        res.json({
-            currentPrice: price,
-            currency: currency,
-            lastUpdated: new Date().toISOString()
-        });
-
-    } catch (error) {
-        console.error(`Error fetching price for ${isin}:`, error.message);
-        res.status(500).json({ error: 'Failed to fetch price', details: error.message });
+    } catch (globalError) {
+        console.error('Global puppeteer error:', globalError);
+        return res.status(500).json({ error: 'Major server error', details: globalError.message });
     } finally {
-        if (browser) {
-            await browser.close();
-        }
+        if (browser) await browser.close();
     }
+
+    // Return all results (successes and failures)
+    res.json({ results });
 });
 
 // --- FRONTEND SERVING ---
