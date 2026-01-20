@@ -1,6 +1,6 @@
 import type { AssetClass, AssetSubClass } from '../types';
 
-export type FinancialGoal = 'Growth' | 'Protection' | 'Emergency Fund' | 'Speculative';
+export type FinancialGoal = 'Growth' | 'Protection' | 'Security';
 
 export const getAssetGoal = (assetClass: AssetClass, assetSubClass?: AssetSubClass): FinancialGoal => {
     if (assetClass === 'Stock') {
@@ -9,15 +9,19 @@ export const getAssetGoal = (assetClass: AssetClass, assetSubClass?: AssetSubCla
 
     if (assetClass === 'Bond') {
         if (assetSubClass === 'Short') {
-            return 'Emergency Fund';
+            return 'Protection'; // Was Emergency Fund
         }
-        return 'Protection'; // Medium or Long
+        return 'Security'; // Medium or Long, was Protection
     }
 
     if (assetClass === 'Commodity' || assetClass === 'Crypto') {
-        return 'Speculative';
+        return 'Growth'; // Was Speculative
     }
 
-    // Default fallback (should ideally not happen given the types, but good for safety)
+    if (assetClass === 'Cash') {
+        return 'Protection';
+    }
+
+    // Default fallback
     return 'Growth';
 };

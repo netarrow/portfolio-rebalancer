@@ -12,13 +12,13 @@ const MacroSettings: React.FC = () => {
     // Initialize inputs from context
     useEffect(() => {
         const macros: Record<string, string> = {};
-        (['Stock', 'Bond', 'Commodity', 'Crypto'] as AssetClass[]).forEach(cls => {
+        (['Stock', 'Bond', 'Commodity', 'Crypto', 'Cash'] as AssetClass[]).forEach(cls => {
             macros[cls] = (macroAllocations[cls] || 0).toString();
         });
         setMacroInputs(macros);
 
         const goals: Record<string, string> = {};
-        (['Liquidity', 'Emergency Fund', 'Protection', 'Growth', 'Speculative'] as FinancialGoal[]).forEach(g => {
+        (['Liquidity', 'Protection', 'Security', 'Growth'] as FinancialGoal[]).forEach(g => {
             goals[g] = (goalAllocations[g] || 0).toString();
         });
         setGoalInputs(goals);
@@ -78,7 +78,7 @@ const MacroSettings: React.FC = () => {
                         By Asset Class
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                        {(['Stock', 'Bond', 'Commodity', 'Crypto'] as AssetClass[]).map(cls => (
+                        {(['Stock', 'Bond', 'Commodity', 'Crypto', 'Cash'] as AssetClass[]).map(cls => (
                             <div key={cls} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <label style={{ fontWeight: 500 }}>{cls}</label>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -122,7 +122,7 @@ const MacroSettings: React.FC = () => {
                         By Goal
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                        {(['Liquidity', 'Emergency Fund', 'Protection', 'Growth', 'Speculative'] as FinancialGoal[]).map(goal => (
+                        {(['Liquidity', 'Protection', 'Security', 'Growth'] as FinancialGoal[]).map(goal => (
                             <div key={goal} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <label style={{ fontWeight: 500 }}>{goal}</label>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>

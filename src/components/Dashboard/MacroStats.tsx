@@ -84,8 +84,8 @@ const MacroStats: React.FC = () => {
 
         // Init Aggregators
         // Use maps to store value
-        const macroValues: Record<string, number> = { 'Stock': 0, 'Bond': 0, 'Commodity': 0, 'Crypto': 0 };
-        const goalValues: Record<string, number> = { 'Growth': 0, 'Protection': 0, 'Emergency Fund': 0, 'Speculative': 0, 'Liquidity': 0 };
+        const macroValues: Record<string, number> = { 'Stock': 0, 'Bond': 0, 'Commodity': 0, 'Crypto': 0, 'Cash': 0 };
+        const goalValues: Record<string, number> = { 'Growth': 0, 'Protection': 0, 'Security': 0 };
 
         // Process Existing Assets
         assets.forEach(asset => {
@@ -112,8 +112,8 @@ const MacroStats: React.FC = () => {
             if (goalValues[key] !== undefined) goalValues[key] += value;
         });
 
-        // Add Liquidity
-        goalValues['Liquidity'] += effectiveLiquidity;
+        // Add Liquidity to Protection
+        goalValues['Protection'] += effectiveLiquidity;
 
         // Prepare Data for Charts & Recommendations
         const totalInvestedWithSimulation = totalInvested + simulatedInvestedTotal;
@@ -153,20 +153,19 @@ const MacroStats: React.FC = () => {
 
         // Goals Target (for Pyramid)
         const goalColors: Record<string, string> = {
-            'Speculative': '#EC4899', // Pink
             'Growth': '#3B82F6',      // Blue
-            'Protection': '#10B981',  // Green
-            'Emergency Fund': '#F59E0B', // Amber
-            'Liquidity': '#F59E0B' // Amber
+            'Protection': '#10B981',  // Green (Includes Liquidity)
+            'Security': '#8B5CF6',    // Purple (Bond/Medium-Long)
         };
 
         const goalProjected = (() => {
             const tempProjected: Record<string, number> = {};
 
             Object.entries(goalValues).forEach(([key, value]) => {
-                // Merge 'Liquidity' into 'Emergency Fund'
-                const normalizedKey = key === 'Liquidity' ? 'Emergency Fund' : key;
-                tempProjected[normalizedKey] = (tempProjected[normalizedKey] || 0) + value;
+                // Protection covers Liquidity + Short Bonds efficiently now
+                // No need to normalize Liquidity key as it is already merged
+                // const normalizedKey = key === 'Liquidity' ? 'Protection' : key;
+                tempProjected[key] = (tempProjected[key] || 0) + value;
             });
 
             return Object.entries(tempProjected).map(([key, value]) => ({
