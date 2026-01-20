@@ -6,18 +6,37 @@ import Swal from 'sweetalert2';
 import MacroSettings from './MacroSettings';
 
 const TargetSettings: React.FC = () => {
-    const { assetSettings, updateAssetSettings, assets, resetPortfolio, loadMockData } = usePortfolio();
-    const [showConfirmReset, setShowConfirmReset] = useState(false);
 
-    // Get unique tickers from assets (plus any already in settings even if 0 items)
+    // ... (existing imports)
+    const {
+        assetSettings,
+        updateAssetSettings,
+        assets,
+        resetPortfolio,
+        loadMockData,
+        // Get all state for backup
+        transactions,
+        portfolios,
+        brokers,
+        marketData,
+        macroAllocations,
+        goalAllocations,
+        importData
+    } = usePortfolio();
+
+    // ... (existing state)
+    const [showConfirmReset, setShowConfirmReset] = useState(false);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+    // ... (existing helpers)
     const assetTickers = assets.map(a => a.ticker);
     const settingTickers = assetSettings.map(t => t.ticker);
     const allTickers = Array.from(new Set([...assetTickers, ...settingTickers])).sort();
 
     const getSetting = (ticker: string) => assetSettings.find(t => t.ticker === ticker) || { ticker, source: 'ETF', assetClass: 'Stock', assetSubClass: 'International' };
 
-
     const handleUpdate = (ticker: string, field: 'source' | 'label' | 'assetClass' | 'assetSubClass', value: string) => {
+        // ... (existing implementation)
         const current = getSetting(ticker);
         const newSource = field === 'source' ? value as 'ETF' | 'MOT' | 'CPRAM' : (current.source || 'ETF');
         const newLabel = field === 'label' ? value : current.label;
@@ -36,7 +55,85 @@ const TargetSettings: React.FC = () => {
         updateAssetSettings(ticker, newSource, newLabel, newClass, newSubClass);
     };
 
+    const handleBackup = () => {
+        const backupData = {
+            version: 1,
+            timestamp: new Date().toISOString(),
+            transactions,
+            assetSettings,
+            portfolios,
+            brokers,
+            marketData,
+            macroAllocations,
+            goalAllocations
+        };
+
+        const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `portfolio-backup-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleRestore = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            try {
+                const content = e.target?.result as string;
+                const data = JSON.parse(content);
+
+                Swal.fire({
+                    title: 'Restore Backup?',
+                    text: "This will overwrite ALL current data with the backup. This action cannot be undone!",
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#3085d6',
+                    cancelButtonColor: '#d33',
+                    confirmButtonText: 'Yes, restore it!'
+                }).then(async (result) => {
+                    if (result.isConfirmed) {
+                        const success = await importData(data);
+                        if (success) {
+                            Swal.fire(
+                                'Restored!',
+                                'Your data has been restored successfully.',
+                                'success'
+                            );
+                        } else {
+                            Swal.fire(
+                                'Error!',
+                                'Failed to restore data. The file might be corrupted.',
+                                'error'
+                            );
+                        }
+                    }
+                    // Reset input
+                    if (fileInputRef.current) fileInputRef.current.value = '';
+                });
+
+            } catch (err) {
+                console.error('Json parse error', err);
+                Swal.fire(
+                    'Error!',
+                    'Invalid backup file format.',
+                    'error'
+                );
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            }
+        };
+        reader.readAsText(file);
+    };
+
+
     const renderAssetRow = (ticker: string) => {
+        // ... (existing implementation)
         const setting = getSetting(ticker);
         return (
             <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
@@ -114,17 +211,68 @@ const TargetSettings: React.FC = () => {
 
     const activeTickers = allTickers; // Show all
 
-    // ... (existing imports)
-
-    // Inside TargetSettings component, before return
     return (
         <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
             <MacroSettings />
 
             <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
 
+            {/* Data Management Section */}
+            <div>
+                <h2 className="section-title">Data Management</h2>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                    Backup your entire portfolio data to a JSON file or restore from a previous backup.
+                </p>
+                <div style={{ display: 'flex', gap: '1rem', marginBottom: '3rem' }}>
+                    <button
+                        onClick={handleBackup}
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            backgroundColor: 'var(--bg-card)',
+                            border: '1px solid var(--color-primary)',
+                            color: 'var(--color-primary)',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                        }}
+                    >
+                        <span style={{ fontSize: '1.2rem' }}>↓</span> Run Backup
+                    </button>
+
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            backgroundColor: 'var(--bg-card)',
+                            border: '1px solid var(--text-secondary)',
+                            color: 'var(--text-primary)',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                        }}
+                    >
+                        <span style={{ fontSize: '1.2rem' }}>↑</span> Restore Data
+                    </button>
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        style={{ display: 'none' }}
+                        accept=".json"
+                        onChange={handleRestore}
+                    />
+                </div>
+            </div>
+
+            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
+
+
             <h2>Asset Registry & Settings</h2>
-            {/* ... existing content ... */}
             <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-6)' }}>
                 Configure asset labels, classes and price sources.
                 <br /><small>Target allocations are now configured per-portfolio in the Portfolios tab.</small>
@@ -235,5 +383,6 @@ const TargetSettings: React.FC = () => {
         </div>
     );
 };
+
 
 export default TargetSettings;

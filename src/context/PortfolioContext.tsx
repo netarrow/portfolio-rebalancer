@@ -35,6 +35,7 @@ interface PortfolioContextType {
     deleteBroker: (id: string) => void;
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
+    importData: (data: any) => Promise<boolean>;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -539,6 +540,32 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setMarketData(mockPrices);
     };
 
+    const importData = async (data: any): Promise<boolean> => {
+        try {
+             // Basic Validation
+            if (!Array.isArray(data.transactions) || !Array.isArray(data.assetSettings)) {
+                throw new Error('Invalid data format');
+            }
+
+            // Restore Data
+            setTransactions(data.transactions || []);
+            setAssetSettings(data.assetSettings || []);
+            setPortfolios(data.portfolios || []);
+            setBrokers(data.brokers || []);
+            setMarketData(data.marketData || {});
+            setMacroAllocations(data.macroAllocations || {});
+            setGoalAllocations(data.goalAllocations || {});
+            
+            // Clear legacy/temp data just in case
+            setOldTargets([]);
+
+            return true;
+        } catch (e) {
+            console.error('Failed to import data', e);
+            return false;
+        }
+    };
+
     const value = {
         transactions,
         targets: assetSettings, // Expose as targets for compatibility
@@ -567,7 +594,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         brokers,
         addBroker,
         updateBroker,
-        deleteBroker
+        deleteBroker,
+        importData
     };
 
     return (
