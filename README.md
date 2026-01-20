@@ -107,7 +107,9 @@ Project your financial future based on current assets, savings, and expenses.
 
 ### Statistics & Analysis
 Deep dive into your portfolio's composition and macro-economic exposure.
-![Stats Allocations](screenshots/stats_allocations.png)
+![Stats Allocations Top](screenshots/stats_allocations.png)
+![Stats Total Portfolios](screenshots/stats_total_portfolios.png)
+![Stats Growth Portfolio](screenshots/stats_growth_portfolio.png)
 - **Portfolio Pyramid**: Visual distribution of assets by risk/goal categories (Liquidity > Protection > Growth).
 - **Macro Allocation**: Aggregate view of exposure to Stocks, Bonds, Crypto, etc. versus your defined targets.
 
@@ -116,6 +118,7 @@ Organize your investments into distinct portfolios (e.g., "Retirement", "Risky B
 ![Portfolios View](screenshots/portfolios_page.png)
 - **Isolation**: Each portfolio tracks its own contribution to your wealth.
 - **Goals**: Set different strategies for different portfolios.
+![Portfolio Targets](screenshots/portfolio_targets.png)
 
 ### Settings & Configuration
 Manage target allocations, external data sources, and data safety.
