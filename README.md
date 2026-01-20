@@ -21,7 +21,8 @@ However, if you are comfortable with these limitations, you are welcome to use t
 
 Tasks managed by the AI included:
 - Architecture refactoring (Unified Frontend/Backend)
-- Dockerization 
+- Dockerization
+- GitHub Actions implementation
 - Data Model Refactoring & Migration
 - Automated Agentic Verification (Browser orchestration for E2E testing and documentation)
 - Mock data generation and upgrade during data structure change
