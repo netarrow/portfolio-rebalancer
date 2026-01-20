@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { PortfolioProvider } from './context/PortfolioContext';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats' | 'disclaimer';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -13,6 +13,7 @@ import BrokerPerformance from './components/Dashboard/BrokerPerformance';
 import TargetSettings from './components/Settings/TargetSettings';
 import PortfolioList from './components/Portfolios/PortfolioList';
 import BrokerList from './components/Brokers/BrokerList';
+import Disclaimer from './components/Disclaimer/Disclaimer';
 
 import ForecastView from './components/Forecast/ForecastView';
 
@@ -56,6 +57,12 @@ const BrokersView = () => (
   </div>
 );
 
+const DisclaimerView = () => (
+  <div>
+    <Disclaimer />
+  </div>
+);
+
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
 
@@ -68,6 +75,7 @@ function App() {
       case 'brokers': return <BrokersView />;
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
+      case 'disclaimer': return <DisclaimerView />;
       default: return <DashboardView />;
     }
   };
