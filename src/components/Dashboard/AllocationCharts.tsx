@@ -317,10 +317,9 @@ const AllocationCharts: React.FC = () => {
     // 5. Goal Distribution (New Logic)
     const goalDistributionData = useMemo(() => {
         const goalMap: Record<string, { value: number; breakdown: Record<string, number> }> = {
-            'Speculative': { value: 0, breakdown: {} },
             'Growth': { value: 0, breakdown: {} },
             'Protection': { value: 0, breakdown: {} },
-            'Emergency Fund': { value: 0, breakdown: {} }
+            'Security': { value: 0, breakdown: {} }
         };
 
         // 1. Assets
@@ -334,19 +333,18 @@ const AllocationCharts: React.FC = () => {
             goalMap[goal].breakdown[label] = (goalMap[goal].breakdown[label] || 0) + asset.currentValue;
         });
 
-        // 2. Liquidity -> Emergency Fund
+        // 2. Liquidity -> Protection
         const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
         if (totalLiquidity > 0) {
-            goalMap['Emergency Fund'].value += totalLiquidity;
-            goalMap['Emergency Fund'].breakdown['Liquidity'] = (goalMap['Emergency Fund'].breakdown['Liquidity'] || 0) + totalLiquidity;
+            goalMap['Protection'].value += totalLiquidity;
+            goalMap['Protection'].breakdown['Liquidity'] = (goalMap['Protection'].breakdown['Liquidity'] || 0) + totalLiquidity;
         }
 
         // Colors for Goals
         const goalColors: Record<string, string> = {
-            'Speculative': '#EC4899', // Pink
             'Growth': '#3B82F6',      // Blue
             'Protection': '#10B981',  // Green
-            'Emergency Fund': '#F59E0B' // Amber/Yellow
+            'Security': '#8B5CF6'     // Purple
         };
 
         return Object.entries(goalMap)

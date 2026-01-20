@@ -5,7 +5,7 @@ import { calculateForecastWithState } from '../../utils/forecastCalculations';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 
-const EXPENSE_TYPES = ['Growth', 'Protection', 'Speculative', 'Emergency Fund'];
+const EXPENSE_TYPES = ['Growth', 'Protection', 'Security'];
 
 const ForecastView: React.FC = () => {
     const { portfolios, brokers, marketData, transactions, assetSettings } = usePortfolio();
@@ -29,7 +29,7 @@ const ForecastView: React.FC = () => {
     const [newExpYear, setNewExpYear] = useState<number | ''>('');
     const [newExpAmount, setNewExpAmount] = useState<number | ''>('');
     const [newExpDesc, setNewExpDesc] = useState('');
-    const [newExpAllowedTypes, setNewExpAllowedTypes] = useState<string[]>(['Growth', 'Protection', 'Speculative', 'Emergency Fund']);
+    const [newExpAllowedTypes, setNewExpAllowedTypes] = useState<string[]>(['Growth', 'Protection', 'Security']);
     const [newExpErosionAllowed, setNewExpErosionAllowed] = useState(false);
 
     const handleAddExpense = () => {
@@ -46,7 +46,7 @@ const ForecastView: React.FC = () => {
         setNewExpAmount('');
         setNewExpDesc('');
         // Reset defaults
-        setNewExpAllowedTypes(['Growth', 'Protection', 'Speculative', 'Emergency Fund']);
+        setNewExpAllowedTypes(['Growth', 'Protection', 'Security']);
         setNewExpErosionAllowed(false);
     };
 
@@ -118,7 +118,7 @@ const ForecastView: React.FC = () => {
             const { assets } = calculateAssets(pTx, assetSettings, marketData);
 
             // Sum value by Goal
-            const goalValues: Record<string, number> = { 'Growth': 0, 'Protection': 0, 'Speculative': 0, 'Emergency Fund': 0 };
+            const goalValues: Record<string, number> = { 'Growth': 0, 'Protection': 0, 'Security': 0 };
 
             assets.forEach(asset => {
                 const goal = getAssetGoal(asset.assetClass, asset.assetSubClass);
@@ -486,7 +486,7 @@ const ForecastView: React.FC = () => {
                     {portfolios.map(p => {
                         const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0 };
                         const goal = portfolioGoals[p.id] || 'Growth';
-                        const goalColor = goal === 'Speculative' ? '#EC4899' : goal === 'Protection' ? '#10B981' : goal === 'Emergency Fund' ? '#F59E0B' : '#3B82F6';
+                        const goalColor = goal === 'Security' ? '#8B5CF6' : goal === 'Protection' ? '#10B981' : '#3B82F6';
 
                         return (
                             <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-input)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>

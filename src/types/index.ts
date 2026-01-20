@@ -10,14 +10,14 @@ export interface Broker {
   minLiquidityAmount?: number;
 }
 
-export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto';
+export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto' | 'Cash';
 export type AssetSubClass =
   | 'International' | 'Local'     // Stock
   | 'Short' | 'Medium' | 'Long'   // Bond
   | 'Gold'                        // Commodity
   | '';                           // Crypto/None
 
-export type FinancialGoal = 'Growth' | 'Protection' | 'Emergency Fund' | 'Speculative' | 'Liquidity';
+export type FinancialGoal = 'Growth' | 'Protection' | 'Security' | 'Liquidity';
 
 export type MacroAllocation = {
   [key in AssetClass]?: number;
