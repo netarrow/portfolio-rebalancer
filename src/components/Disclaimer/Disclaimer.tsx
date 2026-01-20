@@ -28,7 +28,7 @@ const Disclaimer: React.FC = () => {
                     The true purpose of this application was to experiment with <strong>Agentic AI Development</strong>.
                 </p>
                 <p style={{ lineHeight: '1.8', fontSize: '1.05rem', color: 'var(--text-secondary)' }}>
-                    It was built by leveraging <strong>Google's Antigravity</strong> agentic capabilities and <strong>Codex</strong> models.
+                    It was built by leveraging <strong>Google's Antigravity</strong> agentic capabilities with Gemini PRO and <strong>Codex</strong> models as checker and analisys agent.
                     The development process focused on testing autonomous coding, decision-making, and problem-solving capabilities of AI agents in a real-world scenario.
                 </p>
             </div>
