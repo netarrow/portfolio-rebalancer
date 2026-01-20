@@ -6,14 +6,25 @@ interface MarketData {
     lastUpdated: string;
 }
 
-export const fetchAssetPrice = async (isin: string, source: 'ETF' | 'MOT' | 'CPRAM' = 'ETF'): Promise<MarketData | null> => {
+export interface PriceRequestToken {
+    isin: string;
+    source: 'ETF' | 'MOT' | 'CPRAM';
+}
+
+export interface PriceResult {
+    isin: string;
+    success: boolean;
+    data?: MarketData;
+    error?: string;
+}
+
+export const fetchAssetPrices = async (tokens: PriceRequestToken[]): Promise<PriceResult[]> => {
     try {
-        // Call our local API (relative path)
-        const response = await axios.get(`/api/price?isin=${isin}&source=${source}`);
-        return response.data;
+        const response = await axios.post('/api/price', { tokens });
+        return response.data.results;
     } catch (error: any) {
-        console.error(`Error fetching price for ${isin}:`, error);
-        // Propagate error to let caller handle notification
+        console.error('Error fetching bulk prices:', error);
+        // If the whole request fails, try to return useful error structures or throw
         throw error;
     }
 };

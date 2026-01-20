@@ -375,45 +375,58 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     const refreshPrices = async () => {
-        // Dynamic import to avoid circular dependency if any, though likely safe.
-        // Also cleaner separation.
-        const { fetchAssetPrice } = await import('../services/marketData');
+        // Dynamic import to avoid circular dependency
+        const { fetchAssetPrices } = await import('../services/marketData');
 
-        // Get unique tickers from both transactions and assetSettings (unmanaged assets)
+        // Get unique tickers from both transactions and assetSettings
         const uniqueTickers = Array.from(new Set([
             ...transactions.map(t => t.ticker),
             ...assetSettings.map(a => a.ticker)
         ]));
 
-        // Track errors for reporting
-        const errors: string[] = [];
+        if (uniqueTickers.length === 0) return;
 
-        await Promise.all(uniqueTickers.map(async (ticker) => {
-            // Find asset setting source if available
+        // Prepare tokens
+        const tokens = uniqueTickers.map(ticker => {
             const setting = assetSettings.find(t => t.ticker === ticker);
-            const source = setting?.source || 'ETF';
+            return {
+                isin: ticker,
+                source: setting?.source || 'ETF'
+            };
+        });
 
-            try {
-                const data = await fetchAssetPrice(ticker, source);
-                if (data) {
-                    updateMarketData(ticker, data.currentPrice, data.lastUpdated);
+        try {
+            const results = await fetchAssetPrices(tokens as any);
+            const errors: string[] = [];
+
+            results.forEach(res => {
+                if (res.success && res.data) {
+                    updateMarketData(res.isin, res.data.currentPrice, res.data.lastUpdated);
+                } else {
+                    errors.push(`${res.isin}: ${res.error || 'Unknown error'}`);
                 }
-            } catch (err: any) {
-                const msg = err.response?.data?.error || err.message || 'Unknown error';
-                errors.push(`${ticker}: ${msg}`);
+            });
+
+            if (errors.length > 0) {
+                const Swal = (await import('sweetalert2')).default;
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Price Update Issues',
+                    html: `Some assets failed to update:<br/><ul style="text-align:left; font-size:0.9em;">${errors.map(e => `<li>${e}</li>`).join('')}</ul>`,
+                    confirmButtonColor: '#d33'
+                });
+            } else {
+                // Success message? Or silent? Usually silent is fine, or toast. 
+                // Existing code didn't show success message, just errors.
             }
-        }));
 
-        if (errors.length > 0) {
-            // Dynamic import for Swal to avoid potential heavy bundle load if not needed elsewhere immediately
-            // But it's already used in TargetSettings, so import might be fine. 
-            // Better to use import() since it's an event handler.
+        } catch (err: any) {
+            console.error('Bulk update failed', err);
             const Swal = (await import('sweetalert2')).default;
-
             Swal.fire({
                 icon: 'error',
-                title: 'Price Update Issues',
-                html: `Some assets failed to update:<br/><ul style="text-align:left; font-size:0.9em;">${errors.map(e => `<li>${e}</li>`).join('')}</ul>`,
+                title: 'Update Failed',
+                text: 'Could not fetch prices. Check server connection.',
                 confirmButtonColor: '#d33'
             });
         }
