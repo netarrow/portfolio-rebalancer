@@ -14,17 +14,27 @@ import TargetSettings from './components/Settings/TargetSettings';
 import PortfolioList from './components/Portfolios/PortfolioList';
 import BrokerList from './components/Brokers/BrokerList';
 import Disclaimer from './components/Disclaimer/Disclaimer';
+import EmptyState from './components/Dashboard/EmptyState';
+import { usePortfolio } from './context/PortfolioContext';
 
 import ForecastView from './components/Forecast/ForecastView';
 
 // Placeholders for views
-const DashboardView = () => (
-  <div className="dashboard-container">
-    <SummaryCards />
-    <BrokerPerformance />
-    <AllocationOverview />
-  </div>
-);
+const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
+  const { transactions } = usePortfolio();
+
+  if (transactions.length === 0) {
+    return <EmptyState onNavigateToDisclaimer={onNavigateToDisclaimer} />;
+  }
+
+  return (
+    <div className="dashboard-container">
+      <SummaryCards />
+      <BrokerPerformance />
+      <AllocationOverview />
+    </div>
+  );
+};
 
 const StatsView = () => (
   <div className="dashboard-container">
@@ -68,7 +78,7 @@ function App() {
 
   const renderView = () => {
     switch (currentView) {
-      case 'dashboard': return <DashboardView />;
+      case 'dashboard': return <DashboardView onNavigateToDisclaimer={() => setCurrentView('disclaimer')} />;
       case 'transactions': return <TransactionsView />;
       case 'settings': return <SettingsView />;
       case 'portfolios': return <PortfoliosView />;
@@ -76,7 +86,7 @@ function App() {
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
       case 'disclaimer': return <DisclaimerView />;
-      default: return <DashboardView />;
+      default: return <DashboardView onNavigateToDisclaimer={() => setCurrentView('disclaimer')} />;
     }
   };
 
