@@ -416,8 +416,14 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     confirmButtonColor: '#d33'
                 });
             } else {
-                // Success message? Or silent? Usually silent is fine, or toast. 
-                // Existing code didn't show success message, just errors.
+                const Swal = (await import('sweetalert2')).default;
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Prices Updated',
+                    text: 'All asset prices have been successfully updated.',
+                    timer: 2000,
+                    showConfirmButton: false
+                });
             }
 
         } catch (err: any) {
