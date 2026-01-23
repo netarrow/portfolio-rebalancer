@@ -35,9 +35,11 @@ const BrokerPerformance: React.FC = () => {
             // Liquidity Calculations
             const liquidity = brokerEntity?.currentLiquidity || 0;
             const invested = summary.totalValue; // "Value" of assets
+            const totalBrokerValue = invested + liquidity;
 
             // "Calcola la parcentuale della liquidità sul value"
-            const liquidityPercentOnValue = invested > 0 ? (liquidity / invested) * 100 : 0;
+            // FIX: Use totalBrokerValue (Invested + Liquidity) as the denominator
+            const liquidityPercentOnValue = totalBrokerValue > 0 ? (liquidity / totalBrokerValue) * 100 : 0;
 
             let targetValue = 0;
             let targetLabel = '';
@@ -50,7 +52,8 @@ const BrokerPerformance: React.FC = () => {
                 targetLabel = `€${targetValue.toLocaleString('en-IE', { minimumFractionDigits: 0 })}`;
             } else {
                 const targetPercent = brokerEntity?.minLiquidityPercentage || 0;
-                targetValue = invested * (targetPercent / 100);
+                // FIX: Use totalBrokerValue as the base for percentage target
+                targetValue = totalBrokerValue * (targetPercent / 100);
                 targetLabel = `${targetPercent}%`;
             }
 
