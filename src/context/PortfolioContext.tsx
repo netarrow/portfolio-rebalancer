@@ -36,6 +36,7 @@ interface PortfolioContextType {
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
     importData: (data: any) => Promise<boolean>;
+    updateMarketData: (ticker: string, price: number, lastUpdated: string) => void;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -542,7 +543,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const importData = async (data: any): Promise<boolean> => {
         try {
-             // Basic Validation
+            // Basic Validation
             if (!Array.isArray(data.transactions) || !Array.isArray(data.assetSettings)) {
                 throw new Error('Invalid data format');
             }
@@ -555,7 +556,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setMarketData(data.marketData || {});
             setMacroAllocations(data.macroAllocations || {});
             setGoalAllocations(data.goalAllocations || {});
-            
+
             // Clear legacy/temp data just in case
             setOldTargets([]);
 
@@ -595,7 +596,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addBroker,
         updateBroker,
         deleteBroker,
-        importData
+        importData,
+        updateMarketData
     };
 
     return (
