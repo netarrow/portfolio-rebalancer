@@ -220,3 +220,66 @@ export const calculatePortfolioPerformance = (
         yearsElapsed
     };
 };
+
+export const calculateRequiredLiquidityForOnlyBuy = (
+    assets: Asset[],
+    allocations: Record<string, number>
+): number => {
+    // 1. Identify constraint
+    // We need to find the "Implied Total Value" for each asset if it were to match its target perfect.
+    // ImpliedTotal = AssetValue / (Target% / 100)
+    // The Max(ImpliedTotal) is the Minimum Portfolio Size required to satisfy ALL asset targets by only adding value.
+
+    let maxImpliedTotal = 0;
+    let currentTotalAssetsValue = 0;
+
+    assets.forEach(asset => {
+        const targetPerc = allocations[asset.ticker] || 0;
+        const currentValue = asset.currentValue;
+        currentTotalAssetsValue += currentValue;
+
+        if (targetPerc > 0) {
+            const impliedTotal = currentValue / (targetPerc / 100);
+            if (impliedTotal > maxImpliedTotal) {
+                maxImpliedTotal = impliedTotal;
+            }
+        }
+        // If targetPerc is 0 and currentValue > 0, we can't solve this with "Only Buy" 
+        // because we can never reduce the weight to 0 without selling.
+        // We will ignore this constraint for the "Buy Only" calculation on OTHER assets,
+        // effectively accepting that this 0% target asset will drift down but never reach 0%.
+    });
+
+    // If no assets have targets, or all targets are 0 with no value, 0 needed.
+    if (maxImpliedTotal === 0) return 0;
+
+    // However, the MaxImpliedTotal might be LESS than current total value if we have assets with 0% target but High Value?
+    // specific edge case:
+    // A: Val 100, Target 50% -> Implied 200
+    // B: Val 100, Target 50% -> Implied 200
+    // MaxImplied = 200. CurrentTotal = 200. ReqLiquidity = 0. Correct.
+
+    // A: Val 150, Target 50% -> Implied 300
+    // B: Val 50,  Target 50% -> Implied 100
+    // MaxImplied = 300. CurrentTotal = 200. ReqLiquidity = 100.
+    // Result: A->150 (50% of 300), B needs to be 150 (Buy 100). Total 300. Correct.
+
+    // Constraint: MaxImpliedTotal must be at least CurrentTotal (plus existing liquidity? No, the function signature doesn't know existing liquidity yet. 
+    // It usually works on Assets Value. 
+    // Wait, the User wants to know "Liquidity to Invest".
+    // If we have existing liquidity, say 50. And we need 100 MORE.
+    // Actually this function should return the "Additional Cash Needed on top of Current Asset Value".
+    // So if function returns 100, and we have 50 cash, we need to deposit 50 more.
+    // The caller can subtract existing liquidity.
+
+    // Safety check: maxImpliedTotal should be >= currentTotalAssetsValue (mathematically it should be if sum(targets)=100%)
+    // But if sum(targets) < 100%? e.g. Target A 40%, Target B 40% (Total 80%).
+    // A: 100 -> Implied 250.
+    // B: 100 -> Implied 250.
+    // MaxImplied 250.
+    // New allocations: A (100 is 40% of 250), B (100 is 40% of 250). Total used 200. Unallocated 50.
+    // So logic holds.
+
+    const requiredLiquidity = maxImpliedTotal - currentTotalAssetsValue;
+    return Math.max(0, requiredLiquidity);
+};

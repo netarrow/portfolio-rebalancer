@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets } from '../../utils/portfolioCalculations';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy } from '../../utils/portfolioCalculations';
 import './Dashboard.css';
 
 const AllocationOverview: React.FC = () => {
@@ -163,13 +163,40 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                             onUpdatePortfolio({ ...portfolio, liquidity: val });
                         }}
                         style={{
-                            padding: 'var(--space-2)',
                             borderRadius: 'var(--radius-sm)',
                             border: '1px solid var(--border-color)',
                             width: '100px',
                             textAlign: 'right'
                         }}
                     />
+                    {(() => {
+                        const requiredTotalLiq = calculateRequiredLiquidityForOnlyBuy(assets, allocations);
+                        // existing liquidity is portfolio.liquidity. We need to add the difference?
+                        // "Liquidity to Invest" usually means "Cash Available to Buy".
+                        // The user asked: "indicare la quantità di liquidità da investire per poter portare le % ... correttamente con solo azioni Only Buy"
+                        // If I have 0 cash, I need X cash.
+                        // If I have 100 cash, and need 100 total, I need 0 more.
+                        // But usually the user wants to know the Total Amount of Cash required to make the "Only Buy" rebalance work.
+                        // Let's show "Req for Only Buy: €X".
+
+                        // Wait, if I already HAVE liquidity in the input, does the user want to know how much MORE?
+                        // "indicare la quantità di liquidità da investire" -> "Amount of liquidity to invest".
+                        // Use case: User asks "How much money do I need to deposit to balance this?"
+                        // So it means "Total Required Liquidity" (assuming current cash is 0 or part of it).
+                        // If I have 500 cash in input, and I need 1000 total. Do I interpret "Liquidity to invest" as 1000? Or 500 more?
+                        // Let's display "Min Liq: €X" where X is the TOTAL liquidity needed.
+                        // The user can then type that into the input. 
+
+                        return (
+                            <div
+                                style={{ fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer', marginLeft: 'var(--space-2)' }}
+                                title="Click to set Liquidity to this value"
+                                onClick={() => onUpdatePortfolio({ ...portfolio, liquidity: parseFloat(requiredTotalLiq.toFixed(2)) })}
+                            >
+                                (Rebalancing Buy Only Liquidity: <span style={{ textDecoration: 'underline' }}>€{requiredTotalLiq.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>)
+                            </div>
+                        );
+                    })()}
                 </div>
             </div>
 
