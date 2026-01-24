@@ -5,7 +5,7 @@ import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios, brokers } = usePortfolio();
+    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios, brokers, updateMarketData } = usePortfolio();
     const [updating, setUpdating] = useState(false);
     const [showImport, setShowImport] = useState(false);
 
@@ -21,6 +21,7 @@ const TransactionList: React.FC = () => {
     // Editing State (Single Row)
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState<Transaction | null>(null);
+    const [editMarketPrice, setEditMarketPrice] = useState<number | undefined>(undefined);
 
     const getAssetPrice = (ticker: string) => {
         const asset = assets.find(a => a.ticker === ticker);
@@ -84,18 +85,28 @@ const TransactionList: React.FC = () => {
     const startEditing = (tx: Transaction) => {
         setEditingId(tx.id);
         setEditForm({ ...tx });
+        setEditMarketPrice(getAssetPrice(tx.ticker));
     };
 
     const cancelEditing = () => {
         setEditingId(null);
         setEditForm(null);
+        setEditMarketPrice(undefined);
     };
 
     const saveEditing = () => {
         if (editForm) {
             updateTransaction(editForm);
+
+            // Allow manual overwrite of market price
+            if (editMarketPrice !== undefined && !isNaN(editMarketPrice) && editMarketPrice > 0) {
+                // We don't have lastUpdated here, so we use current time.
+                updateMarketData(editForm.ticker, editMarketPrice, new Date().toISOString());
+            }
+
             setEditingId(null);
             setEditForm(null);
+            setEditMarketPrice(undefined);
         }
     };
 
@@ -252,7 +263,16 @@ const TransactionList: React.FC = () => {
                                         style={{ width: '80px' }}
                                     />
                                 </td>
-                                <td style={{ color: 'var(--text-muted)' }}>-</td>
+                                <td style={{ color: 'var(--text-muted)' }}>
+                                    <input
+                                        type="number"
+                                        placeholder="Mkt Px"
+                                        value={editMarketPrice !== undefined ? editMarketPrice : ''}
+                                        onChange={e => setEditMarketPrice(e.target.value === '' ? undefined : parseFloat(e.target.value))}
+                                        className="edit-input"
+                                        style={{ width: '80px', borderColor: 'var(--color-primary)' }}
+                                    />
+                                </td>
                                 <td>{(editForm.amount * editForm.price).toFixed(2)}</td>
                                 <td>
                                     <div style={{ display: 'flex', gap: '5px' }}>
