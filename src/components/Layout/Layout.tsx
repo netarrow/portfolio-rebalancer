@@ -9,58 +9,74 @@ interface LayoutProps {
 }
 
 const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) => {
+  const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+
+  const handleNavigate = (view: View) => {
+    onNavigate(view);
+    setIsMenuOpen(false);
+  };
+
   return (
     <div className="layout">
       <header className="navbar">
-        <div className="navbar-brand">
-          <h1>Portfolio Rebalancer</h1>
+        <div className="navbar-header">
+          <div className="navbar-brand">
+            <h1>Portfolio Rebalancer</h1>
+          </div>
+          <button 
+            className="hamburger-btn" 
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+            aria-label="Toggle menu"
+          >
+            <span className={`hamburger-icon ${isMenuOpen ? 'open' : ''}`}></span>
+          </button>
         </div>
-        <nav className="navbar-links">
+        <nav className={`navbar-links ${isMenuOpen ? 'show' : ''}`}>
           <button
             className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
-            onClick={() => onNavigate('dashboard')}
+            onClick={() => handleNavigate('dashboard')}
           >
             Dashboard
           </button>
           <button
             className={`nav-link ${currentView === 'stats' ? 'active' : ''}`}
-            onClick={() => onNavigate('stats')}
+            onClick={() => handleNavigate('stats')}
           >
             Stats
           </button>
           <button
             className={`nav-link ${currentView === 'transactions' ? 'active' : ''}`}
-            onClick={() => onNavigate('transactions')}
+            onClick={() => handleNavigate('transactions')}
           >
             Transactions
           </button>
           <button
             className={`nav-link ${currentView === 'portfolios' ? 'active' : ''}`}
-            onClick={() => onNavigate('portfolios')}
+            onClick={() => handleNavigate('portfolios')}
           >
             Portfolios
           </button>
           <button
             className={`nav-link ${currentView === 'brokers' ? 'active' : ''}`}
-            onClick={() => onNavigate('brokers')}
+            onClick={() => handleNavigate('brokers')}
           >
             Brokers
           </button>
           <button
             className={`nav-link ${currentView === 'forecast' ? 'active' : ''}`}
-            onClick={() => onNavigate('forecast')}
+            onClick={() => handleNavigate('forecast')}
           >
             Forecast
           </button>
           <button
             className={`nav-link ${currentView === 'settings' ? 'active' : ''}`}
-            onClick={() => onNavigate('settings')}
+            onClick={() => handleNavigate('settings')}
           >
             Settings
           </button>
           <button
             className={`nav-link ${currentView === 'disclaimer' ? 'active' : ''}`}
-            onClick={() => onNavigate('disclaimer')}
+            onClick={() => handleNavigate('disclaimer')}
           >
             Disclaimer
           </button>
@@ -86,7 +102,14 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           border-bottom: 1px solid var(--bg-card);
           position: sticky;
           top: 0;
-          z-index: 10;
+          z-index: 100;
+        }
+
+        .navbar-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          width: 100%;
         }
 
         .navbar-brand h1 {
@@ -100,6 +123,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
         .navbar-links {
           display: flex;
           gap: var(--space-4);
+          width: auto;
         }
 
         .nav-link {
@@ -122,6 +146,55 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           background-color: var(--color-primary);
         }
 
+        .hamburger-btn {
+          display: none;
+          background: transparent;
+          border: none;
+          cursor: pointer;
+          padding: var(--space-2);
+        }
+
+        .hamburger-icon {
+          display: block;
+          width: 24px;
+          height: 2px;
+          background-color: var(--text-primary);
+          position: relative;
+          transition: background-color 0.2s;
+        }
+
+        .hamburger-icon::before,
+        .hamburger-icon::after {
+          content: '';
+          position: absolute;
+          width: 24px;
+          height: 2px;
+          background-color: var(--text-primary);
+          transition: transform 0.2s, top 0.2s;
+        }
+
+        .hamburger-icon::before {
+          top: -8px;
+        }
+
+        .hamburger-icon::after {
+          top: 8px;
+        }
+
+        .hamburger-icon.open {
+          background-color: transparent;
+        }
+
+        .hamburger-icon.open::before {
+          transform: rotate(45deg);
+          top: 0;
+        }
+
+        .hamburger-icon.open::after {
+          transform: rotate(-45deg);
+          top: 0;
+        }
+
         .content {
           flex: 1;
           padding: var(--space-6) var(--space-8);
@@ -137,9 +210,35 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
 
         @media (max-width: 768px) {
           .navbar {
-            padding: var(--space-4);
             flex-direction: column;
-            gap: var(--space-4);
+            padding: var(--space-3) var(--space-4);
+            align-items: flex-start;
+          }
+          
+          .navbar-header {
+            width: 100%;
+          }
+
+          .hamburger-btn {
+            display: block;
+          }
+
+          .navbar-links {
+            display: none;
+            flex-direction: column;
+            width: 100%;
+            padding-top: var(--space-4);
+            gap: var(--space-2);
+          }
+
+          .navbar-links.show {
+            display: flex;
+          }
+
+          .nav-link {
+            width: 100%;
+            text-align: left;
+            padding: var(--space-3) var(--space-4);
           }
           
           .content {
