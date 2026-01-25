@@ -191,3 +191,93 @@
 .diff-positive { color: var(--color-success); }
 .diff-negative { color: var(--color-danger); }
 .diff-neutral { color: var(--text-muted); }
+
+/* Mobile Optimization for Allocation Table */
+.mobile-only {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .desktop-only {
+        display: none !important;
+    }
+
+    .mobile-only {
+        display: block;
+    }
+
+    .allocation-mobile-card {
+        background-color: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        padding: var(--space-4);
+        margin-bottom: var(--space-4);
+    }
+
+    .mobile-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: var(--space-3);
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: var(--space-2);
+    }
+
+    .mobile-card-title {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+    }
+
+    .mobile-card-title strong {
+        font-size: 1rem;
+        color: var(--text-primary);
+    }
+
+    .mobile-card-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-3);
+        font-size: 0.9rem;
+        margin-bottom: var(--space-3);
+    }
+
+    .mobile-detail-group {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .mobile-label {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+    }
+
+    .mobile-value {
+        color: var(--text-primary);
+        font-weight: 500;
+    }
+
+    .mobile-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-3);
+        padding-top: var(--space-3);
+        border-top: 1px solid var(--border-color);
+    }
+    
+    .mobile-action-box {
+        background-color: var(--bg-app);
+        padding: var(--space-2);
+        border-radius: var(--radius-sm);
+        text-align: center;
+    }
+
+    .mobile-action-title {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+}

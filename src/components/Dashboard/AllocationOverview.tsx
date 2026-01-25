@@ -201,7 +201,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
             </div>
 
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
-                <div className="allocation-row" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
+                <div className="allocation-row desktop-only" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
                     <div style={{ flex: 1 }}>Asset</div>
                     <div style={{ width: '100px', textAlign: 'center' }}>Qty</div>
                     <div style={{ width: '110px', textAlign: 'center' }}>Pmc</div>
@@ -352,88 +352,164 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentP
     const colorClass = colorMap[assetClass] || 'dot-neutral';
 
     return (
-        <div className="allocation-row" style={{ padding: 'var(--space-3) 0' }}>
-            <div className="allocation-type" style={{ flex: 1 }}>
-                <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
-                <div>
-                    <strong>{label || ticker}</strong>
+        <React.Fragment>
+            {/* Desktop Table Row */}
+            <div className="allocation-row desktop-only" style={{ padding: 'var(--space-3) 0' }}>
+                <div className="allocation-type" style={{ flex: 1 }}>
+                    <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
+                    <div>
+                        <strong>{label || ticker}</strong>
+                    </div>
+                </div>
+
+                <div style={{ width: '100px', textAlign: 'center' }}>
+                    {parseFloat(quantity.toFixed(4))}
+                </div>
+
+                <div style={{ width: '110px', textAlign: 'center' }}>
+                    €{averagePrice.toFixed(2)}
+                </div>
+
+                <div style={{ width: '110px', textAlign: 'center' }}>
+                    €{currentPrice.toFixed(2)}
+                </div>
+
+                <div style={{ width: '110px', textAlign: 'center' }}>
+                    €{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+
+                <div style={{ width: '110px', textAlign: 'center', fontSize: '0.9rem' }}>
+                    <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        {gainPerc.toFixed(1)}%
+                    </div>
+                </div>
+
+                <div style={{ width: '80px', textAlign: 'center' }}>
+                    {targetPerc}%
+                </div>
+
+                <div style={{ width: '80px', textAlign: 'center' }}>
+                    <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
+                    <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
+                        {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
+                    </div>
+                </div>
+
+                <div style={{ width: '130px', textAlign: 'center' }}>
+                    <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                        {rebalanceShares === 0 ? (
+                            <span className="trend-neutral">OK</span>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                    €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div style={{ width: '90px', textAlign: 'center' }}>
+                    <div style={{ color: 'var(--text-muted)' }}>{postRebalancePerc.toFixed(1)}%</div>
+                </div>
+
+                <div style={{ width: '130px', textAlign: 'center' }}>
+                    <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                        {buyOnlyShares === 0 ? (
+                            <span className="trend-neutral">-</span>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                    €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                <div style={{ width: '90px', textAlign: 'center' }}>
+                    <div style={{ color: 'var(--text-muted)' }}>{projectedPerc.toFixed(1)}%</div>
                 </div>
             </div>
 
-            <div style={{ width: '100px', textAlign: 'center' }}>
-                {parseFloat(quantity.toFixed(4))}
-            </div>
-
-            <div style={{ width: '110px', textAlign: 'center' }}>
-                €{averagePrice.toFixed(2)}
-            </div>
-
-            <div style={{ width: '110px', textAlign: 'center' }}>
-                €{currentPrice.toFixed(2)}
-            </div>
-
-            <div style={{ width: '110px', textAlign: 'center' }}>
-                €{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-
-            <div style={{ width: '110px', textAlign: 'center', fontSize: '0.9rem' }}>
-                <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                    {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
-                </div>
-                <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                    {gainPerc.toFixed(1)}%
-                </div>
-            </div>
-
-            <div style={{ width: '80px', textAlign: 'center' }}>
-                {targetPerc}%
-            </div>
-
-            <div style={{ width: '80px', textAlign: 'center' }}>
-                <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
-                <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
-                    {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
-                </div>
-            </div>
-
-            <div style={{ width: '130px', textAlign: 'center' }}>
-                <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                    {rebalanceShares === 0 ? (
-                        <span className="trend-neutral">OK</span>
-                    ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                            <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                            </span>
+            {/* Mobile Card Layout */}
+            <div className="allocation-mobile-card mobile-only">
+                <div className="mobile-card-header">
+                    <div className="mobile-card-title">
+                        <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
+                        <strong>{label || ticker}</strong>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                            {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
                         </div>
-                    )}
+                    </div>
                 </div>
-            </div>
 
-            <div style={{ width: '90px', textAlign: 'center' }}>
-                <div style={{ color: 'var(--text-muted)' }}>{postRebalancePerc.toFixed(1)}%</div>
-            </div>
-
-            <div style={{ width: '130px', textAlign: 'center' }}>
-                <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
-                    {buyOnlyShares === 0 ? (
-                        <span className="trend-neutral">-</span>
-                    ) : (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                            <span>Buy {Math.abs(buyOnlyShares)}</span>
-                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                <div className="mobile-card-grid">
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Price</span>
+                        <span className="mobile-value">€{currentPrice.toFixed(2)}</span>
+                    </div>
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Qty</span>
+                        <span className="mobile-value">{parseFloat(quantity.toFixed(4))}</span>
+                    </div>
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Target</span>
+                        <span className="mobile-value">{targetPerc}%</span>
+                    </div>
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Actual</span>
+                        <span className="mobile-value">
+                            {currentPerc.toFixed(1)}%
+                            <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
+                                ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
                             </span>
+                        </span>
+                    </div>
+                </div>
+
+                <div className="mobile-actions">
+                    <div className="mobile-action-box">
+                        <div className="mobile-action-title">Standard Rebal</div>
+                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                            {rebalanceShares === 0 ? (
+                                <span>OK</span>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
+                            )}
                         </div>
-                    )}
+                    </div>
+                    <div className="mobile-action-box">
+                        <div className="mobile-action-title">Buy Only</div>
+                        <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                            {buyOnlyShares === 0 ? (
+                                <span>-</span>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
             </div>
-
-            <div style={{ width: '90px', textAlign: 'center' }}>
-                <div style={{ color: 'var(--text-muted)' }}>{projectedPerc.toFixed(1)}%</div>
-            </div>
-        </div>
+        </React.Fragment>
     );
 }
 
