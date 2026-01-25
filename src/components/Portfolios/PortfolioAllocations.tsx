@@ -19,13 +19,24 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
     const [newAssetSubClass, setNewAssetSubClass] = useState<AssetSubClass>('International');
 
     const portfolio = portfolios.find(p => p.id === portfolioId);
+    const allocations = portfolio?.allocations || {};
 
     // Get all assets defined in settings
-    const tickers = useMemo(() => assetSettings.map(s => s.ticker).sort(), [assetSettings]);
+    const tickers = useMemo(() => {
+        return assetSettings
+            .map(s => s.ticker)
+            .sort((a, b) => {
+                const valA = allocations[a] || 0;
+                const valB = allocations[b] || 0;
+                // Sort by allocation descending
+                if (valB !== valA) return valB - valA;
+                return a.localeCompare(b);
+            });
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [assetSettings]);
 
     if (!portfolio) return null;
 
-    const allocations = portfolio.allocations || {};
     const total = Object.values(allocations).reduce((sum, val) => sum + val, 0);
 
     const handleUpdate = (ticker: string, value: string) => {
