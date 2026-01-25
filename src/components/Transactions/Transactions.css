@@ -114,6 +114,86 @@
   white-space: nowrap; /* Prevent content from wrapping */
 }
 
+/* Mobile List View */
+.mobile-list-view {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.mobile-transaction-card {
+  background-color: var(--bg-app);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+}
+
+.mobile-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--space-3);
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: var(--space-2);
+}
+
+.mobile-card-ticker {
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: var(--text-primary);
+}
+
+.mobile-card-date {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.mobile-card-details {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2) var(--space-4);
+  font-size: 0.9rem;
+  margin-bottom: var(--space-3);
+}
+
+.detail-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.detail-value {
+  color: var(--text-primary);
+}
+
+.mobile-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  border-top: 1px solid var(--border-color);
+  padding-top: var(--space-2);
+}
+
+@media (max-width: 768px) {
+  .transaction-table {
+    display: none;
+  }
+  
+  .mobile-list-view {
+    display: flex;
+  }
+
+  .transaction-list-card {
+    padding: var(--space-3);
+  }
+}
+
 .type-badge {
   display: inline-block;
   padding: 0.25rem 0.5rem;

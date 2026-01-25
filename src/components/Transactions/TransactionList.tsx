@@ -350,6 +350,64 @@ const TransactionList: React.FC = () => {
         </table>
     );
 
+    const renderMobileList = (txs: Transaction[]) => (
+        <div className="mobile-list-view">
+            {txs.map((tx) => (
+                <div key={tx.id} className="mobile-transaction-card">
+                    <div className="mobile-card-header">
+                        <div className="mobile-card-ticker">{tx.ticker}</div>
+                        <div className="mobile-card-date">{tx.date}</div>
+                    </div>
+                    <div className="mobile-card-details">
+                        <div className="detail-row">
+                            <span className="detail-label">Side</span>
+                            <span className="detail-value" style={{
+                                color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
+                                fontWeight: 600
+                            }}>
+                                {tx.direction || 'Buy'}
+                            </span>
+                        </div>
+                        <div className="detail-row">
+                            <span className="detail-label">Portfolio</span>
+                            <span className="detail-value">{getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}</span>
+                        </div>
+                        <div className="detail-row">
+                            <span className="detail-label">Broker</span>
+                            <span className="detail-value">{getBrokerName(tx.brokerId)}</span>
+                        </div>
+                        <div className="detail-row">
+                            <span className="detail-label">Total</span>
+                            <span className="detail-value">{((tx.price || 0) * tx.amount).toFixed(2)}</span>
+                        </div>
+                        <div className="detail-row">
+                            <span className="detail-label">Qty</span>
+                            <span className="detail-value">{tx.amount}</span>
+                        </div>
+                        <div className="detail-row">
+                            <span className="detail-label">Price</span>
+                            <span className="detail-value">{tx.price.toFixed(2)}</span>
+                        </div>
+                    </div>
+                    <div className="mobile-card-actions">
+                        <button
+                            className="btn-edit"
+                            onClick={() => startEditing(tx)}
+                        >
+                            Edit
+                        </button>
+                        <button
+                            className="btn-delete"
+                            onClick={() => deleteTransaction(tx.id)}
+                        >
+                            Del
+                        </button>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+
     return (
         <div className="transaction-list-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
@@ -474,10 +532,14 @@ const TransactionList: React.FC = () => {
                                     </span>
                                 </h3>
                                 {renderTable(groupedTransactions[groupKey])}
+                                {renderMobileList(groupedTransactions[groupKey])}
                             </div>
                         ))
                     ) : (
-                        renderTable(sortedTransactions)
+                        <>
+                            {renderTable(sortedTransactions)}
+                            {renderMobileList(sortedTransactions)}
+                        </>
                     )}
                 </>
             )}
