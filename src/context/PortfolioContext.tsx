@@ -37,6 +37,7 @@ interface PortfolioContextType {
     targets: AssetDefinition[];
     importData: (data: any) => Promise<boolean>;
     updateMarketData: (ticker: string, price: number, lastUpdated: string) => void;
+    addTransactionsBulk: (newTransactions: Transaction[]) => void;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -314,6 +315,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const deleteTransaction = (id: string) => {
         setTransactions((prev) => prev.filter((t) => t.id !== id));
+    };
+
+    const addTransactionsBulk = (newTransactions: Transaction[]) => {
+        setTransactions((prev) => [...prev, ...newTransactions]);
     };
 
     const updateAssetSettings = (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
@@ -597,7 +602,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateBroker,
         deleteBroker,
         importData,
-        updateMarketData
+        updateMarketData,
+        addTransactionsBulk
     };
 
     return (

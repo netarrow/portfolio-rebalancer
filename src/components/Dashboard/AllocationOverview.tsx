@@ -4,7 +4,7 @@ import { calculateAssets, calculateRequiredLiquidityForOnlyBuy } from '../../uti
 import './Dashboard.css';
 
 const AllocationOverview: React.FC = () => {
-    const { portfolios, transactions, assetSettings, marketData, updatePortfolio } = usePortfolio();
+    const { portfolios, transactions, assetSettings, marketData, updatePortfolio, addTransactionsBulk } = usePortfolio();
 
     // 1. Group transactions by Portfolio
     // We only care about explicit portfolios, or maybe we want an "Unassigned" one?
@@ -27,7 +27,9 @@ const AllocationOverview: React.FC = () => {
                         allTransactions={transactions}
                         assetSettings={assetSettings}
                         marketData={marketData}
+
                         onUpdatePortfolio={updatePortfolio}
+                        onAddTransactions={addTransactionsBulk}
                     />
                 ))
             )}
@@ -41,9 +43,10 @@ interface AllocationTableProps {
     assetSettings: import('../../types').AssetDefinition[];
     marketData: Record<string, { price: number, lastUpdated: string }>;
     onUpdatePortfolio: (portfolio: import('../../types').Portfolio) => void;
+    onAddTransactions: (transactions: import('../../types').Transaction[]) => void;
 }
 
-const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, onUpdatePortfolio }) => {
+const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, onUpdatePortfolio, onAddTransactions }) => {
     // Filter Txs for this portfolio
     const portfolioTxs = useMemo(() => {
         return allTransactions.filter(t => t.portfolioId === portfolio.id);
@@ -144,6 +147,98 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
         return finalMap;
     }, [allTickers, allocations, assets, portfolio.liquidity, summary.totalValue]);
 
+    // --- Execution Handlers ---
+    const handleExecuteRebalance = async (mode: 'Full' | 'BuyOnly') => {
+        const Swal = (await import('sweetalert2')).default;
+
+        const transactionsToCreate: import('../../types').Transaction[] = [];
+
+        // Wait, for Full Rebalance we iterate allTickers and calc difference to Target.
+        // For Buy Only, we iterate allTickers and use buyOnlyAllocations.
+
+        allTickers.forEach(ticker => {
+            const asset = assets.find(a => a.ticker === ticker);
+            const currentPrice = asset?.currentPrice || 0;
+            const targetPerc = allocations[ticker] || 0;
+            const quantity = asset?.quantity || 0;
+
+            if (quantity <= 0 && targetPerc <= 0) return;
+
+            let shares = 0;
+
+
+            if (mode === 'Full') {
+                // Rebalance Calc
+                const targetValue = totalPortfolioValue * (targetPerc / 100);
+                const idealDiff = targetValue - (asset ? asset.currentValue : 0);
+                if (currentPrice > 0) {
+                    shares = Math.round(idealDiff / currentPrice);
+                }
+            } else {
+                // Buy Only Calc
+                const buyOnlyAmountIdeal = buyOnlyAllocations[ticker] || 0;
+                if (currentPrice > 0) {
+                    shares = Math.round(buyOnlyAmountIdeal / currentPrice);
+                }
+            }
+
+            if (shares !== 0 && currentPrice > 0) {
+                // Try to resolve broker. 
+                const lastTx = allTransactions.filter(t => t.ticker === ticker && t.portfolioId === portfolio.id).pop();
+                const brokerId = lastTx?.brokerId;
+
+                transactionsToCreate.push({
+                    id: `auto-rebal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                    portfolioId: portfolio.id,
+                    ticker: ticker,
+                    date: new Date().toISOString().split('T')[0],
+                    amount: Math.abs(shares),
+                    price: currentPrice,
+                    direction: shares > 0 ? 'Buy' : 'Sell',
+                    brokerId: brokerId
+                });
+            }
+        });
+
+        if (transactionsToCreate.length === 0) {
+            Swal.fire({
+                title: 'No Actions',
+                text: 'There are no actions to execute for this mode.',
+                icon: 'info',
+                confirmButtonColor: '#3B82F6'
+            });
+            return;
+        }
+
+        const modeLabel = mode === 'Full' ? 'Full Rebalance' : 'Buy Only Rebalance';
+
+        const result = await Swal.fire({
+            title: `Execute ${modeLabel}?`,
+            html: `This will create <b>${transactionsToCreate.length}</b> transactions based on current market prices.<br/><br/>` +
+                `<small style="color:var(--text-muted)">Ensure prices are displayed correctly! Transactions will be created at the current dashboard price.</small>`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Yes, Create Transactions',
+            cancelButtonText: 'Cancel',
+            confirmButtonColor: '#10B981',
+            background: 'var(--bg-card)',
+            color: 'var(--text-primary)'
+        });
+
+        if (result.isConfirmed) {
+            onAddTransactions(transactionsToCreate);
+            Swal.fire({
+                title: 'Success',
+                text: `${transactionsToCreate.length} transactions created!`,
+                icon: 'success',
+                timer: 2000,
+                showConfirmButton: false,
+                background: 'var(--bg-card)',
+                color: 'var(--text-primary)'
+            });
+        }
+    };
+
     return (
         <div className="allocation-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
@@ -198,6 +293,25 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                         );
                     })()}
                 </div>
+            </div>
+
+
+            {/* Rebalancing Actions Toolbar */}
+            <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', justifyContent: 'flex-end' }}>
+                <button
+                    className="btn-secondary"
+                    style={{ fontSize: '0.85rem', padding: '4px 8px' }}
+                    onClick={() => handleExecuteRebalance('BuyOnly')}
+                >
+                    Exec Buy Only
+                </button>
+                <button
+                    className="btn-primary"
+                    style={{ fontSize: '0.85rem', padding: '4px 8px' }}
+                    onClick={() => handleExecuteRebalance('Full')}
+                >
+                    Exec Full Rebalance
+                </button>
             </div>
 
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
@@ -313,7 +427,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                     })
                 )}
             </div>
-        </div>
+        </div >
     );
 };
 
