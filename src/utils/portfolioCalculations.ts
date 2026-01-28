@@ -7,8 +7,16 @@ export const calculateAssets = (
 ): { assets: Asset[], summary: PortfolioSummary } => {
     const assetMap = new Map<string, Asset>();
 
+    // 1. Sort transactions by date (oldest first) to ensure correct history playback
+    // Clone array to avoid mutating original
+    const sortedTransactions = [...transactions].sort((a, b) => {
+        const dateA = new Date(a.date).getTime();
+        const dateB = new Date(b.date).getTime();
+        return dateA - dateB;
+    });
+
     // Process transactions to build assets
-    transactions.forEach(tx => {
+    sortedTransactions.forEach(tx => {
         // normalize ticker
         const ticker = tx.ticker.toUpperCase();
         const existing = assetMap.get(ticker);
@@ -27,7 +35,8 @@ export const calculateAssets = (
             if (direction === 'Buy') {
                 const totalQuantity = existing.quantity + amount;
                 // Weighted Average Price
-                if (totalQuantity !== 0) {
+                // Use epsilon for float safety comparison with 0
+                if (Math.abs(totalQuantity) > 0.000001) {
                     newAveragePrice = ((existing.quantity * existing.averagePrice) + (amount * price)) / totalQuantity;
                 } else {
                     newAveragePrice = 0;
@@ -36,7 +45,11 @@ export const calculateAssets = (
             } else {
                 // Sell
                 newQuantity = existing.quantity - amount;
-                // Average Price doesn't change on Sell
+                // Average Price doesn't change on Sell, UNLESS we go to effectively 0
+                if (Math.abs(newQuantity) < 0.000001) {
+                    newQuantity = 0;
+                    newAveragePrice = 0; // Reset average price if we sold everything
+                }
             }
 
             assetMap.set(ticker, {
