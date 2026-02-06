@@ -37,37 +37,42 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
 - **Smart Rebalancing**: Calculates exactly how much to buy/sell to meet target allocations.
     -   **New Liquidity**: Option to inject fresh capital and simulate how it should be distributed.
     -   **Flexible Modes**: Choose between **Total Rebalancing** (Buy/Sell to perfect target) or **Buy Only** (allocate capital without selling existing positions).
+    -   **Post-Action Preview**: See projected allocation percentages after the suggested actions.
 - **Multi-Portfolio Support**: Create distinct portfolios (e.g., "Retirement", "Trading") and assigns transactions to them.
-    - **Per-Portfolio Allocations**: Define specific asset allocation targets for each portfolio independently in the Settings.
-    - **Portfolio Filtering**: Toggle the dashboard and transaction views to focus on a single portfolio or view the aggregate.
+    -   **Per-Portfolio Allocations**: Define specific asset allocation targets for each portfolio independently.
+    -   **Portfolio Filtering**: Toggle the dashboard and transaction views to focus on a single portfolio or view the aggregate.
 - **Transactions Management**:
-    - **Bulk Updates**: Select multiple transactions to update properties (like Portfolio) in one go via a bulk edit toolbar.
-    - **Excel Import**: Import transactions directly from `.xlsx` files (now supports "Broker" column).
-    - **Inline Editing**: Quickly edit transaction details without leaving the list.
-    - **Flexible Grouping**: Group transactions by Portfolio or Broker for easier analysis.
+    -   **Bulk Updates**: Select multiple transactions to update properties (like Portfolio) in one go via a bulk edit toolbar.
+    -   **Excel Import**: Import transactions directly from `.xlsx` files (supports "Broker" column).
+    -   **Smarter Forms**: Inline editing and modal-based creation for better UX.
+    -   **Flexible Grouping**: Group transactions by Portfolio or Broker for easier analysis.
 - **Broker Integration**:
-    - **Performance Tracking**: Dedicated dashboard section for Value, Cost, and Return per Broker.
-    - **Distribution Charts**: Visualize capital spread across different brokers.
-- **Asset Classification**: Hierarchical organization (Class -> Subclass) for better grouping and cleanup of unused assets (collapsed by default).
+    -   **Performance Tracking**: Dedicated dashboard section for Value, Cost, and Return per Broker.
+    -   **Distribution Charts**: Visualize capital spread across different brokers.
+- **Asset Classification**:
+    -   **Hierarchical Grouping**: Organize assets by Class -> Subclass for better groupings.
+    -   **Goal-Based Categories**: Assets are further classified into **Liquidity**, **Protection**, **Security**, and **Growth** for pyramid-style visualization.
+    -   **Unmanaged Assets**: Include assets in your portfolio (e.g. unmanaged legacy positions) without requiring transaction history.
 - **Multi-Source Price Scraping**:
-    - **JustETF**: For standard ETFs.
-    - **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
-    - **CPRAM**: Custom Puppeteer for active funds
+    -   **JustETF**: For standard ETFs.
+    -   **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
+    -   **CPRAM**: Custom Puppeteer for active funds.
 - **Liquidity Management**:
     -   **Broker Tracking**: dedicated view to manage cash/liquidity per broker.
     -   **Thresholds**: Set minimum liquidity comparisons (%) to ensure cash buffers.
 - **Financial Forecast**:
-    - **Projection**: Estimate net worth and liquidity over a custom time horizon.
-    - **Sustainability Checks**: Automatically flags plans as "OK", "Risky" (rule breach), or "Failed" (insolvency).
-    - **Custom Expenses**: Add one-off annual expenses to refine the simulation.
+    -   **Projection**: Estimate net worth and liquidity over a custom time horizon.
+    -   **Sustainability Checks**: Automatically flags plans as "OK", "Risky" (rule breach), or "Failed" (insolvency).
+    -   **Custom Expenses**: Add one-off annual expenses to refine the simulation.
 - **Visual Enhancements**:
     -   **Centered Pyramid**: "Invested Capital Distribution" now uses a centered funnel/pyramid visualization for immediate clarity.
     -   **Premium UI**: Optimized spacing, hidden axes, and centered labels.
 - **Unified Architecture**: Single Express server handling both API requests and serving the Vite frontend.
 - **Custom Labels**: Assign custom display names to assets.
 - **Data Management**:
-    - **Backup & Restore**: Export your entire portfolio data to a JSON file and restore it at any time (Settings page).
-    - **Safe Recovery**: Confirmation prompts to prevent accidental data overwrites during restore.
+    -   **Backup & Restore**: Export your entire portfolio data to a JSON file and restore it at any time.
+    -   **Safe Recovery**: Confirmation prompts to prevent accidental data overwrites during restore.
+-   **Disclaimer & Privacy**: dedicated page confirming local-only data storage and ownership.
 
 ## Application Overview
 
@@ -87,7 +92,12 @@ Comprehensive history of all your investment activities.
 - **Full History**: View all buys and sells.
 - **Broker Tracking**: See which broker executed each trade.
 - **Grouping**: Group transactions by Portfolio or Broker for easier analysis.
-- **Bulk Edit**: Update multiple transactions at once (e.g., assign broker, move portfolio).
+
+#### Edit & Import
+![Import Modal](screenshots/transactions_import_modal.png)
+![Inline Edit](screenshots/transaction_edit_inline.png)
+- **Inline Editing**: Quickly edit transaction details without leaving the list.
+- **Excel Import**: Quickly import history from your broker.
 
 ### Brokers
 Manage your brokers and liquidity.
@@ -99,7 +109,7 @@ Manage your brokers and liquidity.
 Project your financial future based on current assets, savings, and expenses.
 ![Forecast OK](screenshots/forecast_ok.png)
 - **Sustainability Analysis**: Checks if your plan survives your time horizon.
-    - **OK**: All expenses covered, liquidity maintained.
+    - **Sustainable**: All expenses covered, liquidity maintained.
     - **Risky**: Expenses covered, but rules (e.g., minimum liquidity) breached.
     ![Forecast Risky](screenshots/forecast_riskyplan.png)
     - **Failed**: Insolvency reached before the end of the horizon.
@@ -108,10 +118,10 @@ Project your financial future based on current assets, savings, and expenses.
 
 ### Statistics & Analysis
 Deep dive into your portfolio's composition and macro-economic exposure.
-![Stats Allocations Top](screenshots/stats_allocations.png)
+![Stats Allocations](screenshots/stats_allocations.png)
+![Stats Macro](screenshots/stats_macro.png)
 ![Stats Total Portfolios](screenshots/stats_total_portfolios.png)
-![Stats Growth Portfolio](screenshots/stats_growth_portfolio.png)
-- **Portfolio Pyramid**: Visual distribution of assets by risk/goal categories (Liquidity > Protection > Growth).
+- **Portfolio Pyramid**: Visual distribution of assets by risk/goal categories (Liquidity > Protection > Security > Growth).
 - **Macro Allocation**: Aggregate view of exposure to Stocks, Bonds, Crypto, etc. versus your defined targets.
 
 ### Portfolio Management
@@ -127,6 +137,12 @@ Manage target allocations, external data sources, and data safety.
 - **Asset Definitions**: Define asset classes (Stock, Bond, etc.) for each ISIN.
 - **Data Management**: Backup your entire database to JSON or restore from a previous backup.
 - **Mock Data**: Quickly load sample data to test the application features.
+
+### Disclaimer
+![Disclaimer Page](screenshots/disclaimer_page.png)
+- **Privacy Info**: Details on local storage and data usage (localStorage).
+- **Terms**: Non-commercial use disclaimer.
+- **Mock Data Ref**: Information on test data generation.
 
 ## Tech Stack
 - **Frontend**: React 19, TypeScript, Vite, Recharts
