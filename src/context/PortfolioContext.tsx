@@ -468,82 +468,174 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const loadMockData = () => {
         const timestamp = new Date().toISOString();
-        const mockPortfolioId = 'mock-p1';
-        const mockPortfolioId2 = 'mock-p2';
+        const pIdMain = 'mock-p-main';
+        const pIdSafe = 'mock-p-safe';
+        const pIdSpec = 'mock-p-spec';
 
-        const mockIsins = [
-            // Growth Portfolio Assets
-            { ticker: 'IE00B4L5Y983', name: 'iShares Core MSCI World', class: 'Stock', subClass: 'International', type: 'ETF' },
-            { ticker: 'IE00BKM4GZ66', name: 'iShares Core MSCI EM IMI', class: 'Stock', subClass: 'International', type: 'ETF' },
-            { ticker: 'IE00BDBRDM35', name: 'iShares Glb Agg Bond EUR-H', class: 'Bond', subClass: 'International', type: 'ETF' },
-            // Emergency Fund Assets (Money Market)
-            { ticker: 'LU0290358497', name: 'Xtrackers II EUR Overnight Rate Swap', class: 'Cash', subClass: 'Local', type: 'ETF' }, // XEON
-            { ticker: 'LU1190417599', name: 'Lyxor Smart Overnight Return', class: 'Cash', subClass: 'Local', type: 'ETF' } // CSH2
+        // 1. Define Assets with their "canonical" settings
+        // We use a mix of ETFs for Stocks/Bonds, and Crypto
+        const mockAssets = [
+            // Growth (Stocks)
+            { ticker: 'IE00B4L5Y983', name: 'iShares Core MSCI World', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // SWDA
+            { ticker: 'IE00BKM4GZ66', name: 'iShares Core MSCI EM IMI', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // EMIM
+            { ticker: 'IE00B3RBWM25', name: 'Vanguard FTSE All-World', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // VWRL (Unmanaged)
+
+            // Security (Bonds)
+            { ticker: 'IE00BDBRDM35', name: 'iShares Glb Agg Bond EUR-H', class: 'Bond', subClass: 'Medium', source: 'ETF', goal: 'Security' }, // AGGH
+
+            // Protection (Gov Bonds / Gold)
+            { ticker: 'IE00B1FZS798', name: 'iShares Euro Govt Bond 15-30yr', class: 'Bond', subClass: 'Long', source: 'ETF', goal: 'Protection' }, // IGLT (Proxy)
+
+            // Liquidity (Cash Equiv) -> Now Bond Short per user request
+            { ticker: 'LU0290358497', name: 'Xtrackers II EUR Overnight Rate', class: 'Bond', subClass: 'Short', source: 'ETF', goal: 'Protection' }, // XEON
+
+            // Speculative (Crypto)
+            { ticker: 'BTC-USD', name: 'Bitcoin', class: 'Crypto', subClass: 'International', source: 'CPRAM', goal: 'Growth' }
         ];
 
-        // Mock Transactions
-        const initialTransactions: any[] = [
-            // Growth Portfolio
-            { id: String(Date.now() + 1), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-01-15', amount: 50, price: 88.50, direction: 'Buy', broker: 'Degiro' },
-            { id: String(Date.now() + 2), portfolioId: mockPortfolioId, ticker: mockIsins[1].ticker, date: '2024-02-20', amount: 100, price: 29.30, direction: 'Buy', broker: 'Degiro' },
-            { id: String(Date.now() + 3), portfolioId: mockPortfolioId, ticker: mockIsins[2].ticker, date: '2024-03-10', amount: 200, price: 4.95, direction: 'Buy', broker: 'Trade Republic' },
-            { id: String(Date.now() + 4), portfolioId: mockPortfolioId, ticker: mockIsins[0].ticker, date: '2024-06-15', amount: 20, price: 92.10, direction: 'Buy', broker: 'Degiro' },
-            // Emergency Fund
-            { id: String(Date.now() + 5), portfolioId: mockPortfolioId2, ticker: mockIsins[3].ticker, date: '2024-01-10', amount: 10, price: 140.20, direction: 'Buy', broker: 'Directa' },
-            { id: String(Date.now() + 6), portfolioId: mockPortfolioId2, ticker: mockIsins[4].ticker, date: '2024-01-10', amount: 12, price: 119.50, direction: 'Buy', broker: 'Directa' },
-        ];
+        // 2. Generate Transactions (History)
+        const ONE_DAY = 24 * 60 * 60 * 1000;
+        const today = Date.now();
+        const txs: any[] = [];
+        let idCounter = 1;
 
-        // Mock Asset Settings
-        const initialSettings: AssetDefinition[] = mockIsins.map(m => ({
+        const addTx = (pid: string, ticker: string, dateOffsetDays: number, amount: number, price: number, direction: 'Buy' | 'Sell', broker: string) => {
+            txs.push({
+                id: `mock-tx-${idCounter++}`,
+                portfolioId: pid,
+                ticker,
+                date: new Date(today - (dateOffsetDays * ONE_DAY)).toISOString().split('T')[0],
+                amount,
+                price,
+                direction,
+                broker
+            });
+        };
+
+        // --- SCENARIO 1: Main Portfolio (Steady Growth) ---
+        // SWDA: Regular Accumulation
+        addTx(pIdMain, 'IE00B4L5Y983', 365, 300, 78.50, 'Buy', 'Degiro'); // Increased from 100
+        addTx(pIdMain, 'IE00B4L5Y983', 180, 50, 84.20, 'Buy', 'Degiro');
+        addTx(pIdMain, 'IE00B4L5Y983', 30, 20, 92.10, 'Buy', 'Degiro');
+
+        // EMIM: Weighted Average Test (Buy -> Sell Half -> Buy)
+        // Buy 100 @ 25
+        addTx(pIdMain, 'IE00BKM4GZ66', 200, 100, 25.00, 'Buy', 'Degiro');
+        // Sell 50 @ 28 (Profit)
+        addTx(pIdMain, 'IE00BKM4GZ66', 100, 50, 28.00, 'Sell', 'Degiro');
+        // Buy 50 @ 30
+        // Result: Holdings = 100. Previous Avg Cost was 25. New Buy is 30.
+        // Remaining 50 from first batch still has cost 25? Or average?
+        // App Logic: Average Cost matches weighted average.
+        addTx(pIdMain, 'IE00BKM4GZ66', 10, 50, 30.00, 'Buy', 'Degiro');
+
+        // AGGH: Lump sum
+        addTx(pIdMain, 'IE00BDBRDM35', 90, 500, 4.80, 'Buy', 'Trade Republic');
+
+        // VWRL: NO TRANSACTIONS -> UNMANAGED ASSET
+
+        // --- SCENARIO 2: Safety Net (Liquidity & Protection) ---
+        // XEON: Big Parked Cash
+        addTx(pIdSafe, 'LU0290358497', 60, 450, 139.50, 'Buy', 'Directa'); // Increased from 250 (~63k)
+
+        // Govt Bond: Protection
+        addTx(pIdSafe, 'IE00B1FZS798', 120, 50, 180.00, 'Buy', 'Directa');
+
+        // --- SCENARIO 3: Speculative (Crypto - Cost Reset Test) ---
+        // Bitcoin: Buy -> Sell All -> Buy lower/higher
+        // Buy 1 @ 50k
+        addTx(pIdSpec, 'BTC-USD', 500, 0.5, 50000, 'Buy', 'Binance');
+        // Sell All @ 60k
+        addTx(pIdSpec, 'BTC-USD', 400, 0.5, 60000, 'Sell', 'Binance');
+        // Buy 0.2 @ 65k
+        // Result: Cost Basis should be 65k, NOT averaged with the 50k because it was fully closed.
+        addTx(pIdSpec, 'BTC-USD', 20, 0.2, 65000, 'Buy', 'Binance');
+
+
+        // 3. Create Settings
+        const newSettings: AssetDefinition[] = mockAssets.map(m => ({
             ticker: m.ticker,
-            source: 'ETF',
+            source: m.source as any,
             label: m.name,
-            assetClass: m.class as any,
-            assetSubClass: m.subClass as any
+            assetClass: m.class as AssetClass,
+            assetSubClass: m.subClass as AssetSubClass
         }));
 
-        // Mock Allocations
-        const growthAllocations = {
-            [mockIsins[0].ticker]: 60,
-            [mockIsins[1].ticker]: 10,
-            [mockIsins[2].ticker]: 30
-        };
+        // 4. Portfolios & Allocations
+        const portfoliosList: Portfolio[] = [
+            {
+                id: pIdMain,
+                name: 'Main Strategy',
+                description: 'Core ETF Portfolio (World + EM + Agg)',
+                allocations: {
+                    'IE00B4L5Y983': 50, // SWDA
+                    'IE00BKM4GZ66': 15, // EMIM
+                    'IE00BDBRDM35': 25, // AGGH
+                    'IE00B3RBWM25': 10  // VWRL (Unmanaged)
+                }
+            },
+            {
+                id: pIdSafe,
+                name: 'Safety Net',
+                description: 'Emergency fund and hedging',
+                allocations: {
+                    'LU0290358497': 70, // XEON
+                    'IE00B1FZS798': 30  // Govt Bond
+                }
+            },
+            {
+                id: pIdSpec,
+                name: 'Speculative',
+                description: 'High risk bets',
+                allocations: {
+                    'BTC-USD': 100
+                }
+            }
+        ];
 
-        const emergencyAllocations = {
-            [mockIsins[3].ticker]: 60,
-            [mockIsins[4].ticker]: 40
-        };
-
-        setTransactions(initialTransactions);
-        setAssetSettings(initialSettings);
-
-        // Update or Create Portfolios
-        const mockGrowthPortfolio: Portfolio = {
-            id: mockPortfolioId,
-            name: 'Growth Portfolio',
-            description: 'Mock Data Portfolio',
-            allocations: growthAllocations
-        };
-
-        const mockEmergencyPortfolio: Portfolio = {
-            id: mockPortfolioId2,
-            name: 'Emergency Fund',
-            description: 'Low risk liquidity',
-            allocations: emergencyAllocations
-        };
-
-        // Replace portfolios to match the new transactions
-        setPortfolios([mockGrowthPortfolio, mockEmergencyPortfolio]);
-
-        // Soft mock prices so dashboard looks good immediately
+        // 5. Market Data (Soft Mocks for immediate display)
         const mockPrices = {
-            [mockIsins[0].ticker]: { price: 96.20, lastUpdated: timestamp },
-            [mockIsins[1].ticker]: { price: 31.50, lastUpdated: timestamp },
-            [mockIsins[2].ticker]: { price: 5.05, lastUpdated: timestamp },
-            [mockIsins[3].ticker]: { price: 142.50, lastUpdated: timestamp },
-            [mockIsins[4].ticker]: { price: 121.10, lastUpdated: timestamp }
+            'IE00B4L5Y983': { price: 95.50, lastUpdated: timestamp }, // Profit
+            'IE00BKM4GZ66': { price: 31.20, lastUpdated: timestamp }, // Profit
+            'IE00B3RBWM25': { price: 115.00, lastUpdated: timestamp }, // No tx, just price
+            'IE00BDBRDM35': { price: 5.10, lastUpdated: timestamp },  // Profit
+            'IE00B1FZS798': { price: 175.50, lastUpdated: timestamp }, // Loss
+            'LU0290358497': { price: 142.10, lastUpdated: timestamp }, // Profit
+            'BTC-USD': { price: 68000, lastUpdated: timestamp }     // Profit
         };
+
+        // 6. Macro & Goal Allocations (Global Targets)
+        const newMacros: MacroAllocation = {
+            'Stock': 40,
+            'Bond': 53,
+            'Cash': 2,
+            'Crypto': 5,
+            'Commodity': 0
+        };
+
+        const newGoals: GoalAllocation = {
+            'Growth': 45,     // Stocks + Crypto
+            'Security': 5,   // Agg Bonds
+            'Protection': 48,  // Govt Bonds + XEON
+            'Liquidity': 2   // Cash
+        };
+
+        // 7. Apply All
+        setTransactions(txs);
+        setAssetSettings(newSettings);
+        setPortfolios(portfoliosList);
         setMarketData(mockPrices);
+        setMacroAllocations(newMacros);
+        setGoalAllocations(newGoals);
+        setBrokers([
+            { id: 'b1', name: 'Degiro', description: 'Main Broker' },
+            { id: 'b2', name: 'Directa', description: 'Italian Broker' },
+            { id: 'b3', name: 'Trade Republic', description: 'Savings Plans' },
+            { id: 'b4', name: 'Binance', description: 'Crypto Exchange' }
+        ]);
+
+        // Clear old legacy
+        setOldTargets([]);
     };
 
     const importData = async (data: any): Promise<boolean> => {

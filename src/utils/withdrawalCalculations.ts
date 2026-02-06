@@ -131,8 +131,6 @@ const calculateTotalNet = (state: any[]): number => {
     return totalNet;
 };
 
-const allocationTotal = (allocs: Record<string, number>) => Object.values(allocs).reduce((a, b) => a + b, 0);
-
 const buildProjection = (state: any[], netTotal: number): WithdrawalProjection => {
     let grossTotal = 0;
     let taxTotal = 0;
