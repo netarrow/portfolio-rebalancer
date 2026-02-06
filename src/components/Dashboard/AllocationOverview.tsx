@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy } from '../../utils/portfolioCalculations';
+import { WithdrawalModal } from './WithdrawalModal';
 import './Dashboard.css';
 
 const AllocationOverview: React.FC = () => {
@@ -47,6 +48,8 @@ interface AllocationTableProps {
 }
 
 const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, onUpdatePortfolio, onAddTransactions }) => {
+    const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = React.useState(false);
+
     // Filter Txs for this portfolio
     const portfolioTxs = useMemo(() => {
         return allTransactions.filter(t => t.portfolioId === portfolio.id);
@@ -297,7 +300,14 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
 
 
             {/* Rebalancing Actions Toolbar */}
-            <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', justifyContent: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button
+                    className="btn-secondary"
+                    style={{ fontSize: '0.85rem', padding: '4px 8px' }}
+                    onClick={() => setIsWithdrawalModalOpen(true)}
+                >
+                    Simulate Withdrawal
+                </button>
                 <button
                     className="btn-secondary"
                     style={{ fontSize: '0.85rem', padding: '4px 8px' }}
@@ -427,6 +437,13 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                     })
                 )}
             </div>
+
+            <WithdrawalModal
+                isOpen={isWithdrawalModalOpen}
+                onClose={() => setIsWithdrawalModalOpen(false)}
+                assets={assets}
+                portfolio={portfolio}
+            />
         </div >
     );
 };
