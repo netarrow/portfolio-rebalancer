@@ -115,16 +115,21 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                             <thead>
                                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', textAlign: 'left' }}>
                                     <th style={{ padding: '8px' }}>Asset</th>
+                                    <th style={{ padding: '8px', textAlign: 'right' }}>Sell Qty</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Gross Sell</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Tax</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Net</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Post Value</th>
+                                    <th style={{ padding: '8px', textAlign: 'right' }}>Post %</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {projection.breakdown.map(action => (
                                     <tr key={action.ticker} style={{ borderBottom: '1px solid var(--border-color)' }}>
                                         <td style={{ padding: '8px', fontWeight: 500 }}>{action.ticker}</td>
+                                        <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)' }}>
+                                            {action.sharesToSell}
+                                        </td>
                                         <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)' }}>
                                             €{action.grossSellAmount.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
                                         </td>
@@ -136,6 +141,9 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                                         </td>
                                         <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-muted)' }}>
                                             €{action.postSellValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </td>
+                                        <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-muted)' }}>
+                                            {action.postRebalancePerc.toFixed(1)}%
                                         </td>
                                     </tr>
                                 ))}
