@@ -85,6 +85,8 @@ The main hub for your portfolio insights.
 - **Broker Performance**: Breakdown of value and return per broker.
 - **Allocation Overview**: Asset distribution charts (Portfolio Size, Broker Share, Asset Class).
 - **Rebalancing Tables**: Per-portfolio breakdown of assets with drift analysis.
+- **Withdrawal Simulation**: Plan how to divest assets while maintaining target allocations.
+![Withdrawal Simulation](screenshots/dashboard_withdrawal_simulation.png)
 
 ### Transactions
 Comprehensive history of all your investment activities.
