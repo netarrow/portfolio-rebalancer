@@ -57,6 +57,7 @@ Portfolio Rebalancer is a React+Express application designed to help investors t
     -   **JustETF**: For standard ETFs.
     -   **Borsa Italiana (MOT)**: Custom Puppeteer scraper for Italian BTPs/Bonds.
     -   **CPRAM**: Custom Puppeteer for active funds.
+    -   **Real-Time Updates**: WebSocket integration for live progress tracking and concurrent processing.
 - **Liquidity Management**:
     -   **Broker Tracking**: dedicated view to manage cash/liquidity per broker.
     -   **Thresholds**: Set minimum liquidity comparisons (%) to ensure cash buffers.
@@ -139,6 +140,12 @@ Manage target allocations, external data sources, and data safety.
 - **Asset Definitions**: Define asset classes (Stock, Bond, etc.) for each ISIN.
 - **Data Management**: Backup your entire database to JSON or restore from a previous backup.
 - **Mock Data**: Quickly load sample data to test the application features.
+
+### Live Price Updates
+Experience real-time feedback during price updates with a dedicated modal powered by WebSockets.
+![Price Update Modal](screenshots/updating_prices.png)
+- **Instant Status**: Track progress, success, and errors for each ISIN in real-time.
+- **Resilient Processing**: Errors for individual assets do not block the entire update process.
 
 ### Disclaimer
 ![Disclaimer Page](screenshots/disclaimer_page.png)
