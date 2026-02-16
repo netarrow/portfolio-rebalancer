@@ -124,17 +124,36 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
 
         socket.on('price_update_error', ({ message }) => {
-            // Global error
             console.error('Socket Global Error:', message);
-            setIsUpdateComplete(true); // Allow closing
-            // Could show a toast
+            setPriceUpdateItems(prev => prev.map(item =>
+                (item.status === 'pending' || item.status === 'processing')
+                    ? { ...item, status: 'error', error: message }
+                    : item
+            ));
+            setIsUpdateComplete(true);
         });
+
+        // Handle Disconnection / Network Error
+        const handleNetworkError = (reason: string) => {
+            console.warn('Socket disconnected/error:', reason);
+            setPriceUpdateItems(prev => prev.map(item =>
+                (item.status === 'pending' || item.status === 'processing')
+                    ? { ...item, status: 'error', error: `Network Error: ${reason}` }
+                    : item
+            ));
+            setIsUpdateComplete(true);
+        };
+
+        socket.on('disconnect', (reason) => handleNetworkError(reason.toString()));
+        socket.on('connect_error', (err) => handleNetworkError(err.message));
 
         return () => {
             socket.off('price_update_progress');
             socket.off('price_update_item');
             socket.off('price_update_complete');
             socket.off('price_update_error');
+            socket.off('disconnect');
+            socket.off('connect_error');
         };
     }, [socket]);
 
@@ -454,22 +473,25 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     const refreshPrices = async () => {
-        // Old dynamic import logic can be removed or kept as fallback? 
-        // We are going fully socket here.
+        // Calculate active assets dynamically to ensure we get current quantities
+        const { assets } = calculateAssets(transactions, assetSettings, marketData);
 
-        // Get unique tickers from both transactions and assetSettings
-        const uniqueTickers = Array.from(new Set([
-            ...transactions.map(t => t.ticker),
-            ...assetSettings.map(a => a.ticker)
-        ]));
+        // Filter: Only include assets with quantity >= 1
+        // User Requirement: "quantità residua di almeno 1 o superiore"
+        const activeAssets = assets.filter(a => a.quantity >= 1);
 
-        if (uniqueTickers.length === 0) return;
+        if (activeAssets.length === 0) {
+            // Optional: Notify user that no assets met criteria?
+            // For now, just return to avoid socket error on empty list.
+            console.log('No assets with quantity >= 1 found for update.');
+            return;
+        }
 
-        // Prepare tokens
-        const tokens = uniqueTickers.map(ticker => {
-            const setting = assetSettings.find(t => t.ticker === ticker);
+        // Prepare tokens from active assets
+        const tokens = activeAssets.map(asset => {
+            const setting = assetSettings.find(t => t.ticker === asset.ticker);
             return {
-                isin: ticker,
+                isin: asset.ticker,
                 source: setting?.source || 'ETF'
             };
         });
@@ -489,7 +511,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             socket.emit('request_price_update', tokens);
         } else {
             console.error('Socket not connected');
-            // Fallback to alert? Or just show error in modal
             setPriceUpdateItems(prev => prev.map(t => ({ ...t, status: 'error', error: 'Socket disconnected' })));
             setIsUpdateComplete(true);
         }
