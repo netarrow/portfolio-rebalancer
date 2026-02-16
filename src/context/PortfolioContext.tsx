@@ -1,7 +1,9 @@
-import React, { createContext, useContext, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useMemo, useEffect, useState } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation } from '../types';
+import io, { Socket } from 'socket.io-client';
+import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 
 // Legacy Type for Migration
 type Target = AssetDefinition & { targetPercentage?: number };
@@ -65,6 +67,76 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // New State for Macro/Goal Targets
     const [macroAllocations, setMacroAllocations] = useLocalStorage<MacroAllocation>('portfolio_macro_targets', {});
     const [goalAllocations, setGoalAllocations] = useLocalStorage<GoalAllocation>('portfolio_goal_targets', {});
+
+    // Socket & Modal State
+    const [socket, setSocket] = useState<Socket | null>(null);
+    const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
+    const [priceUpdateItems, setPriceUpdateItems] = useState<PriceUpdateItem[]>([]);
+    const [isUpdateComplete, setIsUpdateComplete] = useState(false);
+
+    // Initialize Socket
+    useEffect(() => {
+        const socketUrl = window.location.origin
+
+        // Use the same host/port if served, or localhost:3001 for dev
+        // Actually, if we are in dev (vite) we are on 5173 calling 3001. 
+        // If prod, we are on 3001 calling 3001.
+
+        const newSocket = io(socketUrl);
+        setSocket(newSocket);
+
+        return () => {
+            newSocket.close();
+        };
+    }, []);
+
+    // Socket Event Listeners
+    useEffect(() => {
+        if (!socket) return;
+
+        socket.on('price_update_progress', ({ isin, status }) => {
+            setPriceUpdateItems(prev => prev.map(item =>
+                item.isin === isin ? { ...item, status } : item
+            ));
+        });
+
+        socket.on('price_update_item', ({ isin, success, data, error }) => {
+            setPriceUpdateItems(prev => prev.map(item => {
+                if (item.isin === isin) {
+                    return {
+                        ...item,
+                        status: success ? 'success' : 'error',
+                        price: data?.currentPrice,
+                        currency: data?.currency,
+                        error: error
+                    };
+                }
+                return item;
+            }));
+
+            if (success && data && data.currentPrice) {
+                updateMarketData(isin, data.currentPrice, data.lastUpdated);
+            }
+        });
+
+        socket.on('price_update_complete', () => {
+            setIsUpdateComplete(true);
+        });
+
+        socket.on('price_update_error', ({ message }) => {
+            // Global error
+            console.error('Socket Global Error:', message);
+            setIsUpdateComplete(true); // Allow closing
+            // Could show a toast
+        });
+
+        return () => {
+            socket.off('price_update_progress');
+            socket.off('price_update_item');
+            socket.off('price_update_complete');
+            socket.off('price_update_error');
+        };
+    }, [socket]);
 
     // Migration Effect 3: Migrate free-text portfolios to Portfolio entities
     useEffect(() => {
@@ -382,8 +454,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     const refreshPrices = async () => {
-        // Dynamic import to avoid circular dependency
-        const { fetchAssetPrices } = await import('../services/marketData');
+        // Old dynamic import logic can be removed or kept as fallback? 
+        // We are going fully socket here.
 
         // Get unique tickers from both transactions and assetSettings
         const uniqueTickers = Array.from(new Set([
@@ -402,54 +474,29 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             };
         });
 
-        try {
-            const results = await fetchAssetPrices(tokens as any);
-            const errors: string[] = [];
+        // Initialize Modal State
+        const initialItems: PriceUpdateItem[] = tokens.map(t => ({
+            isin: t.isin,
+            status: 'pending'
+        }));
 
-            results.forEach(res => {
-                if (res.success && res.data) {
-                    updateMarketData(res.isin, res.data.currentPrice, res.data.lastUpdated);
-                } else {
-                    errors.push(`${res.isin}: ${res.error || 'Unknown error'}`);
-                }
-            });
+        setPriceUpdateItems(initialItems);
+        setIsUpdateComplete(false);
+        setIsPriceModalOpen(true);
 
-            if (errors.length > 0) {
-                const Swal = (await import('sweetalert2')).default;
-                Swal.fire({
-                    icon: 'error',
-                    title: 'Price Update Issues',
-                    html: `Some assets failed to update:<br/><ul style="text-align:left; font-size:0.9em;">${errors.map(e => `<li>${e}</li>`).join('')}</ul>`,
-                    confirmButtonColor: '#d33'
-                });
-            } else {
-                const Swal = (await import('sweetalert2')).default;
-                Swal.fire({
-                    icon: 'success',
-                    title: 'Prices Updated',
-                    text: 'All asset prices have been successfully updated.',
-                    timer: 2000,
-                    showConfirmButton: false
-                });
-            }
-
-        } catch (err: any) {
-            console.error('Bulk update failed', err);
-            const Swal = (await import('sweetalert2')).default;
-            Swal.fire({
-                icon: 'error',
-                title: 'Update Failed',
-                text: 'Could not fetch prices. Check server connection.',
-                confirmButtonColor: '#d33'
-            });
+        // Emit socket event
+        if (socket) {
+            socket.emit('request_price_update', tokens);
+        } else {
+            console.error('Socket not connected');
+            // Fallback to alert? Or just show error in modal
+            setPriceUpdateItems(prev => prev.map(t => ({ ...t, status: 'error', error: 'Socket disconnected' })));
+            setIsUpdateComplete(true);
         }
     };
 
     // Derive Assets and Summary
     const { assets, summary } = useMemo(() => {
-        // Dynamic import to avoid circular dependency if any, though likely safe.
-        // Actually we can import it directly at top level if no circular dependency, 
-        // but let's assume valid scope.
         return calculateAssets(transactions, assetSettings, marketData);
     }, [transactions, assetSettings, marketData]);
 
@@ -701,6 +748,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return (
         <PortfolioContext.Provider value={value}>
             {children}
+            <PriceUpdateModal
+                isOpen={isPriceModalOpen}
+                onClose={() => setIsPriceModalOpen(false)}
+                items={priceUpdateItems}
+                isComplete={isUpdateComplete}
+            />
         </PortfolioContext.Provider>
     );
 };
