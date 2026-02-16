@@ -226,9 +226,14 @@ async function setupServer() {
         app.use(vite.middlewares);
     }
 
-    app.listen(port, () => {
+    const server = app.listen(port, () => {
         console.log(`Server listening at http://localhost:${port}`);
     });
+
+    // Increase timeout to 10 minutes (600,000 ms) to avoid 504 Gateway Timeout on Azure
+    server.timeout = 600000;
+    server.keepAliveTimeout = 600000;
+    server.headersTimeout = 600000;
 }
 
 setupServer();
