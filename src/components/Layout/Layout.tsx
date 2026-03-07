@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats' | 'disclaimer';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing';
 
 interface LayoutProps {
   currentView: View;
@@ -57,6 +57,12 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             Portfolios
           </button>
           <button
+            className={`nav-link ${currentView === 'globalRebalancing' ? 'active' : ''}`}
+            onClick={() => handleNavigate('globalRebalancing')}
+          >
+            Global Rebalancing
+          </button>
+          <button
             className={`nav-link ${currentView === 'brokers' ? 'active' : ''}`}
             onClick={() => handleNavigate('brokers')}
           >
@@ -82,7 +88,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           </button>
         </nav>
       </header>
-      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' ? 'full-width' : ''}`}>
+      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' || currentView === 'globalRebalancing' ? 'full-width' : ''}`}>
         {children}
       </main>
 
