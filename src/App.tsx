@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { PortfolioProvider } from './context/PortfolioContext';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats' | 'disclaimer';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -18,6 +18,7 @@ import EmptyState from './components/Dashboard/EmptyState';
 import { usePortfolio } from './context/PortfolioContext';
 
 import ForecastView from './components/Forecast/ForecastView';
+import GlobalRebalancingView from './components/GlobalRebalancing/GlobalRebalancingView';
 
 // Placeholders for views
 const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
@@ -73,6 +74,12 @@ const DisclaimerView = () => (
   </div>
 );
 
+const GlobalRebalancingPage = () => (
+  <div>
+    <GlobalRebalancingView />
+  </div>
+);
+
 function App() {
   const [currentView, setCurrentView] = useState<View>('dashboard');
 
@@ -86,6 +93,7 @@ function App() {
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
       case 'disclaimer': return <DisclaimerView />;
+      case 'globalRebalancing': return <GlobalRebalancingPage />;
       default: return <DashboardView onNavigateToDisclaimer={() => setCurrentView('disclaimer')} />;
     }
   };

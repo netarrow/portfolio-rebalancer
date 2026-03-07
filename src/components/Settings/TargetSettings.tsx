@@ -19,6 +19,7 @@ const TargetSettings: React.FC = () => {
         portfolios,
         brokers,
         marketData,
+        globalRebalancingSettings,
         macroAllocations,
         goalAllocations,
         importData
@@ -57,13 +58,14 @@ const TargetSettings: React.FC = () => {
 
     const handleBackup = () => {
         const backupData = {
-            version: 1,
+            version: 2,
             timestamp: new Date().toISOString(),
             transactions,
             assetSettings,
             portfolios,
             brokers,
             marketData,
+            globalRebalancingSettings,
             macroAllocations,
             goalAllocations
         };

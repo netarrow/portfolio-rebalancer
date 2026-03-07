@@ -35,6 +35,10 @@ export interface Portfolio {
   liquidity?: number; // Cash available for rebalancing
 }
 
+export interface GlobalRebalancingSettings {
+  weightsByPortfolioId?: Record<string, number>;
+}
+
 export interface Transaction {
   id: string;
   ticker: string;
@@ -76,5 +80,4 @@ export interface PortfolioSummary {
   totalGain: number;
   totalGainPercentage: number;
 }
-
 
