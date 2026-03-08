@@ -17,7 +17,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
   };
 
   return (
-    <div className="layout">
+    <div className={`layout ${isMenuOpen ? 'menu-open' : ''}`.trim()}>
       <header className="navbar">
         <div className="navbar-header">
           <div className="navbar-brand">
@@ -97,6 +97,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           min-height: 100vh;
           display: flex;
           flex-direction: column;
+          padding-top: 72px;
         }
 
         .navbar {
@@ -106,9 +107,11 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           padding: var(--space-4) var(--space-8);
           background-color: var(--bg-surface);
           border-bottom: 1px solid var(--bg-card);
-          position: sticky;
+          position: fixed;
           top: 0;
-          z-index: 100;
+          left: 0;
+          right: 0;
+          z-index: 1000;
         }
 
         .navbar-header {
@@ -215,6 +218,10 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
         }
 
         @media (max-width: 768px) {
+          .layout {
+            padding-top: 64px;
+          }
+
           .navbar {
             flex-direction: column;
             padding: var(--space-3) var(--space-4);
@@ -239,6 +246,8 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
 
           .navbar-links.show {
             display: flex;
+            max-height: calc(100vh - 64px);
+            overflow-y: auto;
           }
 
           .nav-link {

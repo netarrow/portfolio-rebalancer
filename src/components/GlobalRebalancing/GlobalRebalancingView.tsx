@@ -343,6 +343,82 @@ const GlobalRebalancingView: React.FC = () => {
                         </tbody>
                     </table>
                 </div>
+
+                <div className="distribution-mobile-list" aria-label="Portfolio distribution mobile cards">
+                    {result.portfolios.map(portfolio => (
+                        <article
+                            key={`${portfolio.portfolioId}-mobile`}
+                            className={`distribution-mobile-card ${!portfolio.included ? 'row-muted' : ''}`}
+                        >
+                            <div className="mobile-card-header">
+                                <label className="mobile-include-toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={portfolio.included}
+                                        onChange={() => handleTogglePortfolio(portfolio.portfolioId)}
+                                        aria-label={`Include ${portfolio.name}`}
+                                    />
+                                    <span>Include</span>
+                                </label>
+                                <div className="portfolio-name-cell">
+                                    <strong>{portfolio.name}</strong>
+                                    {!portfolio.included && <span>Excluded</span>}
+                                </div>
+                            </div>
+
+                            <div className="mobile-weight-control">
+                                <label htmlFor={`weight-${portfolio.portfolioId}`}>Global Weight %</label>
+                                <input
+                                    id={`weight-${portfolio.portfolioId}`}
+                                    type="number"
+                                    min="0"
+                                    step="0.1"
+                                    className="weight-input"
+                                    value={portfolio.targetWeight || ''}
+                                    onChange={(event) => handleWeightChange(portfolio.portfolioId, event.target.value)}
+                                    placeholder="0"
+                                />
+                            </div>
+
+                            <dl className="mobile-metrics-grid">
+                                <div>
+                                    <dt>Invested</dt>
+                                    <dd>{formatCurrency(portfolio.currentInvestedValue)}</dd>
+                                </div>
+                                <div>
+                                    <dt>Liquidity</dt>
+                                    <dd>{formatCurrency(portfolio.currentLiquidity)}</dd>
+                                </div>
+                                <div>
+                                    <dt>Total</dt>
+                                    <dd>{formatCurrency(portfolio.currentTotalValue)}</dd>
+                                </div>
+                                <div>
+                                    <dt>Current Weight</dt>
+                                    <dd>{portfolio.included ? formatPercent(portfolio.currentWeight) : '-'}</dd>
+                                </div>
+                                <div>
+                                    <dt>Target Weight</dt>
+                                    <dd>{portfolio.included ? formatPercent(portfolio.normalizedWeight) : '-'}</dd>
+                                </div>
+                                <div>
+                                    <dt>Target Value</dt>
+                                    <dd>{portfolio.included ? formatCurrency(portfolio.targetValue) : '-'}</dd>
+                                </div>
+                                <div>
+                                    <dt>Suggested EUR</dt>
+                                    <dd className={portfolio.suggestedInvestment > 0 ? 'value-positive' : ''}>
+                                        {portfolio.included ? formatCurrency(portfolio.suggestedInvestment) : '-'}
+                                    </dd>
+                                </div>
+                                <div>
+                                    <dt>Projected Weight</dt>
+                                    <dd>{portfolio.included ? formatPercent(portfolio.projectedWeight) : '-'}</dd>
+                                </div>
+                            </dl>
+                        </article>
+                    ))}
+                </div>
             </section>
 
             <style>{`
@@ -484,6 +560,10 @@ const GlobalRebalancingView: React.FC = () => {
                     overflow-x: auto;
                 }
 
+                .distribution-mobile-list {
+                    display: none;
+                }
+
                 .distribution-table {
                     width: 100%;
                     border-collapse: collapse;
@@ -523,6 +603,100 @@ const GlobalRebalancingView: React.FC = () => {
                     padding: var(--space-2);
                 }
 
+                .distribution-mobile-card {
+                    border: 1px solid rgba(148, 163, 184, 0.2);
+                    border-radius: var(--radius-md);
+                    padding: var(--space-4);
+                    background: rgba(15, 23, 42, 0.72);
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-3);
+                }
+
+                .mobile-card-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    gap: var(--space-3);
+                }
+
+                .mobile-include-toggle {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: var(--space-2);
+                    min-height: 44px;
+                    font-size: 0.9rem;
+                    color: var(--text-secondary);
+                }
+
+                .mobile-include-toggle input {
+                    width: 18px;
+                    height: 18px;
+                }
+
+                .mobile-weight-control {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) 120px;
+                    align-items: center;
+                    gap: var(--space-3);
+                }
+
+                .mobile-weight-control label {
+                    color: var(--text-secondary);
+                    font-size: 0.85rem;
+                }
+
+                .mobile-metrics-grid {
+                    display: grid;
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    gap: var(--space-3);
+                    margin: 0;
+                }
+
+                .mobile-metrics-grid div {
+                    background: rgba(15, 23, 42, 0.6);
+                    border: 1px solid rgba(148, 163, 184, 0.12);
+                    border-radius: var(--radius-sm);
+                    padding: var(--space-2) var(--space-3);
+                }
+
+                .mobile-metrics-grid dt {
+                    margin: 0;
+                    color: var(--text-secondary);
+                    font-size: 0.75rem;
+                }
+
+                .mobile-metrics-grid dd {
+                    margin: var(--space-1) 0 0 0;
+                    font-size: 0.9rem;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }
+
+                @media (max-width: 1024px) {
+                    .global-hero-card,
+                    .global-controls-card,
+                    .global-table-card {
+                        padding: var(--space-5);
+                    }
+
+                    .hero-metrics {
+                        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                        gap: var(--space-3);
+                    }
+
+                    .metric-card strong {
+                        font-size: 1.05rem;
+                    }
+
+                    .distribution-table th,
+                    .distribution-table td {
+                        font-size: 0.87rem;
+                        padding: var(--space-2);
+                    }
+                }
+
                 .row-muted {
                     opacity: 0.55;
                 }
@@ -539,12 +713,69 @@ const GlobalRebalancingView: React.FC = () => {
                         padding: var(--space-4);
                     }
 
+                    .global-rebalancing-page {
+                        gap: var(--space-4);
+                    }
+
+                    .hero-metrics {
+                        margin-top: var(--space-4);
+                    }
+
                     .controls-actions {
                         justify-content: stretch;
                     }
 
                     .controls-actions .btn {
                         width: 100%;
+                    }
+
+                    .input-block textarea,
+                    .weight-input {
+                        font-size: 16px;
+                    }
+                }
+
+                @media (max-width: 430px) {
+                    .table-scroll {
+                        display: none;
+                    }
+
+                    .distribution-mobile-list {
+                        display: flex;
+                        flex-direction: column;
+                        gap: var(--space-3);
+                    }
+
+                    .table-header {
+                        margin-bottom: var(--space-3);
+                    }
+
+                    .global-hero-card,
+                    .global-controls-card,
+                    .global-table-card,
+                    .distribution-mobile-card {
+                        padding: var(--space-3);
+                    }
+
+                    .hero-metrics {
+                        grid-template-columns: 1fr;
+                    }
+
+                    .mobile-card-header {
+                        flex-direction: column;
+                    }
+
+                    .mobile-weight-control {
+                        grid-template-columns: 1fr;
+                        gap: var(--space-2);
+                    }
+
+                    .mobile-weight-control .weight-input {
+                        width: 100%;
+                    }
+
+                    .mobile-metrics-grid {
+                        grid-template-columns: 1fr;
                     }
                 }
             `}</style>
