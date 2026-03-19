@@ -66,7 +66,7 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
         : (minLiquidityPercentage !== '' && Number(minLiquidityPercentage) > 0);
 
     const totalAllocated = useMemo(() => {
-        return Object.values(liquidityAllocations).reduce((sum, v) => sum + (v === '' ? 0 : Number(v)), 0);
+        return Object.values(liquidityAllocations).reduce<number>((sum, v) => sum + (v === '' ? 0 : Number(v)), 0);
     }, [liquidityAllocations]);
 
     const handleAllocationChange = (portfolioId: string, value: string) => {
