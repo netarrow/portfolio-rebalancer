@@ -8,7 +8,11 @@ export interface Broker {
   minLiquidityType?: 'percent' | 'fixed';
   minLiquidityPercentage?: number;
   minLiquidityAmount?: number;
+  liquidityAllocations?: Record<string, number>; // portfolioId -> EUR amount
 }
+
+export const CASH_TICKER_PREFIX = '_CASH_';
+export const getCashTicker = (brokerId: string) => `${CASH_TICKER_PREFIX}${brokerId}`;
 
 export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto' | 'Cash';
 export type AssetSubClass =

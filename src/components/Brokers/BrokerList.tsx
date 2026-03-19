@@ -5,7 +5,7 @@ import type { Broker } from '../../types';
 import Swal from 'sweetalert2';
 
 const BrokerList: React.FC = () => {
-    const { brokers, addBroker, updateBroker, deleteBroker } = usePortfolio();
+    const { brokers, portfolios, addBroker, updateBroker, deleteBroker } = usePortfolio();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingBroker, setEditingBroker] = useState<Broker | null>(null);
 
@@ -132,6 +132,7 @@ const BrokerList: React.FC = () => {
             {isModalOpen && (
                 <BrokerForm
                     initialData={editingBroker}
+                    portfolios={portfolios}
                     onSubmit={editingBroker ? handleUpdate : handleCreate}
                     onCancel={closeModal}
                 />

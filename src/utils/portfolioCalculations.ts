@@ -1,4 +1,6 @@
-import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition } from '../types';
+import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition, Broker } from '../types';
+import { CASH_TICKER_PREFIX, getCashTicker } from '../types';
+export { CASH_TICKER_PREFIX, getCashTicker };
 
 export const calculateAssets = (
     transactions: Transaction[],
@@ -296,3 +298,39 @@ export const calculateRequiredLiquidityForOnlyBuy = (
     const requiredLiquidity = maxImpliedTotal - currentTotalAssetsValue;
     return Math.max(0, requiredLiquidity);
 };
+
+/**
+ * Injects virtual Cash assets into the assets array based on broker liquidity allocations.
+ * Each broker that has allocated liquidity to the given portfolio generates a synthetic
+ * Cash asset with ticker `_CASH_{brokerId}`.
+ */
+export const injectCashAssets = (
+    assets: Asset[],
+    brokers: Broker[],
+    portfolioId: string
+): Asset[] => {
+    const cashAssets: Asset[] = [];
+
+    brokers.forEach(broker => {
+        const allocated = broker.liquidityAllocations?.[portfolioId];
+        if (allocated && allocated > 0) {
+            cashAssets.push({
+                ticker: getCashTicker(broker.id),
+                label: `Cash (${broker.name})`,
+                assetClass: 'Cash',
+                assetSubClass: '',
+                quantity: 1,
+                averagePrice: allocated,
+                currentPrice: allocated,
+                currentValue: allocated,
+                gain: 0,
+                gainPercentage: 0,
+            });
+        }
+    });
+
+    return [...assets, ...cashAssets];
+};
+
+/** Check if a ticker is a virtual cash liquidity ticker */
+export const isCashTicker = (ticker: string): boolean => ticker.startsWith(CASH_TICKER_PREFIX);
