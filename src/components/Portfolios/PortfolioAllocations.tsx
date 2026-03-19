@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
+import { getCashTicker, isCashTicker } from '../../utils/portfolioCalculations';
 
 interface PortfolioAllocationsProps {
     portfolioId: string;
@@ -9,7 +10,7 @@ interface PortfolioAllocationsProps {
 }
 
 const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId, onClose }) => {
-    const { portfolios, assetSettings, updatePortfolioAllocation, updateAssetSettings } = usePortfolio();
+    const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updateAssetSettings } = usePortfolio();
 
     // UI State for "Add Asset" mode
     const [isAddingAsset, setIsAddingAsset] = useState(false);
@@ -21,19 +22,31 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
     const portfolio = portfolios.find(p => p.id === portfolioId);
     const allocations = portfolio?.allocations || {};
 
-    // Get all assets defined in settings
+    // Compute virtual cash tickers from brokers that have liquidity allocated to this portfolio
+    const cashTickers = useMemo(() => {
+        return brokers
+            .filter(b => (b.liquidityAllocations?.[portfolioId] || 0) > 0)
+            .map(b => ({
+                ticker: getCashTicker(b.id),
+                label: `Cash (${b.name})`,
+                assetClass: 'Cash' as AssetClass,
+            }));
+    }, [brokers, portfolioId]);
+
+    // Get all assets defined in settings + virtual cash tickers
     const tickers = useMemo(() => {
-        return assetSettings
-            .map(s => s.ticker)
-            .sort((a, b) => {
+        const settingTickers = assetSettings.map(s => s.ticker);
+        const cashTickerIds = cashTickers.map(c => c.ticker);
+        const allTickers = [...settingTickers, ...cashTickerIds];
+
+        return allTickers.sort((a, b) => {
                 const valA = allocations[a] || 0;
                 const valB = allocations[b] || 0;
-                // Sort by allocation descending
                 if (valB !== valA) return valB - valA;
                 return a.localeCompare(b);
             });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [assetSettings]);
+    }, [assetSettings, cashTickers]);
 
     if (!portfolio) return null;
 
@@ -88,18 +101,26 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                             </div>
 
                             {tickers.map(ticker => {
+                                const isCash = isCashTicker(ticker);
                                 const setting = assetSettings.find(s => s.ticker === ticker);
+                                const cashInfo = cashTickers.find(c => c.ticker === ticker);
                                 const currentPerc = allocations[ticker] || 0;
 
                                 return (
                                     <div key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
-                                        <div style={{ fontWeight: 500 }}>{ticker}</div>
+                                        <div style={{ fontWeight: 500, color: isCash ? 'var(--text-secondary)' : undefined }}>
+                                            {isCash ? 'CASH' : ticker}
+                                        </div>
                                         <div>
-                                            {setting?.label || '-'}
+                                            {isCash ? cashInfo?.label : (setting?.label || '-')}
                                         </div>
                                         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                            {setting?.assetClass}
-                                            {setting?.assetSubClass && <span style={{ opacity: 0.7 }}> • {setting.assetSubClass}</span>}
+                                            {isCash ? 'Cash' : (
+                                                <>
+                                                    {setting?.assetClass}
+                                                    {setting?.assetSubClass && <span style={{ opacity: 0.7 }}> • {setting.assetSubClass}</span>}
+                                                </>
+                                            )}
                                         </div>
                                         <div>
                                             <input
