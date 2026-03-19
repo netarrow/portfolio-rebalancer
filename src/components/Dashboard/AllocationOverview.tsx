@@ -1,11 +1,11 @@
 import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets, calculateRequiredLiquidityForOnlyBuy } from '../../utils/portfolioCalculations';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { WithdrawalModal } from './WithdrawalModal';
 import './Dashboard.css';
 
 const AllocationOverview: React.FC = () => {
-    const { portfolios, transactions, assetSettings, marketData, updatePortfolio, addTransactionsBulk } = usePortfolio();
+    const { portfolios, brokers, transactions, assetSettings, marketData, updatePortfolio, addTransactionsBulk } = usePortfolio();
 
     // 1. Group transactions by Portfolio
     // We only care about explicit portfolios, or maybe we want an "Unassigned" one?
@@ -28,7 +28,7 @@ const AllocationOverview: React.FC = () => {
                         allTransactions={transactions}
                         assetSettings={assetSettings}
                         marketData={marketData}
-
+                        brokers={brokers}
                         onUpdatePortfolio={updatePortfolio}
                         onAddTransactions={addTransactionsBulk}
                     />
@@ -43,11 +43,12 @@ interface AllocationTableProps {
     allTransactions: import('../../types').Transaction[];
     assetSettings: import('../../types').AssetDefinition[];
     marketData: Record<string, { price: number, lastUpdated: string }>;
+    brokers: import('../../types').Broker[];
     onUpdatePortfolio: (portfolio: import('../../types').Portfolio) => void;
     onAddTransactions: (transactions: import('../../types').Transaction[]) => void;
 }
 
-const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, onUpdatePortfolio, onAddTransactions }) => {
+const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions }) => {
     const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = React.useState(false);
 
     // Filter Txs for this portfolio
@@ -55,21 +56,28 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
         return allTransactions.filter(t => t.portfolioId === portfolio.id);
     }, [allTransactions, portfolio.id]);
 
-    // Calculate Assets for this portfolio
+    // Calculate Assets for this portfolio, then inject virtual Cash assets from broker allocations
     const { assets, summary } = useMemo(() => {
-        // We import calculateAssets dynamically or assume it's available (it is imported at top of file in original, wait, I need to check imports)
-        // I'll ensure imports are correct below.
-        return calculateAssets(portfolioTxs, assetSettings, marketData);
-    }, [portfolioTxs, assetSettings, marketData]);
+        const result = calculateAssets(portfolioTxs, assetSettings, marketData);
+        return {
+            assets: injectCashAssets(result.assets, brokers, portfolio.id),
+            summary: result.summary
+        };
+    }, [portfolioTxs, assetSettings, marketData, brokers, portfolio.id]);
 
     const allocations = portfolio.allocations || {};
     const liquidity = portfolio.liquidity || 0;
+
+    // Total value of injected cash assets (broker liquidity allocated to this portfolio)
+    const cashAssetsValue = useMemo(() => {
+        return assets.filter(a => isCashTicker(a.ticker)).reduce((sum, a) => sum + a.currentValue, 0);
+    }, [assets]);
 
     const assetTickers = assets.map(a => a.ticker);
     const targetTickers = Object.keys(allocations);
     const allTickers = Array.from(new Set([...assetTickers, ...targetTickers])).sort();
 
-    const totalPortfolioValue = summary.totalValue + liquidity;
+    const totalPortfolioValue = summary.totalValue + liquidity + cashAssetsValue;
 
     // Helper to calculate Buy Only amounts with integer share optimization
     // Strategy: Proportional Gap Filling + Largest Remainder Method
@@ -77,11 +85,12 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
         const liq = portfolio.liquidity || 0;
         if (liq <= 0) return {};
 
-        const totalVal = summary.totalValue + liq;
+        const totalVal = summary.totalValue + liq + cashAssetsValue;
 
         // 1. Calculate weighted gaps (Ideal Allocation - Current Value)
         // We only care about positive gaps (Underweight assets)
-        const candidates = allTickers.map(ticker => {
+        // Skip cash tickers - they are not tradeable
+        const candidates = allTickers.filter(t => !isCashTicker(t)).map(ticker => {
             const asset = assets.find(a => a.ticker === ticker);
             const currentValue = asset ? asset.currentValue : 0;
             const price = asset?.currentPrice || 0;
@@ -160,6 +169,9 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
         // For Buy Only, we iterate allTickers and use buyOnlyAllocations.
 
         allTickers.forEach(ticker => {
+            // Skip cash tickers - they are not tradeable
+            if (isCashTicker(ticker)) return;
+
             const asset = assets.find(a => a.ticker === ticker);
             const currentPrice = asset?.currentPrice || 0;
             const targetPerc = allocations[ticker] || 0;
@@ -407,10 +419,11 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                             ? (postRebalanceValue / totalPortfolioValue) * 100
                             : 0;
 
+                        const isCash = isCashTicker(ticker);
                         const setting = assetSettings.find(s => s.ticker === ticker);
-                        const assetClass = setting?.assetClass || asset?.assetClass || 'Stock';
+                        const assetClass = isCash ? 'Cash' : (setting?.assetClass || asset?.assetClass || 'Stock');
 
-                        const label = setting?.label || asset?.label;
+                        const label = isCash ? asset?.label : (setting?.label || asset?.label);
 
                         return (
                             <AllocationRow
@@ -418,6 +431,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                                 ticker={ticker}
                                 label={label}
                                 assetClass={assetClass}
+                                isCash={isCash}
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
                                 rebalanceAmount={rebalanceAmount}
@@ -452,14 +466,14 @@ interface RowProps {
     ticker: string;
     label?: string;
     assetClass: string;
+    isCash?: boolean;
 
-    // assetSubClass?: string; // UNUSED
     currentPerc: number;
     targetPerc: number;
     rebalanceAmount: number;
-    rebalanceShares: number; // ADDED
+    rebalanceShares: number;
     buyOnlyAmount: number;
-    buyOnlyShares: number; // ADDED
+    buyOnlyShares: number;
     currentValue: number;
     quantity: number;
     averagePrice: number;
@@ -470,7 +484,7 @@ interface RowProps {
     projectedPerc: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc }) => {
     const diff = currentPerc - targetPerc;
 
     const colorMap: Record<string, string> = {
@@ -493,16 +507,16 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentP
                     </div>
                 </div>
 
-                <div style={{ width: '100px', textAlign: 'center' }}>
-                    {parseFloat(quantity.toFixed(4))}
+                <div style={{ width: '100px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
+                    {isCash ? '-' : parseFloat(quantity.toFixed(4))}
                 </div>
 
-                <div style={{ width: '110px', textAlign: 'center' }}>
-                    €{averagePrice.toFixed(2)}
+                <div style={{ width: '110px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
+                    {isCash ? '-' : `€${averagePrice.toFixed(2)}`}
                 </div>
 
-                <div style={{ width: '110px', textAlign: 'center' }}>
-                    €{currentPrice.toFixed(2)}
+                <div style={{ width: '110px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
+                    {isCash ? '-' : `€${currentPrice.toFixed(2)}`}
                 </div>
 
                 <div style={{ width: '110px', textAlign: 'center' }}>
@@ -510,12 +524,18 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentP
                 </div>
 
                 <div style={{ width: '110px', textAlign: 'center', fontSize: '0.9rem' }}>
-                    <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                        {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
-                    </div>
-                    <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                        {gainPerc.toFixed(1)}%
-                    </div>
+                    {isCash ? (
+                        <div style={{ color: 'var(--text-muted)' }}>-</div>
+                    ) : (
+                        <>
+                            <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {gainPerc.toFixed(1)}%
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 <div style={{ width: '80px', textAlign: 'center' }}>
@@ -530,41 +550,49 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentP
                 </div>
 
                 <div style={{ width: '130px', textAlign: 'center' }}>
-                    <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                        {rebalanceShares === 0 ? (
-                            <span className="trend-neutral">OK</span>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                    €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                </span>
-                            </div>
-                        )}
-                    </div>
+                    {isCash ? (
+                        <div style={{ color: 'var(--text-muted)' }}>-</div>
+                    ) : (
+                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                            {rebalanceShares === 0 ? (
+                                <span className="trend-neutral">OK</span>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div style={{ width: '90px', textAlign: 'center' }}>
-                    <div style={{ color: 'var(--text-muted)' }}>{postRebalancePerc.toFixed(1)}%</div>
+                    <div style={{ color: 'var(--text-muted)' }}>{isCash ? '-' : `${postRebalancePerc.toFixed(1)}%`}</div>
                 </div>
 
                 <div style={{ width: '130px', textAlign: 'center' }}>
-                    <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
-                        {buyOnlyShares === 0 ? (
-                            <span className="trend-neutral">-</span>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                    €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                </span>
-                            </div>
-                        )}
-                    </div>
+                    {isCash ? (
+                        <div style={{ color: 'var(--text-muted)' }}>-</div>
+                    ) : (
+                        <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                            {buyOnlyShares === 0 ? (
+                                <span className="trend-neutral">-</span>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 <div style={{ width: '90px', textAlign: 'center' }}>
-                    <div style={{ color: 'var(--text-muted)' }}>{projectedPerc.toFixed(1)}%</div>
+                    <div style={{ color: 'var(--text-muted)' }}>{isCash ? '-' : `${projectedPerc.toFixed(1)}%`}</div>
                 </div>
             </div>
 
@@ -584,14 +612,18 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentP
                 </div>
 
                 <div className="mobile-card-grid">
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Price</span>
-                        <span className="mobile-value">€{currentPrice.toFixed(2)}</span>
-                    </div>
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Qty</span>
-                        <span className="mobile-value">{parseFloat(quantity.toFixed(4))}</span>
-                    </div>
+                    {!isCash && (
+                        <>
+                            <div className="mobile-detail-group">
+                                <span className="mobile-label">Price</span>
+                                <span className="mobile-value">€{currentPrice.toFixed(2)}</span>
+                            </div>
+                            <div className="mobile-detail-group">
+                                <span className="mobile-label">Qty</span>
+                                <span className="mobile-value">{parseFloat(quantity.toFixed(4))}</span>
+                            </div>
+                        </>
+                    )}
                     <div className="mobile-detail-group">
                         <span className="mobile-label">Target</span>
                         <span className="mobile-value">{targetPerc}%</span>
@@ -607,38 +639,40 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, currentP
                     </div>
                 </div>
 
-                <div className="mobile-actions">
-                    <div className="mobile-action-box">
-                        <div className="mobile-action-title">Standard Rebal</div>
-                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                            {rebalanceShares === 0 ? (
-                                <span>OK</span>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
-                            )}
+                {!isCash && (
+                    <div className="mobile-actions">
+                        <div className="mobile-action-box">
+                            <div className="mobile-action-title">Standard Rebal</div>
+                            <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                {rebalanceShares === 0 ? (
+                                    <span>OK</span>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <div className="mobile-action-box">
+                            <div className="mobile-action-title">Buy Only</div>
+                            <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                                {buyOnlyShares === 0 ? (
+                                    <span>-</span>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
-                    <div className="mobile-action-box">
-                        <div className="mobile-action-title">Buy Only</div>
-                        <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
-                            {buyOnlyShares === 0 ? (
-                                <span>-</span>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
+                )}
             </div>
         </React.Fragment>
     );
@@ -651,6 +685,7 @@ function getColorForClass(assetClass: string): string {
         case 'Bond': return '#10B981';
         case 'Commodity': return '#F59E0B';
         case 'Crypto': return '#8B5CF6';
+        case 'Cash': return '#6B7280';
         default: return '#9CA3AF';
     }
 }
