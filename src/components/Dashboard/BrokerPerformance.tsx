@@ -4,7 +4,7 @@ import { calculateAssets } from '../../utils/portfolioCalculations';
 import './Dashboard.css';
 
 const BrokerPerformance: React.FC = () => {
-    const { transactions, assetSettings, marketData, brokers: brokerList } = usePortfolio();
+    const { transactions, assetSettings, marketData, brokers: brokerList, portfolios } = usePortfolio();
 
     const brokerStats = useMemo(() => {
         // 1. Identify all unique brokers keys (ID) from transactions AND broker list
@@ -171,6 +171,40 @@ const BrokerPerformance: React.FC = () => {
                                         </span>
                                     </div>
                                 )}
+
+                                {/* Liquidity Allocations to Portfolios */}
+                                {(() => {
+                                    const brokerEntity = brokerList.find(b => b.id === stat.brokerId);
+                                    const allocs = brokerEntity?.liquidityAllocations;
+                                    if (!allocs || Object.keys(allocs).length === 0) return null;
+
+                                    const totalAllocated = Object.values(allocs).reduce((sum, v) => sum + v, 0);
+                                    const isShortfall = stat.liquidity < totalAllocated;
+
+                                    return (
+                                        <div style={{ marginTop: '0.3rem' }}>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.3rem' }}>Allocated to Portfolios:</div>
+                                            {Object.entries(allocs).map(([pid, amount]) => {
+                                                const pName = portfolios.find(p => p.id === pid)?.name || pid;
+                                                return (
+                                                    <div key={pid} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', paddingLeft: '0.5rem' }}>
+                                                        <span style={{ color: 'var(--text-secondary)' }}>{pName}</span>
+                                                        <span>€{amount.toLocaleString('en-IE', { minimumFractionDigits: 0 })}</span>
+                                                    </div>
+                                                );
+                                            })}
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', paddingLeft: '0.5rem', fontWeight: 600, borderTop: '1px dotted var(--border-color)', marginTop: '0.2rem', paddingTop: '0.2rem' }}>
+                                                <span style={{ color: 'var(--text-secondary)' }}>Total</span>
+                                                <span>€{totalAllocated.toLocaleString('en-IE', { minimumFractionDigits: 0 })}</span>
+                                            </div>
+                                            {isShortfall && (
+                                                <div style={{ fontSize: '0.8rem', color: '#EF4444', marginTop: '0.2rem' }}>
+                                                    Current liquidity is below the total allocated amount.
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
 
                                 {stat.hasTarget && Math.abs(stat.deviation) >= 100 && (
                                     <div style={{

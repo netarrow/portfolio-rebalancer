@@ -405,6 +405,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ? { ...t, portfolioId: undefined, portfolio: undefined } as any
                 : t
         ));
+        // Clean up liquidity allocations referencing this portfolio from all brokers
+        setBrokers(prev => prev.map(b => {
+            if (!b.liquidityAllocations || !b.liquidityAllocations[id]) return b;
+            const { [id]: _, ...rest } = b.liquidityAllocations;
+            return { ...b, liquidityAllocations: Object.keys(rest).length > 0 ? rest : undefined };
+        }));
     };
 
     const addBroker = (broker: Broker) => {
@@ -417,6 +423,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const deleteBroker = (id: string) => {
         setBrokers(prev => prev.filter(b => b.id !== id));
+        // Clean up _CASH_ ticker entries from portfolio allocations referencing this broker
+        const cashTicker = `_CASH_${id}`;
+        setPortfolios(prev => prev.map(p => {
+            if (!p.allocations || !(cashTicker in p.allocations)) return p;
+            const { [cashTicker]: _, ...rest } = p.allocations;
+            return { ...p, allocations: rest };
+        }));
     };
 
     const updateGlobalPortfolioWeight = (portfolioId: string, weight: number) => {

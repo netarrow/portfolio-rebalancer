@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets } from '../../utils/portfolioCalculations';
+import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import type { Asset } from '../../types';
 import PortfolioPyramid from './PortfolioPyramid';
@@ -54,8 +54,9 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
 
         const grouped: Record<string, number> = {};
         Object.entries(portfolio.allocations).forEach(([ticker, percent]) => {
-            const setting = assetSettings.find(s => s.ticker === ticker);
-            const cls = setting?.assetClass || 'Other';
+            const cls = isCashTicker(ticker)
+                ? 'Cash'
+                : (assetSettings.find(s => s.ticker === ticker)?.assetClass || 'Other');
             grouped[cls] = (grouped[cls] || 0) + percent;
         });
 
@@ -232,10 +233,24 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
 const AllocationCharts: React.FC = () => {
     const { transactions, assetSettings, marketData, portfolios, brokers } = usePortfolio();
 
-    // 1. Total / All
+    // 1. Total / All (including virtual cash assets from all portfolios)
     const totalAssets = useMemo(() => {
-        return calculateAssets(transactions, assetSettings, marketData).assets;
-    }, [transactions, assetSettings, marketData]);
+        const baseAssets = calculateAssets(transactions, assetSettings, marketData).assets;
+        // Collect cash assets from all portfolios, avoiding duplicates per broker
+        const seenBrokerPortfolio = new Set<string>();
+        const allCashAssets: Asset[] = [];
+        portfolios.forEach(p => {
+            const cashForPortfolio = injectCashAssets([], brokers, p.id);
+            cashForPortfolio.forEach(ca => {
+                const key = `${ca.ticker}_${p.id}`;
+                if (!seenBrokerPortfolio.has(key)) {
+                    seenBrokerPortfolio.add(key);
+                    allCashAssets.push(ca);
+                }
+            });
+        });
+        return [...baseAssets, ...allCashAssets];
+    }, [transactions, assetSettings, marketData, brokers, portfolios]);
 
     // 2. Portfolio Contribution
     const portfolioContributionData = useMemo(() => {
@@ -368,10 +383,11 @@ const AllocationCharts: React.FC = () => {
         if (investedVsLiquidityData.length === 0) return null;
     }
 
-    // Helper to get assets for a portfolio
+    // Helper to get assets for a portfolio (including virtual cash assets)
     const getPortfolioAssets = (pid: string) => {
         const filteredTxs = transactions.filter(t => t.portfolioId === pid);
-        return calculateAssets(filteredTxs, assetSettings, marketData).assets;
+        const result = calculateAssets(filteredTxs, assetSettings, marketData);
+        return injectCashAssets(result.assets, brokers, pid);
     };
 
     // ...
