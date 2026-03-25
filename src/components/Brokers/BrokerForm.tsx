@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { usePortfolio } from '../../context/PortfolioContext';
 import type { Broker } from '../../types';
 
 interface BrokerFormProps {
@@ -8,6 +9,7 @@ interface BrokerFormProps {
 }
 
 const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel }) => {
+    const { portfolios } = usePortfolio();
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [currentLiquidity, setCurrentLiquidity] = useState<number | ''>('');
@@ -17,18 +19,26 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
     const [minLiquidityPercentage, setMinLiquidityPercentage] = useState<number | ''>('');
     const [minLiquidityAmount, setMinLiquidityAmount] = useState<number | ''>('');
 
+    // Portfolio cash distribution
+    const [portfolioCashDistribution, setPortfolioCashDistribution] = useState<Record<string, number | ''>>({});
+
     useEffect(() => {
         if (initialData) {
             setName(initialData.name);
             setDescription(initialData.description || '');
             setCurrentLiquidity(initialData.currentLiquidity !== undefined ? initialData.currentLiquidity : '');
 
-            // Default to 'percent' if undefined, unless we want to infer?
-            // If type is not set, check if amount is set? Legacy defaults to percent.
             const type = initialData.minLiquidityType || 'percent';
             setLiquidityType(type);
             setMinLiquidityPercentage(initialData.minLiquidityPercentage !== undefined ? initialData.minLiquidityPercentage : '');
             setMinLiquidityAmount(initialData.minLiquidityAmount !== undefined ? initialData.minLiquidityAmount : '');
+
+            const dist: Record<string, number | ''> = {};
+            portfolios.forEach(p => {
+                const val = initialData.portfolioCashDistribution?.[p.id];
+                dist[p.id] = val !== undefined ? val : '';
+            });
+            setPortfolioCashDistribution(dist);
         } else {
             setName('');
             setDescription('');
@@ -36,18 +46,33 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
             setLiquidityType('percent');
             setMinLiquidityPercentage('');
             setMinLiquidityAmount('');
+            const dist: Record<string, number | ''> = {};
+            portfolios.forEach(p => { dist[p.id] = ''; });
+            setPortfolioCashDistribution(dist);
         }
-    }, [initialData]);
+    }, [initialData, portfolios]);
+
+    const handlePortfolioCashChange = (portfolioId: string, value: string) => {
+        setPortfolioCashDistribution(prev => ({
+            ...prev,
+            [portfolioId]: value === '' ? '' : Number(value)
+        }));
+    };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
+        const dist: Record<string, number> = {};
+        Object.entries(portfolioCashDistribution).forEach(([id, val]) => {
+            if (val !== '' && Number(val) > 0) dist[id] = Number(val);
+        });
         onSubmit({
             name,
             description,
             currentLiquidity: currentLiquidity === '' ? undefined : Number(currentLiquidity),
             minLiquidityType: liquidityType,
             minLiquidityPercentage: minLiquidityPercentage === '' ? undefined : Number(minLiquidityPercentage),
-            minLiquidityAmount: minLiquidityAmount === '' ? undefined : Number(minLiquidityAmount)
+            minLiquidityAmount: minLiquidityAmount === '' ? undefined : Number(minLiquidityAmount),
+            portfolioCashDistribution: Object.keys(dist).length > 0 ? dist : undefined
         });
     };
 
@@ -153,6 +178,32 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
                         )}
                     </div>
 
+                    {portfolios.length > 0 && (
+                        <div className="form-group">
+                            <label style={{ display: 'block', marginBottom: '0.5rem' }}>Cash per Portfolio (€)</label>
+                            <div className="portfolio-cash-list">
+                                {portfolios.map(p => (
+                                    <div key={p.id} className="portfolio-cash-row">
+                                        <span className="portfolio-cash-name">{p.name}</span>
+                                        <div className="input-with-prefix">
+                                            <span className="input-prefix">€</span>
+                                            <input
+                                                type="number"
+                                                value={portfolioCashDistribution[p.id] ?? ''}
+                                                onChange={(e) => handlePortfolioCashChange(p.id, e.target.value)}
+                                                placeholder="0.00"
+                                                step="0.01"
+                                                min="0"
+                                                className="form-input"
+                                                style={{ paddingLeft: '1.8rem' }}
+                                            />
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="form-actions">
                         <button type="button" onClick={onCancel} className="btn btn-secondary">
                             Cancel
@@ -182,6 +233,35 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
                     transform: translateY(-50%);
                     color: var(--text-secondary);
                 }
+                .input-with-prefix {
+                    position: relative;
+                }
+                .portfolio-cash-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-2);
+                    max-height: 200px;
+                    overflow-y: auto;
+                    padding-right: var(--space-1);
+                }
+                .portfolio-cash-row {
+                    display: flex;
+                    align-items: center;
+                    gap: var(--space-3);
+                }
+                .portfolio-cash-name {
+                    flex: 1;
+                    font-size: 0.875rem;
+                    color: var(--text-primary);
+                    min-width: 0;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .portfolio-cash-row .input-with-prefix {
+                    width: 140px;
+                    flex-shrink: 0;
+                }
             `}</style>
 
             <style>{`
@@ -204,6 +284,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, onSubmit, onCancel
                     border-radius: var(--radius-lg);
                     width: 100%;
                     max-width: 500px;
+                    max-height: 90vh;
+                    overflow-y: auto;
                     border: 1px solid var(--bg-card);
                     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
                 }

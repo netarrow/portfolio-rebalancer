@@ -8,6 +8,7 @@ export interface Broker {
   minLiquidityType?: 'percent' | 'fixed';
   minLiquidityPercentage?: number;
   minLiquidityAmount?: number;
+  portfolioCashDistribution?: Record<string, number>; // portfolioId -> cash amount
 }
 
 export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto' | 'Cash';
