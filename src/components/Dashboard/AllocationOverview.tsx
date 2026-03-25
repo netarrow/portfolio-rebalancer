@@ -259,8 +259,17 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
                 <h3 className="section-title" style={{ margin: 0 }}>
                     Rebalancing: {portfolio.name} <span style={{ fontSize: '0.9em', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
-                        ({summary.totalValue.toLocaleString('en-IE', { style: 'currency', currency: 'EUR' })})
+                        ({totalPortfolioValue.toLocaleString('en-IE', { style: 'currency', currency: 'EUR' })})
                     </span>
+                    {(() => {
+                        const totalTargetPerc = Object.values(allocations).reduce((sum, v) => sum + v, 0);
+                        const isComplete = Math.abs(totalTargetPerc - 100) < 0.01;
+                        return (
+                            <span style={{ fontSize: '0.75em', fontWeight: 'normal', marginLeft: 'var(--space-3)', color: isComplete ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                Target: {totalTargetPerc.toFixed(1)}%
+                            </span>
+                        );
+                    })()}
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Liquidity:</label>
