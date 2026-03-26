@@ -9,9 +9,10 @@ interface PortfolioPyramidProps {
         color: string;
         breakdown?: { label: string; value: number }[];
     }[];
+    baseComposition?: { label: string; value: number; color: string }[];
 }
 
-const PortfolioPyramid: React.FC<PortfolioPyramidProps> = ({ data }) => {
+const PortfolioPyramid: React.FC<PortfolioPyramidProps> = ({ data, baseComposition }) => {
     // Data must be sorted for the pyramid look.
     // Largest at bottom means in a horizontal bar chart (where Category 0 is top),
     // we want Smallest -> Largest.
@@ -128,6 +129,8 @@ const PortfolioPyramid: React.FC<PortfolioPyramidProps> = ({ data }) => {
 
     if (data.length === 0) return null;
 
+    const baseTotal = baseComposition ? baseComposition.reduce((s, seg) => s + seg.value, 0) : 0;
+
     return (
         <div className="portfolio-pyramid-container" style={{ width: '100%', minHeight: '350px' }}>
             <ReactApexChart
@@ -136,6 +139,49 @@ const PortfolioPyramid: React.FC<PortfolioPyramidProps> = ({ data }) => {
                 type="bar"
                 height={350}
             />
+            {baseComposition && baseTotal > 0 && (
+                <div style={{ padding: '0 10px', marginTop: '-0.5rem' }}>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.35rem' }}>
+                        Base breakdown
+                    </div>
+                    <div style={{
+                        display: 'flex',
+                        borderRadius: 'var(--radius-md)',
+                        overflow: 'hidden',
+                        height: 22
+                    }}>
+                        {baseComposition.filter(s => s.value > 0).map((seg, i) => {
+                            const pct = (seg.value / baseTotal * 100);
+                            return (
+                                <div key={i} style={{
+                                    width: `${pct}%`,
+                                    backgroundColor: seg.color,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: '0.7rem',
+                                    fontWeight: 600,
+                                    color: '#fff',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    padding: '0 4px'
+                                }}>
+                                    {pct >= 15 ? `${seg.label} ${pct.toFixed(0)}%` : `${pct.toFixed(0)}%`}
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div style={{ display: 'flex', gap: '1rem', marginTop: '0.35rem', flexWrap: 'wrap' }}>
+                        {baseComposition.filter(s => s.value > 0).map((seg, i) => (
+                            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', backgroundColor: seg.color }} />
+                                {seg.label}: €{seg.value.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
