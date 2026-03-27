@@ -379,62 +379,151 @@ const AllocationCharts: React.FC = () => {
     // 6. Portfolio Value Pyramid (simulation)
     const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
     const LIQUIDITY_COLOR = '#6B7280';
-    const [simulatedValues, setSimulatedValues] = useState<Record<string, number>>({});
-    const isSimulationActive = Object.keys(simulatedValues).length > 0;
+    const [portfolioTransfers, setPortfolioTransfers] = useState<Record<string, { remove: number; add: number }>>({});
+    const [liquidityPortfolioId, setLiquidityPortfolioId] = useState<string>('');
+    const isSimulationActive = useMemo(
+        () => Object.values(portfolioTransfers).some(({ remove, add }) => remove > 0 || add > 0),
+        [portfolioTransfers]
+    );
 
     const actualLiquidity = useMemo(() =>
         brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0),
         [brokers]
     );
-    const simLiquidity = simulatedValues['__liquidity__'] ?? Math.trunc(actualLiquidity);
+    const roundedActualLiquidity = Math.trunc(actualLiquidity);
 
-    // Build pyramid data: portfolios + liquidity merged into the largest (base) layer
+    const portfolioCurrentValues = useMemo(
+        () => Object.fromEntries(
+            portfolioContributionData.map(d => [d.id, Math.trunc(d.value)])
+        ) as Record<string, number>,
+        [portfolioContributionData]
+    );
+
+    const totalRemoved = useMemo(
+        () => Object.values(portfolioTransfers).reduce((sum, { remove }) => sum + remove, 0),
+        [portfolioTransfers]
+    );
+
+    const totalAdded = useMemo(
+        () => Object.values(portfolioTransfers).reduce((sum, { add }) => sum + add, 0),
+        [portfolioTransfers]
+    );
+
+    const simLiquidity = roundedActualLiquidity + totalRemoved - totalAdded;
+
+    const simulatedPortfolioValues = useMemo(
+        () => Object.fromEntries(
+            portfolioContributionData.map(d => {
+                const transfer = portfolioTransfers[d.id] ?? { remove: 0, add: 0 };
+                return [d.id, portfolioCurrentValues[d.id] - transfer.remove + transfer.add];
+            })
+        ) as Record<string, number>,
+        [portfolioContributionData, portfolioTransfers, portfolioCurrentValues]
+    );
+
+    const resolvedLiquidityPortfolioId = useMemo(() => {
+        if (portfolioContributionData.length === 0) return '';
+        const selectedExists = portfolioContributionData.some(d => d.id === liquidityPortfolioId);
+        return selectedExists ? liquidityPortfolioId : portfolioContributionData[0].id;
+    }, [portfolioContributionData, liquidityPortfolioId]);
+
+    const liquidityPortfolioName = useMemo(
+        () => portfolioContributionData.find(d => d.id === resolvedLiquidityPortfolioId)?.name ?? '',
+        [portfolioContributionData, resolvedLiquidityPortfolioId]
+    );
+
+    const updatePortfolioTransfer = (portfolioId: string, field: 'remove' | 'add', rawValue: number) => {
+        const sanitizedValue = Math.max(0, Math.trunc(Number.isFinite(rawValue) ? rawValue : 0));
+
+        setPortfolioTransfers(prev => {
+            const current = prev[portfolioId] ?? { remove: 0, add: 0 };
+            const currentValue = portfolioCurrentValues[portfolioId] ?? 0;
+            const prevTotalRemoved = Object.values(prev).reduce((sum, { remove }) => sum + remove, 0);
+            const prevTotalAdded = Object.values(prev).reduce((sum, { add }) => sum + add, 0);
+
+            let nextRemove = current.remove;
+            let nextAdd = current.add;
+
+            if (field === 'remove') {
+                const otherRemoved = prevTotalRemoved - current.remove;
+                const minimumRemoveNeeded = Math.max(0, prevTotalAdded - roundedActualLiquidity - otherRemoved);
+                nextRemove = Math.max(minimumRemoveNeeded, Math.min(sanitizedValue, currentValue));
+            } else {
+                const availableForThisRow = Math.max(0, roundedActualLiquidity + prevTotalRemoved - (prevTotalAdded - current.add));
+                nextAdd = Math.min(sanitizedValue, availableForThisRow);
+            }
+
+            const nextEntry = { remove: nextRemove, add: nextAdd };
+            if (nextEntry.remove === 0 && nextEntry.add === 0) {
+                const { [portfolioId]: _, ...rest } = prev;
+                return rest;
+            }
+
+            return {
+                ...prev,
+                [portfolioId]: nextEntry
+            };
+        });
+    };
+
+    // Build pyramid data: portfolios + liquidity merged into the selected portfolio layer
     const { portfolioPyramidData, baseComposition } = useMemo(() => {
-        // Portfolio layers with simulated or actual values (truncated)
         const layers = portfolioContributionData.map((d, index) => ({
             id: d.id,
             name: d.name,
-            value: simulatedValues[d.id] ?? Math.trunc(d.value),
+            value: simulatedPortfolioValues[d.id] ?? portfolioCurrentValues[d.id],
             color: COLORS[index % COLORS.length],
         })).filter(d => d.value > 0);
 
         if (layers.length === 0) return { portfolioPyramidData: [], baseComposition: undefined };
 
-        // Find the largest layer (base of the pyramid)
-        const maxIdx = layers.reduce((mi, d, i, arr) => d.value > arr[mi].value ? i : mi, 0);
-        const baseLayer = layers[maxIdx];
-
-        // Merge liquidity into the base
         const liqValue = simLiquidity;
         let composition: { label: string; value: number; color: string }[] | undefined;
 
         if (liqValue > 0) {
-            composition = [
-                { label: baseLayer.name, value: baseLayer.value, color: baseLayer.color },
-                { label: 'Liquidity', value: liqValue, color: LIQUIDITY_COLOR }
-            ];
-            // Replace the base layer with the merged total
-            layers[maxIdx] = {
-                ...baseLayer,
-                name: `${baseLayer.name} + Liquidity`,
-                value: baseLayer.value + liqValue,
-            };
+            let ownerIdx = layers.findIndex(layer => layer.id === resolvedLiquidityPortfolioId);
+
+            if (ownerIdx === -1) {
+                const ownerMeta = portfolioContributionData.find((portfolio, index) => {
+                    if (portfolio.id !== resolvedLiquidityPortfolioId) return false;
+                    layers.push({
+                        id: portfolio.id,
+                        name: portfolio.name,
+                        value: 0,
+                        color: COLORS[index % COLORS.length],
+                    });
+                    return true;
+                });
+
+                if (ownerMeta) {
+                    ownerIdx = layers.findIndex(layer => layer.id === resolvedLiquidityPortfolioId);
+                }
+            }
+
+            const ownerLayer = ownerIdx >= 0 ? layers[ownerIdx] : undefined;
+
+            if (ownerLayer) {
+                composition = [
+                    { label: ownerLayer.name, value: ownerLayer.value, color: ownerLayer.color },
+                    { label: 'Liquidity', value: liqValue, color: LIQUIDITY_COLOR }
+                ];
+                layers[ownerIdx] = {
+                    ...ownerLayer,
+                    name: `${ownerLayer.name} + Liquidity`,
+                    value: ownerLayer.value + liqValue,
+                };
+            }
         }
 
         return {
             portfolioPyramidData: layers,
             baseComposition: composition
         };
-    }, [portfolioContributionData, simulatedValues, simLiquidity]);
+    }, [portfolioContributionData, simulatedPortfolioValues, portfolioCurrentValues, simLiquidity, resolvedLiquidityPortfolioId]);
 
     const simulatedTotal = useMemo(() =>
         portfolioPyramidData.reduce((sum, d) => sum + d.value, 0),
         [portfolioPyramidData]
-    );
-
-    const actualTotal = useMemo(() =>
-        portfolioContributionData.reduce((sum, d) => sum + d.value, 0) + Math.trunc(actualLiquidity),
-        [portfolioContributionData, actualLiquidity]
     );
 
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
@@ -596,7 +685,7 @@ const AllocationCharts: React.FC = () => {
                                 <h4 style={{ margin: 0 }}>Simulate Portfolio Values</h4>
                                 {isSimulationActive && (
                                     <button
-                                        onClick={() => setSimulatedValues({})}
+                                        onClick={() => setPortfolioTransfers({})}
                                         style={{
                                             padding: '0.35rem 0.75rem',
                                             fontSize: '0.8rem',
@@ -611,9 +700,42 @@ const AllocationCharts: React.FC = () => {
                                     </button>
                                 )}
                             </div>
+                            <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                Each portfolio starts from its current value. You can only move capital: remove it from one portfolio, then reallocate it using available liquidity.
+                            </p>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Liquidity attached to</span>
+                                    <select
+                                        value={resolvedLiquidityPortfolioId}
+                                        onChange={(e) => setLiquidityPortfolioId(e.target.value)}
+                                        style={{
+                                            width: '100%',
+                                            padding: '0.6rem',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: '1px solid var(--border-color)',
+                                            backgroundColor: 'var(--bg-input)',
+                                            color: 'var(--text-primary)'
+                                        }}
+                                    >
+                                        {portfolioContributionData.map(p => (
+                                            <option key={p.id} value={p.id}>
+                                                {p.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                {portfolioContributionData.map((d, index) => (
-                                    <div key={d.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                {portfolioContributionData.map((d, index) => {
+                                    const transfer = portfolioTransfers[d.id] ?? { remove: 0, add: 0 };
+                                    const currentValue = portfolioCurrentValues[d.id];
+                                    const simulatedValue = simulatedPortfolioValues[d.id];
+                                    const minRemoveNeeded = Math.max(0, totalAdded - roundedActualLiquidity - (totalRemoved - transfer.remove));
+                                    const maxAddAvailable = Math.max(0, roundedActualLiquidity + totalRemoved - (totalAdded - transfer.add));
+
+                                    return (
+                                        <div key={d.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                             <label style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 500 }}>
                                                 <span style={{
@@ -626,34 +748,61 @@ const AllocationCharts: React.FC = () => {
                                                 }} />
                                                 {d.name}
                                             </label>
-                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                                                Actual: €{Math.trunc(d.value).toLocaleString('en-IE')}
+                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                                                Current: €{currentValue.toLocaleString('en-IE')}
+                                                <br />
+                                                Simulated: €{simulatedValue.toLocaleString('en-IE')}
                                             </span>
                                         </div>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                            <span style={{ color: 'var(--text-muted)' }}>€</span>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                step="100"
-                                                value={simulatedValues[d.id] ?? Math.trunc(d.value)}
-                                                onChange={(e) => setSimulatedValues(prev => ({
-                                                    ...prev,
-                                                    [d.id]: Number(e.target.value)
-                                                }))}
-                                                style={{
-                                                    width: '100%',
-                                                    padding: '0.5rem',
-                                                    borderRadius: 'var(--radius-md)',
-                                                    border: '1px solid var(--border-color)',
-                                                    backgroundColor: 'var(--bg-input)',
-                                                    color: 'var(--text-primary)'
-                                                }}
-                                            />
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Remove from portfolio</span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <span style={{ color: 'var(--text-muted)' }}>€</span>
+                                                    <input
+                                                        type="number"
+                                                        min={minRemoveNeeded}
+                                                        max={currentValue}
+                                                        step="100"
+                                                        value={transfer.remove}
+                                                        onChange={(e) => updatePortfolioTransfer(d.id, 'remove', Number(e.target.value))}
+                                                        style={{
+                                                            width: '100%',
+                                                            padding: '0.5rem',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            border: '1px solid var(--border-color)',
+                                                            backgroundColor: 'var(--bg-input)',
+                                                            color: 'var(--text-primary)'
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Add from liquidity</span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <span style={{ color: 'var(--text-muted)' }}>€</span>
+                                                    <input
+                                                        type="number"
+                                                        min="0"
+                                                        max={maxAddAvailable}
+                                                        step="100"
+                                                        value={transfer.add}
+                                                        onChange={(e) => updatePortfolioTransfer(d.id, 'add', Number(e.target.value))}
+                                                        style={{
+                                                            width: '100%',
+                                                            padding: '0.5rem',
+                                                            borderRadius: 'var(--radius-md)',
+                                                            border: '1px solid var(--border-color)',
+                                                            backgroundColor: 'var(--bg-input)',
+                                                            color: 'var(--text-primary)'
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
-                                {/* Liquidity row */}
+                                        </div>
+                                    );
+                                })}
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                         <label style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 500 }}>
@@ -667,30 +816,23 @@ const AllocationCharts: React.FC = () => {
                                             }} />
                                             Liquidity
                                         </label>
-                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                                            Actual: €{Math.trunc(actualLiquidity).toLocaleString('en-IE')}
+                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'right' }}>
+                                            Current: €{roundedActualLiquidity.toLocaleString('en-IE')}
+                                            <br />
+                                            Simulated: €{simLiquidity.toLocaleString('en-IE')}
                                         </span>
                                     </div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                        <span style={{ color: 'var(--text-muted)' }}>€</span>
-                                        <input
-                                            type="number"
-                                            min="0"
-                                            step="100"
-                                            value={simLiquidity}
-                                            onChange={(e) => setSimulatedValues(prev => ({
-                                                ...prev,
-                                                ['__liquidity__']: Number(e.target.value)
-                                            }))}
-                                            style={{
-                                                width: '100%',
-                                                padding: '0.5rem',
-                                                borderRadius: 'var(--radius-md)',
-                                                border: '1px solid var(--border-color)',
-                                                backgroundColor: 'var(--bg-input)',
-                                                color: 'var(--text-primary)'
-                                            }}
-                                        />
+                                    <div style={{
+                                        padding: '0.75rem',
+                                        borderRadius: 'var(--radius-md)',
+                                        border: '1px solid var(--border-color)',
+                                        backgroundColor: 'var(--bg-input)',
+                                        color: 'var(--text-muted)',
+                                        fontSize: '0.85rem'
+                                    }}>
+                                        Attached to: {liquidityPortfolioName || 'No portfolio selected'}
+                                        <br />
+                                        Available liquidity for new allocations: €{simLiquidity.toLocaleString('en-IE')}
                                     </div>
                                 </div>
                             </div>
@@ -706,9 +848,7 @@ const AllocationCharts: React.FC = () => {
                                 <span style={{ color: 'var(--text-muted)' }}>Total</span>
                                 <span style={{
                                     fontWeight: 600,
-                                    color: isSimulationActive
-                                        ? (simulatedTotal > actualTotal ? 'var(--color-success)' : simulatedTotal < actualTotal ? 'var(--color-danger)' : 'var(--text-primary)')
-                                        : 'var(--text-primary)'
+                                    color: 'var(--text-primary)'
                                 }}>
                                     €{simulatedTotal.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
                                 </span>
