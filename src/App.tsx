@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { PortfolioProvider } from './context/PortfolioContext';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -17,6 +17,7 @@ import Disclaimer from './components/Disclaimer/Disclaimer';
 import EmptyState from './components/Dashboard/EmptyState';
 import { usePortfolio } from './context/PortfolioContext';
 
+import GoalList from './components/Goals/GoalList';
 import ForecastView from './components/Forecast/ForecastView';
 import GlobalRebalancingView from './components/GlobalRebalancing/GlobalRebalancingView';
 
@@ -68,6 +69,12 @@ const BrokersView = () => (
   </div>
 );
 
+const GoalsView = () => (
+  <div>
+    <GoalList />
+  </div>
+);
+
 const DisclaimerView = () => (
   <div>
     <Disclaimer />
@@ -90,6 +97,7 @@ function App() {
       case 'settings': return <SettingsView />;
       case 'portfolios': return <PortfoliosView />;
       case 'brokers': return <BrokersView />;
+      case 'goals': return <GoalsView />;
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
       case 'disclaimer': return <DisclaimerView />;

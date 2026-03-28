@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, GlobalRebalancingSettings } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, GlobalRebalancingSettings, Goal } from '../types';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { normalizeGlobalRebalancingSettings } from '../utils/globalRebalancing';
@@ -15,6 +15,7 @@ interface PortfolioContextType {
     assets: Asset[];
     portfolios: Portfolio[];
     brokers: Broker[];
+    goals: Goal[];
     globalRebalancingSettings: { weightsByPortfolioId: Record<string, number> };
     summary: PortfolioSummary;
     macroAllocations: MacroAllocation;
@@ -37,6 +38,9 @@ interface PortfolioContextType {
     addBroker: (broker: Broker) => void;
     updateBroker: (broker: Broker) => void;
     deleteBroker: (id: string) => void;
+    addGoal: (goal: Goal) => void;
+    updateGoal: (goal: Goal) => void;
+    deleteGoal: (id: string) => void;
     updateGlobalPortfolioWeight: (portfolioId: string, weight: number) => void;
     applyGlobalLiquidityDistribution: (distribution: Record<string, number>) => void;
     // Deprecated accessors for compatibility during transition
@@ -66,6 +70,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [oldTargets, setOldTargets] = useLocalStorage<Target[]>('portfolio_targets_v2', []);
     const [portfolios, setPortfolios] = useLocalStorage<Portfolio[]>('portfolio_list', []);
     const [brokers, setBrokers] = useLocalStorage<Broker[]>('portfolio_brokers', []);
+    const [goals, setGoals] = useLocalStorage<Goal[]>('portfolio_goals', []);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
     const [storedGlobalRebalancingSettings, setStoredGlobalRebalancingSettings] = useLocalStorage<GlobalRebalancingSettings>(
         'portfolio_global_rebalancing_v1',
@@ -432,6 +437,22 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
     };
 
+    const addGoal = (goal: Goal) => {
+        setGoals(prev => [...prev, goal]);
+    };
+
+    const updateGoal = (goal: Goal) => {
+        setGoals(prev => prev.map(g => g.id === goal.id ? goal : g));
+    };
+
+    const deleteGoal = (id: string) => {
+        setGoals(prev => prev.filter(g => g.id !== id));
+        // Clear goalId from portfolios referencing this goal
+        setPortfolios(prev => prev.map(p =>
+            p.goalId === id ? { ...p, goalId: undefined } : p
+        ));
+    };
+
     const updateGlobalPortfolioWeight = (portfolioId: string, weight: number) => {
         setStoredGlobalRebalancingSettings(prev => {
             const normalized = normalizeGlobalRebalancingSettings(prev);
@@ -536,6 +557,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setOldTargets([]);
         setMacroAllocations({});
         setGoalAllocations({});
+        setGoals([]);
     };
 
     const refreshPrices = async () => {
@@ -695,12 +717,20 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             assetSubClass: m.subClass as AssetSubClass
         }));
 
-        // 4. Portfolios & Allocations
+        // 4. Goals
+        const mockGoals: Goal[] = [
+            { id: 'goal-growth', title: 'Growth', description: 'Long-term capital appreciation', order: 1 },
+            { id: 'goal-protection', title: 'Protection', description: 'Capital preservation and emergency fund', order: 2 },
+            { id: 'goal-security', title: 'Security', description: 'Stable income and low volatility', order: 3 }
+        ];
+
+        // 5. Portfolios & Allocations
         const portfoliosList: Portfolio[] = [
             {
                 id: pIdMain,
                 name: 'Main Strategy',
                 description: 'Core ETF Portfolio (World + EM + Agg)',
+                goalId: 'goal-growth',
                 allocations: {
                     'IE00B4L5Y983': 50, // SWDA
                     'IE00BKM4GZ66': 15, // EMIM
@@ -712,6 +742,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 id: pIdSafe,
                 name: 'Safety Net',
                 description: 'Emergency fund and hedging',
+                goalId: 'goal-protection',
                 allocations: {
                     'LU0290358497': 70, // XEON
                     'IE00B1FZS798': 30  // Govt Bond
@@ -721,6 +752,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 id: pIdSpec,
                 name: 'Speculative',
                 description: 'High risk bets',
+                goalId: 'goal-security',
                 allocations: {
                     'BTC-USD': 100
                 }
@@ -758,6 +790,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTransactions(txs);
         setAssetSettings(newSettings);
         setPortfolios(portfoliosList);
+        setGoals(mockGoals);
         setMarketData(mockPrices);
         setMacroAllocations(newMacros);
         setGoalAllocations(newGoals);
@@ -795,6 +828,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setStoredGlobalRebalancingSettings(normalizeGlobalRebalancingSettings(data.globalRebalancingSettings));
             setMacroAllocations(data.macroAllocations || {});
             setGoalAllocations(data.goalAllocations || {});
+            setGoals(data.goals || []);
 
             // Clear legacy/temp data just in case
             setOldTargets([]);
@@ -836,6 +870,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addBroker,
         updateBroker,
         deleteBroker,
+        goals,
+        addGoal,
+        updateGoal,
+        deleteGoal,
         updateGlobalPortfolioWeight,
         applyGlobalLiquidityDistribution,
         importData,

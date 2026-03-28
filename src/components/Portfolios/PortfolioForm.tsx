@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { usePortfolio } from '../../context/PortfolioContext';
 import type { Portfolio } from '../../types';
 
 interface PortfolioFormProps {
@@ -8,16 +9,20 @@ interface PortfolioFormProps {
 }
 
 const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, onCancel }) => {
+    const { goals } = usePortfolio();
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
+    const [goalId, setGoalId] = useState('');
 
     useEffect(() => {
         if (initialData) {
             setName(initialData.name);
             setDescription(initialData.description || '');
+            setGoalId(initialData.goalId || '');
         } else {
             setName('');
             setDescription('');
+            setGoalId('');
         }
     }, [initialData]);
 
@@ -25,7 +30,8 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
         e.preventDefault();
         onSubmit({
             name,
-            description
+            description,
+            goalId: goalId || undefined
         });
     };
 
@@ -57,6 +63,21 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
                             className="form-input"
                             rows={3}
                         />
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="goalId">Goal</label>
+                        <select
+                            id="goalId"
+                            value={goalId}
+                            onChange={(e) => setGoalId(e.target.value)}
+                            className="form-input"
+                        >
+                            <option value="">-- No Goal --</option>
+                            {[...goals].sort((a, b) => a.order - b.order).map(g => (
+                                <option key={g.id} value={g.id}>{g.title}</option>
+                            ))}
+                        </select>
                     </div>
 
                     <div className="form-actions">
