@@ -4,7 +4,6 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import type { Asset } from '../../types';
-import PortfolioPyramid from './PortfolioPyramid';
 import MacroStats from './MacroStats';
 import './Dashboard.css';
 
@@ -230,8 +229,105 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
     );
 };
 
+interface GoalSegment {
+    id: string;
+    name: string;
+    value: number;
+    color: string;
+    breakdown: { label: string; value: number }[];
+}
+
+const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number }> = ({ data, total }) => {
+    const [hoveredId, setHoveredId] = useState<string | null>(null);
+    const hoveredGoal = data.find(g => g.id === hoveredId);
+    const visible = data.filter(g => g.value > 0);
+
+    return (
+        <div style={{ marginBottom: '3rem' }}>
+            <h3 className="section-title" style={{
+                fontSize: '1.2rem',
+                color: 'var(--color-primary)',
+                borderBottom: '1px solid var(--border-color)',
+                paddingBottom: '0.5rem',
+                marginBottom: '1rem'
+            }}>
+                Goal Distribution
+            </h3>
+            <div className="chart-card" style={{ padding: '1.5rem' }}>
+                {/* Bar */}
+                <div style={{ display: 'flex', borderRadius: 'var(--radius-md)', overflow: 'hidden', height: 48, width: '100%', backgroundColor: 'var(--bg-card)' }}>
+                    {visible.map((goal) => {
+                        const pct = (goal.value / total) * 100;
+                        return (
+                            <div
+                                key={goal.id}
+                                onMouseEnter={() => setHoveredId(goal.id)}
+                                onMouseLeave={() => setHoveredId(null)}
+                                style={{
+                                    width: `${pct}%`,
+                                    backgroundColor: goal.color,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    color: '#fff',
+                                    fontSize: pct >= 8 ? '0.85rem' : '0.7rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    filter: hoveredId === goal.id ? 'brightness(1.15)' : 'none',
+                                    transition: 'filter 0.2s'
+                                }}
+                            >
+                                {pct >= 8 ? `${goal.name} ${pct.toFixed(1)}%` : pct >= 4 ? `${pct.toFixed(0)}%` : ''}
+                            </div>
+                        );
+                    })}
+                </div>
+
+                {/* Tooltip panel */}
+                {hoveredGoal && (() => {
+                    const pct = (hoveredGoal.value / total) * 100;
+                    return (
+                        <div style={{
+                            marginTop: '0.75rem',
+                            padding: '0.75rem 1rem',
+                            backgroundColor: 'var(--bg-surface)',
+                            border: `1px solid ${hoveredGoal.color}`,
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: '0.85rem'
+                        }}>
+                            <div style={{ fontWeight: 700, marginBottom: '0.4rem', fontSize: '0.95rem', color: hoveredGoal.color }}>
+                                {hoveredGoal.name} — {pct.toFixed(1)}%
+                            </div>
+                            <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: 'var(--text-primary)' }}>
+                                Total: €{hoveredGoal.value.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                            </div>
+                            {hoveredGoal.breakdown.map(b => (
+                                <div key={b.label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', color: 'var(--text-secondary)' }}>
+                                    <span>{b.label}</span>
+                                    <span>€{b.value.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>
+                                </div>
+                            ))}
+                        </div>
+                    );
+                })()}
+
+                {/* Legend */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', marginTop: '0.75rem' }}>
+                    {visible.map(goal => (
+                        <div key={goal.id} style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem' }}>
+                            <span style={{ width: 12, height: 12, borderRadius: '50%', backgroundColor: goal.color, display: 'inline-block' }} />
+                            <span style={{ color: 'var(--text-primary)' }}>{goal.name}</span>
+                            <span style={{ color: 'var(--text-muted)' }}>€{goal.value.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const AllocationCharts: React.FC = () => {
-    const { transactions, assetSettings, marketData, portfolios, brokers } = usePortfolio();
+    const { transactions, assetSettings, marketData, portfolios, brokers, goals } = usePortfolio();
 
     // 1. Total / All (including virtual cash assets from all portfolios)
     const totalAssets = useMemo(() => {
@@ -540,13 +636,59 @@ const AllocationCharts: React.FC = () => {
         return injectCashAssets(result.assets, brokers, pid);
     };
 
-    // ...
+    // Goal aggregation chart data
+    const GOAL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6', '#F97316'];
+
+    const goalChartData = useMemo(() => {
+        if (goals.length === 0) return [];
+
+        const sortedGoals = [...goals].sort((a, b) => a.order - b.order);
+
+        return sortedGoals.map((goal, idx) => {
+            const linkedPortfolios = portfolios.filter(p => p.goalId === goal.id);
+
+            // Aggregate asset class breakdown across all linked portfolios
+            const classBreakdown: Record<string, number> = {};
+            let totalValue = 0;
+
+            linkedPortfolios.forEach(p => {
+                const pAssets = getPortfolioAssets(p.id);
+                pAssets.forEach(asset => {
+                    if (asset.currentValue <= 0) return;
+                    const cls = asset.assetClass || 'Other';
+                    classBreakdown[cls] = (classBreakdown[cls] || 0) + asset.currentValue;
+                    totalValue += asset.currentValue;
+                });
+            });
+
+            return {
+                id: goal.id,
+                name: goal.title,
+                value: totalValue,
+                color: GOAL_COLORS[idx % GOAL_COLORS.length],
+                breakdown: Object.entries(classBreakdown)
+                    .map(([cls, val]) => ({ label: cls, value: val }))
+                    .sort((a, b) => b.value - a.value)
+            };
+        });
+    }, [goals, portfolios, transactions, assetSettings, marketData, brokers]);
+
+    const goalChartTotal = useMemo(() =>
+        goalChartData.reduce((sum, g) => sum + g.value, 0),
+        [goalChartData]
+    );
 
     return (
         <div className="charts-section">
             <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '2rem' }}>Portfolio Distribution</h2>
 
             <MacroStats />
+            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
+
+            {/* Goal Distribution Chart */}
+            {goalChartData.length > 0 && goalChartTotal > 0 && (
+                <GoalDistributionChart data={goalChartData} total={goalChartTotal} />
+            )}
             <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
 
             {/* Portfolio Contribution Chart */}
@@ -647,213 +789,7 @@ const AllocationCharts: React.FC = () => {
                             </div>
                         )}
 
-                        {/* Portfolio Pyramid */}
-                        {goalDistributionData.length > 0 && (
-                            <div className="chart-card" style={{ gridColumn: '1 / -1' }}>
-                                <h4>Total Wealth Distribution (Portfolios + Liquidity)</h4>
-                                <PortfolioPyramid
-                                    data={goalDistributionData}
-                                />
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
 
-            {/* Portfolio Value Pyramid with Simulation */}
-            {portfolioContributionData.length > 1 && (
-                <div style={{ marginBottom: '3rem' }}>
-                    <h3 className="section-title" style={{
-                        fontSize: '1.2rem',
-                        color: 'var(--color-primary)',
-                        borderBottom: '1px solid var(--border-color)',
-                        paddingBottom: '0.5rem',
-                        marginBottom: '1rem'
-                    }}>
-                        Portfolio Value Pyramid
-                    </h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '2rem' }}>
-                        {/* Left: Pyramid */}
-                        <div className="chart-card">
-                            <h4>Value by Portfolio</h4>
-                            <PortfolioPyramid data={portfolioPyramidData} baseComposition={baseComposition} />
-                        </div>
-
-                        {/* Right: Simulation Panel */}
-                        <div className="chart-card">
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                                <h4 style={{ margin: 0 }}>Simulate Portfolio Values</h4>
-                                {isSimulationActive && (
-                                    <button
-                                        onClick={() => setPortfolioTransfers({})}
-                                        style={{
-                                            padding: '0.35rem 0.75rem',
-                                            fontSize: '0.8rem',
-                                            borderRadius: 'var(--radius-md)',
-                                            border: '1px solid var(--border-color)',
-                                            backgroundColor: 'var(--bg-input)',
-                                            color: 'var(--text-primary)',
-                                            cursor: 'pointer'
-                                        }}
-                                    >
-                                        Reset
-                                    </button>
-                                )}
-                            </div>
-                            <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                Each portfolio starts from its current value. You can only move capital: remove it from one portfolio, then reallocate it using available liquidity.
-                            </p>
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Liquidity attached to</span>
-                                    <select
-                                        value={resolvedLiquidityPortfolioId}
-                                        onChange={(e) => setLiquidityPortfolioId(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '0.6rem',
-                                            borderRadius: 'var(--radius-md)',
-                                            border: '1px solid var(--border-color)',
-                                            backgroundColor: 'var(--bg-input)',
-                                            color: 'var(--text-primary)'
-                                        }}
-                                    >
-                                        {portfolioContributionData.map(p => (
-                                            <option key={p.id} value={p.id}>
-                                                {p.name}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </label>
-                            </div>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                {portfolioContributionData.map((d, index) => {
-                                    const transfer = portfolioTransfers[d.id] ?? { remove: 0, add: 0 };
-                                    const currentValue = portfolioCurrentValues[d.id];
-                                    const simulatedValue = simulatedPortfolioValues[d.id];
-                                    const minRemoveNeeded = Math.max(0, totalAdded - roundedActualLiquidity - (totalRemoved - transfer.remove));
-                                    const maxAddAvailable = Math.max(0, roundedActualLiquidity + totalRemoved - (totalAdded - transfer.add));
-
-                                    return (
-                                        <div key={d.id} style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                            <label style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                                                <span style={{
-                                                    display: 'inline-block',
-                                                    width: 10,
-                                                    height: 10,
-                                                    borderRadius: '50%',
-                                                    backgroundColor: COLORS[index % COLORS.length],
-                                                    marginRight: '0.5rem'
-                                                }} />
-                                                {d.name}
-                                            </label>
-                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'right' }}>
-                                                Current: €{currentValue.toLocaleString('en-IE')}
-                                                <br />
-                                                Simulated: €{simulatedValue.toLocaleString('en-IE')}
-                                            </span>
-                                        </div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '0.75rem' }}>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Remove from portfolio</span>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <span style={{ color: 'var(--text-muted)' }}>€</span>
-                                                    <input
-                                                        type="number"
-                                                        min={minRemoveNeeded}
-                                                        max={currentValue}
-                                                        step="100"
-                                                        value={transfer.remove}
-                                                        onChange={(e) => updatePortfolioTransfer(d.id, 'remove', Number(e.target.value))}
-                                                        style={{
-                                                            width: '100%',
-                                                            padding: '0.5rem',
-                                                            borderRadius: 'var(--radius-md)',
-                                                            border: '1px solid var(--border-color)',
-                                                            backgroundColor: 'var(--bg-input)',
-                                                            color: 'var(--text-primary)'
-                                                        }}
-                                                    />
-                                                </div>
-                                            </div>
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Add from liquidity</span>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <span style={{ color: 'var(--text-muted)' }}>€</span>
-                                                    <input
-                                                        type="number"
-                                                        min="0"
-                                                        max={maxAddAvailable}
-                                                        step="100"
-                                                        value={transfer.add}
-                                                        onChange={(e) => updatePortfolioTransfer(d.id, 'add', Number(e.target.value))}
-                                                        style={{
-                                                            width: '100%',
-                                                            padding: '0.5rem',
-                                                            borderRadius: 'var(--radius-md)',
-                                                            border: '1px solid var(--border-color)',
-                                                            backgroundColor: 'var(--bg-input)',
-                                                            color: 'var(--text-primary)'
-                                                        }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                        </div>
-                                    );
-                                })}
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <label style={{ fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: 500 }}>
-                                            <span style={{
-                                                display: 'inline-block',
-                                                width: 10,
-                                                height: 10,
-                                                borderRadius: '50%',
-                                                backgroundColor: LIQUIDITY_COLOR,
-                                                marginRight: '0.5rem'
-                                            }} />
-                                            Liquidity
-                                        </label>
-                                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', textAlign: 'right' }}>
-                                            Current: €{roundedActualLiquidity.toLocaleString('en-IE')}
-                                            <br />
-                                            Simulated: €{simLiquidity.toLocaleString('en-IE')}
-                                        </span>
-                                    </div>
-                                    <div style={{
-                                        padding: '0.75rem',
-                                        borderRadius: 'var(--radius-md)',
-                                        border: '1px solid var(--border-color)',
-                                        backgroundColor: 'var(--bg-input)',
-                                        color: 'var(--text-muted)',
-                                        fontSize: '0.85rem'
-                                    }}>
-                                        Attached to: {liquidityPortfolioName || 'No portfolio selected'}
-                                        <br />
-                                        Available liquidity for new allocations: €{simLiquidity.toLocaleString('en-IE')}
-                                    </div>
-                                </div>
-                            </div>
-                            {/* Total summary */}
-                            <div style={{
-                                marginTop: '1.5rem',
-                                paddingTop: '1rem',
-                                borderTop: '1px solid var(--border-color)',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                fontSize: '0.9rem'
-                            }}>
-                                <span style={{ color: 'var(--text-muted)' }}>Total</span>
-                                <span style={{
-                                    fontWeight: 600,
-                                    color: 'var(--text-primary)'
-                                }}>
-                                    €{simulatedTotal.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                </span>
-                            </div>
-                        </div>
                     </div>
                 </div>
             )}

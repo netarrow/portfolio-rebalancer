@@ -31,12 +31,20 @@ export type GoalAllocation = {
   [key in FinancialGoal]?: number;
 };
 
+export interface Goal {
+  id: string;
+  title: string;
+  description?: string;
+  order: number;
+}
+
 export interface Portfolio {
   id: string;
   name: string;
   description?: string;
   allocations?: Record<string, number>; // Ticker -> Percentage (0-100)
   liquidity?: number; // Cash available for rebalancing
+  goalId?: string;
 }
 
 export interface GlobalRebalancingSettings {

@@ -4,7 +4,6 @@ import { getAssetGoal } from '../../utils/goalCalculations';
 import type { FinancialGoal } from '../../utils/goalCalculations';
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import PortfolioPyramid from './PortfolioPyramid';
 
 
 const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899'];
@@ -285,43 +284,6 @@ const MacroStats: React.FC = () => {
                                         fontWeight: 500
                                     }}>
                                         {Math.abs(m.diffValue) < 50 ? 'OK' : `${m.action} €${Math.abs(m.diffValue).toFixed(0)}`}
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-
-                {/* Goals Chart & Table */}
-                <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h3>Goal Allocation (Projected)</h3>
-                    </div>
-                    <div style={{ width: '100%', minHeight: 400, display: 'flex', alignItems: 'center', marginTop: '1rem' }}>
-                        {/* Replaced Pie with Pyramid */}
-                        <PortfolioPyramid data={stats.goalProjected} />
-                    </div>
-                    <table style={{ width: '100%', marginTop: '1rem', borderCollapse: 'collapse' }}>
-                        <thead>
-                            <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>
-                                <th style={{ padding: '0.5rem' }}>Goal</th>
-                                <th style={{ textAlign: 'right' }}>Actual</th>
-                                <th style={{ textAlign: 'right' }}>Target</th>
-                                <th style={{ textAlign: 'right' }}>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {stats.goals.map(g => (
-                                <tr key={g.name} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                    <td style={{ padding: '0.5rem' }}>{g.name}</td>
-                                    <td style={{ textAlign: 'right' }}>{g.currentPercent.toFixed(1)}%</td>
-                                    <td style={{ textAlign: 'right' }}>{g.targetPercent > 0 ? g.targetPercent + '%' : '-'}</td>
-                                    <td style={{
-                                        textAlign: 'right',
-                                        color: Math.abs(g.diffValue) < 50 ? 'var(--text-muted)' : (g.action === 'Buy' ? 'var(--color-success)' : 'var(--color-danger)'),
-                                        fontWeight: 500
-                                    }}>
-                                        {Math.abs(g.diffValue) < 50 ? 'OK' : `${g.action} €${Math.abs(g.diffValue).toFixed(0)}`}
                                     </td>
                                 </tr>
                             ))}
