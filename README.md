@@ -4,6 +4,8 @@ This project is an **Agentic Development Experiment** created with **Antigravity
 
 **Codex (GPT 5.2 Plus)** was employed as a control agent to analyze the codebase and provide architectural, compliance and security insights.
 
+**GPT 5.4 Plus and Claud Code Opus 4.6** was also used to implement some incremental feature and some rework
+
 It was built in a **few hours** while multitasking, demonstrating the capabilities of agentic AI in handling end-to-end development, for a tool I actually needed for my own portfolio management.
  
 The goal was to create the tool I was looking for, replacing an overly complex Excel spreadsheet.
