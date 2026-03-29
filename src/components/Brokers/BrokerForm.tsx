@@ -101,7 +101,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
 
     return (
         <div className="modal-overlay">
-            <div className="modal-content">
+            <div className="modal-content" style={{ position: 'relative' }}>
+                <button className="modal-close-btn" type="button" onClick={onCancel}>×</button>
                 <h3>{initialData ? 'Edit Broker' : 'New Broker'}</h3>
                 <form onSubmit={handleSubmit} className="broker-form">
                     <div className="form-group">

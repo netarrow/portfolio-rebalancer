@@ -30,7 +30,8 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete 
 
     return (
         <div className="modal-overlay" style={{ zIndex: 1100 }}> {/* Higher z-index than others if needed */}
-            <div className="modal-content" style={{ maxWidth: '500px', width: '90%', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-content" style={{ maxWidth: '500px', width: '90%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+                <button className="modal-close-btn" type="button" onClick={onClose} disabled={!isComplete}>×</button>
                 <h3 style={{ marginBottom: '1rem', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     Updating Prices
                     {!isComplete && <span className="loader-spinner" style={{ width: '20px', height: '20px', border: '3px solid var(--text-muted)', borderTop: '3px solid var(--color-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span>}

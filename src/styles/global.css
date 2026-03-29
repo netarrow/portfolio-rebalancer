@@ -85,3 +85,29 @@ button {
     color: var(--text-primary);
     border-color: var(--text-muted);
 }
+
+/* Modal close button — shared across all modals */
+.modal-close-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    transition: color 0.2s, background-color 0.2s;
+}
+
+.modal-close-btn:hover {
+    color: var(--text-primary);
+    background-color: var(--bg-card);
+}
+
+.modal-close-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
