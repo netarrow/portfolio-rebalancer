@@ -236,6 +236,29 @@
     border-radius: 4px;
     font-size: 0.85rem;
     width: 100%;
+    min-width: 0;
+}
+
+/* Mobile Edit Form */
+.mobile-editing-card {
+    border-color: var(--color-primary);
+}
+
+.mobile-edit-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.mobile-edit-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.mobile-edit-field--full {
+    grid-column: 1 / -1;
 }
 
 .btn-edit {

@@ -295,6 +295,23 @@
     .transaction-form-card h2 {
         font-size: 1.1rem !important;
     }
+
+    /* Prevent native date input from overflowing its container */
+    .transaction-form-card input[type="date"].form-input {
+        min-width: 0 !important;
+        width: 100% !important;
+    }
+
+    /* Ensure edit inputs on mobile don't zoom (iOS) */
+    .mobile-edit-form .edit-input {
+        font-size: 16px !important;
+        padding: 6px 8px !important;
+    }
+
+    .mobile-edit-form input[type="date"].edit-input {
+        min-width: 0 !important;
+        width: 100% !important;
+    }
 }
 
 /* ===== GLOBAL REBALANCING (supplements existing 430px breakpoint) ===== */

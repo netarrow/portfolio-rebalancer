@@ -352,59 +352,164 @@ const TransactionList: React.FC = () => {
 
     const renderMobileList = (txs: Transaction[]) => (
         <div className="mobile-list-view">
-            {txs.map((tx) => (
-                <div key={tx.id} className="mobile-transaction-card">
-                    <div className="mobile-card-header">
-                        <div className="mobile-card-ticker">{tx.ticker}</div>
-                        <div className="mobile-card-date">{tx.date}</div>
+            {txs.map((tx) => {
+                const isEditing = editingId === tx.id;
+
+                if (isEditing && editForm) {
+                    return (
+                        <div key={tx.id} className="mobile-transaction-card mobile-editing-card">
+                            <div className="mobile-card-header">
+                                <div className="mobile-card-ticker">{editForm.ticker}</div>
+                                <div className="mobile-card-date" style={{ color: 'var(--color-primary)', fontSize: '0.75rem' }}>Editing</div>
+                            </div>
+                            <div className="mobile-edit-form">
+                                <div className="mobile-edit-field mobile-edit-field--full">
+                                    <label className="detail-label">Date</label>
+                                    <input
+                                        type="date"
+                                        value={editForm.date}
+                                        onChange={e => handleEditChange('date', e.target.value)}
+                                        className="edit-input"
+                                    />
+                                </div>
+                                <div className="mobile-edit-field">
+                                    <label className="detail-label">Ticker</label>
+                                    <input
+                                        type="text"
+                                        value={editForm.ticker}
+                                        onChange={e => handleEditChange('ticker', e.target.value.toUpperCase())}
+                                        className="edit-input"
+                                    />
+                                </div>
+                                <div className="mobile-edit-field">
+                                    <label className="detail-label">Side</label>
+                                    <select
+                                        value={editForm.direction}
+                                        onChange={e => handleEditChange('direction', e.target.value as TransactionDirection)}
+                                        className="edit-input"
+                                    >
+                                        <option value="Buy">Buy</option>
+                                        <option value="Sell">Sell</option>
+                                    </select>
+                                </div>
+                                <div className="mobile-edit-field">
+                                    <label className="detail-label">Portfolio</label>
+                                    <select
+                                        value={editForm.portfolioId || ''}
+                                        onChange={e => handleEditChange('portfolioId', e.target.value)}
+                                        className="edit-input"
+                                    >
+                                        <option value="">-</option>
+                                        {portfolios.map(p => (
+                                            <option key={p.id} value={p.id}>{p.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="mobile-edit-field">
+                                    <label className="detail-label">Broker</label>
+                                    <select
+                                        value={editForm.brokerId || ''}
+                                        onChange={e => handleEditChange('brokerId', e.target.value)}
+                                        className="edit-input"
+                                    >
+                                        <option value="">-</option>
+                                        {brokers.map(b => (
+                                            <option key={b.id} value={b.id}>{b.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="mobile-edit-field">
+                                    <label className="detail-label">Qty</label>
+                                    <input
+                                        type="number"
+                                        value={editForm.amount}
+                                        onChange={e => handleEditChange('amount', Number(e.target.value))}
+                                        className="edit-input"
+                                    />
+                                </div>
+                                <div className="mobile-edit-field">
+                                    <label className="detail-label">Price (Exec)</label>
+                                    <input
+                                        type="number"
+                                        value={editForm.price}
+                                        onChange={e => handleEditChange('price', Number(e.target.value))}
+                                        className="edit-input"
+                                    />
+                                </div>
+                                <div className="mobile-edit-field">
+                                    <label className="detail-label">Price (Mkt)</label>
+                                    <input
+                                        type="number"
+                                        placeholder="Mkt Px"
+                                        value={editMarketPrice !== undefined ? editMarketPrice : ''}
+                                        onChange={e => setEditMarketPrice(e.target.value === '' ? undefined : parseFloat(e.target.value))}
+                                        className="edit-input"
+                                        style={{ borderColor: 'var(--color-primary)' }}
+                                    />
+                                </div>
+                            </div>
+                            <div className="mobile-card-actions">
+                                <button className="btn-save" onClick={saveEditing} style={{ padding: '6px 20px', fontSize: '0.9rem' }}>Save</button>
+                                <button className="btn-cancel" onClick={cancelEditing} style={{ padding: '6px 20px', fontSize: '0.9rem' }}>Cancel</button>
+                            </div>
+                        </div>
+                    );
+                }
+
+                return (
+                    <div key={tx.id} className="mobile-transaction-card">
+                        <div className="mobile-card-header">
+                            <div className="mobile-card-ticker">{tx.ticker}</div>
+                            <div className="mobile-card-date">{tx.date}</div>
+                        </div>
+                        <div className="mobile-card-details">
+                            <div className="detail-row">
+                                <span className="detail-label">Side</span>
+                                <span className="detail-value" style={{
+                                    color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
+                                    fontWeight: 600
+                                }}>
+                                    {tx.direction || 'Buy'}
+                                </span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Portfolio</span>
+                                <span className="detail-value">{getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}</span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Broker</span>
+                                <span className="detail-value">{getBrokerName(tx.brokerId)}</span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Total</span>
+                                <span className="detail-value">{((tx.price || 0) * tx.amount).toFixed(2)}</span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Qty</span>
+                                <span className="detail-value">{tx.amount}</span>
+                            </div>
+                            <div className="detail-row">
+                                <span className="detail-label">Price</span>
+                                <span className="detail-value">{tx.price.toFixed(2)}</span>
+                            </div>
+                        </div>
+                        <div className="mobile-card-actions">
+                            <button
+                                className="btn-edit"
+                                onClick={() => startEditing(tx)}
+                            >
+                                Edit
+                            </button>
+                            <button
+                                className="btn-delete"
+                                onClick={() => deleteTransaction(tx.id)}
+                            >
+                                Del
+                            </button>
+                        </div>
                     </div>
-                    <div className="mobile-card-details">
-                        <div className="detail-row">
-                            <span className="detail-label">Side</span>
-                            <span className="detail-value" style={{
-                                color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
-                                fontWeight: 600
-                            }}>
-                                {tx.direction || 'Buy'}
-                            </span>
-                        </div>
-                        <div className="detail-row">
-                            <span className="detail-label">Portfolio</span>
-                            <span className="detail-value">{getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}</span>
-                        </div>
-                        <div className="detail-row">
-                            <span className="detail-label">Broker</span>
-                            <span className="detail-value">{getBrokerName(tx.brokerId)}</span>
-                        </div>
-                        <div className="detail-row">
-                            <span className="detail-label">Total</span>
-                            <span className="detail-value">{((tx.price || 0) * tx.amount).toFixed(2)}</span>
-                        </div>
-                        <div className="detail-row">
-                            <span className="detail-label">Qty</span>
-                            <span className="detail-value">{tx.amount}</span>
-                        </div>
-                        <div className="detail-row">
-                            <span className="detail-label">Price</span>
-                            <span className="detail-value">{tx.price.toFixed(2)}</span>
-                        </div>
-                    </div>
-                    <div className="mobile-card-actions">
-                        <button
-                            className="btn-edit"
-                            onClick={() => startEditing(tx)}
-                        >
-                            Edit
-                        </button>
-                        <button
-                            className="btn-delete"
-                            onClick={() => deleteTransaction(tx.id)}
-                        >
-                            Del
-                        </button>
-                    </div>
-                </div>
-            ))}
+                );
+            })}
         </div>
     );
 
