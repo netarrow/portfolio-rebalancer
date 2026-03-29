@@ -55,7 +55,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                     Calculate how much to sell to net the desired cash amount, accounting for taxes (26% / 12.5%), while maintaining target allocation.
                 </p>
 
-                <div style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'flex-end', marginBottom: 'var(--space-6)' }}>
+                <div className="withdrawal-input-row" style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'flex-end', marginBottom: 'var(--space-6)' }}>
                     <div style={{ flex: 1 }}>
                         <label style={{ display: 'block', marginBottom: 'var(--space-2)', fontWeight: 500 }}>Net Cash Needed (€)</label>
                         <input
@@ -89,7 +89,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                 {projection && (
                     <div className="projection-results" style={{ animation: 'fadeIn 0.3s ease' }}>
 
-                        <div className="summary-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
+                        <div className="summary-cards withdrawal-summary-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
                             <div className="stat-card" style={{ padding: 'var(--space-4)', backgroundColor: 'var(--bg-default)', borderRadius: 'var(--radius-md)' }}>
                                 <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Gross To Sell</div>
                                 <div style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -111,6 +111,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                         </div>
 
                         <h3 style={{ marginBottom: 'var(--space-3)' }}>Sell Actions</h3>
+                        <div className="withdrawal-table-scroll">
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
                             <thead>
                                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)', textAlign: 'left' }}>
@@ -149,6 +150,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                                 ))}
                             </tbody>
                         </table>
+                        </div>
 
                         <div style={{ marginTop: 'var(--space-4)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                             * Tax calculation assumes 26% for Stocks/Crypto/Gold and 12.5% for Bonds/Cash.

@@ -140,7 +140,7 @@ const TargetSettings: React.FC = () => {
         // ... (existing implementation)
         const setting = getSetting(ticker);
         return (
-            <div className="form-group" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+            <div className="form-group asset-registry-row" key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 100px 100px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
                 <label style={{ margin: 0 }}>{ticker}</label>
 
                 <div>
@@ -227,7 +227,7 @@ const TargetSettings: React.FC = () => {
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
                     Backup your entire portfolio data to a JSON file or restore from a previous backup.
                 </p>
-                <div style={{ display: 'flex', gap: '1rem', marginBottom: '3rem' }}>
+                <div className="data-management-buttons" style={{ display: 'flex', gap: '1rem', marginBottom: '3rem' }}>
                     <button
                         onClick={handleBackup}
                         style={{
@@ -347,7 +347,7 @@ const TargetSettings: React.FC = () => {
                         Delete All Data
                     </button>
                 ) : (
-                    <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)' }}>
+                    <div className="danger-zone-confirm" style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)' }}>
                         <span style={{ color: 'var(--color-danger)', fontWeight: 500 }}>Are you sure? This cannot be undone.</span>
                         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
                             <button

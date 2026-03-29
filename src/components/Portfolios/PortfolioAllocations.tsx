@@ -93,7 +93,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                         <p style={{ color: 'var(--text-muted)' }}>No assets defined. Add an asset below to start.</p>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                            <div className="allocation-header" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', paddingBottom: 'var(--space-2)', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            <div className="allocation-header alloc-modal-header-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', paddingBottom: 'var(--space-2)', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                                 <div>Ticker</div>
                                 <div>Asset</div>
                                 <div>Class</div>
@@ -107,7 +107,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 const currentPerc = allocations[ticker] || 0;
 
                                 return (
-                                    <div key={ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+                                    <div key={ticker} className="alloc-modal-row" data-ticker={isCash ? 'CASH' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
                                         <div style={{ fontWeight: 500, color: isCash ? 'var(--text-secondary)' : undefined }}>
                                             {isCash ? 'CASH' : ticker}
                                         </div>
@@ -164,7 +164,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                             border: '1px solid var(--color-primary)'
                         }}>
                             <h4 style={{ marginTop: 0, marginBottom: 'var(--space-3)' }}>Define New Asset</h4>
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+                            <div className="alloc-modal-add-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
                                 <div>
                                     <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: 'var(--space-1)' }}>Ticker (ISIN)</label>
                                     <input
