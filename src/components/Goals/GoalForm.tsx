@@ -31,7 +31,8 @@ const GoalForm: React.FC<GoalFormProps> = ({ initialData, onSubmit, onCancel }) 
 
     return (
         <div className="modal-overlay">
-            <div className="modal-content">
+            <div className="modal-content" style={{ position: 'relative' }}>
+                <button className="modal-close-btn" type="button" onClick={onCancel}>×</button>
                 <h3>{initialData ? 'Edit Goal' : 'New Goal'}</h3>
                 <form onSubmit={handleSubmit} className="portfolio-form">
                     <div className="form-group">

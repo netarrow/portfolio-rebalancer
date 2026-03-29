@@ -37,7 +37,8 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
 
     return (
         <div className="modal-overlay">
-            <div className="modal-content">
+            <div className="modal-content" style={{ position: 'relative' }}>
+                <button className="modal-close-btn" type="button" onClick={onCancel}>×</button>
                 <h3>{initialData ? 'Edit Portfolio' : 'New Portfolio'}</h3>
                 <form onSubmit={handleSubmit} className="portfolio-form">
                     <div className="form-group">
