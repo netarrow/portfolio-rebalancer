@@ -22,6 +22,7 @@ const TargetSettings: React.FC = () => {
         globalRebalancingSettings,
         macroAllocations,
         goalAllocations,
+        goals,
         importData
     } = usePortfolio();
 
@@ -67,7 +68,8 @@ const TargetSettings: React.FC = () => {
             marketData,
             globalRebalancingSettings,
             macroAllocations,
-            goalAllocations
+            goalAllocations,
+            goals
         };
 
         const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
