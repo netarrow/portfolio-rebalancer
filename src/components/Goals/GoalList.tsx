@@ -67,7 +67,7 @@ const GoalList: React.FC = () => {
     };
 
     return (
-        <div className="portfolio-list-container">
+        <div className="goal-list-container">
             <div className="header-actions">
                 <h2>Goals</h2>
                 <button className="btn btn-primary" onClick={openCreateModal}>
@@ -75,7 +75,7 @@ const GoalList: React.FC = () => {
                 </button>
             </div>
 
-            <div className="portfolio-grid">
+            <div className="goal-grid">
                 {sortedGoals.length === 0 ? (
                     <div className="empty-state">
                         <p>No goals created yet. Create goals to categorize your portfolios.</p>
@@ -84,7 +84,7 @@ const GoalList: React.FC = () => {
                     sortedGoals.map(goal => {
                         const linked = getLinkedPortfolios(goal.id);
                         return (
-                            <div key={goal.id} className="portfolio-card">
+                            <div key={goal.id} className="goal-card">
                                 <div className="card-header">
                                     <h3>{goal.title}</h3>
                                     <div className="card-actions">
@@ -131,10 +131,110 @@ const GoalList: React.FC = () => {
             )}
 
             <style>{`
+                .goal-list-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-6);
+                }
+
+                .header-actions {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+
+                .header-actions h2 {
+                    margin: 0;
+                    font-size: 1.5rem;
+                    color: var(--text-primary);
+                }
+
+                .goal-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                    gap: var(--space-6);
+                }
+
+                .goal-card {
+                    background-color: var(--bg-surface);
+                    border: 1px solid var(--bg-card);
+                    border-radius: var(--radius-lg);
+                    padding: var(--space-5);
+                    transition: transform 0.2s, box-shadow 0.2s;
+                }
+
+                .goal-card:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                }
+
+                .card-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: flex-start;
+                    margin-bottom: var(--space-3);
+                }
+
+                .card-header h3 {
+                    margin: 0;
+                    font-size: 1.1rem;
+                    font-weight: 600;
+                    color: var(--text-primary);
+                }
+
+                .card-actions {
+                    display: flex;
+                    gap: var(--space-2);
+                }
+
+                .btn-icon {
+                    background: transparent;
+                    border: none;
+                    cursor: pointer;
+                    font-size: 1rem;
+                    padding: var(--space-1);
+                    border-radius: var(--radius-sm);
+                    transition: background-color 0.2s;
+                }
+
+                .btn-icon:hover {
+                    background-color: var(--bg-card);
+                }
+
+                .btn-icon.delete:hover {
+                    background-color: #fee2e2;
+                }
+
+                .description {
+                    color: var(--text-secondary);
+                    font-size: 0.9rem;
+                    margin: 0 0 var(--space-4) 0;
+                    line-height: 1.5;
+                }
+
                 .stats {
                     display: flex;
                     flex-wrap: wrap;
                     gap: var(--space-2);
+                }
+
+                .stat-pill {
+                    background-color: var(--bg-card);
+                    color: var(--text-primary);
+                    padding: var(--space-1) var(--space-3);
+                    border-radius: var(--radius-full);
+                    font-size: 0.8rem;
+                    font-weight: 500;
+                }
+
+                .empty-state {
+                    grid-column: 1 / -1;
+                    text-align: center;
+                    padding: var(--space-8);
+                    color: var(--text-secondary);
+                    background-color: var(--bg-surface);
+                    border-radius: var(--radius-lg);
+                    border: 1px dashed var(--bg-card);
                 }
             `}</style>
         </div>
