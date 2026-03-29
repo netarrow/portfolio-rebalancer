@@ -1,0 +1,309 @@
+/* ============================================================
+ * Mobile Responsive Overrides
+ * Target: iPhone 12 (390px) on Safari
+ * Breakpoints: 768px (tablet), 480px (phone)
+ *
+ * Anti-fragile: These rules only activate on small screens.
+ * Desktop rendering is not affected.
+ * ============================================================ */
+
+/* ===== GLOBAL: iOS Safari input zoom prevention ===== */
+@media (max-width: 480px) {
+    input,
+    select,
+    textarea {
+        font-size: 16px !important;
+    }
+}
+
+/* ===== LAYOUT / NAVBAR ===== */
+@media (max-width: 480px) {
+    .content {
+        padding: var(--space-3) !important;
+    }
+
+    .content.full-width {
+        padding: var(--space-3) var(--space-2) !important;
+    }
+}
+
+/* ===== DASHBOARD: Summary Cards ===== */
+@media (max-width: 480px) {
+    .summary-grid {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-3) !important;
+    }
+
+    .summary-card {
+        padding: var(--space-3) !important;
+    }
+
+    .card-value {
+        font-size: 1.4rem !important;
+    }
+}
+
+/* ===== DASHBOARD: Charts ===== */
+@media (max-width: 480px) {
+    .charts-grid {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-3) !important;
+    }
+
+    .chart-card {
+        padding: var(--space-3) !important;
+    }
+}
+
+/* ===== DASHBOARD: Allocation Overview ===== */
+@media (max-width: 480px) {
+    .allocation-card {
+        padding: var(--space-3) !important;
+    }
+
+    .allocation-header-row {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: var(--space-3) !important;
+    }
+
+    .allocation-header-row .section-title {
+        font-size: 1rem !important;
+    }
+
+    .allocation-liquidity-controls {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: var(--space-2) !important;
+        width: 100% !important;
+    }
+
+    .allocation-liquidity-controls input[type="number"] {
+        width: 100% !important;
+    }
+
+    .allocation-liquidity-hint {
+        font-size: 0.75rem !important;
+        margin-left: 0 !important;
+    }
+
+    .rebalancing-toolbar {
+        gap: var(--space-2) !important;
+    }
+
+    .rebalancing-toolbar button {
+        flex: 1 1 auto;
+        font-size: 0.78rem !important;
+        padding: 6px 8px !important;
+        white-space: nowrap;
+    }
+
+    /* Broker performance section */
+    .broker-performance-section h2 {
+        font-size: 1.2rem !important;
+    }
+}
+
+/* ===== CARD GRIDS (Portfolios, Brokers, Goals) ===== */
+@media (max-width: 480px) {
+    .portfolio-grid,
+    .broker-grid,
+    .goal-grid {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-3) !important;
+    }
+
+    .header-actions h2 {
+        font-size: 1.2rem !important;
+    }
+}
+
+/* ===== MODALS ===== */
+@media (max-width: 480px) {
+    .modal-overlay {
+        align-items: flex-start !important;
+        padding: var(--space-3) !important;
+    }
+
+    .modal-content {
+        max-width: 100% !important;
+        width: 100% !important;
+        padding: var(--space-4) !important;
+        max-height: calc(100vh - var(--space-6)) !important;
+        overflow-y: auto !important;
+        margin-top: var(--space-3) !important;
+    }
+
+    .form-actions {
+        flex-direction: column-reverse !important;
+        gap: var(--space-2) !important;
+    }
+
+    .form-actions .btn {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+}
+
+/* ===== FORECAST VIEW ===== */
+@media (max-width: 768px) {
+    .forecast-container {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-4) !important;
+    }
+
+    .forecast-summary-grid {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-3) !important;
+    }
+
+    .forecast-chart-card {
+        min-height: 300px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .forecast-controls,
+    .forecast-results,
+    .forecast-performance {
+        padding: var(--space-3) !important;
+    }
+
+    .forecast-expense-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ===== SETTINGS: Macro & Goal Targets ===== */
+@media (max-width: 480px) {
+    .macro-settings-grid {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-4) !important;
+    }
+}
+
+/* ===== SETTINGS: Asset Registry ===== */
+@media (max-width: 480px) {
+    .asset-registry-row {
+        grid-template-columns: 1fr 1fr !important;
+        gap: var(--space-2) !important;
+        padding: var(--space-3) !important;
+        background: var(--bg-surface) !important;
+        border-radius: var(--radius-md) !important;
+        border: 1px solid var(--border-color) !important;
+        margin-bottom: var(--space-3) !important;
+    }
+
+    .asset-registry-row > label:first-child {
+        grid-column: 1 / -1 !important;
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        padding-bottom: var(--space-1) !important;
+        border-bottom: 1px solid var(--border-color) !important;
+        margin-bottom: var(--space-1) !important;
+    }
+}
+
+/* ===== SETTINGS: Data Management ===== */
+@media (max-width: 480px) {
+    .data-management-buttons {
+        flex-direction: column !important;
+        gap: var(--space-2) !important;
+    }
+
+    .data-management-buttons button {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+
+    .danger-zone-confirm {
+        flex-direction: column !important;
+        gap: var(--space-2) !important;
+    }
+
+    .danger-zone-confirm > span {
+        text-align: center !important;
+    }
+
+    .danger-zone-confirm > div {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+}
+
+/* ===== PORTFOLIO ALLOCATIONS MODAL ===== */
+@media (max-width: 480px) {
+    .alloc-modal-header-row {
+        display: none !important;
+    }
+
+    .alloc-modal-row {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-2) !important;
+        padding: var(--space-3) !important;
+        background: var(--bg-app) !important;
+        border-radius: var(--radius-md) !important;
+        border: 1px solid var(--border-color) !important;
+        margin-bottom: var(--space-2) !important;
+    }
+
+    .alloc-modal-row::before {
+        content: attr(data-ticker);
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: var(--text-primary);
+    }
+
+    .alloc-modal-add-grid {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* ===== WITHDRAWAL MODAL ===== */
+@media (max-width: 480px) {
+    .withdrawal-summary-cards {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-3) !important;
+    }
+
+    .withdrawal-input-row {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: var(--space-3) !important;
+    }
+
+    .withdrawal-input-row button {
+        width: 100% !important;
+    }
+
+    .withdrawal-table-scroll {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+
+    .withdrawal-table-scroll table {
+        min-width: 550px;
+    }
+}
+
+/* ===== TRANSACTIONS ===== */
+@media (max-width: 480px) {
+    .transaction-form-card {
+        padding: var(--space-3) !important;
+    }
+
+    .transaction-form-card h2 {
+        font-size: 1.1rem !important;
+    }
+}
+
+/* ===== GLOBAL REBALANCING (supplements existing 430px breakpoint) ===== */
+@media (max-width: 480px) {
+    .global-hero-card h2 {
+        font-size: 1.2rem !important;
+    }
+
+    .global-hero-card p {
+        font-size: 0.85rem !important;
+    }
+}

@@ -256,7 +256,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
 
     return (
         <div className="allocation-card">
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
+            <div className="allocation-header-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
                 <h3 className="section-title" style={{ margin: 0 }}>
                     Rebalancing: {portfolio.name} <span style={{ fontSize: '0.9em', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
                         ({totalPortfolioValue.toLocaleString('en-IE', { style: 'currency', currency: 'EUR' })})
@@ -271,7 +271,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                         );
                     })()}
                 </h3>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Liquidity:</label>
                     <input
                         type="number"
@@ -308,6 +308,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
 
                         return (
                             <div
+                                className="allocation-liquidity-hint"
                                 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer', marginLeft: 'var(--space-2)' }}
                                 title="Click to set Liquidity to this value"
                                 onClick={() => onUpdatePortfolio({ ...portfolio, liquidity: parseFloat(requiredTotalLiq.toFixed(2)) })}
@@ -321,7 +322,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
 
 
             {/* Rebalancing Actions Toolbar */}
-            <div style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <div className="rebalancing-toolbar" style={{ display: 'flex', gap: 'var(--space-2)', marginBottom: 'var(--space-4)', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                 <button
                     className="btn-secondary"
                     style={{ fontSize: '0.85rem', padding: '4px 8px' }}

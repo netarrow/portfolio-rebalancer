@@ -305,7 +305,7 @@ const ForecastView: React.FC = () => {
     return (
         <div className="forecast-container" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 320px) 1fr 280px', gap: '1.5rem', width: '100%', maxWidth: '100%' }}>
             {/* Sidebar Controls */}
-            <div className="forecast-controls card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', height: 'fit-content' }}>
+            <div className="forecast-controls" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', height: 'fit-content' }}>
                 <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', color: 'var(--text-primary)' }}>Configuration</h2>
 
                 <div className="form-group" style={{ marginBottom: '1rem' }}>
@@ -343,7 +343,7 @@ const ForecastView: React.FC = () => {
 
                 <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Planned Annual Expenses</label>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    <div className="forecast-expense-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginBottom: '0.5rem' }}>
                         <input
                             type="number"
                             value={newExpYear}
@@ -442,7 +442,7 @@ const ForecastView: React.FC = () => {
 
             {/* Results Area */}
             <div className="forecast-results" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div className="summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                <div className="summary-grid forecast-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
                     <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', position: 'relative' }}>
                         <div style={{ position: 'absolute', top: '1rem', right: '1rem', color: sustainabilityStatus.color }} title={sustainabilityStatus.label}>
                             {sustainabilityStatus.icon}
@@ -469,7 +469,7 @@ const ForecastView: React.FC = () => {
                     </div>
                 </div>
 
-                <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', flex: 1, minHeight: '400px' }}>
+                <div className="card forecast-chart-card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', flex: 1, minHeight: '400px' }}>
                     <Chart
                         options={chartOptions}
                         series={chartSeries}
@@ -480,7 +480,7 @@ const ForecastView: React.FC = () => {
             </div>
 
             {/* Right: Portfolio Performance */}
-            <div className="forecast-performance card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', height: 'fit-content' }}>
+            <div className="forecast-performance" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', height: 'fit-content' }}>
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)' }}>Estimated Returns</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {portfolios.map(p => {
