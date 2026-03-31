@@ -1,4 +1,5 @@
-import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition, Broker } from '../types';
+import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition, Broker, CommissionType } from '../types';
+export type { CommissionType };
 import { CASH_TICKER_PREFIX, getCashTicker } from '../types';
 export { CASH_TICKER_PREFIX, getCashTicker };
 
@@ -334,6 +335,30 @@ export const injectCashAssets = (
 
 /** Check if a ticker is a virtual cash liquidity ticker */
 export const isCashTicker = (ticker: string): boolean => ticker.startsWith(CASH_TICKER_PREFIX);
+
+/**
+ * Calculates the estimated commission for a transaction given a broker's commission plan.
+ * Returns undefined if the broker has no commission plan configured.
+ */
+export const calculateCommission = (transaction: Transaction, broker: Broker | undefined): number | undefined => {
+    if (!broker || !broker.commissionType) return undefined;
+
+    const total = Number(transaction.amount) * Number(transaction.price);
+
+    if (broker.commissionType === 'fixed') {
+        return broker.commissionFixed ?? undefined;
+    }
+
+    if (broker.commissionType === 'percent') {
+        if (broker.commissionPercent === undefined) return undefined;
+        let fee = total * (broker.commissionPercent / 100);
+        if (broker.commissionMin !== undefined) fee = Math.max(fee, broker.commissionMin);
+        if (broker.commissionMax !== undefined) fee = Math.min(fee, broker.commissionMax);
+        return fee;
+    }
+
+    return undefined;
+};
 
 export interface RealizedTickerDetail {
     ticker: string;

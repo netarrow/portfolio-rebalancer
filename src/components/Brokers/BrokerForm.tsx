@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Broker, Portfolio } from '../../types';
+import type { Broker, Portfolio, CommissionType } from '../../types';
 
 interface BrokerFormProps {
     initialData?: Broker | null;
@@ -21,6 +21,13 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
     // Liquidity Allocations to Portfolios
     const [liquidityAllocations, setLiquidityAllocations] = useState<Record<string, number | ''>>({});
 
+    // Commission Plan
+    const [commissionType, setCommissionType] = useState<CommissionType | ''>('');
+    const [commissionFixed, setCommissionFixed] = useState<number | ''>('');
+    const [commissionPercent, setCommissionPercent] = useState<number | ''>('');
+    const [commissionMin, setCommissionMin] = useState<number | ''>('');
+    const [commissionMax, setCommissionMax] = useState<number | ''>('');
+
     useEffect(() => {
         if (initialData) {
             setName(initialData.name);
@@ -40,6 +47,12 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
                 });
             }
             setLiquidityAllocations(allocs);
+
+            setCommissionType(initialData.commissionType || '');
+            setCommissionFixed(initialData.commissionFixed !== undefined ? initialData.commissionFixed : '');
+            setCommissionPercent(initialData.commissionPercent !== undefined ? initialData.commissionPercent : '');
+            setCommissionMin(initialData.commissionMin !== undefined ? initialData.commissionMin : '');
+            setCommissionMax(initialData.commissionMax !== undefined ? initialData.commissionMax : '');
         } else {
             setName('');
             setDescription('');
@@ -48,6 +61,11 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
             setMinLiquidityPercentage('');
             setMinLiquidityAmount('');
             setLiquidityAllocations({});
+            setCommissionType('');
+            setCommissionFixed('');
+            setCommissionPercent('');
+            setCommissionMin('');
+            setCommissionMax('');
         }
     }, [initialData]);
 
@@ -95,7 +113,12 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
             minLiquidityType: liquidityType,
             minLiquidityPercentage: minLiquidityPercentage === '' ? undefined : Number(minLiquidityPercentage),
             minLiquidityAmount: minLiquidityAmount === '' ? undefined : Number(minLiquidityAmount),
-            liquidityAllocations: Object.keys(cleanAllocations).length > 0 ? cleanAllocations : undefined
+            liquidityAllocations: Object.keys(cleanAllocations).length > 0 ? cleanAllocations : undefined,
+            commissionType: commissionType || undefined,
+            commissionFixed: commissionType === 'fixed' && commissionFixed !== '' ? Number(commissionFixed) : undefined,
+            commissionPercent: commissionType === 'percent' && commissionPercent !== '' ? Number(commissionPercent) : undefined,
+            commissionMin: commissionType === 'percent' && commissionMin !== '' ? Number(commissionMin) : undefined,
+            commissionMax: commissionType === 'percent' && commissionMax !== '' ? Number(commissionMax) : undefined,
         });
     };
 
@@ -251,6 +274,111 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
                             </div>
                         </div>
                     )}
+
+                    {/* Commission Plan */}
+                    <div className="form-group">
+                        <label style={{ display: 'block', marginBottom: '0.5rem' }}>Commission Plan</label>
+
+                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>
+                            <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="commissionType"
+                                    value=""
+                                    checked={commissionType === ''}
+                                    onChange={() => setCommissionType('')}
+                                />
+                                None
+                            </label>
+                            <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="commissionType"
+                                    value="fixed"
+                                    checked={commissionType === 'fixed'}
+                                    onChange={() => setCommissionType('fixed')}
+                                />
+                                Fixed
+                            </label>
+                            <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="commissionType"
+                                    value="percent"
+                                    checked={commissionType === 'percent'}
+                                    onChange={() => setCommissionType('percent')}
+                                />
+                                Percentage
+                            </label>
+                        </div>
+
+                        {commissionType === 'fixed' && (
+                            <div className="input-with-suffix">
+                                <span className="input-prefix">€</span>
+                                <input
+                                    type="number"
+                                    value={commissionFixed}
+                                    onChange={e => setCommissionFixed(e.target.value === '' ? '' : Number(e.target.value))}
+                                    placeholder="e.g. 2.00"
+                                    step="0.01"
+                                    min="0"
+                                    className="form-input"
+                                    style={{ paddingLeft: '1.8rem' }}
+                                />
+                            </div>
+                        )}
+
+                        {commissionType === 'percent' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <div className="input-with-suffix">
+                                    <input
+                                        type="number"
+                                        value={commissionPercent}
+                                        onChange={e => setCommissionPercent(e.target.value === '' ? '' : Number(e.target.value))}
+                                        placeholder="e.g. 0.20"
+                                        step="0.01"
+                                        min="0"
+                                        className="form-input"
+                                    />
+                                    <span className="input-suffix">%</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Min fee (optional)</label>
+                                        <div className="input-with-suffix">
+                                            <span className="input-prefix">€</span>
+                                            <input
+                                                type="number"
+                                                value={commissionMin}
+                                                onChange={e => setCommissionMin(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 1.50"
+                                                step="0.01"
+                                                min="0"
+                                                className="form-input"
+                                                style={{ paddingLeft: '1.8rem' }}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Max fee (optional)</label>
+                                        <div className="input-with-suffix">
+                                            <span className="input-prefix">€</span>
+                                            <input
+                                                type="number"
+                                                value={commissionMax}
+                                                onChange={e => setCommissionMax(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 10.00"
+                                                step="0.01"
+                                                min="0"
+                                                className="form-input"
+                                                style={{ paddingLeft: '1.8rem' }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
 
                     <div className="form-actions">
                         <button type="button" onClick={onCancel} className="btn btn-secondary">
