@@ -334,3 +334,77 @@ export const injectCashAssets = (
 
 /** Check if a ticker is a virtual cash liquidity ticker */
 export const isCashTicker = (ticker: string): boolean => ticker.startsWith(CASH_TICKER_PREFIX);
+
+export interface RealizedTickerDetail {
+    ticker: string;
+    realized: number;
+    /** Weighted avg cost basis across all sell events for this ticker */
+    avgBuyPrice: number;
+    /** Weighted avg sell price across all sell events for this ticker */
+    avgSellPrice: number;
+    totalSoldQty: number;
+}
+
+/**
+ * Calculates realized gains/losses from sell transactions.
+ * Uses weighted average cost basis (FIFO-compatible via avg cost tracking).
+ * For each Sell, realized gain = (sell price - avg cost at time of sale) * quantity sold.
+ */
+export const calculateRealizedGains = (
+    transactions: Transaction[]
+): { totalRealized: number; byTicker: Record<string, number>; details: RealizedTickerDetail[] } => {
+    const sortedTxs = [...transactions].sort(
+        (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+    );
+
+    const costBasisMap = new Map<string, { quantity: number; avgPrice: number }>();
+    const sellDataMap = new Map<string, { totalSoldQty: number; totalSellProceeds: number; totalCostAtSale: number }>();
+    const byTicker: Record<string, number> = {};
+    let totalRealized = 0;
+
+    sortedTxs.forEach(tx => {
+        const ticker = tx.ticker.toUpperCase();
+        const amount = Number(tx.amount);
+        const price = Number(tx.price);
+        const direction = tx.direction || 'Buy';
+
+        const existing = costBasisMap.get(ticker) || { quantity: 0, avgPrice: 0 };
+
+        if (direction === 'Buy') {
+            const newQuantity = existing.quantity + amount;
+            const newAvgPrice = newQuantity > 0.000001
+                ? (existing.quantity * existing.avgPrice + amount * price) / newQuantity
+                : price;
+            costBasisMap.set(ticker, { quantity: newQuantity, avgPrice: newAvgPrice });
+        } else {
+            // Sell: realize gain = (sell price - cost basis) * qty sold
+            const realized = (price - existing.avgPrice) * amount;
+            byTicker[ticker] = (byTicker[ticker] || 0) + realized;
+            totalRealized += realized;
+
+            // Accumulate sell stats for tooltip detail
+            const prev = sellDataMap.get(ticker) || { totalSoldQty: 0, totalSellProceeds: 0, totalCostAtSale: 0 };
+            sellDataMap.set(ticker, {
+                totalSoldQty: prev.totalSoldQty + amount,
+                totalSellProceeds: prev.totalSellProceeds + price * amount,
+                totalCostAtSale: prev.totalCostAtSale + existing.avgPrice * amount,
+            });
+
+            const newQuantity = existing.quantity - amount;
+            costBasisMap.set(ticker, {
+                quantity: Math.max(0, newQuantity),
+                avgPrice: newQuantity > 0.000001 ? existing.avgPrice : 0
+            });
+        }
+    });
+
+    const details: RealizedTickerDetail[] = Array.from(sellDataMap.entries()).map(([ticker, data]) => ({
+        ticker,
+        realized: byTicker[ticker] || 0,
+        avgBuyPrice: data.totalSoldQty > 0 ? data.totalCostAtSale / data.totalSoldQty : 0,
+        avgSellPrice: data.totalSoldQty > 0 ? data.totalSellProceeds / data.totalSoldQty : 0,
+        totalSoldQty: data.totalSoldQty,
+    })).sort((a, b) => b.realized - a.realized);
+
+    return { totalRealized, byTicker, details };
+};
