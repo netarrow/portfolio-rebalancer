@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains } from '../../utils/portfolioCalculations';
 import { WithdrawalModal } from './WithdrawalModal';
 import './Dashboard.css';
 
@@ -55,6 +55,13 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
     const portfolioTxs = useMemo(() => {
         return allTransactions.filter(t => t.portfolioId === portfolio.id);
     }, [allTransactions, portfolio.id]);
+
+    // Realized gains for this portfolio
+    const { totalRealized, details: realizedDetails } = useMemo(
+        () => calculateRealizedGains(portfolioTxs),
+        [portfolioTxs]
+    );
+    const [showRealizedTooltip, setShowRealizedTooltip] = React.useState(false);
 
     // Calculate Assets for this portfolio, then inject virtual Cash assets from broker allocations
     const { assets, summary } = useMemo(() => {
@@ -270,6 +277,68 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                             </span>
                         );
                     })()}
+                    <span
+                        className="realized-badge-wrapper"
+                        style={{
+                            fontSize: '0.75em',
+                            fontWeight: 'normal',
+                            marginLeft: 'var(--space-3)',
+                            color: totalRealized >= 0 ? 'var(--color-success)' : 'var(--color-danger)',
+                            borderBottom: '1px dashed currentColor',
+                        }}
+                        onMouseEnter={() => setShowRealizedTooltip(true)}
+                        onMouseLeave={() => setShowRealizedTooltip(false)}
+                    >
+                        Realized: {totalRealized >= 0 ? '+' : ''}€{totalRealized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {showRealizedTooltip && realizedDetails.length > 0 && (() => {
+                            const gains = realizedDetails.filter(d => d.realized >= 0);
+                            const losses = realizedDetails.filter(d => d.realized < 0);
+                            const getLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+                            return (
+                                <div className="realized-badge-tooltip">
+                                    <div className="realized-tooltip-title">Realized — {portfolio.name}</div>
+
+                                    {gains.length > 0 && (
+                                        <>
+                                            <div className="realized-tooltip-section-label" style={{ color: 'var(--color-success)' }}>Gains</div>
+                                            {gains.map(d => (
+                                                <div key={d.ticker} className="realized-tooltip-row">
+                                                    <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
+                                                    <span className="realized-tooltip-prices">€{d.avgBuyPrice.toFixed(2)} → €{d.avgSellPrice.toFixed(2)}</span>
+                                                    <span className="realized-tooltip-amount" style={{ color: 'var(--color-success)' }}>
+                                                        +€{d.realized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
+
+                                    {losses.length > 0 && (
+                                        <>
+                                            <div className="realized-tooltip-section-label" style={{ color: 'var(--color-danger)' }}>Losses</div>
+                                            {losses.map(d => (
+                                                <div key={d.ticker} className="realized-tooltip-row">
+                                                    <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
+                                                    <span className="realized-tooltip-prices">€{d.avgBuyPrice.toFixed(2)} → €{d.avgSellPrice.toFixed(2)}</span>
+                                                    <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                                        €{d.realized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </>
+                                    )}
+
+                                    <hr className="realized-tooltip-divider" />
+                                    <div className="realized-tooltip-total">
+                                        <span>Total</span>
+                                        <span style={{ color: totalRealized >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                            {totalRealized >= 0 ? '+' : ''}€{totalRealized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                    </span>
                 </h3>
                 <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Liquidity:</label>
