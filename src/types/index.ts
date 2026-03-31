@@ -1,5 +1,7 @@
 export type TransactionDirection = 'Buy' | 'Sell';
 
+export type CommissionType = 'fixed' | 'percent';
+
 export interface Broker {
   id: string;
   name: string;
@@ -9,6 +11,12 @@ export interface Broker {
   minLiquidityPercentage?: number;
   minLiquidityAmount?: number;
   liquidityAllocations?: Record<string, number>; // portfolioId -> EUR amount
+  // Commission plan
+  commissionType?: CommissionType;
+  commissionFixed?: number;    // € per transaction (fixed mode)
+  commissionPercent?: number;  // % of transaction value (percent mode)
+  commissionMin?: number;      // optional minimum fee (percent mode)
+  commissionMax?: number;      // optional maximum fee (percent mode)
 }
 
 export const CASH_TICKER_PREFIX = '_CASH_';

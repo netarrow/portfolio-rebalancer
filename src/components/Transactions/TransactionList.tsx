@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, TransactionDirection } from '../../types';
+import { calculateCommission } from '../../utils/portfolioCalculations';
 import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
@@ -173,6 +174,7 @@ const TransactionList: React.FC = () => {
                     <th>Price (Exec)</th>
                     <th>Price (Mkt)</th>
                     <th>Total</th>
+                    <th>Est. Fee</th>
                     <th>Action</th>
                 </tr>
             </thead>
@@ -274,6 +276,7 @@ const TransactionList: React.FC = () => {
                                     />
                                 </td>
                                 <td>{(editForm.amount * editForm.price).toFixed(2)}</td>
+                                <td style={{ color: 'var(--text-muted)' }}>-</td>
                                 <td>
                                     <div style={{ display: 'flex', gap: '5px' }}>
                                         <button className="btn-save" onClick={saveEditing}>Save</button>
@@ -326,6 +329,18 @@ const TransactionList: React.FC = () => {
                             </td>
                             <td>
                                 {((tx.price || 0) * tx.amount).toFixed(2)}
+                            </td>
+                            <td style={{ fontSize: '0.85rem' }}>
+                                {(() => {
+                                    const broker = brokers.find(b => b.id === tx.brokerId);
+                                    const fee = calculateCommission(tx, broker);
+                                    if (fee === undefined) return <span style={{ color: 'var(--text-muted)' }}>-</span>;
+                                    return (
+                                        <span style={{ color: 'var(--color-danger)' }}>
+                                            €{fee.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    );
+                                })()}
                             </td>
                             <td>
                                 <div style={{ display: 'flex', gap: '5px' }}>
@@ -484,6 +499,19 @@ const TransactionList: React.FC = () => {
                                 <span className="detail-label">Total</span>
                                 <span className="detail-value">{((tx.price || 0) * tx.amount).toFixed(2)}</span>
                             </div>
+                            {(() => {
+                                const broker = brokers.find(b => b.id === tx.brokerId);
+                                const fee = calculateCommission(tx, broker);
+                                if (fee === undefined) return null;
+                                return (
+                                    <div className="detail-row">
+                                        <span className="detail-label">Est. Fee</span>
+                                        <span className="detail-value" style={{ color: 'var(--color-danger)' }}>
+                                            €{fee.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                );
+                            })()}
                             <div className="detail-row">
                                 <span className="detail-label">Qty</span>
                                 <span className="detail-value">{tx.amount}</span>
