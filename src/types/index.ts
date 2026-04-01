@@ -68,6 +68,7 @@ export interface Transaction {
   direction: TransactionDirection;
   portfolioId?: string;
   brokerId?: string;
+  freeCommission?: boolean;
 }
 
 export interface Asset {

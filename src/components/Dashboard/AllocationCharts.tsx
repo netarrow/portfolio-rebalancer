@@ -4,6 +4,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import type { Asset } from '../../types';
+import { CASH_TICKER_PREFIX } from '../../types';
 import MacroStats from './MacroStats';
 import './Dashboard.css';
 
@@ -416,7 +417,9 @@ const AllocationCharts: React.FC = () => {
 
     // 4. Invested vs Liquidity Data
     const investedVsLiquidityData = useMemo(() => {
-        const investedAmount = totalAssets.reduce((sum, a) => sum + a.currentValue, 0);
+        const investedAmount = totalAssets
+            .filter(a => !a.ticker.startsWith(CASH_TICKER_PREFIX))
+            .reduce((sum, a) => sum + a.currentValue, 0);
         const liquidityAmount = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
 
         return [
