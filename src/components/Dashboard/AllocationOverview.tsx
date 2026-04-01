@@ -573,7 +573,7 @@ interface RowProps {
 }
 
 const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees }) => {
-    const [showFeeTooltip, setShowFeeTooltip] = React.useState(false);
+    const [tooltipPos, setTooltipPos] = React.useState<{ x: number; y: number } | null>(null);
     const diff = currentPerc - targetPerc;
 
     const colorMap: Record<string, string> = {
@@ -617,9 +617,16 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                         <div style={{ color: 'var(--text-muted)' }}>-</div>
                     ) : (
                         <div
-                            style={{ position: 'relative', display: 'inline-block', cursor: 'default' }}
-                            onMouseEnter={() => setShowFeeTooltip(true)}
-                            onMouseLeave={() => setShowFeeTooltip(false)}
+                            style={{ display: 'inline-block', cursor: 'default' }}
+                            onMouseEnter={(e) => {
+                                if (totalFees > 0) {
+                                    setTooltipPos({ x: e.clientX, y: e.clientY + 16 });
+                                }
+                            }}
+                            onMouseMove={(e) => {
+                                if (tooltipPos) setTooltipPos({ x: e.clientX, y: e.clientY + 16 });
+                            }}
+                            onMouseLeave={() => setTooltipPos(null)}
                         >
                             <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: totalFees > 0 ? '1px dashed currentColor' : undefined }}>
                                 {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
@@ -627,10 +634,20 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                             <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                 {gainPerc.toFixed(1)}%
                             </div>
-                            {showFeeTooltip && totalFees > 0 && (() => {
+                            {tooltipPos && totalFees > 0 && (() => {
                                 const netGain = gain - totalFees;
                                 return (
-                                    <div className="realized-badge-tooltip" style={{ left: '50%', transform: 'translateX(-50%)', minWidth: '220px' }}>
+                                    <div
+                                        className="realized-badge-tooltip"
+                                        style={{
+                                            position: 'fixed',
+                                            top: tooltipPos.y,
+                                            left: tooltipPos.x,
+                                            transform: 'translateX(-50%)',
+                                            minWidth: '220px',
+                                            zIndex: 9999,
+                                        }}
+                                    >
                                         <div className="realized-tooltip-title">P/L breakdown — {label || ticker}</div>
                                         <div className="realized-tooltip-row">
                                             <span className="realized-tooltip-label">Gross P/L</span>
