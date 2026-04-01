@@ -368,22 +368,32 @@ export interface RealizedTickerDetail {
     /** Weighted avg sell price across all sell events for this ticker */
     avgSellPrice: number;
     totalSoldQty: number;
+    /** Total commissions paid (buy + sell) for this ticker */
+    commissions: number;
+    /** Applicable tax rate: 0.125 for Bond, 0.26 for others */
+    taxRate: number;
+    /** Theoretical tax on positive realized gain */
+    tax: number;
 }
 
 /**
  * Calculates realized gains/losses from sell transactions.
  * Uses weighted average cost basis (FIFO-compatible via avg cost tracking).
  * For each Sell, realized gain = (sell price - avg cost at time of sale) * quantity sold.
+ * Optionally computes commissions and taxes when brokers and assetSettings are provided.
  */
 export const calculateRealizedGains = (
-    transactions: Transaction[]
-): { totalRealized: number; byTicker: Record<string, number>; details: RealizedTickerDetail[] } => {
+    transactions: Transaction[],
+    brokers?: Broker[],
+    assetSettings?: { ticker: string; assetClass?: AssetClass }[]
+): { totalRealized: number; byTicker: Record<string, number>; details: RealizedTickerDetail[]; totalCommissions: number; totalTax: number } => {
     const sortedTxs = [...transactions].sort(
         (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
     );
 
     const costBasisMap = new Map<string, { quantity: number; avgPrice: number }>();
     const sellDataMap = new Map<string, { totalSoldQty: number; totalSellProceeds: number; totalCostAtSale: number }>();
+    const commissionsMap = new Map<string, number>();
     const byTicker: Record<string, number> = {};
     let totalRealized = 0;
 
@@ -392,6 +402,15 @@ export const calculateRealizedGains = (
         const amount = Number(tx.amount);
         const price = Number(tx.price);
         const direction = tx.direction || 'Buy';
+
+        // Accumulate commissions per ticker (buy + sell)
+        if (brokers && !tx.freeCommission) {
+            const broker = brokers.find(b => b.id === tx.brokerId);
+            const fee = calculateCommission(tx, broker);
+            if (fee !== undefined && fee > 0) {
+                commissionsMap.set(ticker, (commissionsMap.get(ticker) || 0) + fee);
+            }
+        }
 
         const existing = costBasisMap.get(ticker) || { quantity: 0, avgPrice: 0 };
 
@@ -423,13 +442,25 @@ export const calculateRealizedGains = (
         }
     });
 
-    const details: RealizedTickerDetail[] = Array.from(sellDataMap.entries()).map(([ticker, data]) => ({
-        ticker,
-        realized: byTicker[ticker] || 0,
-        avgBuyPrice: data.totalSoldQty > 0 ? data.totalCostAtSale / data.totalSoldQty : 0,
-        avgSellPrice: data.totalSoldQty > 0 ? data.totalSellProceeds / data.totalSoldQty : 0,
-        totalSoldQty: data.totalSoldQty,
-    })).sort((a, b) => b.realized - a.realized);
+    const details: RealizedTickerDetail[] = Array.from(sellDataMap.entries()).map(([ticker, data]) => {
+        const realized = byTicker[ticker] || 0;
+        const assetDef = assetSettings?.find(s => s.ticker.toUpperCase() === ticker);
+        const taxRate = assetDef?.assetClass === 'Bond' ? 0.125 : 0.26;
+        const tax = realized > 0 ? realized * taxRate : 0;
+        return {
+            ticker,
+            realized,
+            avgBuyPrice: data.totalSoldQty > 0 ? data.totalCostAtSale / data.totalSoldQty : 0,
+            avgSellPrice: data.totalSoldQty > 0 ? data.totalSellProceeds / data.totalSoldQty : 0,
+            totalSoldQty: data.totalSoldQty,
+            commissions: commissionsMap.get(ticker) || 0,
+            taxRate,
+            tax,
+        };
+    }).sort((a, b) => b.realized - a.realized);
 
-    return { totalRealized, byTicker, details };
+    const totalCommissions = details.reduce((sum, d) => sum + d.commissions, 0);
+    const totalTax = details.reduce((sum, d) => sum + d.tax, 0);
+
+    return { totalRealized, byTicker, details, totalCommissions, totalTax };
 };
