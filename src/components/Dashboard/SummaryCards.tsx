@@ -7,9 +7,9 @@ const SummaryCards: React.FC = () => {
     const { summary, brokers, transactions, assetSettings } = usePortfolio();
     const [showRealizedTooltip, setShowRealizedTooltip] = React.useState(false);
 
-    const { totalRealized, details } = React.useMemo(
-        () => calculateRealizedGains(transactions),
-        [transactions]
+    const { totalRealized, details, totalCommissions, totalTax } = React.useMemo(
+        () => calculateRealizedGains(transactions, brokers, assetSettings),
+        [transactions, brokers, assetSettings]
     );
 
     const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
@@ -115,11 +115,74 @@ const SummaryCards: React.FC = () => {
 
                             <hr className="realized-tooltip-divider" />
                             <div className="realized-tooltip-total">
-                                <span>Total</span>
+                                <span>Gross Realized</span>
                                 <span style={{ color: totalRealized >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                     {totalRealized >= 0 ? '+' : ''}€{fmt(totalRealized)}
                                 </span>
                             </div>
+
+                            {(totalCommissions > 0 || totalTax > 0) && (
+                                <>
+                                    <div className="realized-tooltip-section-label" style={{ marginTop: 'var(--space-2)' }}>
+                                        Impact
+                                    </div>
+
+                                    {totalCommissions > 0 && (
+                                        <>
+                                            <div className="realized-tooltip-row" style={{ marginBottom: 2 }}>
+                                                <span className="realized-tooltip-label" style={{ fontWeight: 600 }}>Commissions</span>
+                                            </div>
+                                            {details.filter(d => d.commissions > 0).map(d => (
+                                                <div key={d.ticker} className="realized-tooltip-row" style={{ paddingLeft: 8 }}>
+                                                    <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
+                                                    <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                                        -€{d.commissions.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                            <div className="realized-tooltip-row" style={{ borderTop: '1px dashed var(--border-color)', paddingTop: 4, marginTop: 2 }}>
+                                                <span className="realized-tooltip-label" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Total commissions</span>
+                                                <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                                    -€{fmt(totalCommissions)}
+                                                </span>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    {totalTax > 0 && (
+                                        <>
+                                            <div className="realized-tooltip-row" style={{ marginTop: totalCommissions > 0 ? 'var(--space-2)' : 0, marginBottom: 2 }}>
+                                                <span className="realized-tooltip-label" style={{ fontWeight: 600 }}>Taxes (est.)</span>
+                                            </div>
+                                            {details.filter(d => d.tax > 0).map(d => (
+                                                <div key={d.ticker} className="realized-tooltip-row" style={{ paddingLeft: 8 }}>
+                                                    <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
+                                                    <span className="realized-tooltip-prices">
+                                                        {(d.taxRate * 100).toFixed(1)}%
+                                                    </span>
+                                                    <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                                        -€{d.tax.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                            <div className="realized-tooltip-row" style={{ borderTop: '1px dashed var(--border-color)', paddingTop: 4, marginTop: 2 }}>
+                                                <span className="realized-tooltip-label" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Total taxes (est.)</span>
+                                                <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                                    -€{fmt(totalTax)}
+                                                </span>
+                                            </div>
+                                        </>
+                                    )}
+
+                                    <hr className="realized-tooltip-divider" />
+                                    <div className="realized-tooltip-total">
+                                        <span>Net (est.)</span>
+                                        <span style={{ color: (totalRealized - totalCommissions - totalTax) >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                            {(totalRealized - totalCommissions - totalTax) >= 0 ? '+' : ''}€{fmt(totalRealized - totalCommissions - totalTax)}
+                                        </span>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>
