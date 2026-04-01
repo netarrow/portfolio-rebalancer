@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains } from '../../utils/portfolioCalculations';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission } from '../../utils/portfolioCalculations';
 import { WithdrawalModal } from './WithdrawalModal';
 import './Dashboard.css';
 
@@ -504,6 +504,13 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
 
                         const label = isCash ? asset?.label : (setting?.label || asset?.label);
 
+                        const tickerTxs = portfolioTxs.filter(t => t.ticker === ticker);
+                        const totalFees = tickerTxs.reduce((sum, t) => {
+                            if (t.freeCommission) return sum;
+                            const broker = brokers.find(b => b.id === t.brokerId);
+                            return sum + (calculateCommission(t, broker) || 0);
+                        }, 0);
+
                         return (
                             <AllocationRow
                                 key={ticker}
@@ -525,6 +532,7 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                                 gainPerc={asset?.gainPercentage || 0}
                                 postRebalancePerc={postRebalancePerc}
                                 projectedPerc={projectedPerc}
+                                totalFees={totalFees}
                             />
                         );
                     })
@@ -561,9 +569,11 @@ interface RowProps {
     gainPerc: number;
     postRebalancePerc: number;
     projectedPerc: number;
+    totalFees: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees }) => {
+    const [showFeeTooltip, setShowFeeTooltip] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
     const colorMap: Record<string, string> = {
@@ -606,14 +616,45 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     {isCash ? (
                         <div style={{ color: 'var(--text-muted)' }}>-</div>
                     ) : (
-                        <>
-                            <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        <div
+                            style={{ position: 'relative', display: 'inline-block', cursor: 'default' }}
+                            onMouseEnter={() => setShowFeeTooltip(true)}
+                            onMouseLeave={() => setShowFeeTooltip(false)}
+                        >
+                            <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: totalFees > 0 ? '1px dashed currentColor' : undefined }}>
                                 {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
                             </div>
                             <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                 {gainPerc.toFixed(1)}%
                             </div>
-                        </>
+                            {showFeeTooltip && totalFees > 0 && (() => {
+                                const netGain = gain - totalFees;
+                                return (
+                                    <div className="realized-badge-tooltip" style={{ left: '50%', transform: 'translateX(-50%)', minWidth: '220px' }}>
+                                        <div className="realized-tooltip-title">P/L breakdown — {label || ticker}</div>
+                                        <div className="realized-tooltip-row">
+                                            <span className="realized-tooltip-label">Gross P/L</span>
+                                            <span className="realized-tooltip-amount" style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {gain >= 0 ? '+' : ''}€{gain.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <div className="realized-tooltip-row">
+                                            <span className="realized-tooltip-label">Fees paid</span>
+                                            <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                                -€{totalFees.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <div className="realized-tooltip-divider" />
+                                        <div className="realized-tooltip-row realized-tooltip-total">
+                                            <span className="realized-tooltip-label">Net P/L</span>
+                                            <span className="realized-tooltip-amount" style={{ color: netGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {netGain >= 0 ? '+' : ''}€{netGain.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+                        </div>
                     )}
                 </div>
 
@@ -687,6 +728,11 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                         <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                             {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
                         </div>
+                        {totalFees > 0 && (
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                Net: {(gain - totalFees) >= 0 ? '+' : ''}€{(gain - totalFees).toFixed(0)}
+                            </div>
+                        )}
                     </div>
                 </div>
 

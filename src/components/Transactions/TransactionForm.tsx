@@ -14,6 +14,7 @@ const TransactionForm: React.FC = () => {
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
     const [portfolioId, setPortfolioId] = useState('');
     const [broker, setBroker] = useState('');
+    const [freeCommission, setFreeCommission] = useState(false);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -27,7 +28,8 @@ const TransactionForm: React.FC = () => {
             amount: Number(amount),
             price: Number(price),
             portfolioId: portfolioId || undefined,
-            brokerId: broker || undefined
+            brokerId: broker || undefined,
+            freeCommission: freeCommission || undefined
         });
 
         // Reset form
@@ -36,6 +38,7 @@ const TransactionForm: React.FC = () => {
         setPrice('');
         setBroker('');
         setDirection('Buy');
+        setFreeCommission(false);
         // Keep portfolio for next entry ease? Or reset?
         // setPortfolioId(''); 
     };
@@ -166,6 +169,18 @@ const TransactionForm: React.FC = () => {
                             </option>
                         ))}
                     </select>
+                </div>
+
+                <div className="form-group">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                        <input
+                            type="checkbox"
+                            checked={freeCommission}
+                            onChange={(e) => setFreeCommission(e.target.checked)}
+                            style={{ width: '18px', height: '18px', accentColor: 'var(--color-success)', cursor: 'pointer' }}
+                        />
+                        <span>Free commission (no fee)</span>
+                    </label>
                 </div>
 
                 <button type="submit" className="btn-submit">Add Transaction</button>

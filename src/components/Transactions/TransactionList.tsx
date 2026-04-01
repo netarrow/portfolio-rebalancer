@@ -18,6 +18,7 @@ const TransactionList: React.FC = () => {
     // Bulk Update State
     const [bulkPortfolioId, setBulkPortfolioId] = useState('');
     const [bulkBroker, setBulkBroker] = useState('');
+    const [bulkFreeCommission, setBulkFreeCommission] = useState<'' | 'free' | 'paid'>('');
 
     // Editing State (Single Row)
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -73,13 +74,16 @@ const TransactionList: React.FC = () => {
         const updates: Partial<Transaction> = {};
         if (bulkPortfolioId) updates.portfolioId = bulkPortfolioId;
         if (bulkBroker) updates.brokerId = bulkBroker;
+        if (bulkFreeCommission === 'free') updates.freeCommission = true;
+        else if (bulkFreeCommission === 'paid') updates.freeCommission = undefined;
 
         if (Object.keys(updates).length === 0) return;
 
         updateTransactionsBulk(Array.from(selectedIds), updates);
-        setSelectedIds(new Set()); // Reset selection
-        setBulkPortfolioId(''); // Reset input
+        setSelectedIds(new Set());
+        setBulkPortfolioId('');
         setBulkBroker('');
+        setBulkFreeCommission('');
     };
 
     // --- Single Edit Handlers ---
@@ -276,7 +280,17 @@ const TransactionList: React.FC = () => {
                                     />
                                 </td>
                                 <td>{(editForm.amount * editForm.price).toFixed(2)}</td>
-                                <td style={{ color: 'var(--text-muted)' }}>-</td>
+                                <td>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '5px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={!!editForm.freeCommission}
+                                            onChange={e => handleEditChange('freeCommission', e.target.checked || undefined)}
+                                            style={{ accentColor: 'var(--color-success)', cursor: 'pointer' }}
+                                        />
+                                        <span style={{ fontSize: '0.8rem', color: 'var(--color-success)' }}>Free</span>
+                                    </label>
+                                </td>
                                 <td>
                                     <div style={{ display: 'flex', gap: '5px' }}>
                                         <button className="btn-save" onClick={saveEditing}>Save</button>
@@ -332,6 +346,13 @@ const TransactionList: React.FC = () => {
                             </td>
                             <td style={{ fontSize: '0.85rem' }}>
                                 {(() => {
+                                    if (tx.freeCommission) {
+                                        return (
+                                            <span style={{ color: 'var(--color-success)' }}>
+                                                €0.00
+                                            </span>
+                                        );
+                                    }
                                     const broker = brokers.find(b => b.id === tx.brokerId);
                                     const fee = calculateCommission(tx, broker);
                                     if (fee === undefined) return <span style={{ color: 'var(--text-muted)' }}>-</span>;
@@ -462,6 +483,17 @@ const TransactionList: React.FC = () => {
                                         style={{ borderColor: 'var(--color-primary)' }}
                                     />
                                 </div>
+                                <div className="mobile-edit-field mobile-edit-field--full">
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={!!editForm.freeCommission}
+                                            onChange={e => handleEditChange('freeCommission', e.target.checked || undefined)}
+                                            style={{ width: '18px', height: '18px', accentColor: 'var(--color-success)', cursor: 'pointer' }}
+                                        />
+                                        <span className="detail-label" style={{ color: 'var(--color-success)' }}>Free commission (no fee)</span>
+                                    </label>
+                                </div>
                             </div>
                             <div className="mobile-card-actions">
                                 <button className="btn-save" onClick={saveEditing} style={{ padding: '6px 20px', fontSize: '0.9rem' }}>Save</button>
@@ -500,6 +532,14 @@ const TransactionList: React.FC = () => {
                                 <span className="detail-value">{((tx.price || 0) * tx.amount).toFixed(2)}</span>
                             </div>
                             {(() => {
+                                if (tx.freeCommission) {
+                                    return (
+                                        <div className="detail-row">
+                                            <span className="detail-label">Est. Fee</span>
+                                            <span className="detail-value" style={{ color: 'var(--color-success)' }}>€0.00</span>
+                                        </div>
+                                    );
+                                }
                                 const broker = brokers.find(b => b.id === tx.brokerId);
                                 const fee = calculateCommission(tx, broker);
                                 if (fee === undefined) return null;
@@ -624,6 +664,16 @@ const TransactionList: React.FC = () => {
                                     {b.name}
                                 </option>
                             ))}
+                        </select>
+                        <select
+                            value={bulkFreeCommission}
+                            onChange={e => setBulkFreeCommission(e.target.value as '' | 'free' | 'paid')}
+                            className="form-input"
+                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', width: '160px' }}
+                        >
+                            <option value="">Commission...</option>
+                            <option value="free">Free (no fee)</option>
+                            <option value="paid">Paid (use broker plan)</option>
                         </select>
                         <button
                             className="btn-primary"
