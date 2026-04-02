@@ -1,11 +1,12 @@
 import React from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateRealizedGains } from '../../utils/portfolioCalculations';
+import { RealizedGainsModal } from './RealizedGainsModal';
 import './Dashboard.css';
 
 const SummaryCards: React.FC = () => {
     const { summary, brokers, transactions, assetSettings } = usePortfolio();
-    const [showRealizedTooltip, setShowRealizedTooltip] = React.useState(false);
+    const [showRealizedModal, setShowRealizedModal] = React.useState(false);
 
     const { totalRealized, details, totalCommissions, totalTax } = React.useMemo(
         () => calculateRealizedGains(transactions, brokers, assetSettings),
@@ -19,9 +20,6 @@ const SummaryCards: React.FC = () => {
     const returnPerc = summary.totalCost > 0 ? (returnValue / summary.totalCost) * 100 : 0;
 
     const isPositive = returnValue >= 0;
-
-    const gains = details.filter(d => d.realized >= 0);
-    const losses = details.filter(d => d.realized < 0);
 
     const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const getLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
@@ -62,130 +60,29 @@ const SummaryCards: React.FC = () => {
                 </div>
 
                 <div
-                    className="summary-card realized-tooltip-wrapper"
-                    onMouseEnter={() => setShowRealizedTooltip(true)}
-                    onMouseLeave={() => setShowRealizedTooltip(false)}
+                    className="summary-card"
+                    style={{ cursor: details.length > 0 ? 'pointer' : 'default' }}
+                    onClick={() => { if (details.length > 0) setShowRealizedModal(true); }}
                 >
                     <span className="card-label">Realized Gains</span>
                     <span className={`card-value ${totalRealized >= 0 ? 'trend-up' : 'trend-down'}`}>
                         {totalRealized >= 0 ? '+' : ''}€{Math.abs(totalRealized).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
-
-                    {showRealizedTooltip && details.length > 0 && (
-                        <div className="realized-tooltip">
-                            <div className="realized-tooltip-title">Realized Gains Breakdown</div>
-
-                            {gains.length > 0 && (
-                                <>
-                                    <div className="realized-tooltip-section-label" style={{ color: 'var(--color-success)' }}>
-                                        Gains
-                                    </div>
-                                    {gains.map(d => (
-                                        <div key={d.ticker} className="realized-tooltip-row">
-                                            <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
-                                            <span className="realized-tooltip-prices">
-                                                €{d.avgBuyPrice.toFixed(2)} → €{d.avgSellPrice.toFixed(2)}
-                                            </span>
-                                            <span className="realized-tooltip-amount" style={{ color: 'var(--color-success)' }}>
-                                                +€{d.realized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                    ))}
-                                </>
-                            )}
-
-                            {losses.length > 0 && (
-                                <>
-                                    <div className="realized-tooltip-section-label" style={{ color: 'var(--color-danger)' }}>
-                                        Losses
-                                    </div>
-                                    {losses.map(d => (
-                                        <div key={d.ticker} className="realized-tooltip-row">
-                                            <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
-                                            <span className="realized-tooltip-prices">
-                                                €{d.avgBuyPrice.toFixed(2)} → €{d.avgSellPrice.toFixed(2)}
-                                            </span>
-                                            <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
-                                                €{d.realized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                    ))}
-                                </>
-                            )}
-
-                            <hr className="realized-tooltip-divider" />
-                            <div className="realized-tooltip-total">
-                                <span>Gross Realized</span>
-                                <span style={{ color: totalRealized >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                    {totalRealized >= 0 ? '+' : ''}€{fmt(totalRealized)}
-                                </span>
-                            </div>
-
-                            {(totalCommissions > 0 || totalTax > 0) && (
-                                <>
-                                    <div className="realized-tooltip-section-label" style={{ marginTop: 'var(--space-2)' }}>
-                                        Impact
-                                    </div>
-
-                                    {totalCommissions > 0 && (
-                                        <>
-                                            <div className="realized-tooltip-row" style={{ marginBottom: 2 }}>
-                                                <span className="realized-tooltip-label" style={{ fontWeight: 600 }}>Commissions</span>
-                                            </div>
-                                            {details.filter(d => d.commissions > 0).map(d => (
-                                                <div key={d.ticker} className="realized-tooltip-row" style={{ paddingLeft: 8 }}>
-                                                    <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
-                                                    <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
-                                                        -€{d.commissions.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                            <div className="realized-tooltip-row" style={{ borderTop: '1px dashed var(--border-color)', paddingTop: 4, marginTop: 2 }}>
-                                                <span className="realized-tooltip-label" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Total commissions</span>
-                                                <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
-                                                    -€{fmt(totalCommissions)}
-                                                </span>
-                                            </div>
-                                        </>
-                                    )}
-
-                                    {totalTax > 0 && (
-                                        <>
-                                            <div className="realized-tooltip-row" style={{ marginTop: totalCommissions > 0 ? 'var(--space-2)' : 0, marginBottom: 2 }}>
-                                                <span className="realized-tooltip-label" style={{ fontWeight: 600 }}>Taxes (est.)</span>
-                                            </div>
-                                            {details.filter(d => d.tax > 0).map(d => (
-                                                <div key={d.ticker} className="realized-tooltip-row" style={{ paddingLeft: 8 }}>
-                                                    <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
-                                                    <span className="realized-tooltip-prices">
-                                                        {(d.taxRate * 100).toFixed(1)}%
-                                                    </span>
-                                                    <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
-                                                        -€{d.tax.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                            <div className="realized-tooltip-row" style={{ borderTop: '1px dashed var(--border-color)', paddingTop: 4, marginTop: 2 }}>
-                                                <span className="realized-tooltip-label" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Total taxes (est.)</span>
-                                                <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
-                                                    -€{fmt(totalTax)}
-                                                </span>
-                                            </div>
-                                        </>
-                                    )}
-
-                                    <hr className="realized-tooltip-divider" />
-                                    <div className="realized-tooltip-total">
-                                        <span>Net (est.)</span>
-                                        <span style={{ color: (totalRealized - totalCommissions - totalTax) >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                            {(totalRealized - totalCommissions - totalTax) >= 0 ? '+' : ''}€{fmt(totalRealized - totalCommissions - totalTax)}
-                                        </span>
-                                    </div>
-                                </>
-                            )}
-                        </div>
+                    {details.length > 0 && (
+                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>Tap to see breakdown</span>
                     )}
                 </div>
+
+                <RealizedGainsModal
+                    isOpen={showRealizedModal}
+                    onClose={() => setShowRealizedModal(false)}
+                    title="Realized Gains Breakdown"
+                    details={details}
+                    totalRealized={totalRealized}
+                    totalCommissions={totalCommissions}
+                    totalTax={totalTax}
+                    getLabel={getLabel}
+                />
             </div>
         </div>
     );

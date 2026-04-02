@@ -819,18 +819,39 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 throw new Error('Invalid data format');
             }
 
-            // Restore Data
-            setTransactions(data.transactions || []);
-            setAssetSettings(data.assetSettings || []);
-            setPortfolios(data.portfolios || []);
-            setBrokers(data.brokers || []);
-            setMarketData(data.marketData || {});
-            setStoredGlobalRebalancingSettings(normalizeGlobalRebalancingSettings(data.globalRebalancingSettings));
-            setMacroAllocations(data.macroAllocations || {});
-            setGoalAllocations(data.goalAllocations || {});
-            setGoals(data.goals || []);
+            const transactions = data.transactions || [];
+            const assetSettings = data.assetSettings || [];
+            const portfolios = data.portfolios || [];
+            const brokers = data.brokers || [];
+            const marketData = data.marketData || {};
+            const globalRebalancingSettings = normalizeGlobalRebalancingSettings(data.globalRebalancingSettings);
+            const macroAllocations = data.macroAllocations || {};
+            const goalAllocations = data.goalAllocations || {};
+            const goals = data.goals || [];
 
-            // Clear legacy/temp data just in case
+            // Write directly to localStorage first to guarantee persistence
+            // regardless of React effect scheduling or migration effects ordering
+            localStorage.setItem('portfolio_transactions', JSON.stringify(transactions));
+            localStorage.setItem('portfolio_assets_v1', JSON.stringify(assetSettings));
+            localStorage.setItem('portfolio_list', JSON.stringify(portfolios));
+            localStorage.setItem('portfolio_brokers', JSON.stringify(brokers));
+            localStorage.setItem('portfolio_market_data', JSON.stringify(marketData));
+            localStorage.setItem('portfolio_global_rebalancing_v1', JSON.stringify(globalRebalancingSettings));
+            localStorage.setItem('portfolio_macro_targets', JSON.stringify(macroAllocations));
+            localStorage.setItem('portfolio_goal_targets', JSON.stringify(goalAllocations));
+            localStorage.setItem('portfolio_goals', JSON.stringify(goals));
+            localStorage.setItem('portfolio_targets_v2', JSON.stringify([]));
+
+            // Then update React state
+            setTransactions(transactions);
+            setAssetSettings(assetSettings);
+            setPortfolios(portfolios);
+            setBrokers(brokers);
+            setMarketData(marketData);
+            setStoredGlobalRebalancingSettings(globalRebalancingSettings);
+            setMacroAllocations(macroAllocations);
+            setGoalAllocations(goalAllocations);
+            setGoals(goals);
             setOldTargets([]);
 
             return true;
