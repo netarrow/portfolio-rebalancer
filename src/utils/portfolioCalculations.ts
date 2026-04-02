@@ -176,62 +176,69 @@ export const calculatePortfolioPerformance = (
     totalCost: number;
     totalGain: number;
     totalGainPercentage: number;
+    unrealizedGain: number;
+    realizedGain: number;
     cagr: number;
     yearsElapsed: number;
 } => {
     if (transactions.length === 0) {
-        return { totalValue: 0, totalCost: 0, totalGain: 0, totalGainPercentage: 0, cagr: 0, yearsElapsed: 0 };
+        return { totalValue: 0, totalCost: 0, totalGain: 0, totalGainPercentage: 0, unrealizedGain: 0, realizedGain: 0, cagr: 0, yearsElapsed: 0 };
     }
 
-    // 1. Calculate Value and Cost
-    // We can reuse calculateAssets but we need to pass temporary targets (empty or minimal)
-    // because we just need sums, we don't need classification.
+    // 1. Calculate current holdings value and cost basis of remaining shares
     const { summary } = calculateAssets(transactions, [], marketData);
 
-    // 2. Find duration
+    // 2. Total capital ever deployed = sum of all Buy transactions
+    //    This is the correct denominator for total return, because it accounts
+    //    for capital that was invested and then returned via sells.
+    const totalBuyInvested = transactions
+        .filter(t => (t.direction || 'Buy') === 'Buy')
+        .reduce((sum, t) => sum + Number(t.amount) * Number(t.price), 0);
+
+    // 3. Realized gain/loss from sell transactions (raw P/L, no commissions or taxes)
+    //    calculateRealizedGains without brokers returns pure price gain only.
+    const { totalRealized } = calculateRealizedGains(transactions);
+
+    // 4. Effective total gain = unrealized (current holdings) + realized (from closed positions)
+    const unrealizedGain = summary.totalGain;
+    const realizedGain = totalRealized;
+    const effectiveTotalGain = unrealizedGain + realizedGain;
+
+    // 5. Use total capital deployed as cost base (more accurate than just current holdings cost
+    //    when positions have been partially or fully sold)
+    const effectiveTotalCost = totalBuyInvested > 0 ? totalBuyInvested : summary.totalCost;
+
+    // 6. Find duration
     const dates = transactions.map(t => new Date(t.date).getTime());
     const minDate = Math.min(...dates);
     const now = Date.now();
-
-    // Avoid division by zero or negative time
     const diffMs = now - minDate;
-    // Floor at 1 day to prevent infinity
     const daysElapsed = Math.max(1, diffMs / (1000 * 60 * 60 * 24));
     const yearsElapsed = daysElapsed / 365.25;
 
-    // 3. Calculate CAGR
-    // Formula: (End/Start)^(1/n) - 1
-    // But we have DCA (multiple inflows). 
-    // True CAGR/XIRR is complex. 
-    // Approx: Total Gain % / Years? No.
-    // Approx for DCA: (CurrentValue / TotalInvested)^(1/Years) - 1? 
-    // This assumes all money was there at start (underestimates return if invested recently).
-    // Let's stick to a simple Annualized Return = TotalReturn% / Years. 
-    // It's not mathematically perfect compounding (Simple Annual Interest), but easier to explain.
-    // Wait, simple interest is (Gain/Cost) / Years.
-    // Compound: (1 + Gain/Cost) ^ (1/Years) - 1.
-
+    // 7. Annualized return (CAGR approximation for DCA portfolios)
+    //    Formula: (1 + totalReturn)^(1/years) - 1
+    //    Note: for DCA this underestimates true IRR if capital was deployed recently,
+    //    but it's consistent and easy to explain.
     let cagr = 0;
-    if (summary.totalCost > 0) {
-        const absoluteReturn = summary.totalGain / summary.totalCost; // e.g. 0.10 for 10%
-
+    if (effectiveTotalCost > 0) {
+        const absoluteReturn = effectiveTotalGain / effectiveTotalCost;
         if (yearsElapsed < 1) {
-            // If less than a year, don't annualize (too volatile). Return absolute.
-            cagr = absoluteReturn;
+            cagr = absoluteReturn; // Don't annualize if < 1 year (too volatile)
         } else {
-            // Annualize
             cagr = Math.pow(1 + absoluteReturn, 1 / yearsElapsed) - 1;
         }
     }
 
-    // Sanity caps? -90% to +500%?
-    // Let's leave it raw for now.
+    const totalGainPercentage = effectiveTotalCost > 0 ? (effectiveTotalGain / effectiveTotalCost) * 100 : 0;
 
     return {
         totalValue: summary.totalValue,
-        totalCost: summary.totalCost,
-        totalGain: summary.totalGain,
-        totalGainPercentage: summary.totalGainPercentage,
+        totalCost: effectiveTotalCost,
+        totalGain: effectiveTotalGain,
+        totalGainPercentage,
+        unrealizedGain,
+        realizedGain,
         cagr: cagr * 100, // Return as percentage (5.0 instead of 0.05)
         yearsElapsed
     };
