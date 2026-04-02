@@ -59,7 +59,7 @@ const TargetSettings: React.FC = () => {
 
     const handleBackup = () => {
         const backupData = {
-            version: 2,
+            version: 3,
             timestamp: new Date().toISOString(),
             transactions,
             assetSettings,
