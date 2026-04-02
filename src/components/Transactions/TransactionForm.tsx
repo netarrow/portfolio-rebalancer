@@ -1,7 +1,15 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { TransactionDirection } from '../../types';
+import { isIncomeDirection } from '../../types';
 import './Transactions.css';
+
+const directionConfig: { value: TransactionDirection; label: string; color: string; bg: string }[] = [
+    { value: 'Buy', label: 'Buy', color: 'var(--color-success)', bg: 'rgba(16, 185, 129, 0.2)' },
+    { value: 'Sell', label: 'Sell', color: 'var(--color-danger)', bg: 'rgba(239, 68, 68, 0.2)' },
+    { value: 'Dividend', label: 'Dividend', color: '#3B82F6', bg: 'rgba(59, 130, 246, 0.2)' },
+    { value: 'Coupon', label: 'Coupon', color: '#8B5CF6', bg: 'rgba(139, 92, 246, 0.2)' },
+];
 
 const TransactionForm: React.FC = () => {
     const { addTransaction, portfolios, brokers } = usePortfolio();
@@ -16,21 +24,38 @@ const TransactionForm: React.FC = () => {
     const [broker, setBroker] = useState('');
     const [freeCommission, setFreeCommission] = useState(false);
 
+    const isIncome = isIncomeDirection(direction);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!ticker || !amount || !price) return;
+        if (!ticker) return;
 
-        addTransaction({
-            id: crypto.randomUUID(),
-            date,
-            ticker: ticker.toUpperCase(),
-            direction,
-            amount: Number(amount),
-            price: Number(price),
-            portfolioId: portfolioId || undefined,
-            brokerId: broker || undefined,
-            freeCommission: freeCommission || undefined
-        });
+        if (isIncome) {
+            if (!amount) return;
+            addTransaction({
+                id: crypto.randomUUID(),
+                date,
+                ticker: ticker.toUpperCase(),
+                direction,
+                amount: Number(amount),
+                price: 1,
+                portfolioId: portfolioId || undefined,
+                brokerId: broker || undefined,
+            });
+        } else {
+            if (!amount || !price) return;
+            addTransaction({
+                id: crypto.randomUUID(),
+                date,
+                ticker: ticker.toUpperCase(),
+                direction,
+                amount: Number(amount),
+                price: Number(price),
+                portfolioId: portfolioId || undefined,
+                brokerId: broker || undefined,
+                freeCommission: freeCommission || undefined
+            });
+        }
 
         // Reset form
         setTicker('');
@@ -39,8 +64,6 @@ const TransactionForm: React.FC = () => {
         setBroker('');
         setDirection('Buy');
         setFreeCommission(false);
-        // Keep portfolio for next entry ease? Or reset?
-        // setPortfolioId(''); 
     };
 
     return (
@@ -60,39 +83,27 @@ const TransactionForm: React.FC = () => {
 
                 <div className="form-group">
                     <label>Direction</label>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                        <button
-                            type="button"
-                            onClick={() => setDirection('Buy')}
-                            className={`btn-toggle ${direction === 'Buy' ? 'active-buy' : ''}`}
-                            style={{
-                                flex: 1,
-                                padding: '10px',
-                                border: '1px solid var(--bg-card)',
-                                borderRadius: 'var(--radius-md)',
-                                backgroundColor: direction === 'Buy' ? 'rgba(16, 185, 129, 0.2)' : 'transparent',
-                                color: direction === 'Buy' ? 'var(--color-success)' : 'var(--text-secondary)',
-                                fontWeight: 600
-                            }}
-                        >
-                            Buy
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setDirection('Sell')}
-                            className={`btn-toggle ${direction === 'Sell' ? 'active-sell' : ''}`}
-                            style={{
-                                flex: 1,
-                                padding: '10px',
-                                border: '1px solid var(--bg-card)',
-                                borderRadius: 'var(--radius-md)',
-                                backgroundColor: direction === 'Sell' ? 'rgba(239, 68, 68, 0.2)' : 'transparent',
-                                color: direction === 'Sell' ? 'var(--color-danger)' : 'var(--text-secondary)',
-                                fontWeight: 600
-                            }}
-                        >
-                            Sell
-                        </button>
+                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                        {directionConfig.map(d => (
+                            <button
+                                key={d.value}
+                                type="button"
+                                onClick={() => setDirection(d.value)}
+                                className={`btn-toggle ${direction === d.value ? 'active' : ''}`}
+                                style={{
+                                    flex: 1,
+                                    minWidth: '70px',
+                                    padding: '10px',
+                                    border: '1px solid var(--bg-card)',
+                                    borderRadius: 'var(--radius-md)',
+                                    backgroundColor: direction === d.value ? d.bg : 'transparent',
+                                    color: direction === d.value ? d.color : 'var(--text-secondary)',
+                                    fontWeight: 600
+                                }}
+                            >
+                                {d.label}
+                            </button>
+                        ))}
                     </div>
                 </div>
 
@@ -108,31 +119,48 @@ const TransactionForm: React.FC = () => {
                     />
                 </div>
 
-                <div className="form-group">
-                    <label>Quantity</label>
-                    <input
-                        type="number"
-                        className="form-input"
-                        placeholder="0.00"
-                        step="any"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        required
-                    />
-                </div>
+                {isIncome ? (
+                    <div className="form-group">
+                        <label>Amount (EUR)</label>
+                        <input
+                            type="number"
+                            className="form-input"
+                            placeholder="0.00"
+                            step="any"
+                            value={amount}
+                            onChange={(e) => setAmount(e.target.value)}
+                            required
+                        />
+                    </div>
+                ) : (
+                    <>
+                        <div className="form-group">
+                            <label>Quantity</label>
+                            <input
+                                type="number"
+                                className="form-input"
+                                placeholder="0.00"
+                                step="any"
+                                value={amount}
+                                onChange={(e) => setAmount(e.target.value)}
+                                required
+                            />
+                        </div>
 
-                <div className="form-group">
-                    <label>Price per unit</label>
-                    <input
-                        type="number"
-                        className="form-input"
-                        placeholder="0.00"
-                        step="any"
-                        value={price}
-                        onChange={(e) => setPrice(e.target.value)}
-                        required
-                    />
-                </div>
+                        <div className="form-group">
+                            <label>Price per unit</label>
+                            <input
+                                type="number"
+                                className="form-input"
+                                placeholder="0.00"
+                                step="any"
+                                value={price}
+                                onChange={(e) => setPrice(e.target.value)}
+                                required
+                            />
+                        </div>
+                    </>
+                )}
 
                 <div className="form-group">
                     <label>Portfolio (Optional)</label>
@@ -171,17 +199,19 @@ const TransactionForm: React.FC = () => {
                     </select>
                 </div>
 
-                <div className="form-group">
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-                        <input
-                            type="checkbox"
-                            checked={freeCommission}
-                            onChange={(e) => setFreeCommission(e.target.checked)}
-                            style={{ width: '18px', height: '18px', accentColor: 'var(--color-success)', cursor: 'pointer' }}
-                        />
-                        <span>Free commission (no fee)</span>
-                    </label>
-                </div>
+                {!isIncome && (
+                    <div className="form-group">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
+                            <input
+                                type="checkbox"
+                                checked={freeCommission}
+                                onChange={(e) => setFreeCommission(e.target.checked)}
+                                style={{ width: '18px', height: '18px', accentColor: 'var(--color-success)', cursor: 'pointer' }}
+                            />
+                            <span>Free commission (no fee)</span>
+                        </label>
+                    </div>
+                )}
 
                 <button type="submit" className="btn-submit">Add Transaction</button>
             </form>

@@ -54,6 +54,8 @@ const ImportTransactionsModal: React.FC<ImportModalProps> = ({ onClose, onImport
             const parseDirection = (val: any): TransactionDirection => {
                 const s = String(val).toLowerCase();
                 if (s.includes('sell') || s.includes('vendita') || s.includes('withdrawal')) return 'Sell';
+                if (s.includes('dividend') || s.includes('dividendo')) return 'Dividend';
+                if (s.includes('coupon') || s.includes('cedola')) return 'Coupon';
                 return 'Buy';
             };
 
@@ -71,6 +73,14 @@ const ImportTransactionsModal: React.FC<ImportModalProps> = ({ onClose, onImport
                 cleanRow.amount = Number(row[qtyIdx]);
                 cleanRow.price = Number(row[priceIdx]);
                 cleanRow.direction = typeIdx !== -1 ? parseDirection(row[typeIdx]) : 'Buy';
+
+                // Normalize income rows: total EUR goes in amount, price = 1
+                if (cleanRow.direction === 'Dividend' || cleanRow.direction === 'Coupon') {
+                    const totalEur = cleanRow.amount * cleanRow.price;
+                    cleanRow.amount = totalEur;
+                    cleanRow.price = 1;
+                }
+
                 if (brokerIdx !== -1 && row[brokerIdx]) {
                     cleanRow.broker = String(row[brokerIdx]);
                 }
@@ -105,6 +115,7 @@ const ImportTransactionsModal: React.FC<ImportModalProps> = ({ onClose, onImport
                         <input type="file" accept=".xlsx" onChange={handleFileChange} />
                         <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>
                             Expected columns: Date, ISIN, Quantity, Price, Type (optional)<br />
+                            Type: Buy, Sell, Dividend/Dividendo, Coupon/Cedola<br />
                             Supports .xlsx files
                         </p>
                         {error && <p style={{ color: 'var(--color-danger)', marginTop: '1rem' }}>{error}</p>}
