@@ -1,16 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import type { Asset, Portfolio } from '../../types';
+import React, { useState, useEffect, useMemo } from 'react';
+import type { Asset, Broker, Portfolio, Transaction } from '../../types';
 import { calculateWithdrawalProjection } from '../../utils/withdrawalCalculations';
 import type { WithdrawalProjection } from '../../utils/withdrawalCalculations';
+import { isCashTicker } from '../../utils/portfolioCalculations';
 
 interface WithdrawalModalProps {
     isOpen: boolean;
     onClose: () => void;
     assets: Asset[];
     portfolio: Portfolio;
+    brokers: Broker[];
+    transactions: Transaction[];
 }
 
-export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClose, assets, portfolio }) => {
+export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClose, assets, portfolio, brokers, transactions }) => {
     const [netNeeded, setNetNeeded] = useState<number>(0);
     const [projection, setProjection] = useState<WithdrawalProjection | null>(null);
 
@@ -21,15 +24,33 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
         }
     }, [isOpen]);
 
+    // Map each ticker to the broker used in the most recent transaction for this portfolio
+    const brokerByTicker = useMemo(() => {
+        const map: Record<string, Broker | undefined> = {};
+        const portfolioTxs = transactions.filter(t => t.portfolioId === portfolio.id);
+        const sorted = [...portfolioTxs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        sorted.forEach(tx => {
+            const key = tx.ticker.toUpperCase();
+            if (!map[key]) {
+                map[key] = brokers.find(b => b.id === tx.brokerId);
+            }
+        });
+        return map;
+    }, [transactions, portfolio.id, brokers]);
+
     const handleCalculate = () => {
         if (netNeeded <= 0) return;
 
+        // Filter out CASH assets
+        const nonCashAssets = assets.filter(a => !isCashTicker(a.ticker));
         const allocations = portfolio.allocations || {};
-        const res = calculateWithdrawalProjection(assets, allocations, netNeeded);
+        const res = calculateWithdrawalProjection(nonCashAssets, allocations, netNeeded, brokerByTicker);
         setProjection(res);
     };
 
     if (!isOpen) return null;
+
+    const hasCommissions = projection && projection.commissionTotal > 0;
 
     return (
         <div className="modal-overlay" style={{
@@ -41,7 +62,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                 backgroundColor: 'var(--bg-card)',
                 padding: 'var(--space-6)',
                 borderRadius: 'var(--radius-lg)',
-                maxWidth: '800px',
+                maxWidth: '860px',
                 width: '90%',
                 maxHeight: '90vh',
                 overflowY: 'auto'
@@ -52,7 +73,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                 </div>
 
                 <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-4)' }}>
-                    Calculate how much to sell to net the desired cash amount, accounting for taxes (26% / 12.5%), while maintaining target allocation.
+                    Calculate how much to sell to net the desired cash amount, accounting for taxes (26% / 12.5%) and broker sell commissions, while maintaining target allocation.
                 </p>
 
                 <div className="withdrawal-input-row" style={{ display: 'flex', gap: 'var(--space-4)', alignItems: 'flex-end', marginBottom: 'var(--space-6)' }}>
@@ -89,7 +110,12 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                 {projection && (
                     <div className="projection-results" style={{ animation: 'fadeIn 0.3s ease' }}>
 
-                        <div className="summary-cards withdrawal-summary-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--space-4)', marginBottom: 'var(--space-6)' }}>
+                        <div className="summary-cards withdrawal-summary-cards" style={{
+                            display: 'grid',
+                            gridTemplateColumns: hasCommissions ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)',
+                            gap: 'var(--space-4)',
+                            marginBottom: 'var(--space-6)'
+                        }}>
                             <div className="stat-card" style={{ padding: 'var(--space-4)', backgroundColor: 'var(--bg-default)', borderRadius: 'var(--radius-md)' }}>
                                 <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Gross To Sell</div>
                                 <div style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -102,6 +128,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                                     €{projection.taxTotal.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
                                 </div>
                             </div>
+                            {hasCommissions && (
+                                <div className="stat-card" style={{ padding: 'var(--space-4)', backgroundColor: 'var(--bg-default)', borderRadius: 'var(--radius-md)' }}>
+                                    <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Est. Commissions</div>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--color-danger)' }}>
+                                        €{projection.commissionTotal.toLocaleString('en-IE', { maximumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                            )}
                             <div className="stat-card" style={{ padding: 'var(--space-4)', backgroundColor: 'var(--bg-default)', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-success)' }}>
                                 <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Net Proceeds</div>
                                 <div style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--color-success)' }}>
@@ -119,6 +153,7 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Sell Qty</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Gross Sell</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Tax</th>
+                                    {hasCommissions && <th style={{ padding: '8px', textAlign: 'right' }}>Commission</th>}
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Net</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Post Value</th>
                                     <th style={{ padding: '8px', textAlign: 'right' }}>Post %</th>
@@ -127,7 +162,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                             <tbody>
                                 {projection.breakdown.map(action => (
                                     <tr key={action.ticker} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                                        <td style={{ padding: '8px', fontWeight: 500 }}>{action.ticker}</td>
+                                        <td style={{ padding: '8px', fontWeight: 500 }}>
+                                            {action.ticker}
+                                            {hasCommissions && brokerByTicker[action.ticker.toUpperCase()] && (
+                                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: 6 }}>
+                                                    {brokerByTicker[action.ticker.toUpperCase()]!.name}
+                                                </span>
+                                            )}
+                                        </td>
                                         <td style={{ padding: '8px', textAlign: 'right', color: 'var(--text-primary)' }}>
                                             {action.sharesToSell}
                                         </td>
@@ -137,6 +179,14 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                                         <td style={{ padding: '8px', textAlign: 'right', color: 'var(--color-danger)' }}>
                                             €{action.estimatedTax.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
                                         </td>
+                                        {hasCommissions && (
+                                            <td style={{ padding: '8px', textAlign: 'right', color: action.commission > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                                {action.commission > 0
+                                                    ? `€${action.commission.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                                    : '—'
+                                                }
+                                            </td>
+                                        )}
                                         <td style={{ padding: '8px', textAlign: 'right', color: 'var(--color-success)', fontWeight: 600 }}>
                                             €{action.netProceeds.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
                                         </td>
@@ -153,9 +203,8 @@ export const WithdrawalModal: React.FC<WithdrawalModalProps> = ({ isOpen, onClos
                         </div>
 
                         <div style={{ marginTop: 'var(--space-4)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                            * Tax calculation assumes 26% for Stocks/Crypto/Gold and 12.5% for Bonds/Cash.
-                            It applies only to the Gain portion of the sold amount (Gain = SellPrice - AvgPrice).
-                            Losses are ignored (conservative).
+                            * Tax: 26% for Stocks/Crypto/Gold, 12.5% for Bonds/Cash — applied only to the gain portion (conservative: losses ignored).
+                            {hasCommissions && ' Commissions based on the broker plan associated with each asset.'}
                         </div>
                     </div>
                 )}
