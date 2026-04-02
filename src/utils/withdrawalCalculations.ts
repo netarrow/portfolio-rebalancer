@@ -1,4 +1,5 @@
-import type { Asset, AssetClass } from '../types';
+import type { Asset, AssetClass, Broker } from '../types';
+import { calculateCommission } from './portfolioCalculations';
 
 // Tax Rates
 // 26% for Stocks, Crypto, Gold (Commodity)
@@ -6,7 +7,7 @@ import type { Asset, AssetClass } from '../types';
 export const TAX_RATES: Record<AssetClass, number> = {
     'Stock': 0.26,
     'Crypto': 0.26,
-    'Commodity': 0.26, // Gold 
+    'Commodity': 0.26, // Gold
     'Bond': 0.125,     // State Bonds (approx)
     'Cash': 0.125      // Monetari (approx)
 };
@@ -15,6 +16,7 @@ export interface WithdrawalProjection {
     grossTotal: number;
     netTotal: number;
     taxTotal: number;
+    commissionTotal: number;
     breakdown: WithdrawalAction[];
 }
 
@@ -23,6 +25,7 @@ export interface WithdrawalAction {
     grossSellAmount: number;
     sharesToSell: number; // Integer
     estimatedTax: number;
+    commission: number;
     netProceeds: number;
     postSellQuantity: number;
     postSellValue: number;
@@ -33,43 +36,32 @@ export interface WithdrawalAction {
 /**
  * Calculates a withdrawal strategy to meet `neededNet` amount.
  * Enforces INTEGER share constraints.
+ * Optionally accounts for broker sell commissions via `brokerByTicker`.
  */
 export const calculateWithdrawalProjection = (
     assets: Asset[],
     allocations: Record<string, number>,
-    neededNet: number
+    neededNet: number,
+    brokerByTicker?: Record<string, Broker | undefined>
 ): WithdrawalProjection => {
     // 1. Sanity Check
     const currentTotalValue = assets.reduce((sum, a) => sum + a.currentValue, 0);
     if (neededNet >= currentTotalValue * 0.99) { // Safety margin
-        return calculateFullLiquidation(assets);
-    } // TODO: Handle logic if needed > total (full liquidation)
+        return calculateFullLiquidation(assets, brokerByTicker);
+    }
 
-    // 2. Initial Floating Point Solver 
-    // We reuse the previous "Trim the Tops" logic (conceptually) or just run the iterative finder 
-    // to get a "Target Gross" that we can try to discretize.
-
-    // Let's use a simpler approach for Integer Solver:
+    // 2. Integer Share Solver
     // Start with 0 shares sold for everyone.
-    // Loop:
-    //   Calculate current Net Proceeds.
-    //   If Net >= Needed, Done.
-    //   Else, Find the BEST asset to sell 1 share of.
-    //   "Best" = The asset that is most Overweight relative to the target allocation of the REMAINING portfolio.
-    //   Wait, "Remaining Portfolio" changes as we sell.
-    //   Metric: Maximize (CurrentWeight - TargetWeight).
-    //   Or better: Minimize the "Distance" to target.
-    //   Let's use the Score: Value / TargetWeight. 
-    //   The asset with the Highest Score is the most overweight. Sell 1 share of that.
+    // Loop: find asset most overweight relative to target, sell 1 share, repeat until net >= needed.
 
-    // Setup Mutable State
     const workingState = assets.map(a => ({
         ...a,
         sharesSold: 0,
         remainingQty: a.quantity,
         remainingValue: a.currentValue,
         price: a.currentPrice || 0,
-        targetWeight: allocations[a.ticker] || 0
+        targetWeight: allocations[a.ticker] || 0,
+        broker: brokerByTicker?.[a.ticker.toUpperCase()]
     }));
 
     let currentNet = 0;
@@ -81,18 +73,13 @@ export const calculateWithdrawalProjection = (
     while (currentNet < neededNet && limit < maxShares + 1000) {
         limit++;
 
-        // Calculate Scores for remaining assets
-        // Score = RemainingValue / TargetWeight
-        // We want to reduce the one with Highest Score.
         let bestCandidateIdx = -1;
         let maxScore = -1;
 
         workingState.forEach((asset, idx) => {
-            if (asset.remainingQty < 1) return; // Cannot sell what we don't have
+            if (asset.remainingQty < 1) return;
             if (asset.price <= 0) return;
 
-            // Score calculation
-            // If target is 0, score is infinite (sell it first)
             const score = asset.targetWeight === 0
                 ? Number.MAX_VALUE
                 : asset.remainingValue / asset.targetWeight;
@@ -103,15 +90,13 @@ export const calculateWithdrawalProjection = (
             }
         });
 
-        if (bestCandidateIdx === -1) break; // No assets left to sell
+        if (bestCandidateIdx === -1) break;
 
-        // Sell 1 share of best candidate
         const candidate = workingState[bestCandidateIdx];
         candidate.sharesSold += 1;
         candidate.remainingQty -= 1;
         candidate.remainingValue -= candidate.price;
 
-        // Update Net (incremental update is faster, but full recalc is safer)
         currentNet = calculateTotalNet(workingState);
     }
 
@@ -124,7 +109,7 @@ const calculateTotalNet = (state: any[]): number => {
     state.forEach(asset => {
         if (asset.sharesSold > 0) {
             const gross = asset.sharesSold * asset.price;
-            const res = calculateAssetTax(asset, gross);
+            const res = calculateAssetCosts(asset, gross, asset.broker);
             totalNet += res.net;
         }
     });
@@ -134,20 +119,19 @@ const calculateTotalNet = (state: any[]): number => {
 const buildProjection = (state: any[], netTotal: number): WithdrawalProjection => {
     let grossTotal = 0;
     let taxTotal = 0;
+    let commissionTotal = 0;
     const breakdown: WithdrawalAction[] = [];
 
-    // Calculate Final Total Remaining Value to compute percentages
     const finalTotalValue = state.reduce((sum, a) => sum + a.remainingValue, 0);
 
     state.forEach(asset => {
         const gross = asset.sharesSold * asset.price;
         grossTotal += gross;
 
-        const txRes = calculateAssetTax(asset, gross);
+        const txRes = calculateAssetCosts(asset, gross, asset.broker);
         taxTotal += txRes.tax;
+        commissionTotal += txRes.commission;
 
-        // Post Alloc %
-        // If totalAllocWeight is ~100, we just do (Val / Total) * 100.
         const postRebalancePerc = finalTotalValue > 0
             ? (asset.remainingValue / finalTotalValue) * 100
             : 0;
@@ -158,6 +142,7 @@ const buildProjection = (state: any[], netTotal: number): WithdrawalProjection =
                 sharesToSell: asset.sharesSold,
                 grossSellAmount: gross,
                 estimatedTax: txRes.tax,
+                commission: txRes.commission,
                 netProceeds: txRes.net,
                 postSellQuantity: asset.remainingQty,
                 postSellValue: asset.remainingValue,
@@ -171,28 +156,33 @@ const buildProjection = (state: any[], netTotal: number): WithdrawalProjection =
         grossTotal,
         netTotal,
         taxTotal,
+        commissionTotal,
         breakdown
     };
 };
 
 
-const calculateFullLiquidation = (assets: Asset[]): WithdrawalProjection => {
+const calculateFullLiquidation = (assets: Asset[], brokerByTicker?: Record<string, Broker | undefined>): WithdrawalProjection => {
     let gross = 0;
     let net = 0;
     let tax = 0;
+    let commissionTotal = 0;
     const breakdown: WithdrawalAction[] = [];
 
     assets.forEach(asset => {
-        const result = calculateAssetTax(asset, asset.currentValue);
+        const broker = brokerByTicker?.[asset.ticker.toUpperCase()];
+        const result = calculateAssetCosts(asset, asset.currentValue, broker);
         gross += asset.currentValue;
         net += result.net;
         tax += result.tax;
+        commissionTotal += result.commission;
 
         breakdown.push({
             ticker: asset.ticker,
             grossSellAmount: asset.currentValue,
-            sharesToSell: asset.quantity, // Assuming integer quantity, or close enough
+            sharesToSell: asset.quantity,
             estimatedTax: result.tax,
+            commission: result.commission,
             netProceeds: result.net,
             postSellQuantity: 0,
             postSellValue: 0,
@@ -201,21 +191,34 @@ const calculateFullLiquidation = (assets: Asset[]): WithdrawalProjection => {
         });
     });
 
-    return { grossTotal: gross, netTotal: net, taxTotal: tax, breakdown };
+    return { grossTotal: gross, netTotal: net, taxTotal: tax, commissionTotal, breakdown };
 };
 
-const calculateAssetTax = (asset: Asset, sellAmount: number): { tax: number, net: number, gain: number } => {
-    if (!asset.currentPrice || asset.currentPrice === 0) return { tax: 0, net: sellAmount, gain: 0 };
+const calculateAssetCosts = (asset: Asset, sellAmount: number, broker?: Broker): { tax: number, commission: number, net: number, gain: number } => {
+    // Tax
+    let tax = 0;
+    let gain = 0;
+    if (asset.currentPrice && asset.currentPrice > 0) {
+        const sellQty = sellAmount / asset.currentPrice;
+        const costBasis = sellQty * asset.averagePrice;
+        gain = sellAmount - costBasis;
+        if (gain < 0) gain = 0;
+        const rate = TAX_RATES[asset.assetClass] || 0.26;
+        tax = gain * rate;
+    }
 
-    // Recalculate based on exact shares if possible, but sellAmount is derived from shares * price, so consistent.
-    const sellQty = sellAmount / asset.currentPrice;
-    const costBasis = sellQty * asset.averagePrice;
+    // Commission (sell only)
+    let commission = 0;
+    if (broker) {
+        const sellQty = asset.currentPrice && asset.currentPrice > 0
+            ? sellAmount / asset.currentPrice
+            : 0;
+        const fakeTx = {
+            amount: sellQty,
+            price: asset.currentPrice || 0,
+        } as any;
+        commission = calculateCommission(fakeTx, broker) || 0;
+    }
 
-    let gain = sellAmount - costBasis;
-    if (gain < 0) gain = 0;
-
-    const rate = TAX_RATES[asset.assetClass] || 0.26;
-    const tax = gain * rate;
-
-    return { tax, net: sellAmount - tax, gain };
+    return { tax, commission, net: sellAmount - tax - commission, gain };
 };
