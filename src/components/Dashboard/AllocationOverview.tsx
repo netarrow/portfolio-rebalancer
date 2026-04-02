@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission } from '../../utils/portfolioCalculations';
 import { WithdrawalModal } from './WithdrawalModal';
@@ -542,8 +543,12 @@ interface RowProps {
 }
 
 const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees }) => {
-    const [tooltipPos, setTooltipPos] = React.useState<{ x: number; y: number } | null>(null);
+    const [isModalOpen, setIsModalOpen] = React.useState(false);
     const diff = currentPerc - targetPerc;
+
+    const taxRate = assetClass === 'Bond' ? 0.125 : 0.26;
+    const estimatedTax = gain > 0 ? gain * taxRate : 0;
+    const netGain = gain - totalFees - estimatedTax;
 
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf',
@@ -586,63 +591,87 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                         <div style={{ color: 'var(--text-muted)' }}>-</div>
                     ) : (
                         <div
-                            style={{ display: 'inline-block', cursor: 'default' }}
-                            onMouseEnter={(e) => {
-                                if (totalFees > 0) {
-                                    setTooltipPos({ x: e.clientX, y: e.clientY + 16 });
-                                }
-                            }}
-                            onMouseMove={(e) => {
-                                if (tooltipPos) setTooltipPos({ x: e.clientX, y: e.clientY + 16 });
-                            }}
-                            onMouseLeave={() => setTooltipPos(null)}
+                            style={{ display: 'inline-block', cursor: 'pointer' }}
+                            onClick={() => setIsModalOpen(true)}
+                            title="Click for P/L breakdown"
                         >
-                            <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: totalFees > 0 ? '1px dashed currentColor' : undefined }}>
+                            <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: '1px dashed currentColor' }}>
                                 {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
                             </div>
                             <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                 {gainPerc.toFixed(1)}%
                             </div>
-                            {tooltipPos && totalFees > 0 && (() => {
-                                const netGain = gain - totalFees;
-                                return (
-                                    <div
-                                        className="realized-badge-tooltip"
-                                        style={{
-                                            position: 'fixed',
-                                            top: tooltipPos.y,
-                                            left: tooltipPos.x,
-                                            transform: 'translateX(-50%)',
-                                            minWidth: '220px',
-                                            zIndex: 9999,
-                                        }}
-                                    >
-                                        <div className="realized-tooltip-title">P/L breakdown — {label || ticker}</div>
-                                        <div className="realized-tooltip-row">
-                                            <span className="realized-tooltip-label">Gross P/L</span>
-                                            <span className="realized-tooltip-amount" style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                                {gain >= 0 ? '+' : ''}€{gain.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                        <div className="realized-tooltip-row">
-                                            <span className="realized-tooltip-label">Fees paid</span>
-                                            <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
-                                                -€{totalFees.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                        <div className="realized-tooltip-divider" />
-                                        <div className="realized-tooltip-row realized-tooltip-total">
-                                            <span className="realized-tooltip-label">Net P/L</span>
-                                            <span className="realized-tooltip-amount" style={{ color: netGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                                {netGain >= 0 ? '+' : ''}€{netGain.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </span>
-                                        </div>
-                                    </div>
-                                );
-                            })()}
                         </div>
                     )}
                 </div>
+
+                {isModalOpen && createPortal(
+                    <div className="realized-modal-overlay" onClick={() => setIsModalOpen(false)}>
+                        <div className="realized-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 380 }}>
+                            <div className="realized-modal-header">
+                                <span className="realized-modal-title">P/L Breakdown — {label || ticker}</span>
+                                <button className="realized-modal-close" onClick={() => setIsModalOpen(false)} aria-label="Close">✕</button>
+                            </div>
+                            <div className="realized-modal-body">
+                                <div className="realized-tooltip-section-label" style={{ color: 'var(--text-muted)' }}>Position</div>
+                                <div className="realized-tooltip-row">
+                                    <span className="realized-tooltip-label">Avg buy price</span>
+                                    <span className="realized-tooltip-amount">€{averagePrice.toFixed(2)}</span>
+                                </div>
+                                <div className="realized-tooltip-row">
+                                    <span className="realized-tooltip-label">Current price</span>
+                                    <span className="realized-tooltip-amount">€{currentPrice.toFixed(2)}</span>
+                                </div>
+                                <div className="realized-tooltip-row">
+                                    <span className="realized-tooltip-label">Quantity</span>
+                                    <span className="realized-tooltip-amount">{parseFloat(quantity.toFixed(4))}</span>
+                                </div>
+
+                                <hr className="realized-tooltip-divider" />
+
+                                <div className="realized-tooltip-row">
+                                    <span className="realized-tooltip-label">Gross P/L</span>
+                                    <span className="realized-tooltip-amount" style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                        {gain >= 0 ? '+' : ''}€{gain.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        <span style={{ fontWeight: 'normal', marginLeft: 4, fontSize: '0.78rem' }}>({gainPerc.toFixed(1)}%)</span>
+                                    </span>
+                                </div>
+
+                                {totalFees > 0 && (
+                                    <div className="realized-tooltip-row">
+                                        <span className="realized-tooltip-label">Commissions paid</span>
+                                        <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                            -€{totalFees.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                )}
+
+                                {estimatedTax > 0 && (
+                                    <div className="realized-tooltip-row">
+                                        <span className="realized-tooltip-label">Tax est. ({(taxRate * 100).toFixed(1)}%)</span>
+                                        <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
+                                            -€{estimatedTax.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                    </div>
+                                )}
+
+                                <hr className="realized-tooltip-divider" />
+                                <div className="realized-tooltip-total">
+                                    <span>Net P/L {(totalFees > 0 || estimatedTax > 0) ? '(est.)' : ''}</span>
+                                    <span style={{ color: netGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                        {netGain >= 0 ? '+' : ''}€{netGain.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
+                                {estimatedTax > 0 && (
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 'var(--space-2)', textAlign: 'center' }}>
+                                        Tax is estimated on unrealized gain if sold today
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>,
+                    document.body
+                )}
 
                 <div style={{ width: '80px', textAlign: 'center' }}>
                     {targetPerc}%
@@ -711,12 +740,17 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     </div>
                     <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
-                        <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                            {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
-                        </div>
-                        {totalFees > 0 && (
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                Net: {(gain - totalFees) >= 0 ? '+' : ''}€{(gain - totalFees).toFixed(0)}
+                        {!isCash && (
+                            <div
+                                style={{ display: 'inline-block', cursor: 'pointer' }}
+                                onClick={() => setIsModalOpen(true)}
+                            >
+                                <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: '1px dashed currentColor' }}>
+                                    {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
+                                </div>
+                                <div style={{ fontSize: '0.72rem', color: netGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                    Net: {netGain >= 0 ? '+' : ''}€{netGain.toFixed(0)}
+                                </div>
                             </div>
                         )}
                     </div>
