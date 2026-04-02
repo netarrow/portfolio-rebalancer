@@ -64,14 +64,18 @@ const ForecastView: React.FC = () => {
 
     // Calculated returns (Read-Only)
     const portfolioPerformance = useMemo(() => {
-        const perf: Record<string, { cagr: number; years: number }> = {};
+        const perf: Record<string, { cagr: number; years: number; unrealizedGain: number; realizedGain: number; totalGain: number; totalCost: number }> = {};
 
         portfolios.forEach(p => {
             const pTx = transactions.filter(t => t.portfolioId === p.id);
-            const { cagr, yearsElapsed } = calculatePortfolioPerformance(pTx, marketData);
+            const { cagr, yearsElapsed, unrealizedGain, realizedGain, totalGain, totalCost } = calculatePortfolioPerformance(pTx, marketData);
             perf[p.id] = {
                 cagr: isNaN(cagr) ? 0 : cagr,
-                years: yearsElapsed
+                years: yearsElapsed,
+                unrealizedGain: unrealizedGain ?? 0,
+                realizedGain: realizedGain ?? 0,
+                totalGain: totalGain ?? 0,
+                totalCost: totalCost ?? 0,
             };
         });
 
@@ -484,35 +488,66 @@ const ForecastView: React.FC = () => {
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)' }}>Estimated Returns</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {portfolios.map(p => {
-                        const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0 };
+                        const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0, unrealizedGain: 0, realizedGain: 0, totalGain: 0, totalCost: 0 };
                         const goal = portfolioGoals[p.id] || 'Growth';
                         const goalColor = goal === 'Security' ? '#8B5CF6' : goal === 'Protection' ? '#10B981' : '#3B82F6';
+                        const hasRealized = perf.realizedGain !== 0;
+                        const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
                         return (
-                            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--bg-input)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
-                                <div>
-                                    <div style={{ color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 500 }}>{p.name}</div>
-                                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.25rem' }}>
-                                        <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '4px', background: goalColor + '20', color: goalColor, border: `1px solid ${goalColor}50` }}>
-                                            {goal}
-                                        </span>
+                            <div key={p.id} style={{ background: 'var(--bg-input)', padding: '0.75rem', borderRadius: 'var(--radius-md)' }}>
+                                {/* Header row */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <div>
+                                        <div style={{ color: 'var(--text-primary)', fontSize: '0.9rem', fontWeight: 500 }}>{p.name}</div>
+                                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginTop: '0.25rem' }}>
+                                            <span style={{ fontSize: '0.65rem', padding: '0.1rem 0.4rem', borderRadius: '4px', background: goalColor + '20', color: goalColor, border: `1px solid ${goalColor}50` }}>
+                                                {goal}
+                                            </span>
+                                        </div>
+                                        <div style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                                            {perf.years < 1 ? '< 1yr data' : `${perf.years.toFixed(1)} yrs data`}
+                                        </div>
                                     </div>
-                                    <div style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem', marginTop: '0.25rem' }}>
-                                        {perf.years < 1 ? '< 1yr data' : `${perf.years.toFixed(1)} yrs data`}
+                                    <div style={{ textAlign: 'right' }}>
+                                        <div style={{ color: perf.cagr >= 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 600, fontSize: '1rem' }}>
+                                            {perf.cagr > 0 ? '+' : ''}{perf.cagr.toFixed(2)}%
+                                        </div>
+                                        <div style={{ color: 'var(--text-tertiary)', fontSize: '0.72rem' }}>Ann. Return</div>
+                                        {perf.totalCost > 0 && (
+                                            <div style={{ color: perf.totalGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', fontSize: '0.72rem', marginTop: '0.15rem' }}>
+                                                {perf.totalGain >= 0 ? '+' : ''}€{fmt(perf.totalGain)}
+                                                <span style={{ color: 'var(--text-tertiary)', marginLeft: 3 }}>
+                                                    ({perf.totalCost > 0 ? ((perf.totalGain / perf.totalCost) * 100).toFixed(1) : '0.0'}%)
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-                                <div style={{ textAlign: 'right' }}>
-                                    <div style={{ color: perf.cagr >= 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 600 }}>
-                                        {perf.cagr > 0 ? '+' : ''}{perf.cagr.toFixed(2)}%
+
+                                {/* P/L breakdown — only shown when there are realized gains */}
+                                {hasRealized && (
+                                    <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                                            <span style={{ color: 'var(--text-tertiary)' }}>Unrealized P/L</span>
+                                            <span style={{ color: perf.unrealizedGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {perf.unrealizedGain >= 0 ? '+' : ''}€{fmt(perf.unrealizedGain)}
+                                            </span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                                            <span style={{ color: 'var(--text-tertiary)' }}>Realized P/L</span>
+                                            <span style={{ color: perf.realizedGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {perf.realizedGain >= 0 ? '+' : ''}€{fmt(perf.realizedGain)}
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>Ann. Return</div>
-                                </div>
+                                )}
                             </div>
                         );
                     })}
                 </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '1rem', fontStyle: 'italic', lineHeight: '1.4' }}>
-                    * Returns based on historical transaction data weighted by time. Used for future projections.
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-tertiary)', marginTop: '1rem', fontStyle: 'italic', lineHeight: '1.4' }}>
+                    * Ann. Return is calculated on total capital deployed including realized gains from closed positions.
                 </div>
             </div>
         </div>
