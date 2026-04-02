@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, TransactionDirection } from '../../types';
+import { isIncomeDirection } from '../../types';
 import { calculateCommission } from '../../utils/portfolioCalculations';
 import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
@@ -216,6 +217,8 @@ const TransactionList: React.FC = () => {
                                     >
                                         <option value="Buy">Buy</option>
                                         <option value="Sell">Sell</option>
+                                        <option value="Dividend">Dividend</option>
+                                        <option value="Coupon">Coupon</option>
                                     </select>
                                 </td>
                                 <td>
@@ -314,7 +317,10 @@ const TransactionList: React.FC = () => {
                             <td style={{ fontWeight: 600 }}>{tx.ticker}</td>
                             <td>
                                 <span style={{
-                                    color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
+                                    color: tx.direction === 'Sell' ? 'var(--color-danger)'
+                                        : tx.direction === 'Dividend' ? '#3B82F6'
+                                        : tx.direction === 'Coupon' ? '#8B5CF6'
+                                        : 'var(--color-success)',
                                     fontWeight: 600
                                 }}>
                                     {tx.direction || 'Buy'}
@@ -346,6 +352,9 @@ const TransactionList: React.FC = () => {
                             </td>
                             <td style={{ fontSize: '0.85rem' }}>
                                 {(() => {
+                                    if (isIncomeDirection(tx.direction)) {
+                                        return <span style={{ color: 'var(--text-muted)' }}>-</span>;
+                                    }
                                     if (tx.freeCommission) {
                                         return (
                                             <span style={{ color: 'var(--color-success)' }}>
@@ -426,6 +435,8 @@ const TransactionList: React.FC = () => {
                                     >
                                         <option value="Buy">Buy</option>
                                         <option value="Sell">Sell</option>
+                                        <option value="Dividend">Dividend</option>
+                                        <option value="Coupon">Coupon</option>
                                     </select>
                                 </div>
                                 <div className="mobile-edit-field">
@@ -513,7 +524,10 @@ const TransactionList: React.FC = () => {
                             <div className="detail-row">
                                 <span className="detail-label">Side</span>
                                 <span className="detail-value" style={{
-                                    color: tx.direction === 'Sell' ? 'var(--color-danger)' : 'var(--color-success)',
+                                    color: tx.direction === 'Sell' ? 'var(--color-danger)'
+                                        : tx.direction === 'Dividend' ? '#3B82F6'
+                                        : tx.direction === 'Coupon' ? '#8B5CF6'
+                                        : 'var(--color-success)',
                                     fontWeight: 600
                                 }}>
                                     {tx.direction || 'Buy'}
@@ -532,6 +546,7 @@ const TransactionList: React.FC = () => {
                                 <span className="detail-value">{((tx.price || 0) * tx.amount).toFixed(2)}</span>
                             </div>
                             {(() => {
+                                if (isIncomeDirection(tx.direction)) return null;
                                 if (tx.freeCommission) {
                                     return (
                                         <div className="detail-row">

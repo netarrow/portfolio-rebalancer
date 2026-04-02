@@ -1,4 +1,6 @@
-export type TransactionDirection = 'Buy' | 'Sell';
+export type TransactionDirection = 'Buy' | 'Sell' | 'Dividend' | 'Coupon';
+
+export const isIncomeDirection = (d: TransactionDirection): boolean => d === 'Dividend' || d === 'Coupon';
 
 export type CommissionType = 'fixed' | 'percent';
 

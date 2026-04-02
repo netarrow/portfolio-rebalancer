@@ -1,6 +1,6 @@
 import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition, Broker, CommissionType } from '../types';
 export type { CommissionType };
-import { CASH_TICKER_PREFIX, getCashTicker } from '../types';
+import { CASH_TICKER_PREFIX, getCashTicker, isIncomeDirection } from '../types';
 export { CASH_TICKER_PREFIX, getCashTicker };
 
 export const calculateAssets = (
@@ -26,6 +26,9 @@ export const calculateAssets = (
 
         // Default to Buy if undefined (migration safety)
         const direction = tx.direction || 'Buy';
+
+        // Skip income transactions — they don't affect holdings
+        if (isIncomeDirection(direction)) return;
 
         // Ensure numbers
         const amount = Number(tx.amount);
@@ -178,11 +181,12 @@ export const calculatePortfolioPerformance = (
     totalGainPercentage: number;
     unrealizedGain: number;
     realizedGain: number;
+    totalIncome: number;
     cagr: number;
     yearsElapsed: number;
 } => {
     if (transactions.length === 0) {
-        return { totalValue: 0, totalCost: 0, totalGain: 0, totalGainPercentage: 0, unrealizedGain: 0, realizedGain: 0, cagr: 0, yearsElapsed: 0 };
+        return { totalValue: 0, totalCost: 0, totalGain: 0, totalGainPercentage: 0, unrealizedGain: 0, realizedGain: 0, totalIncome: 0, cagr: 0, yearsElapsed: 0 };
     }
 
     // 1. Calculate current holdings value and cost basis of remaining shares
@@ -199,10 +203,13 @@ export const calculatePortfolioPerformance = (
     //    calculateRealizedGains without brokers returns pure price gain only.
     const { totalRealized } = calculateRealizedGains(transactions);
 
-    // 4. Effective total gain = unrealized (current holdings) + realized (from closed positions)
+    // 3b. Total income from dividends/coupons
+    const { totalIncome } = calculateCashFlows(transactions);
+
+    // 4. Effective total gain = unrealized (current holdings) + realized (from closed positions) + income
     const unrealizedGain = summary.totalGain;
     const realizedGain = totalRealized;
-    const effectiveTotalGain = unrealizedGain + realizedGain;
+    const effectiveTotalGain = unrealizedGain + realizedGain + totalIncome;
 
     // 5. Use total capital deployed as cost base (more accurate than just current holdings cost
     //    when positions have been partially or fully sold)
@@ -239,6 +246,7 @@ export const calculatePortfolioPerformance = (
         totalGainPercentage,
         unrealizedGain,
         realizedGain,
+        totalIncome,
         cagr: cagr * 100, // Return as percentage (5.0 instead of 0.05)
         yearsElapsed
     };
@@ -410,6 +418,9 @@ export const calculateRealizedGains = (
         const price = Number(tx.price);
         const direction = tx.direction || 'Buy';
 
+        // Skip income transactions — not capital gains
+        if (isIncomeDirection(direction)) return;
+
         // Accumulate commissions per ticker (buy + sell)
         if (brokers && !tx.freeCommission) {
             const broker = brokers.find(b => b.id === tx.brokerId);
@@ -470,4 +481,48 @@ export const calculateRealizedGains = (
     const totalTax = details.reduce((sum, d) => sum + d.tax, 0);
 
     return { totalRealized, byTicker, details, totalCommissions, totalTax };
+};
+
+// ─── Cash Flow (Dividend / Coupon) tracking ────────────────────────────
+
+export interface CashFlowDetail {
+    ticker: string;
+    totalDividends: number;
+    totalCoupons: number;
+    totalIncome: number;
+    events: { date: string; direction: 'Dividend' | 'Coupon'; amount: number }[];
+}
+
+export const calculateCashFlows = (
+    transactions: Transaction[]
+): { totalIncome: number; totalDividends: number; totalCoupons: number; byTicker: CashFlowDetail[] } => {
+    const map = new Map<string, CashFlowDetail>();
+    let totalDividends = 0;
+    let totalCoupons = 0;
+
+    transactions.forEach(tx => {
+        const dir = tx.direction;
+        if (dir !== 'Dividend' && dir !== 'Coupon') return;
+
+        const ticker = tx.ticker.toUpperCase();
+        const eurAmount = Number(tx.amount) * Number(tx.price);
+
+        if (!map.has(ticker)) {
+            map.set(ticker, { ticker, totalDividends: 0, totalCoupons: 0, totalIncome: 0, events: [] });
+        }
+        const entry = map.get(ticker)!;
+
+        if (dir === 'Dividend') {
+            entry.totalDividends += eurAmount;
+            totalDividends += eurAmount;
+        } else {
+            entry.totalCoupons += eurAmount;
+            totalCoupons += eurAmount;
+        }
+        entry.totalIncome += eurAmount;
+        entry.events.push({ date: tx.date, direction: dir, amount: eurAmount });
+    });
+
+    const byTicker = Array.from(map.values()).sort((a, b) => b.totalIncome - a.totalIncome);
+    return { totalIncome: totalDividends + totalCoupons, totalDividends, totalCoupons, byTicker };
 };
