@@ -4,6 +4,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateForecastWithState } from '../../utils/forecastCalculations';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
+import { isIncomeDirection, TransactionDirection } from '../../types';
 
 const EXPENSE_TYPES = ['Growth', 'Protection', 'Security'];
 
@@ -64,16 +65,17 @@ const ForecastView: React.FC = () => {
 
     // Calculated returns (Read-Only)
     const portfolioPerformance = useMemo(() => {
-        const perf: Record<string, { cagr: number; years: number; unrealizedGain: number; realizedGain: number; totalGain: number; totalCost: number }> = {};
+        const perf: Record<string, { cagr: number; years: number; unrealizedGain: number; realizedGain: number; totalIncome: number; totalGain: number; totalCost: number }> = {};
 
         portfolios.forEach(p => {
             const pTx = transactions.filter(t => t.portfolioId === p.id);
-            const { cagr, yearsElapsed, unrealizedGain, realizedGain, totalGain, totalCost } = calculatePortfolioPerformance(pTx, marketData);
+            const { cagr, yearsElapsed, unrealizedGain, realizedGain, totalIncome, totalGain, totalCost } = calculatePortfolioPerformance(pTx, marketData);
             perf[p.id] = {
                 cagr: isNaN(cagr) ? 0 : cagr,
                 years: yearsElapsed,
                 unrealizedGain: unrealizedGain ?? 0,
                 realizedGain: realizedGain ?? 0,
+                totalIncome: totalIncome ?? 0,
                 totalGain: totalGain ?? 0,
                 totalCost: totalCost ?? 0,
             };
@@ -90,6 +92,7 @@ const ForecastView: React.FC = () => {
 
         transactions.forEach(t => {
             if (!t.portfolioId) return;
+            if (isIncomeDirection(t.direction as TransactionDirection)) return;
             if (!portfolioHoldings[t.portfolioId]) portfolioHoldings[t.portfolioId] = {};
 
             const currentQty = portfolioHoldings[t.portfolioId][t.ticker] || 0;
@@ -488,10 +491,10 @@ const ForecastView: React.FC = () => {
                 <h3 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)' }}>Estimated Returns</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {portfolios.map(p => {
-                        const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0, unrealizedGain: 0, realizedGain: 0, totalGain: 0, totalCost: 0 };
+                        const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0, unrealizedGain: 0, realizedGain: 0, totalIncome: 0, totalGain: 0, totalCost: 0 };
                         const goal = portfolioGoals[p.id] || 'Growth';
                         const goalColor = goal === 'Security' ? '#8B5CF6' : goal === 'Protection' ? '#10B981' : '#3B82F6';
-                        const hasRealized = perf.realizedGain !== 0;
+                        const hasRealized = perf.realizedGain !== 0 || perf.totalIncome !== 0;
                         const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
                         return (
@@ -525,7 +528,7 @@ const ForecastView: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {/* P/L breakdown — only shown when there are realized gains */}
+                                {/* P/L breakdown — shown when there are realized gains or income */}
                                 {hasRealized && (
                                     <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
@@ -534,12 +537,22 @@ const ForecastView: React.FC = () => {
                                                 {perf.unrealizedGain >= 0 ? '+' : ''}€{fmt(perf.unrealizedGain)}
                                             </span>
                                         </div>
-                                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                                            <span style={{ color: 'var(--text-tertiary)' }}>Realized P/L</span>
-                                            <span style={{ color: perf.realizedGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                                {perf.realizedGain >= 0 ? '+' : ''}€{fmt(perf.realizedGain)}
-                                            </span>
-                                        </div>
+                                        {perf.realizedGain !== 0 && (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                                                <span style={{ color: 'var(--text-tertiary)' }}>Realized P/L</span>
+                                                <span style={{ color: perf.realizedGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                    {perf.realizedGain >= 0 ? '+' : ''}€{fmt(perf.realizedGain)}
+                                                </span>
+                                            </div>
+                                        )}
+                                        {perf.totalIncome !== 0 && (
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                                                <span style={{ color: 'var(--text-tertiary)' }}>Income (Div/Coup)</span>
+                                                <span style={{ color: 'var(--color-success)' }}>
+                                                    +€{fmt(perf.totalIncome)}
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                             </div>
