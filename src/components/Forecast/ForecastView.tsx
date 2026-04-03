@@ -4,7 +4,8 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateForecastWithState } from '../../utils/forecastCalculations';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
-import { isIncomeDirection, TransactionDirection } from '../../types';
+import { isIncomeDirection } from '../../types';
+import type { TransactionDirection } from '../../types';
 
 const EXPENSE_TYPES = ['Growth', 'Protection', 'Security'];
 
