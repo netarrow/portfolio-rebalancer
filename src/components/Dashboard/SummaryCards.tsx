@@ -26,11 +26,14 @@ const SummaryCards: React.FC = () => {
     const returnValue = summary.totalValue - summary.totalCost;
     const returnPerc = summary.totalCost > 0 ? (returnValue / summary.totalCost) * 100 : 0;
 
-    const isPositive = returnValue >= 0;
+    const totalAppreciation = returnValue + totalRealized;
+    const totalAppreciationPerc = summary.totalCost > 0 ? (totalAppreciation / summary.totalCost) * 100 : 0;
+
+    const totalReturn = totalAppreciation + totalIncome;
+    const totalReturnPerc = summary.totalCost > 0 ? (totalReturn / summary.totalCost) * 100 : 0;
 
     const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const getLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
-    const getAssetClass = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.assetClass;
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
@@ -46,13 +49,36 @@ const SummaryCards: React.FC = () => {
                 </div>
 
                 <div className="summary-card">
+                    <span className="card-label">Price Appreciation</span>
+                    <span className={`card-value ${returnValue >= 0 ? 'trend-up' : 'trend-down'}`}>
+                        {returnValue >= 0 ? '+' : ''}&euro;{Math.abs(returnValue).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className={`card-trend ${returnValue >= 0 ? 'trend-up' : 'trend-down'}`}>
+                        {returnValue >= 0 ? '\u25B2' : '\u25BC'} {Math.abs(returnPerc).toFixed(2)}%
+                    </span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>Unrealized only</span>
+                </div>
+
+                <div className="summary-card">
+                    <span className="card-label">Total Appreciation</span>
+                    <span className={`card-value ${totalAppreciation >= 0 ? 'trend-up' : 'trend-down'}`}>
+                        {totalAppreciation >= 0 ? '+' : ''}&euro;{Math.abs(totalAppreciation).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                    <span className={`card-trend ${totalAppreciation >= 0 ? 'trend-up' : 'trend-down'}`}>
+                        {totalAppreciation >= 0 ? '\u25B2' : '\u25BC'} {Math.abs(totalAppreciationPerc).toFixed(2)}%
+                    </span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>Unrealized + Realized</span>
+                </div>
+
+                <div className="summary-card">
                     <span className="card-label">Total Return</span>
-                    <span className={`card-value ${isPositive ? 'trend-up' : 'trend-down'}`}>
-                        {isPositive ? '+' : ''}&euro;{Math.abs(returnValue).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <span className={`card-value ${totalReturn >= 0 ? 'trend-up' : 'trend-down'}`}>
+                        {totalReturn >= 0 ? '+' : ''}&euro;{Math.abs(totalReturn).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
-                    <span className={`card-trend ${isPositive ? 'trend-up' : 'trend-down'}`}>
-                        {isPositive ? '\u25B2' : '\u25BC'} {Math.abs(returnPerc).toFixed(2)}%
+                    <span className={`card-trend ${totalReturn >= 0 ? 'trend-up' : 'trend-down'}`}>
+                        {totalReturn >= 0 ? '\u25B2' : '\u25BC'} {Math.abs(totalReturnPerc).toFixed(2)}%
                     </span>
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: 2 }}>Appreciation + Distributions</span>
                 </div>
             </div>
 
@@ -114,7 +140,6 @@ const SummaryCards: React.FC = () => {
                     totalCoupons={totalCoupons}
                     totalIncome={totalIncome}
                     getLabel={getLabel}
-                    getAssetClass={getAssetClass}
                 />
             </div>
         </div>

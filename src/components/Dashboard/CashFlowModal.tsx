@@ -10,7 +10,6 @@ interface CashFlowModalProps {
     totalCoupons: number;
     totalIncome: number;
     getLabel: (ticker: string) => string;
-    getAssetClass?: (ticker: string) => string | undefined;
 }
 
 const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -23,7 +22,6 @@ export const CashFlowModal: React.FC<CashFlowModalProps> = ({
     totalCoupons,
     totalIncome,
     getLabel,
-    getAssetClass,
 }) => {
     React.useEffect(() => {
         if (!isOpen) return;
@@ -33,16 +31,6 @@ export const CashFlowModal: React.FC<CashFlowModalProps> = ({
     }, [isOpen, onClose]);
 
     if (!isOpen) return null;
-
-    // Estimate tax: 26% for dividends (stocks), 12.5% for coupons (bonds)
-    const totalTax = details.reduce((sum, d) => {
-        const isBond = getAssetClass?.(d.ticker) === 'Bond';
-        const dividendTax = d.totalDividends * 0.26;
-        const couponTax = d.totalCoupons * (isBond ? 0.125 : 0.26);
-        return sum + dividendTax + couponTax;
-    }, 0);
-
-    const net = totalIncome - totalTax;
 
     const dividendDetails = details.filter(d => d.totalDividends > 0);
     const couponDetails = details.filter(d => d.totalCoupons > 0);
@@ -62,6 +50,10 @@ export const CashFlowModal: React.FC<CashFlowModalProps> = ({
                 </div>
 
                 <div className="realized-modal-body">
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 'var(--space-3)', fontStyle: 'italic' }}>
+                        All amounts are net at source (tax withheld at origin)
+                    </div>
+
                     {dividendDetails.length > 0 && (
                         <>
                             <div className="realized-tooltip-section-label" style={{ color: '#3B82F6' }}>Dividends</div>
@@ -94,7 +86,7 @@ export const CashFlowModal: React.FC<CashFlowModalProps> = ({
 
                     <hr className="realized-tooltip-divider" />
                     <div className="realized-tooltip-total">
-                        <span>Gross Income</span>
+                        <span>Total Income</span>
                         <span style={{ color: '#3B82F6' }}>
                             +&euro;{fmt(totalIncome)}
                         </span>
@@ -104,39 +96,6 @@ export const CashFlowModal: React.FC<CashFlowModalProps> = ({
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.78rem', color: 'var(--text-muted)', padding: '2px 0' }}>
                             <span>Dividends &euro;{fmt(totalDividends)} + Coupons &euro;{fmt(totalCoupons)}</span>
                         </div>
-                    )}
-
-                    {totalTax > 0 && (
-                        <>
-                            <div className="realized-tooltip-section-label" style={{ marginTop: 'var(--space-2)' }}>Taxes (est.)</div>
-                            {details.filter(d => d.totalIncome > 0).map(d => {
-                                const isBond = getAssetClass?.(d.ticker) === 'Bond';
-                                const tax = d.totalDividends * 0.26 + d.totalCoupons * (isBond ? 0.125 : 0.26);
-                                if (tax <= 0) return null;
-                                const rate = isBond && d.totalDividends === 0 ? '12.5%' : d.totalCoupons === 0 ? '26%' : 'mixed';
-                                return (
-                                    <div key={d.ticker} className="realized-tooltip-row" style={{ paddingLeft: 8 }}>
-                                        <span className="realized-tooltip-label">{getLabel(d.ticker)}</span>
-                                        <span className="realized-tooltip-prices">{rate}</span>
-                                        <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>
-                                            -&euro;{fmt(tax)}
-                                        </span>
-                                    </div>
-                                );
-                            })}
-                            <div className="realized-tooltip-row" style={{ borderTop: '1px dashed var(--border-color)', paddingTop: 4, marginTop: 2 }}>
-                                <span className="realized-tooltip-label" style={{ color: 'var(--text-muted)', fontSize: '0.78rem' }}>Total taxes (est.)</span>
-                                <span className="realized-tooltip-amount" style={{ color: 'var(--color-danger)' }}>-&euro;{fmt(totalTax)}</span>
-                            </div>
-
-                            <hr className="realized-tooltip-divider" />
-                            <div className="realized-tooltip-total">
-                                <span>Net (est.)</span>
-                                <span style={{ color: net >= 0 ? '#3B82F6' : 'var(--color-danger)' }}>
-                                    +&euro;{fmt(net)}
-                                </span>
-                            </div>
-                        </>
                     )}
                 </div>
             </div>

@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission } from '../../utils/portfolioCalculations';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission, calculateCashFlows } from '../../utils/portfolioCalculations';
 import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
+import { CashFlowModal } from './CashFlowModal';
 import './Dashboard.css';
 
 const AllocationOverview: React.FC = () => {
@@ -65,6 +66,14 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
     );
     const [showRealizedModal, setShowRealizedModal] = React.useState(false);
 
+    // Cash flows (distributions) for this portfolio
+    const { totalIncome: portfolioIncome, totalDividends: portfolioDividends, totalCoupons: portfolioCoupons, byTicker: portfolioCashFlowDetails } = useMemo(
+        () => calculateCashFlows(portfolioTxs),
+        [portfolioTxs]
+    );
+    const [showCashFlowModal, setShowCashFlowModal] = React.useState(false);
+    const getCashFlowLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+
     const fmtNum = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const getRealizedLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
 
@@ -76,6 +85,9 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
             summary: result.summary
         };
     }, [portfolioTxs, assetSettings, marketData, brokers, portfolio.id]);
+
+    const portfolioTotalReturn = summary.totalGain + totalRealized + portfolioIncome;
+    const portfolioTotalReturnPerc = summary.totalCost > 0 ? (portfolioTotalReturn / summary.totalCost) * 100 : 0;
 
     const allocations = portfolio.allocations || {};
     const liquidity = portfolio.liquidity || 0;
@@ -297,6 +309,33 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                             Realized: {totalRealized >= 0 ? '+' : ''}€{totalRealized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                     )}
+                    {portfolioCashFlowDetails.length > 0 && (
+                        <span
+                            style={{
+                                fontSize: '0.75em',
+                                fontWeight: 'normal',
+                                marginLeft: 'var(--space-3)',
+                                color: '#3B82F6',
+                                borderBottom: '1px dashed currentColor',
+                                cursor: 'pointer',
+                            }}
+                            onClick={e => { e.stopPropagation(); setShowCashFlowModal(true); }}
+                        >
+                            Distributions: +€{portfolioIncome.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                    )}
+                    {(summary.totalGain !== 0 || totalRealized !== 0 || portfolioIncome !== 0) && (
+                        <span
+                            style={{
+                                fontSize: '0.75em',
+                                fontWeight: 'normal',
+                                marginLeft: 'var(--space-3)',
+                                color: portfolioTotalReturn >= 0 ? 'var(--color-success)' : 'var(--color-danger)',
+                            }}
+                        >
+                            Total Return: {portfolioTotalReturn >= 0 ? '+' : ''}€{portfolioTotalReturn.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({portfolioTotalReturnPerc.toFixed(1)}%)
+                        </span>
+                    )}
                     <RealizedGainsModal
                         isOpen={showRealizedModal}
                         onClose={() => setShowRealizedModal(false)}
@@ -306,6 +345,15 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                         totalCommissions={realizedCommissions}
                         totalTax={realizedTax}
                         getLabel={getRealizedLabel}
+                    />
+                    <CashFlowModal
+                        isOpen={showCashFlowModal}
+                        onClose={() => setShowCashFlowModal(false)}
+                        details={portfolioCashFlowDetails}
+                        totalDividends={portfolioDividends}
+                        totalCoupons={portfolioCoupons}
+                        totalIncome={portfolioIncome}
+                        getLabel={getCashFlowLabel}
                     />
                 </h3>
                 <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
@@ -479,6 +527,10 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                             return sum + (calculateCommission(t, broker) || 0);
                         }, 0);
 
+                        const assetCashFlow = portfolioCashFlowDetails.find(d => d.ticker === ticker.toUpperCase());
+                        const assetDistributions = assetCashFlow?.totalIncome ?? 0;
+                        const assetDistributionEvents = assetCashFlow?.events.length ?? 0;
+
                         return (
                             <AllocationRow
                                 key={ticker}
@@ -501,6 +553,8 @@ const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, a
                                 postRebalancePerc={postRebalancePerc}
                                 projectedPerc={projectedPerc}
                                 totalFees={totalFees}
+                                assetDistributions={assetDistributions}
+                                assetDistributionEvents={assetDistributionEvents}
                             />
                         );
                     })
@@ -540,15 +594,22 @@ interface RowProps {
     postRebalancePerc: number;
     projectedPerc: number;
     totalFees: number;
+    assetDistributions: number;
+    assetDistributionEvents: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
     const taxRate = assetClass === 'Bond' ? 0.125 : 0.26;
     const estimatedTax = gain > 0 ? gain * taxRate : 0;
     const netGain = gain - totalFees - estimatedTax;
+
+    const totalReturnWithDistributions = gain + assetDistributions;
+    const totalReturnPerc = (averagePrice > 0 && quantity > 0)
+        ? (totalReturnWithDistributions / (averagePrice * quantity)) * 100
+        : 0;
 
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf',
@@ -667,6 +728,32 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                                         Tax is estimated on unrealized gain if sold today
                                     </div>
                                 )}
+
+                                {assetDistributions > 0 && (
+                                    <>
+                                        <hr className="realized-tooltip-divider" />
+                                        <div className="realized-tooltip-section-label" style={{ color: '#8B5CF6' }}>Distributions received</div>
+                                        <div className="realized-tooltip-row">
+                                            <span className="realized-tooltip-label">
+                                                Income
+                                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: 4 }}>
+                                                    ({assetDistributionEvents} payment{assetDistributionEvents !== 1 ? 's' : ''}, net at source)
+                                                </span>
+                                            </span>
+                                            <span className="realized-tooltip-amount" style={{ color: '#8B5CF6' }}>
+                                                +€{assetDistributions.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            </span>
+                                        </div>
+                                        <hr className="realized-tooltip-divider" />
+                                        <div className="realized-tooltip-total">
+                                            <span>Total Return</span>
+                                            <span style={{ color: totalReturnWithDistributions >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                                {totalReturnWithDistributions >= 0 ? '+' : ''}€{totalReturnWithDistributions.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                <span style={{ fontWeight: 'normal', marginLeft: 4, fontSize: '0.78rem' }}>({totalReturnPerc.toFixed(1)}%)</span>
+                                            </span>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </div>,
@@ -751,6 +838,11 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                                 <div style={{ fontSize: '0.72rem', color: netGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                     Net: {netGain >= 0 ? '+' : ''}€{netGain.toFixed(0)}
                                 </div>
+                                {assetDistributions > 0 && (
+                                    <div style={{ fontSize: '0.7rem', color: '#8B5CF6' }}>
+                                        +€{assetDistributions.toFixed(0)} dist.
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
