@@ -13,6 +13,7 @@ const TransactionList: React.FC = () => {
 
     // View State
     const [groupBy, setGroupBy] = useState<'None' | 'Portfolio' | 'Broker' | 'Ticker'>('None');
+    const [showMetricsAsPercentage, setShowMetricsAsPercentage] = useState(false);
 
     // Bulk Selection State
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -191,6 +192,12 @@ const TransactionList: React.FC = () => {
     const fmtEur = (n: number) => {
         const sign = n > 0 ? '+' : '';
         return `${sign}€${n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    };
+    const fmtPercentage = (value: number, basis: number) => {
+        if (basis === 0) return '+0.00%';
+        const perc = (value / basis) * 100;
+        const sign = perc > 0 ? '+' : '';
+        return `${sign}${perc.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
     };
 
     const renderTable = (txs: Transaction[]) => (
@@ -765,7 +772,25 @@ const TransactionList: React.FC = () => {
                                         flexWrap: 'wrap',
                                         gap: '0.5rem'
                                     }}>
-                                        <h3 style={{ margin: 0, color: 'var(--color-primary)' }}>{displayLabel}</h3>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <h3 style={{ margin: 0, color: 'var(--color-primary)' }}>{displayLabel}</h3>
+                                            <button
+                                                onClick={() => setShowMetricsAsPercentage(!showMetricsAsPercentage)}
+                                                style={{
+                                                    fontSize: '0.7rem',
+                                                    padding: '2px 6px',
+                                                    border: '1px solid var(--border-color)',
+                                                    borderRadius: 'var(--radius-sm)',
+                                                    backgroundColor: showMetricsAsPercentage ? 'var(--color-primary)' : 'transparent',
+                                                    color: showMetricsAsPercentage ? 'white' : 'var(--text-muted)',
+                                                    cursor: 'pointer',
+                                                    fontWeight: 'bold'
+                                                }}
+                                                title={showMetricsAsPercentage ? 'Click to show in euros' : 'Click to show as percentage'}
+                                            >
+                                                {showMetricsAsPercentage ? '%' : '€'}
+                                            </button>
+                                        </div>
                                         <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap', alignItems: 'center' }}>
                                             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
                                                 {txs.length} tx
@@ -783,18 +808,26 @@ const TransactionList: React.FC = () => {
                                                 Market Value: <strong style={{ color: 'var(--text-primary)' }}>{fmtEur(currentMarketValue)}</strong>
                                             </span>
                                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                                P&L: <strong style={{ color: unrealizedPnl > 0 ? 'var(--color-success)' : unrealizedPnl < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>{fmtEur(unrealizedPnl)}</strong>
+                                                P&L: <strong style={{ color: unrealizedPnl > 0 ? 'var(--color-success)' : unrealizedPnl < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                                    {showMetricsAsPercentage ? fmtPercentage(unrealizedPnl, costBasisValue) : fmtEur(unrealizedPnl)}
+                                                </strong>
                                             </span>
                                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                                                Realized: <strong style={{ color: realized > 0 ? 'var(--color-success)' : realized < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>{fmtEur(realized)}</strong>
+                                                Realized: <strong style={{ color: realized > 0 ? 'var(--color-success)' : realized < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                                    {showMetricsAsPercentage ? fmtPercentage(realized, costBasisValue) : fmtEur(realized)}
+                                                </strong>
                                             </span>
                                             {distributions > 0 && (
                                                 <span style={{ fontSize: '0.85rem', color: '#3B82F6' }}>
-                                                    Distributions: <strong style={{ color: '#3B82F6' }}>{fmtEur(distributions)}</strong>
+                                                    Distributions: <strong style={{ color: '#3B82F6' }}>
+                                                        {showMetricsAsPercentage ? fmtPercentage(distributions, costBasisValue) : fmtEur(distributions)}
+                                                    </strong>
                                                 </span>
                                             )}
                                             <span style={{ fontSize: '0.85rem', color: totalReturn > 0 ? 'var(--color-success)' : totalReturn < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                                                Total Return: <strong style={{ color: totalReturn > 0 ? 'var(--color-success)' : totalReturn < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>{fmtEur(totalReturn)}</strong>
+                                                Total Return: <strong style={{ color: totalReturn > 0 ? 'var(--color-success)' : totalReturn < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                                    {showMetricsAsPercentage ? fmtPercentage(totalReturn, costBasisValue) : fmtEur(totalReturn)}
+                                                </strong>
                                             </span>
                                         </div>
                                     </div>
