@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, TransactionDirection } from '../../types';
 import { isIncomeDirection } from '../../types';
-import { calculateCommission } from '../../utils/portfolioCalculations';
+import { calculateCommission, calculateRealizedGains } from '../../utils/portfolioCalculations';
 import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
@@ -12,7 +12,7 @@ const TransactionList: React.FC = () => {
     const [showImport, setShowImport] = useState(false);
 
     // View State
-    const [groupBy, setGroupBy] = useState<'None' | 'Portfolio' | 'Broker'>('None');
+    const [groupBy, setGroupBy] = useState<'None' | 'Portfolio' | 'Broker' | 'Ticker'>('None');
 
     // Bulk Selection State
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -151,12 +151,45 @@ const TransactionList: React.FC = () => {
             key = getPortfolioName(tx.portfolioId);
         } else if (groupBy === 'Broker') {
             key = getBrokerName(tx.brokerId) === '-' ? 'No Broker' : getBrokerName(tx.brokerId);
+        } else if (groupBy === 'Ticker') {
+            key = tx.ticker.toUpperCase();
         }
 
         if (!acc[key]) acc[key] = [];
         acc[key].push(tx);
         return acc;
     }, {} as Record<string, Transaction[]>);
+
+    const getGroupStats = (txs: Transaction[]) => {
+        const boughtQty = txs.filter(t => t.direction === 'Buy').reduce((s, t) => s + Number(t.amount), 0);
+        const soldQty = txs.filter(t => t.direction === 'Sell').reduce((s, t) => s + Number(t.amount), 0);
+        const realized = calculateRealizedGains(txs, brokers, targets).totalRealized;
+        const distinctTickers = [...new Set(txs.map(t => t.ticker.toUpperCase()))];
+        const unrealizedPnl = distinctTickers.reduce((sum, ticker) => {
+            return sum + (assets.find(a => a.ticker === ticker)?.gain ?? 0);
+        }, 0);
+        const costBasisValue = distinctTickers.reduce((sum, ticker) => {
+            const asset = assets.find(a => a.ticker === ticker);
+            if (asset) {
+                return sum + (asset.quantity * asset.averagePrice);
+            }
+            return sum;
+        }, 0);
+        const currentMarketValue = distinctTickers.reduce((sum, ticker) => {
+            const asset = assets.find(a => a.ticker === ticker);
+            if (asset) {
+                return sum + (asset.currentValue ?? 0);
+            }
+            return sum;
+        }, 0);
+        return { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue };
+    };
+
+    const fmtQty = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+    const fmtEur = (n: number) => {
+        const sign = n > 0 ? '+' : '';
+        return `${sign}€${n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    };
 
     const renderTable = (txs: Transaction[]) => (
         <table className="transaction-table">
@@ -605,6 +638,7 @@ const TransactionList: React.FC = () => {
                         onClick={() => {
                             if (groupBy === 'None') setGroupBy('Portfolio');
                             else if (groupBy === 'Portfolio') setGroupBy('Broker');
+                            else if (groupBy === 'Broker') setGroupBy('Ticker');
                             else setGroupBy('None');
                         }}
                         className="btn-secondary"
@@ -713,26 +747,52 @@ const TransactionList: React.FC = () => {
             ) : (
                 <>
                     {groupBy !== 'None' ? (
-                        Object.keys(groupedTransactions).sort().map((groupKey) => (
-                            <div key={groupKey} style={{ marginBottom: '2rem' }}>
-                                <h3 style={{
-                                    padding: '0.5rem 0',
-                                    borderBottom: '2px solid var(--border-color)',
-                                    marginBottom: '1rem',
-                                    color: 'var(--color-primary)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'space-between'
-                                }}>
-                                    <span>{groupKey}</span>
-                                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>
-                                        {groupedTransactions[groupKey].length} transactions
-                                    </span>
-                                </h3>
-                                {renderTable(groupedTransactions[groupKey])}
-                                {renderMobileList(groupedTransactions[groupKey])}
-                            </div>
-                        ))
+                        Object.keys(groupedTransactions).sort().map((groupKey) => {
+                            const txs = groupedTransactions[groupKey];
+                            const { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue } = getGroupStats(txs);
+                            const displayLabel = groupBy === 'Ticker' ? getAssetName(groupKey) || groupKey : groupKey;
+                            return (
+                                <div key={groupKey} style={{ marginBottom: '2rem' }}>
+                                    <div style={{
+                                        padding: '0.5rem 0',
+                                        borderBottom: '2px solid var(--border-color)',
+                                        marginBottom: '1rem',
+                                        display: 'flex',
+                                        alignItems: 'baseline',
+                                        justifyContent: 'space-between',
+                                        flexWrap: 'wrap',
+                                        gap: '0.5rem'
+                                    }}>
+                                        <h3 style={{ margin: 0, color: 'var(--color-primary)' }}>{displayLabel}</h3>
+                                        <div style={{ display: 'flex', gap: '1.2rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                                                {txs.length} tx
+                                            </span>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                Bought: <strong style={{ color: 'var(--text-primary)' }}>{fmtQty(boughtQty)}</strong>
+                                            </span>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                Sold: <strong style={{ color: 'var(--text-primary)' }}>{fmtQty(soldQty)}</strong>
+                                            </span>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                Cost Basis: <strong style={{ color: 'var(--text-primary)' }}>{fmtEur(costBasisValue)}</strong>
+                                            </span>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                Market Value: <strong style={{ color: 'var(--text-primary)' }}>{fmtEur(currentMarketValue)}</strong>
+                                            </span>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                P&L: <strong style={{ color: unrealizedPnl > 0 ? 'var(--color-success)' : unrealizedPnl < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>{fmtEur(unrealizedPnl)}</strong>
+                                            </span>
+                                            <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                                Realized: <strong style={{ color: realized > 0 ? 'var(--color-success)' : realized < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>{fmtEur(realized)}</strong>
+                                            </span>
+                                        </div>
+                                    </div>
+                                    {renderTable(txs)}
+                                    {renderMobileList(txs)}
+                                </div>
+                            );
+                        })
                     ) : (
                         <>
                             {renderTable(sortedTransactions)}
