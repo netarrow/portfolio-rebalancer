@@ -37,6 +37,7 @@ const SummaryCards: React.FC = () => {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            {/* Row 1: Investment Base (2 cards) */}
             <div className="summary-grid">
                 <div className="summary-card">
                     <span className="card-label">Total Cost</span>
@@ -47,7 +48,10 @@ const SummaryCards: React.FC = () => {
                     <span className="card-label">Invested Value</span>
                     <span className="card-value">&euro;{fmt(summary.totalValue)}</span>
                 </div>
+            </div>
 
+            {/* Row 2: Return Progression (3 cards) */}
+            <div className="summary-grid">
                 <div className="summary-card">
                     <span className="card-label">Price Appreciation</span>
                     <span className={`card-value ${returnValue >= 0 ? 'trend-up' : 'trend-down'}`}>
@@ -82,6 +86,7 @@ const SummaryCards: React.FC = () => {
                 </div>
             </div>
 
+            {/* Row 3: Wealth & Realized Gains (2 cards) */}
             <div className="summary-grid">
                 <div className="summary-card">
                     <span className="card-label">Liquidity</span>
@@ -92,7 +97,10 @@ const SummaryCards: React.FC = () => {
                     <span className="card-label">Net Worth</span>
                     <span className="card-value">&euro;{fmt(netWorth)}</span>
                 </div>
+            </div>
 
+            {/* Row 4: Realized Activity (2 cards) */}
+            <div className="summary-grid">
                 <div
                     className="summary-card"
                     style={{ cursor: details.length > 0 ? 'pointer' : 'default' }}

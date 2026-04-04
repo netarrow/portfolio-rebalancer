@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, TransactionDirection } from '../../types';
 import { isIncomeDirection } from '../../types';
-import { calculateCommission, calculateRealizedGains } from '../../utils/portfolioCalculations';
+import { calculateCommission, calculateRealizedGains, calculateCashFlows } from '../../utils/portfolioCalculations';
 import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
@@ -164,6 +164,7 @@ const TransactionList: React.FC = () => {
         const boughtQty = txs.filter(t => t.direction === 'Buy').reduce((s, t) => s + Number(t.amount), 0);
         const soldQty = txs.filter(t => t.direction === 'Sell').reduce((s, t) => s + Number(t.amount), 0);
         const realized = calculateRealizedGains(txs, brokers, targets).totalRealized;
+        const { totalIncome: distributions } = calculateCashFlows(txs);
         const distinctTickers = [...new Set(txs.map(t => t.ticker.toUpperCase()))];
         const unrealizedPnl = distinctTickers.reduce((sum, ticker) => {
             return sum + (assets.find(a => a.ticker === ticker)?.gain ?? 0);
@@ -182,7 +183,8 @@ const TransactionList: React.FC = () => {
             }
             return sum;
         }, 0);
-        return { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue };
+        const totalReturn = unrealizedPnl + realized + distributions;
+        return { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue, distributions, totalReturn };
     };
 
     const fmtQty = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -749,7 +751,7 @@ const TransactionList: React.FC = () => {
                     {groupBy !== 'None' ? (
                         Object.keys(groupedTransactions).sort().map((groupKey) => {
                             const txs = groupedTransactions[groupKey];
-                            const { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue } = getGroupStats(txs);
+                            const { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue, distributions, totalReturn } = getGroupStats(txs);
                             const displayLabel = groupBy === 'Ticker' ? getAssetName(groupKey) || groupKey : groupKey;
                             return (
                                 <div key={groupKey} style={{ marginBottom: '2rem' }}>
@@ -785,6 +787,14 @@ const TransactionList: React.FC = () => {
                                             </span>
                                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                                 Realized: <strong style={{ color: realized > 0 ? 'var(--color-success)' : realized < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>{fmtEur(realized)}</strong>
+                                            </span>
+                                            {distributions > 0 && (
+                                                <span style={{ fontSize: '0.85rem', color: '#3B82F6' }}>
+                                                    Distributions: <strong style={{ color: '#3B82F6' }}>{fmtEur(distributions)}</strong>
+                                                </span>
+                                            )}
+                                            <span style={{ fontSize: '0.85rem', color: totalReturn > 0 ? 'var(--color-success)' : totalReturn < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                                Total Return: <strong style={{ color: totalReturn > 0 ? 'var(--color-success)' : totalReturn < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>{fmtEur(totalReturn)}</strong>
                                             </span>
                                         </div>
                                     </div>
