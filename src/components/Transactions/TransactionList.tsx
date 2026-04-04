@@ -185,8 +185,13 @@ const TransactionList: React.FC = () => {
             }
             return sum;
         }, 0);
+        const totalFees = txs.reduce((sum, tx) => {
+            if (tx.freeCommission) return sum;
+            const fee = calculateCommission(tx, brokers.find(b => b.id === tx.brokerId));
+            return sum + (fee ?? 0);
+        }, 0);
         const totalReturn = unrealizedPnl + realized + distributions;
-        return { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, costBasisTotal, currentMarketValue, distributions, totalReturn };
+        return { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, costBasisTotal, currentMarketValue, distributions, totalReturn, totalFees };
     };
 
     const fmtQty = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -759,7 +764,7 @@ const TransactionList: React.FC = () => {
                     {groupBy !== 'None' ? (
                         Object.keys(groupedTransactions).sort().map((groupKey) => {
                             const txs = groupedTransactions[groupKey];
-                            const { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, costBasisTotal, currentMarketValue, distributions, totalReturn } = getGroupStats(txs);
+                            const { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, costBasisTotal, currentMarketValue, distributions, totalReturn, totalFees } = getGroupStats(txs);
                             const displayLabel = groupBy === 'Ticker' ? getAssetName(groupKey) || groupKey : groupKey;
                             return (
                                 <div key={groupKey} style={{ marginBottom: '2rem' }}>
@@ -818,6 +823,13 @@ const TransactionList: React.FC = () => {
                                                     {showMetricsAsPercentage ? fmtPercentage(realized, costBasisTotal) : fmtEur(realized)}
                                                 </strong>
                                             </span>
+                                            {totalFees > 0 && (
+                                                <span style={{ fontSize: '0.85rem', color: '#FF6B6B' }}>
+                                                    Total Fees: <strong style={{ color: '#FF6B6B' }}>
+                                                        {showMetricsAsPercentage ? `${fmtPercentage(totalFees, costBasisTotal)} (${fmtEur(totalFees)})` : `${fmtEur(totalFees)} (${fmtPercentage(totalFees, costBasisTotal)})`}
+                                                    </strong>
+                                                </span>
+                                            )}
                                             {distributions > 0 && (
                                                 <span style={{ fontSize: '0.85rem', color: '#3B82F6' }}>
                                                     Distributions: <strong style={{ color: '#3B82F6' }}>
