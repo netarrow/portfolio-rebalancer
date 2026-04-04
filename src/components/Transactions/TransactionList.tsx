@@ -177,6 +177,7 @@ const TransactionList: React.FC = () => {
             }
             return sum;
         }, 0);
+        const costBasisTotal = txs.filter(t => t.direction === 'Buy').reduce((sum, t) => sum + (t.price * t.amount), 0);
         const currentMarketValue = distinctTickers.reduce((sum, ticker) => {
             const asset = assets.find(a => a.ticker === ticker);
             if (asset) {
@@ -185,7 +186,7 @@ const TransactionList: React.FC = () => {
             return sum;
         }, 0);
         const totalReturn = unrealizedPnl + realized + distributions;
-        return { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue, distributions, totalReturn };
+        return { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, costBasisTotal, currentMarketValue, distributions, totalReturn };
     };
 
     const fmtQty = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -758,7 +759,7 @@ const TransactionList: React.FC = () => {
                     {groupBy !== 'None' ? (
                         Object.keys(groupedTransactions).sort().map((groupKey) => {
                             const txs = groupedTransactions[groupKey];
-                            const { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, currentMarketValue, distributions, totalReturn } = getGroupStats(txs);
+                            const { boughtQty, soldQty, realized, unrealizedPnl, costBasisValue, costBasisTotal, currentMarketValue, distributions, totalReturn } = getGroupStats(txs);
                             const displayLabel = groupBy === 'Ticker' ? getAssetName(groupKey) || groupKey : groupKey;
                             return (
                                 <div key={groupKey} style={{ marginBottom: '2rem' }}>
@@ -809,24 +810,24 @@ const TransactionList: React.FC = () => {
                                             </span>
                                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                                 P&L: <strong style={{ color: unrealizedPnl > 0 ? 'var(--color-success)' : unrealizedPnl < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                                                    {showMetricsAsPercentage ? fmtPercentage(unrealizedPnl, costBasisValue) : fmtEur(unrealizedPnl)}
+                                                    {showMetricsAsPercentage ? fmtPercentage(unrealizedPnl, costBasisTotal) : fmtEur(unrealizedPnl)}
                                                 </strong>
                                             </span>
                                             <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                                 Realized: <strong style={{ color: realized > 0 ? 'var(--color-success)' : realized < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                                                    {showMetricsAsPercentage ? fmtPercentage(realized, costBasisValue) : fmtEur(realized)}
+                                                    {showMetricsAsPercentage ? fmtPercentage(realized, costBasisTotal) : fmtEur(realized)}
                                                 </strong>
                                             </span>
                                             {distributions > 0 && (
                                                 <span style={{ fontSize: '0.85rem', color: '#3B82F6' }}>
                                                     Distributions: <strong style={{ color: '#3B82F6' }}>
-                                                        {showMetricsAsPercentage ? fmtPercentage(distributions, costBasisValue) : fmtEur(distributions)}
+                                                        {showMetricsAsPercentage ? fmtPercentage(distributions, costBasisTotal) : fmtEur(distributions)}
                                                     </strong>
                                                 </span>
                                             )}
                                             <span style={{ fontSize: '0.85rem', color: totalReturn > 0 ? 'var(--color-success)' : totalReturn < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                                                 Total Return: <strong style={{ color: totalReturn > 0 ? 'var(--color-success)' : totalReturn < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                                                    {showMetricsAsPercentage ? fmtPercentage(totalReturn, costBasisValue) : fmtEur(totalReturn)}
+                                                    {showMetricsAsPercentage ? fmtPercentage(totalReturn, costBasisTotal) : fmtEur(totalReturn)}
                                                 </strong>
                                             </span>
                                         </div>
