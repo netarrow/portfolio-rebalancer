@@ -57,7 +57,7 @@ io.on('connection', (socket) => {
 
                 // Re-validate per ISIN
                 const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
-                if (!isinRegex.test(isin)) {
+                if (source !== 'COMETA' && !isinRegex.test(isin)) {
                     socket.emit('price_update_item', { isin, error: 'Invalid ISIN format', success: false });
                     continue;
                 }
@@ -121,14 +121,66 @@ io.on('connection', (socket) => {
                             if (extractedData) priceText = extractedData;
                          } catch (e) {}
 
+                    } else if (source === 'COMETA') {
+                         url = 'https://www.cometafondo.it/andamenti/crescita/';
+                         await page.goto(url, { waitUntil: 'networkidle2' });
+
+                         const extractedPrice = await page.evaluate(() => {
+                            // Method 1: wpDataCharts JS global
+                            try {
+                                if (typeof wpDataCharts !== 'undefined' && wpDataCharts[6]) {
+                                    const chart = wpDataCharts[6];
+                                    const series = (chart.render_data || chart).series;
+                                    if (series?.[0]?.data?.length > 0) {
+                                        const dataArray = series[0].data;
+                                        const lastValue = dataArray[dataArray.length - 1];
+                                        let val;
+                                        if (typeof lastValue === 'number') {
+                                            val = lastValue;
+                                        } else if (Array.isArray(lastValue)) {
+                                            val = lastValue[1] ?? lastValue[0];
+                                        } else if (typeof lastValue === 'object' && lastValue !== null) {
+                                            val = lastValue.y ?? lastValue.value ?? lastValue.v;
+                                        }
+                                        if (typeof val === 'number' && !isNaN(val)) return String(val);
+                                    }
+                                }
+                            } catch (e) {}
+                            // Method 2: regex on script tag source
+                            try {
+                                for (const script of document.scripts) {
+                                    const txt = script.textContent || '';
+                                    if (!txt.includes('wpDataCharts')) continue;
+                                    // Extract last decimal number before closing ] of the data array
+                                    const m = txt.match(/"data"\s*:\s*\[[\s\S]*?([\d]+\.[\d]+)\s*\]/);
+                                    if (m) return m[1];
+                                }
+                            } catch (e) {}
+                            return null;
+                         });
+                         if (extractedPrice && !isNaN(parseFloat(extractedPrice))) {
+                            priceText = extractedPrice;
+                         } else {
+                            // Fallback: HTML table last row, QUOTA column (Italian decimal: comma)
+                            const fallbackPrice = await page.evaluate(() => {
+                                const rows = document.querySelectorAll('table tbody tr');
+                                if (rows.length === 0) return null;
+                                const lastRow = rows[rows.length - 1];
+                                const cells = lastRow.querySelectorAll('td');
+                                return cells.length >= 2 ? cells[1].textContent.trim() : null;
+                            });
+                            if (fallbackPrice) priceText = fallbackPrice;
+                         }
+                         currency = 'EUR';
+
                     } else {
                          // JustETF
                          url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
                          await page.goto(url, { waitUntil: 'domcontentloaded' });
-                         
+
                          const priceSelector = '[data-testid="realtime-quotes_price-value"]';
                          const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
-                         
+
                          try {
                             await page.waitForSelector(priceSelector, { timeout: 10000 });
                             priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
@@ -143,7 +195,13 @@ io.on('connection', (socket) => {
                     // Parse Price
                     let cleanPrice;
                     if (source === 'ETF') {
-                        cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim(); 
+                        cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim();
+                    } else if (source === 'COMETA') {
+                        if (priceText.includes(',') && !priceText.includes('.')) {
+                            cleanPrice = priceText.replace(/[^\d,]/g, '').replace(/,/g, '.').trim();
+                        } else {
+                            cleanPrice = priceText.replace(/[^\d.]/g, '').trim();
+                        }
                     } else {
                         cleanPrice = priceText.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(/,/g, '.').trim();
                     }
@@ -222,7 +280,7 @@ app.post('/api/price', async (req, res) => {
         for (const token of tokens) {
             const { isin, source = 'ETF' } = token;
             const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
-            if (!isinRegex.test(isin)) { results.push({ isin, error: 'Invalid ISIN format', success: false }); continue; }
+            if (source !== 'COMETA' && !isinRegex.test(isin)) { results.push({ isin, error: 'Invalid ISIN format', success: false }); continue; }
             
             try {
                 let url, priceText, currency = 'EUR';
@@ -262,6 +320,56 @@ app.post('/api/price', async (req, res) => {
                         });
                         if (extractedData) priceText = extractedData;
                      } catch (e) {}
+                } else if (source === 'COMETA') {
+                     url = 'https://www.cometafondo.it/andamenti/crescita/';
+                     await page.goto(url, { waitUntil: 'networkidle2' });
+
+                     const extractedPrice = await page.evaluate(() => {
+                        // Method 1: wpDataCharts JS global
+                        try {
+                            if (typeof wpDataCharts !== 'undefined' && wpDataCharts[6]) {
+                                const chart = wpDataCharts[6];
+                                const series = (chart.render_data || chart).series;
+                                if (series?.[0]?.data?.length > 0) {
+                                    const dataArray = series[0].data;
+                                    const lastValue = dataArray[dataArray.length - 1];
+                                    let val;
+                                    if (typeof lastValue === 'number') {
+                                        val = lastValue;
+                                    } else if (Array.isArray(lastValue)) {
+                                        val = lastValue[1] ?? lastValue[0];
+                                    } else if (typeof lastValue === 'object' && lastValue !== null) {
+                                        val = lastValue.y ?? lastValue.value ?? lastValue.v;
+                                    }
+                                    if (typeof val === 'number' && !isNaN(val)) return String(val);
+                                }
+                            }
+                        } catch (e) {}
+                        // Method 2: regex on script tag source
+                        try {
+                            for (const script of document.scripts) {
+                                const txt = script.textContent || '';
+                                if (!txt.includes('wpDataCharts')) continue;
+                                const m = txt.match(/"data"\s*:\s*\[[\s\S]*?([\d]+\.[\d]+)\s*\]/);
+                                if (m) return m[1];
+                            }
+                        } catch (e) {}
+                        return null;
+                     });
+                     if (extractedPrice && !isNaN(parseFloat(extractedPrice))) {
+                        priceText = extractedPrice;
+                     } else {
+                        // Fallback: HTML table last row, QUOTA column (Italian decimal: comma)
+                        const fallbackPrice = await page.evaluate(() => {
+                            const rows = document.querySelectorAll('table tbody tr');
+                            if (rows.length === 0) return null;
+                            const lastRow = rows[rows.length - 1];
+                            const cells = lastRow.querySelectorAll('td');
+                            return cells.length >= 2 ? cells[1].textContent.trim() : null;
+                        });
+                        if (fallbackPrice) priceText = fallbackPrice;
+                     }
+                     currency = 'EUR';
                 } else {
                      url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
                      await page.goto(url, { waitUntil: 'domcontentloaded' });
@@ -274,7 +382,14 @@ app.post('/api/price', async (req, res) => {
 
                 if (!priceText) throw new Error('Price element empty');
                 let cleanPrice;
-                if (source === 'ETF') cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim(); 
+                if (source === 'ETF') cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim();
+                else if (source === 'COMETA') {
+                    if (priceText.includes(',') && !priceText.includes('.')) {
+                        cleanPrice = priceText.replace(/[^\d,]/g, '').replace(/,/g, '.').trim();
+                    } else {
+                        cleanPrice = priceText.replace(/[^\d.]/g, '').trim();
+                    }
+                }
                 else cleanPrice = priceText.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(/,/g, '.').trim();
                 const finalPrice = parseFloat(cleanPrice);
                 if (isNaN(finalPrice)) throw new Error(`Failed to parse: ${priceText}`);

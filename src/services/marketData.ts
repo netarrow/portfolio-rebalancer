@@ -8,7 +8,7 @@ interface MarketData {
 
 export interface PriceRequestToken {
     isin: string;
-    source: 'ETF' | 'MOT' | 'CPRAM';
+    source: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA';
 }
 
 export interface PriceResult {

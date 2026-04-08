@@ -40,7 +40,7 @@ const TargetSettings: React.FC = () => {
     const handleUpdate = (ticker: string, field: 'source' | 'label' | 'assetClass' | 'assetSubClass', value: string) => {
         // ... (existing implementation)
         const current = getSetting(ticker);
-        const newSource = field === 'source' ? value as 'ETF' | 'MOT' | 'CPRAM' : (current.source || 'ETF');
+        const newSource = field === 'source' ? value as 'ETF' | 'MOT' | 'CPRAM' | 'COMETA' : (current.source || 'ETF');
         const newLabel = field === 'label' ? value : current.label;
         const newClass = field === 'assetClass' ? value as AssetClass : (current.assetClass || 'Stock');
 
@@ -207,6 +207,7 @@ const TargetSettings: React.FC = () => {
                         <option value="ETF">ETF</option>
                         <option value="MOT">MOT</option>
                         <option value="CPRAM">CPRAM</option>
+                        <option value="COMETA">COMETA</option>
                     </select>
                 </div>
             </div>
