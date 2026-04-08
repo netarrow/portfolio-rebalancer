@@ -24,11 +24,12 @@ export interface Broker {
 export const CASH_TICKER_PREFIX = '_CASH_';
 export const getCashTicker = (brokerId: string) => `${CASH_TICKER_PREFIX}${brokerId}`;
 
-export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto' | 'Cash';
+export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto' | 'Cash' | 'PensionFund';
 export type AssetSubClass =
   | 'International' | 'Local'     // Stock
   | 'Short' | 'Medium' | 'Long'   // Bond
   | 'Gold'                        // Commodity
+  | 'Balanced'                    // PensionFund
   | '';                           // Crypto/None
 
 export type FinancialGoal = 'Growth' | 'Protection' | 'Security' | 'Liquidity';

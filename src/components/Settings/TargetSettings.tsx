@@ -50,7 +50,8 @@ const TargetSettings: React.FC = () => {
         if (field === 'assetClass') {
             if (value === 'Bond') newSubClass = 'Medium';
             else if (value === 'Commodity') newSubClass = 'Gold';
-            else if (value === 'Crypto') newSubClass = ''; // Just a placeholder or empty
+            else if (value === 'Crypto') newSubClass = '';
+            else if (value === 'PensionFund') newSubClass = 'Balanced';
             else newSubClass = 'International';
         }
 
@@ -166,6 +167,7 @@ const TargetSettings: React.FC = () => {
                         <option value="Bond">Bond</option>
                         <option value="Commodity">Cmdty</option>
                         <option value="Crypto">Crypto</option>
+                        <option value="PensionFund">Pension</option>
                     </select>
                 </div>
 
@@ -191,6 +193,7 @@ const TargetSettings: React.FC = () => {
                                 </>
                             )}
                             {setting.assetClass === 'Commodity' && <option value="Gold">Gold</option>}
+                            {setting.assetClass === 'PensionFund' && <option value="Balanced">Balanced</option>}
                         </select>
                     ) : (
                         <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>-</span>

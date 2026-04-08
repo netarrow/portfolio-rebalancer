@@ -9,7 +9,8 @@ export const TAX_RATES: Record<AssetClass, number> = {
     'Crypto': 0.26,
     'Commodity': 0.26, // Gold
     'Bond': 0.125,     // State Bonds (approx)
-    'Cash': 0.125      // Monetari (approx)
+    'Cash': 0.125,     // Monetari (approx)
+    'PensionFund': 0.20 // Italian pension funds (TFR rate approx)
 };
 
 export interface WithdrawalProjection {
