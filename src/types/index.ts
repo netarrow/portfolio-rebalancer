@@ -91,7 +91,7 @@ export interface Asset {
 export interface AssetDefinition {
   ticker: string;
   label?: string;
-  source?: 'ETF' | 'MOT' | 'CPRAM';
+  source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA';
   assetClass?: AssetClass;
   assetSubClass?: AssetSubClass;
 }
