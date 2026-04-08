@@ -91,7 +91,11 @@ const MacroStats: React.FC = () => {
             if (!asset.currentValue) return;
 
             // Macro
-            if (macroValues[asset.assetClass] !== undefined) {
+            if (asset.assetClass === 'PensionFund') {
+                // PensionFund/Balanced splits 60% Stock, 40% Bond
+                macroValues['Stock'] += asset.currentValue * 0.6;
+                macroValues['Bond'] += asset.currentValue * 0.4;
+            } else if (macroValues[asset.assetClass] !== undefined) {
                 macroValues[asset.assetClass] += asset.currentValue;
             }
 

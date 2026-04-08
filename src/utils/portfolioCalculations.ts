@@ -148,7 +148,11 @@ export const calculateAssets = (
     };
 
     assetsList.forEach(asset => {
-        if (allocation[asset.assetClass] !== undefined) {
+        if (asset.assetClass === 'PensionFund') {
+            // PensionFund/Balanced splits 60% Stock, 40% Bond
+            allocation['Stock']! += asset.currentValue * 0.6;
+            allocation['Bond']! += asset.currentValue * 0.4;
+        } else if (allocation[asset.assetClass] !== undefined) {
             allocation[asset.assetClass]! += asset.currentValue;
         }
     });

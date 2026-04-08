@@ -22,6 +22,10 @@ export const getAssetGoal = (assetClass: AssetClass, assetSubClass?: AssetSubCla
         return 'Protection';
     }
 
+    if (assetClass === 'PensionFund') {
+        return 'Growth';
+    }
+
     // Default fallback
     return 'Growth';
 };
