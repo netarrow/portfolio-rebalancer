@@ -58,8 +58,39 @@ export interface Portfolio {
   goalId?: string;
 }
 
-export interface GlobalRebalancingSettings {
-  weightsByPortfolioId?: Record<string, number>;
+export type PortfolioTargetMode =
+  | 'excluded'   // Not counted in total, no target
+  | 'locked'     // Counts in total, target = current value (does not move)
+  | 'fixed'      // Target = fixed EUR amount
+  | 'percent'    // Target = X% of eligible total
+  | 'ratio';     // Part of a ratio group (share a group budget by relative weight)
+
+export interface PortfolioTargetConfig {
+  mode: PortfolioTargetMode;
+  value: number;          // fixed: EUR | percent: 0-100 | ratio: relative weight | excluded/locked: ignored
+  ratioGroupId?: string;  // required only for mode === 'ratio'
+}
+
+export type LiquidityTargetMode = 'fixed' | 'percent';
+
+export interface LiquidityTargetConfig {
+  mode: LiquidityTargetMode;
+  value: number; // EUR if fixed, 0-100 if percent
+}
+
+export type RatioGroupTargetMode = 'fixed' | 'percent' | 'remainder';
+
+export interface RatioGroupConfig {
+  id: string;
+  name: string;
+  groupTargetMode: RatioGroupTargetMode;
+  groupTargetValue: number; // fixed: EUR | percent: 0-100 | remainder: ignored
+}
+
+export interface AssetAllocationSettings {
+  liquidityTarget?: LiquidityTargetConfig;
+  portfolioTargets: Record<string, PortfolioTargetConfig>;
+  ratioGroups: RatioGroupConfig[];
 }
 
 export interface Transaction {

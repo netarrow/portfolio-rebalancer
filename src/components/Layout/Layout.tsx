@@ -60,7 +60,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             className={`nav-link ${currentView === 'globalRebalancing' ? 'active' : ''}`}
             onClick={() => handleNavigate('globalRebalancing')}
           >
-            Global Rebalancing
+            Asset Allocation
           </button>
           <button
             className={`nav-link ${currentView === 'goals' ? 'active' : ''}`}

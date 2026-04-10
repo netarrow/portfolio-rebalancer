@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useMemo, useEffect, useState } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, GlobalRebalancingSettings, Goal } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal } from '../types';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
-import { normalizeGlobalRebalancingSettings } from '../utils/globalRebalancing';
+import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
 
 // Legacy Type for Migration
 type Target = AssetDefinition & { targetPercentage?: number };
@@ -16,7 +16,7 @@ interface PortfolioContextType {
     portfolios: Portfolio[];
     brokers: Broker[];
     goals: Goal[];
-    globalRebalancingSettings: { weightsByPortfolioId: Record<string, number> };
+    assetAllocationSettings: AssetAllocationSettings;
     summary: PortfolioSummary;
     macroAllocations: MacroAllocation;
     goalAllocations: GoalAllocation;
@@ -41,8 +41,11 @@ interface PortfolioContextType {
     addGoal: (goal: Goal) => void;
     updateGoal: (goal: Goal) => void;
     deleteGoal: (id: string) => void;
-    updateGlobalPortfolioWeight: (portfolioId: string, weight: number) => void;
-    applyGlobalLiquidityDistribution: (distribution: Record<string, number>) => void;
+    updatePortfolioTarget: (portfolioId: string, target: PortfolioTargetConfig | null) => void;
+    updateLiquidityTarget: (target: LiquidityTargetConfig | undefined) => void;
+    upsertRatioGroup: (group: RatioGroupConfig) => void;
+    deleteRatioGroup: (id: string) => void;
+    resetAssetAllocationSettings: () => void;
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
     importData: (data: any) => Promise<boolean>;
@@ -72,19 +75,28 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [brokers, setBrokers] = useLocalStorage<Broker[]>('portfolio_brokers', []);
     const [goals, setGoals] = useLocalStorage<Goal[]>('portfolio_goals', []);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
-    const [storedGlobalRebalancingSettings, setStoredGlobalRebalancingSettings] = useLocalStorage<GlobalRebalancingSettings>(
-        'portfolio_global_rebalancing_v1',
-        { weightsByPortfolioId: {} }
+    const [storedAssetAllocationSettings, setStoredAssetAllocationSettings] = useLocalStorage<AssetAllocationSettings>(
+        'portfolio_asset_allocation_v1',
+        { portfolioTargets: {}, ratioGroups: [] }
     );
 
     // New State for Macro/Goal Targets
     const [macroAllocations, setMacroAllocations] = useLocalStorage<MacroAllocation>('portfolio_macro_targets', {});
     const [goalAllocations, setGoalAllocations] = useLocalStorage<GoalAllocation>('portfolio_goal_targets', {});
 
-    const globalRebalancingSettings = useMemo(
-        () => normalizeGlobalRebalancingSettings(storedGlobalRebalancingSettings),
-        [storedGlobalRebalancingSettings]
+    const assetAllocationSettings = useMemo(
+        () => normalizeAssetAllocationSettings(storedAssetAllocationSettings),
+        [storedAssetAllocationSettings]
     );
+
+    // One-shot cleanup of legacy Global Rebalancing storage key
+    useEffect(() => {
+        try {
+            localStorage.removeItem('portfolio_global_rebalancing_v1');
+        } catch {
+            // ignore
+        }
+    }, []);
 
     // Socket & Modal State
     const [socket, setSocket] = useState<Socket | null>(null);
@@ -398,11 +410,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const nameToDelete = portfolioToDelete?.name;
 
         setPortfolios(prev => prev.filter(p => p.id !== id));
-        setStoredGlobalRebalancingSettings(prev => {
-            const normalized = normalizeGlobalRebalancingSettings(prev);
-            const nextWeights = { ...normalized.weightsByPortfolioId };
-            delete nextWeights[id];
-            return { weightsByPortfolioId: nextWeights };
+        setStoredAssetAllocationSettings(prev => {
+            const normalized = normalizeAssetAllocationSettings(prev);
+            const { [id]: _removed, ...rest } = normalized.portfolioTargets;
+            return { ...normalized, portfolioTargets: rest };
         });
         // Also clear the legacy 'portfolio' field to prevent the migration effect from re-creating it
         setTransactions(prev => prev.map(t =>
@@ -453,37 +464,74 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ));
     };
 
-    const updateGlobalPortfolioWeight = (portfolioId: string, weight: number) => {
-        setStoredGlobalRebalancingSettings(prev => {
-            const normalized = normalizeGlobalRebalancingSettings(prev);
-            const nextWeights = { ...normalized.weightsByPortfolioId };
-            const numericWeight = Number.isFinite(weight) ? Math.max(0, weight) : 0;
-
-            if (numericWeight > 0) {
-                nextWeights[portfolioId] = numericWeight;
+    const updatePortfolioTarget = (portfolioId: string, target: PortfolioTargetConfig | null) => {
+        setStoredAssetAllocationSettings(prev => {
+            const normalized = normalizeAssetAllocationSettings(prev);
+            const nextTargets = { ...normalized.portfolioTargets };
+            if (target === null) {
+                delete nextTargets[portfolioId];
             } else {
-                delete nextWeights[portfolioId];
+                nextTargets[portfolioId] = target;
             }
-
-            return { weightsByPortfolioId: nextWeights };
+            return { ...normalized, portfolioTargets: nextTargets };
         });
     };
 
-    const applyGlobalLiquidityDistribution = (distribution: Record<string, number>) => {
-        setPortfolios(prev => prev.map(portfolio => {
-            const increment = Number(distribution[portfolio.id]);
+    const updateLiquidityTarget = (target: LiquidityTargetConfig | undefined) => {
+        setStoredAssetAllocationSettings(prev => {
+            const normalized = normalizeAssetAllocationSettings(prev);
+            if (!target) {
+                const { liquidityTarget: _removed, ...rest } = normalized;
+                return { ...rest };
+            }
+            return { ...normalized, liquidityTarget: target };
+        });
+    };
 
-            if (!Number.isFinite(increment) || increment <= 0) {
-                return portfolio;
+    const upsertRatioGroup = (group: RatioGroupConfig) => {
+        setStoredAssetAllocationSettings(prev => {
+            const normalized = normalizeAssetAllocationSettings(prev);
+            let nextGroups = normalized.ratioGroups.slice();
+            const idx = nextGroups.findIndex(g => g.id === group.id);
+
+            // Enforce: only one remainder group allowed at a time
+            let sanitizedGroup = group;
+            if (group.groupTargetMode === 'remainder') {
+                nextGroups = nextGroups.map(g =>
+                    g.id !== group.id && g.groupTargetMode === 'remainder'
+                        ? { ...g, groupTargetMode: 'percent' as const, groupTargetValue: 0 }
+                        : g
+                );
             }
 
-            const currentLiquidity = Number.isFinite(portfolio.liquidity) ? portfolio.liquidity || 0 : 0;
+            if (idx >= 0) {
+                nextGroups[idx] = sanitizedGroup;
+            } else {
+                nextGroups.push(sanitizedGroup);
+            }
+            return { ...normalized, ratioGroups: nextGroups };
+        });
+    };
 
-            return {
-                ...portfolio,
-                liquidity: Math.round((currentLiquidity + increment) * 100) / 100
-            };
-        }));
+    const deleteRatioGroup = (id: string) => {
+        setStoredAssetAllocationSettings(prev => {
+            const normalized = normalizeAssetAllocationSettings(prev);
+            const nextGroups = normalized.ratioGroups.filter(g => g.id !== id);
+            // Reset portfolios that referenced this group to 'excluded'
+            const nextTargets: Record<string, PortfolioTargetConfig> = {};
+            for (const [pid, cfg] of Object.entries(normalized.portfolioTargets)) {
+                if (cfg.mode === 'ratio' && cfg.ratioGroupId === id) {
+                    nextTargets[pid] = { mode: 'excluded', value: 0 };
+                } else {
+                    nextTargets[pid] = cfg;
+                }
+            }
+            return { ...normalized, ratioGroups: nextGroups, portfolioTargets: nextTargets };
+        });
+    };
+
+    const resetAssetAllocationSettings = () => {
+        setStoredAssetAllocationSettings({ portfolioTargets: {}, ratioGroups: [] });
     };
 
     const addTransaction = (transaction: Transaction) => {
@@ -553,7 +601,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setPortfolios([]);
         setBrokers([]);
         setMarketData({});
-        setStoredGlobalRebalancingSettings({ weightsByPortfolioId: {} });
+        setStoredAssetAllocationSettings({ portfolioTargets: {}, ratioGroups: [] });
         setOldTargets([]);
         setMacroAllocations({});
         setGoalAllocations({});
@@ -794,12 +842,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setMarketData(mockPrices);
         setMacroAllocations(newMacros);
         setGoalAllocations(newGoals);
-        setStoredGlobalRebalancingSettings({
-            weightsByPortfolioId: {
-                [pIdMain]: 60,
-                [pIdSafe]: 30,
-                [pIdSpec]: 10
-            }
+        setStoredAssetAllocationSettings({
+            liquidityTarget: { mode: 'fixed', value: 5000 },
+            portfolioTargets: {
+                [pIdMain]: { mode: 'percent', value: 60 },
+                [pIdSafe]: { mode: 'fixed', value: 10000 },
+                [pIdSpec]: { mode: 'ratio', value: 100, ratioGroupId: 'rg-remainder' }
+            },
+            ratioGroups: [
+                { id: 'rg-remainder', name: 'Growth Remainder', groupTargetMode: 'remainder', groupTargetValue: 0 }
+            ]
         });
         setBrokers([
             { id: 'b1', name: 'Degiro', description: 'Main Broker' },
@@ -824,7 +876,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const portfolios = data.portfolios || [];
             const brokers = data.brokers || [];
             const marketData = data.marketData || {};
-            const globalRebalancingSettings = normalizeGlobalRebalancingSettings(data.globalRebalancingSettings);
+            const assetAllocationSettings = normalizeAssetAllocationSettings(data.assetAllocationSettings);
             const macroAllocations = data.macroAllocations || {};
             const goalAllocations = data.goalAllocations || {};
             const goals = data.goals || [];
@@ -836,7 +888,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_list', JSON.stringify(portfolios));
             localStorage.setItem('portfolio_brokers', JSON.stringify(brokers));
             localStorage.setItem('portfolio_market_data', JSON.stringify(marketData));
-            localStorage.setItem('portfolio_global_rebalancing_v1', JSON.stringify(globalRebalancingSettings));
+            localStorage.setItem('portfolio_asset_allocation_v1', JSON.stringify(assetAllocationSettings));
+            localStorage.removeItem('portfolio_global_rebalancing_v1');
             localStorage.setItem('portfolio_macro_targets', JSON.stringify(macroAllocations));
             localStorage.setItem('portfolio_goal_targets', JSON.stringify(goalAllocations));
             localStorage.setItem('portfolio_goals', JSON.stringify(goals));
@@ -848,7 +901,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setPortfolios(portfolios);
             setBrokers(brokers);
             setMarketData(marketData);
-            setStoredGlobalRebalancingSettings(globalRebalancingSettings);
+            setStoredAssetAllocationSettings(assetAllocationSettings);
             setMacroAllocations(macroAllocations);
             setGoalAllocations(goalAllocations);
             setGoals(goals);
@@ -886,7 +939,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addPortfolio,
         updatePortfolio,
         deletePortfolio,
-        globalRebalancingSettings,
+        assetAllocationSettings,
         brokers,
         addBroker,
         updateBroker,
@@ -895,8 +948,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addGoal,
         updateGoal,
         deleteGoal,
-        updateGlobalPortfolioWeight,
-        applyGlobalLiquidityDistribution,
+        updatePortfolioTarget,
+        updateLiquidityTarget,
+        upsertRatioGroup,
+        deleteRatioGroup,
+        resetAssetAllocationSettings,
         importData,
         updateMarketData,
         addTransactionsBulk
