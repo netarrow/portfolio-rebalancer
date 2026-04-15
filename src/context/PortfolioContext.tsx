@@ -614,7 +614,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Filter: Only include assets with quantity >= 1
         // User Requirement: "quantità residua di almeno 1 o superiore"
-        const activeAssets = assets.filter(a => a.quantity >= 1);
+        const activeAssets = assets.filter(a => a.quantity > 0);
 
         if (activeAssets.length === 0) {
             // Optional: Notify user that no assets met criteria?
