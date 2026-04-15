@@ -88,7 +88,24 @@ io.on('connection', (socket) => {
                          const priceSelector = 'span.-formatPrice strong';
                          try {
                             await page.waitForSelector(priceSelector, { timeout: 10000 });
-                            priceText = await page.$eval(priceSelector, el => el.textContent.trim());
+                            const cleanPriceText = await page.$eval(priceSelector, el => el.textContent.trim());
+
+                            // Extract Rateo Lordo (gross accrued interest) to compute tel quel (dirty price)
+                            const rateoText = await page.evaluate(() => {
+                                const rows = document.querySelectorAll('table.m-table tr');
+                                for (const row of rows) {
+                                    if (row.textContent.includes('Rateo Lordo')) {
+                                        const valueCell = row.querySelector('td:last-child span.t-text');
+                                        if (valueCell) return valueCell.textContent.trim();
+                                    }
+                                }
+                                return null;
+                            });
+
+                            const cleanPrice = parseFloat(cleanPriceText.replace(/\./g, '').replace(',', '.'));
+                            const rateo = rateoText ? parseFloat(rateoText.replace(/\./g, '').replace(',', '.')) : 0;
+                            // Tel quel = corso secco + rateo lordo
+                            priceText = String(cleanPrice + rateo);
                          } catch(e) {}
 
                     } else if (source === 'CPRAM') {
@@ -174,18 +191,52 @@ io.on('connection', (socket) => {
                          currency = 'EUR';
 
                     } else {
-                         // JustETF
-                         url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
-                         await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-                         const priceSelector = '[data-testid="realtime-quotes_price-value"]';
-                         const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
+                         // ETF: try Borsa Italiana (MIL) first, fall back to JustETF (XETRA/gettex)
+                         let fetchedFromMIL = false;
 
                          try {
-                            await page.waitForSelector(priceSelector, { timeout: 10000 });
-                            priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
-                            currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+                            await page.goto(`https://www.borsaitaliana.it/borsa/etf/scheda/${isin}.html?lang=it`, { waitUntil: 'domcontentloaded' });
+
+                            // Cookie handling (same as MOT)
+                            try {
+                                const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
+                                for (const sel of cookieSelectors) {
+                                    if (await page.$(sel)) {
+                                        await page.click(sel);
+                                        await new Promise(r => setTimeout(r, 1000));
+                                        break;
+                                    }
+                                }
+                            } catch (e) {}
+
+                            const priceEl = await page.$('span.-formatPrice strong');
+                            if (priceEl) {
+                                const raw = await priceEl.evaluate(el => el.textContent.trim());
+                                // Italian format: "114,65" or "1.234,56" → normalize to JS number string
+                                const parsed = parseFloat(raw.replace(/\./g, '').replace(',', '.'));
+                                if (!isNaN(parsed)) {
+                                    priceText = String(parsed);
+                                    fetchedFromMIL = true;
+                                    console.log(`[ETF] ${isin} fetched from Borsa Italiana (MIL): ${priceText}`);
+                                }
+                            }
                          } catch (e) {}
+
+                         // Fallback: JustETF (XETRA / gettex)
+                         if (!fetchedFromMIL) {
+                            console.log(`[ETF] ${isin} not on MIL, falling back to JustETF`);
+                            url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
+                            await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+                            const priceSelector = '[data-testid="realtime-quotes_price-value"]';
+                            const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
+
+                            try {
+                                await page.waitForSelector(priceSelector, { timeout: 10000 });
+                                priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
+                                currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+                            } catch (e) {}
+                         }
                     }
 
                     if (!priceText) {
@@ -202,6 +253,9 @@ io.on('connection', (socket) => {
                         } else {
                             cleanPrice = priceText.replace(/[^\d.]/g, '').trim();
                         }
+                    } else if (source === 'MOT') {
+                        // Already computed as JS number string (tel quel = corso secco + rateo)
+                        cleanPrice = priceText;
                     } else {
                         cleanPrice = priceText.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(/,/g, '.').trim();
                     }
