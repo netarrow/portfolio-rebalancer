@@ -12,6 +12,7 @@ const MacroStats: React.FC = () => {
     const { assets, brokers, macroAllocations, goalAllocations, portfolios, assetSettings } = usePortfolio();
 
     const [addedCapital, setAddedCapital] = useState<Record<string, number>>({});
+    const [includeCash, setIncludeCash] = useState(true);
 
     // 1. Calculate Totals and Allocations
     const stats = useMemo(() => {
@@ -118,13 +119,19 @@ const MacroStats: React.FC = () => {
         // Add Liquidity to Protection
         goalValues['Protection'] += effectiveLiquidity;
 
+        // Add Liquidity to Cash macro if requested
+        if (includeCash) {
+            macroValues['Cash'] = (macroValues['Cash'] || 0) + effectiveLiquidity;
+        }
+
         // Prepare Data for Charts & Recommendations
         const totalInvestedWithSimulation = totalInvested + simulatedInvestedTotal;
+        const macroDenominator = includeCash ? totalValue : totalInvestedWithSimulation;
         const macros = Object.entries(macroValues).map(([key, value]) => {
             const target = (macroAllocations as any)[key] || 0;
-            const currentPercent = totalInvestedWithSimulation > 0 ? (value / totalInvestedWithSimulation) * 100 : 0;
+            const currentPercent = macroDenominator > 0 ? (value / macroDenominator) * 100 : 0;
             const diffPercent = currentPercent - target;
-            const diffValue = totalInvestedWithSimulation * (target / 100) - value;
+            const diffValue = macroDenominator * (target / 100) - value;
 
             return {
                 name: key,
@@ -181,7 +188,7 @@ const MacroStats: React.FC = () => {
 
         return { totalValue, macros, goals, goalProjected };
 
-    }, [assets, brokers, macroAllocations, goalAllocations, addedCapital, portfolios, assetSettings]);
+    }, [assets, brokers, macroAllocations, goalAllocations, addedCapital, portfolios, assetSettings, includeCash]);
 
 
 
@@ -244,6 +251,22 @@ const MacroStats: React.FC = () => {
                 <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h3>Asset Allocation</h3>
+                        <button
+                            onClick={() => setIncludeCash(v => !v)}
+                            style={{
+                                fontSize: '0.8rem',
+                                padding: '0.3rem 0.75rem',
+                                borderRadius: 'var(--radius-md)',
+                                border: '1px solid var(--border-color)',
+                                backgroundColor: includeCash ? 'var(--color-primary)' : 'var(--bg-input)',
+                                color: includeCash ? '#fff' : 'var(--text-muted)',
+                                cursor: 'pointer',
+                                fontWeight: 500,
+                                transition: 'all 0.2s'
+                            }}
+                        >
+                            {includeCash ? '+ Liquidità' : 'Solo Investito'}
+                        </button>
                     </div>
                     <div style={{ width: '100%', height: 250 }}>
                         <ResponsiveContainer>
