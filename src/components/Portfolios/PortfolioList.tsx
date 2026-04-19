@@ -124,6 +124,19 @@ const PortfolioList: React.FC = () => {
                                     <span className="stat-pill">
                                         {getTransactionCount(portfolio.id)} Transactions
                                     </span>
+                                    {portfolio.parentId && (() => {
+                                        const parent = portfolios.find(p => p.id === portfolio.parentId);
+                                        return parent ? (
+                                            <span className="stat-pill stat-pill-child" title={`Child of ${parent.name}`}>
+                                                ↳ {parent.name}
+                                            </span>
+                                        ) : null;
+                                    })()}
+                                    {portfolios.some(p => p.parentId === portfolio.id) && (
+                                        <span className="stat-pill stat-pill-parent">
+                                            ⬡ Group
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -235,6 +248,22 @@ const PortfolioList: React.FC = () => {
                     border-radius: var(--radius-full);
                     font-size: 0.8rem;
                     font-weight: 500;
+                }
+
+                .stat-pill-child {
+                    background-color: rgba(59, 130, 246, 0.12);
+                    color: #3B82F6;
+                }
+
+                .stat-pill-parent {
+                    background-color: rgba(16, 185, 129, 0.12);
+                    color: #10B981;
+                }
+
+                .stats {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: var(--space-2);
                 }
 
                 .empty-state {

@@ -56,6 +56,7 @@ export interface Portfolio {
   allocations?: Record<string, number>; // Ticker -> Percentage (0-100)
   liquidity?: number; // Cash available for rebalancing
   goalId?: string;
+  parentId?: string; // ID of parent portfolio for nested Core/Satellite grouping
 }
 
 export type PortfolioTargetMode =
