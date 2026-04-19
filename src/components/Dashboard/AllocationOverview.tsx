@@ -5,15 +5,37 @@ import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets
 import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
 import { CashFlowModal } from './CashFlowModal';
+import PortfolioGroupSection from './PortfolioGroupSection';
 import './Dashboard.css';
 
 const AllocationOverview: React.FC = () => {
     const { portfolios, brokers, transactions, assetSettings, marketData, updatePortfolio, addTransactionsBulk } = usePortfolio();
 
-    // 1. Group transactions by Portfolio
-    // We only care about explicit portfolios, or maybe we want an "Unassigned" one?
-    // User request: "ripetuta per ogni portafoglio ... specifici portafogli configurati" implies configured portfolios.
-    // We will iterate `portfolios`.
+    // Split portfolios into groups (parent + children) and standalones
+    const { groups, standalones } = useMemo(() => {
+        const parentPortfolios = portfolios.filter(
+            p => !p.parentId && portfolios.some(c => c.parentId === p.id)
+        );
+        // Children whose parent exists
+        const validChildren = portfolios.filter(
+            p => p.parentId && portfolios.some(par => par.id === p.parentId)
+        );
+        // Orphan children (parentId set but parent doesn't exist) → render standalone
+        const orphans = portfolios.filter(
+            p => p.parentId && !portfolios.some(par => par.id === p.parentId)
+        );
+        // Portfolios with no parent and no children
+        const trueStandalones = portfolios.filter(
+            p => !p.parentId && !portfolios.some(c => c.parentId === p.id)
+        );
+
+        const groups = parentPortfolios.map(parent => ({
+            parent,
+            children: validChildren.filter(c => c.parentId === parent.id),
+        }));
+
+        return { groups, standalones: [...trueStandalones, ...orphans] };
+    }, [portfolios]);
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
@@ -24,18 +46,33 @@ const AllocationOverview: React.FC = () => {
                     </p>
                 </div>
             ) : (
-                portfolios.map(portfolio => (
-                    <PortfolioAllocationTable
-                        key={portfolio.id}
-                        portfolio={portfolio}
-                        allTransactions={transactions}
-                        assetSettings={assetSettings}
-                        marketData={marketData}
-                        brokers={brokers}
-                        onUpdatePortfolio={updatePortfolio}
-                        onAddTransactions={addTransactionsBulk}
-                    />
-                ))
+                <>
+                    {groups.map(({ parent, children }) => (
+                        <PortfolioGroupSection
+                            key={parent.id}
+                            parent={parent}
+                            children={children}
+                            allTransactions={transactions}
+                            assetSettings={assetSettings}
+                            marketData={marketData}
+                            brokers={brokers}
+                            onUpdatePortfolio={updatePortfolio}
+                            onAddTransactions={addTransactionsBulk}
+                        />
+                    ))}
+                    {standalones.map(portfolio => (
+                        <PortfolioAllocationTable
+                            key={portfolio.id}
+                            portfolio={portfolio}
+                            allTransactions={transactions}
+                            assetSettings={assetSettings}
+                            marketData={marketData}
+                            brokers={brokers}
+                            onUpdatePortfolio={updatePortfolio}
+                            onAddTransactions={addTransactionsBulk}
+                        />
+                    ))}
+                </>
             )}
         </div>
     );

@@ -9,29 +9,39 @@ interface PortfolioFormProps {
 }
 
 const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, onCancel }) => {
-    const { goals } = usePortfolio();
+    const { goals, portfolios } = usePortfolio();
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [goalId, setGoalId] = useState('');
+    const [parentId, setParentId] = useState('');
 
     useEffect(() => {
         if (initialData) {
             setName(initialData.name);
             setDescription(initialData.description || '');
             setGoalId(initialData.goalId || '');
+            setParentId(initialData.parentId || '');
         } else {
             setName('');
             setDescription('');
             setGoalId('');
+            setParentId('');
         }
     }, [initialData]);
+
+    // Portfolios eligible as parents: not self, not already a child (flat 1-level hierarchy)
+    const availableParents = portfolios.filter(p =>
+        p.id !== initialData?.id &&
+        !p.parentId
+    );
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         onSubmit({
             name,
             description,
-            goalId: goalId || undefined
+            goalId: goalId || undefined,
+            parentId: parentId || undefined,
         });
     };
 
@@ -79,6 +89,27 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
                                 <option key={g.id} value={g.id}>{g.title}</option>
                             ))}
                         </select>
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="parentId">Parent Portfolio (Optional)</label>
+                        <select
+                            id="parentId"
+                            value={parentId}
+                            onChange={(e) => setParentId(e.target.value)}
+                            className="form-input"
+                        >
+                            <option value="">-- Standalone --</option>
+                            {availableParents.map(p => (
+                                <option key={p.id} value={p.id}>{p.name}</option>
+                            ))}
+                        </select>
+                        {parentId && (
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                                This portfolio will appear nested under{' '}
+                                <strong>{availableParents.find(p => p.id === parentId)?.name}</strong> in the dashboard.
+                            </span>
+                        )}
                     </div>
 
                     <div className="form-actions">
