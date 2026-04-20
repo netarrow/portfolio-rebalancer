@@ -3,8 +3,6 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
 import Swal from 'sweetalert2';
-import MacroSettings from './MacroSettings';
-
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -221,10 +219,6 @@ const TargetSettings: React.FC = () => {
 
     return (
         <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
-            <MacroSettings />
-
-            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
-
             {/* Data Management Section */}
             <div>
                 <h2 className="section-title">Data Management</h2>
