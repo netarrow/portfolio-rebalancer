@@ -15,7 +15,7 @@ const AllocationOverview: React.FC = () => {
     const { groups, standalones } = useMemo(() => {
         const parentPortfolios = portfolios.filter(
             p => !p.parentId && portfolios.some(c => c.parentId === p.id)
-        );
+        ).sort((a, b) => a.order - b.order);
         // Children whose parent exists
         const validChildren = portfolios.filter(
             p => p.parentId && portfolios.some(par => par.id === p.parentId)
@@ -31,10 +31,10 @@ const AllocationOverview: React.FC = () => {
 
         const groups = parentPortfolios.map(parent => ({
             parent,
-            children: validChildren.filter(c => c.parentId === parent.id),
+            children: validChildren.filter(c => c.parentId === parent.id).sort((a, b) => a.order - b.order),
         }));
 
-        return { groups, standalones: [...trueStandalones, ...orphans] };
+        return { groups, standalones: [...trueStandalones, ...orphans].sort((a, b) => a.order - b.order) };
     }, [portfolios]);
 
     return (

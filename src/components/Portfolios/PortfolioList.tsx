@@ -85,7 +85,7 @@ const PortfolioList: React.FC = () => {
                         <p>No portfolios created yet. Create one to organize your transactions.</p>
                     </div>
                 ) : (
-                    portfolios.map(portfolio => (
+                    [...portfolios].sort((a, b) => a.order - b.order).map(portfolio => (
                         <div key={portfolio.id} className="portfolio-card">
                             <div className="card-header">
                                 <h3>{portfolio.name}</h3>

@@ -98,6 +98,20 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     }, []);
 
+    // Migrate portfolios to add order field if missing
+    useEffect(() => {
+        if (portfolios.length > 0) {
+            const needsMigration = portfolios.some(p => p.order === undefined);
+            if (needsMigration) {
+                const migratedPortfolios = portfolios.map((p, index) => ({
+                    ...p,
+                    order: p.order ?? index
+                }));
+                setPortfolios(migratedPortfolios);
+            }
+        }
+    }, []);
+
     // Socket & Modal State
     const [socket, setSocket] = useState<Socket | null>(null);
     const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
@@ -398,7 +412,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     const addPortfolio = (portfolio: Portfolio) => {
-        setPortfolios(prev => [...prev, portfolio]);
+        setPortfolios(prev => {
+            const newPortfolio = {
+                ...portfolio,
+                order: portfolio.order !== undefined ? portfolio.order : prev.length
+            };
+            return [...prev, newPortfolio];
+        });
     };
 
     const updatePortfolio = (portfolio: Portfolio) => {
@@ -779,6 +799,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 name: 'Main Strategy',
                 description: 'Core ETF Portfolio (World + EM + Agg)',
                 goalId: 'goal-growth',
+                order: 0,
                 allocations: {
                     'IE00B4L5Y983': 50, // SWDA
                     'IE00BKM4GZ66': 15, // EMIM
@@ -791,6 +812,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 name: 'Safety Net',
                 description: 'Emergency fund and hedging',
                 goalId: 'goal-protection',
+                order: 1,
                 allocations: {
                     'LU0290358497': 70, // XEON
                     'IE00B1FZS798': 30  // Govt Bond
@@ -801,6 +823,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 name: 'Speculative',
                 description: 'High risk bets',
                 goalId: 'goal-security',
+                order: 2,
                 allocations: {
                     'BTC-USD': 100
                 }

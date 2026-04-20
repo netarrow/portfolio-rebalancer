@@ -14,6 +14,7 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
     const [description, setDescription] = useState('');
     const [goalId, setGoalId] = useState('');
     const [parentId, setParentId] = useState('');
+    const [order, setOrder] = useState(0);
 
     useEffect(() => {
         if (initialData) {
@@ -21,13 +22,15 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
             setDescription(initialData.description || '');
             setGoalId(initialData.goalId || '');
             setParentId(initialData.parentId || '');
+            setOrder(initialData.order ?? 0);
         } else {
             setName('');
             setDescription('');
             setGoalId('');
             setParentId('');
+            setOrder(portfolios.length);
         }
-    }, [initialData]);
+    }, [initialData, portfolios.length]);
 
     // Portfolios eligible as parents: not self, not already a child (flat 1-level hierarchy)
     const availableParents = portfolios.filter(p =>
@@ -42,6 +45,7 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
             description,
             goalId: goalId || undefined,
             parentId: parentId || undefined,
+            order,
         });
     };
 
@@ -89,6 +93,18 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
                                 <option key={g.id} value={g.id}>{g.title}</option>
                             ))}
                         </select>
+                    </div>
+
+                    <div className="form-group">
+                        <label htmlFor="order">Display order (lower = left)</label>
+                        <input
+                            type="number"
+                            id="order"
+                            value={order}
+                            onChange={(e) => setOrder(parseInt(e.target.value, 10))}
+                            className="form-input"
+                            min="0"
+                        />
                     </div>
 
                     <div className="form-group">

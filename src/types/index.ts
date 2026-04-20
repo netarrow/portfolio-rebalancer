@@ -57,6 +57,7 @@ export interface Portfolio {
   liquidity?: number; // Cash available for rebalancing
   goalId?: string;
   parentId?: string; // ID of parent portfolio for nested Core/Satellite grouping
+  order: number; // Display order (lower = left)
 }
 
 export type PortfolioTargetMode =
