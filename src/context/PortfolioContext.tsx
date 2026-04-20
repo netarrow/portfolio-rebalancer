@@ -219,7 +219,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 portfolio = {
                     id: String(Date.now() + Math.random()),
                     name: name,
-                    description: 'Migrated from transaction'
+                    description: 'Migrated from transaction',
+                    order: newPortfolios.length
                 };
                 newPortfolios.push(portfolio);
                 portfoliosChanged = true;
@@ -333,7 +334,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     id: 'main',
                     name: 'Main Portfolio',
                     description: 'Default portfolio',
-                    allocations: {}
+                    allocations: {},
+                    order: 0
                 });
                 portfoliosChanged = true;
             }
