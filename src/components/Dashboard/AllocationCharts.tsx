@@ -805,7 +805,7 @@ const AllocationCharts: React.FC = () => {
             />
 
             {/* Individual Views */}
-            {portfolios.map(p => {
+            {[...portfolios].sort((a, b) => a.order - b.order).map(p => {
                 const pAssets = getPortfolioAssets(p.id);
                 // Only show if there are assets OR allocations
                 const hasAssets = pAssets.some(a => a.currentValue > 0);

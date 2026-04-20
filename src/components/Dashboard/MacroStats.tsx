@@ -26,7 +26,7 @@ const MacroStats: React.FC = () => {
         const simulatedMacroAdditions: Record<string, number> = {};
         const simulatedGoalAdditions: Record<string, number> = {};
 
-        portfolios.forEach(portfolio => {
+        [...portfolios].sort((a, b) => a.order - b.order).forEach(portfolio => {
             const addedAmount = addedCapital[portfolio.id] || 0;
             if (addedAmount <= 0) return;
 
