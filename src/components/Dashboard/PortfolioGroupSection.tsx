@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
     calculateAssets,
     calculateRequiredLiquidityForOnlyBuy,
@@ -6,6 +6,7 @@ import {
     isCashTicker,
 } from '../../utils/portfolioCalculations';
 import { WithdrawalModal } from './WithdrawalModal';
+import { PortfolioAllocationTable } from './AllocationOverview';
 import type { Portfolio, Transaction, AssetDefinition, Broker, Asset } from '../../types';
 
 interface Props {
@@ -100,6 +101,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
     onUpdatePortfolio,
     onAddTransactions,
 }) => {
+    const [viewMode, setViewMode] = useState<'grouped' | 'individual'>('grouped');
     const allPortfolios = useMemo(() => [parent, ...children], [parent, children]);
 
     const portfolioCalcs = useMemo((): PortfolioCalc[] => {
@@ -177,6 +179,18 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         ))}
                     </span>
                     <span className="group-total-value">{fmt(totalGroupValue)}</span>
+                    <div className="group-view-toggle">
+                        <button
+                            className={viewMode === 'grouped' ? 'group-toggle-active' : 'group-toggle-btn'}
+                            onClick={() => setViewMode('grouped')}
+                            title="Vista comparativa gruppo"
+                        >⬡ Gruppo</button>
+                        <button
+                            className={viewMode === 'individual' ? 'group-toggle-active' : 'group-toggle-btn'}
+                            onClick={() => setViewMode('individual')}
+                            title="Vista portafoglio singolo"
+                        >☰ Singolo</button>
+                    </div>
                 </div>
 
                 <div className="group-composition-bar">
@@ -216,7 +230,47 @@ const PortfolioGroupSection: React.FC<Props> = ({
                 </div>
             </div>
 
-            {/* Comparison table */}
+            {/* Individual view */}
+            {viewMode === 'individual' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    {portfolioCalcs.map((pc, i) => {
+                        const isParent = pc.portfolio.id === parent.id;
+                        const color = PORTFOLIO_COLORS[i % PORTFOLIO_COLORS.length];
+                        return (
+                            <div key={pc.portfolio.id}>
+                                <div style={{
+                                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                    marginBottom: '0.5rem', padding: '0.35rem 0.75rem',
+                                    background: 'var(--bg-surface)', borderRadius: 'var(--radius-md)',
+                                    border: `1px solid ${color}33`,
+                                    borderLeft: `3px solid ${color}`,
+                                }}>
+                                    <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color }}>
+                                        {isParent ? '⬡ Padre' : '↳ Figlio'}
+                                    </span>
+                                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                        {isParent
+                                            ? `Gruppo con: ${children.map(c => c.name).join(', ')}`
+                                            : `Parte di: ${parent.name}`}
+                                    </span>
+                                </div>
+                                <PortfolioAllocationTable
+                                    portfolio={pc.portfolio}
+                                    allTransactions={allTransactions}
+                                    assetSettings={assetSettings}
+                                    marketData={marketData}
+                                    brokers={brokers}
+                                    onUpdatePortfolio={onUpdatePortfolio}
+                                    onAddTransactions={onAddTransactions}
+                                />
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Comparison table + action bars */}
+            {viewMode === 'grouped' && (<>
             <div className="ct-scroll-wrapper">
                 <div
                     className="ct-table"
@@ -375,6 +429,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                     />
                 ))}
             </div>
+            </>)}
 
             <style>{`
                 .group-section {
@@ -401,6 +456,37 @@ const PortfolioGroupSection: React.FC<Props> = ({
                 .group-title { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
 
                 .group-children-tags { display: flex; gap: var(--space-1); flex-wrap: wrap; }
+
+                .group-view-toggle {
+                    display: flex;
+                    gap: 2px;
+                    margin-left: var(--space-2);
+                    background: var(--bg-surface);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-md);
+                    padding: 2px;
+                    flex-shrink: 0;
+                }
+                .group-toggle-btn, .group-toggle-active {
+                    font-size: 0.78rem;
+                    font-weight: 500;
+                    padding: 3px 10px;
+                    border-radius: calc(var(--radius-md) - 2px);
+                    border: none;
+                    cursor: pointer;
+                    transition: all 0.15s;
+                    white-space: nowrap;
+                }
+                .group-toggle-btn {
+                    background: transparent;
+                    color: var(--text-muted);
+                }
+                .group-toggle-btn:hover { color: var(--text-secondary); background: var(--bg-card); }
+                .group-toggle-active {
+                    background: var(--color-primary);
+                    color: #fff;
+                    font-weight: 600;
+                }
 
                 .group-child-tag {
                     font-size: 0.78rem;

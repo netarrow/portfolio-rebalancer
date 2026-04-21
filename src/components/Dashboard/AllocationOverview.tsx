@@ -88,7 +88,7 @@ interface AllocationTableProps {
     onAddTransactions: (transactions: import('../../types').Transaction[]) => void;
 }
 
-const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions }) => {
+export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions }) => {
     const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = React.useState(false);
 
     // Filter Txs for this portfolio
