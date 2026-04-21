@@ -109,6 +109,7 @@ const MacroStats: React.FC = () => {
     const chartData = useMemo(() => {
         if (!stats) return [];
         const macroMap: Record<string, number> = { Stock: 0, Bond: 0, Commodity: 0, Crypto: 0, Cash: 0 };
+        const actualMap: Record<string, number> = { Stock: 0, Bond: 0, Commodity: 0, Crypto: 0, Cash: 0 };
 
         Object.entries(effectiveValues).forEach(([key, value]) => {
             if (key === 'Cash') { macroMap['Cash'] += value; return; }
@@ -118,21 +119,31 @@ const MacroStats: React.FC = () => {
             if (macroMap[cls] !== undefined) macroMap[cls] += value;
         });
 
-        // Use simulated values for denominator (reflects slider changes)
+        Object.entries(stats.subclassValues).forEach(([key, value]) => {
+            if (key === 'Cash') { actualMap['Cash'] += value; return; }
+            if (key === 'Crypto') { actualMap['Crypto'] += value; return; }
+            if (key.startsWith('PensionFund')) { actualMap['Stock'] += value * 0.6; actualMap['Bond'] += value * 0.4; return; }
+            const [cls] = key.split(':');
+            if (actualMap[cls] !== undefined) actualMap[cls] += value;
+        });
+
         const effectiveTotal = Object.values(macroMap).reduce((s, v) => s + v, 0);
         const effectiveInvested = effectiveTotal - (macroMap['Cash'] || 0);
         const denominator = includeCash ? effectiveTotal : effectiveInvested;
 
+        const actualTotal = Object.values(actualMap).reduce((s, v) => s + v, 0);
+        const actualInvested = actualTotal - (actualMap['Cash'] || 0);
+        const actualDenominator = includeCash ? actualTotal : actualInvested;
+
         return stats.macros
             .filter(m => includeCash || m.name !== 'Cash')
             .map(m => ({
-                ...m,
+                name: m.name,
                 currentValue: macroMap[m.name] || 0,
                 currentPercent: denominator > 0 ? ((macroMap[m.name] || 0) / denominator) * 100 : 0,
-                diffPercent: denominator > 0 ? ((macroMap[m.name] || 0) / denominator) * 100 - m.targetPercent : -m.targetPercent,
-                diffValue: denominator * (m.targetPercent / 100) - (macroMap[m.name] || 0),
-            })).map(m => ({ ...m, action: m.diffValue > 0 ? 'Buy' : 'Sell' }))
-            .filter(m => m.currentValue > 0);
+                actualPercent: actualDenominator > 0 ? ((actualMap[m.name] || 0) / actualDenominator) * 100 : 0,
+            }))
+            .filter(m => m.currentValue > 0 || (actualMap[m.name] || 0) > 0);
     }, [stats, effectiveValues, includeCash]);
 
     const handleSliderChange = (key: string, newValue: number) => {
@@ -178,8 +189,10 @@ const MacroStats: React.FC = () => {
                 )}
             </div>
 
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1.5rem', alignItems: 'start' }}>
+
             {/* Allocation Simulator */}
-            <div className="card" style={{ padding: '1.25rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', marginBottom: '2rem' }}>
+            <div className="card" style={{ padding: '1.25rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                     <h4 style={{ margin: 0, fontSize: '1rem' }}>Allocation Simulator</h4>
                     {isSimulated && (
@@ -252,8 +265,7 @@ const MacroStats: React.FC = () => {
                 </p>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '2rem' }}>
-                <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
+            <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <h3>Asset Allocation</h3>
                         <button onClick={() => setIncludeCash(v => !v)} style={{
@@ -281,24 +293,24 @@ const MacroStats: React.FC = () => {
                         <thead>
                             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border-color)' }}>
                                 <th style={{ padding: '0.5rem' }}>Class</th>
-                                <th style={{ textAlign: 'right' }}>{isSimulated ? 'Simulato' : 'Actual'}</th>
-                                <th style={{ textAlign: 'right' }}>Target</th>
-                                <th style={{ textAlign: 'right' }}>Action</th>
+                                <th style={{ textAlign: 'right' }}>Actual</th>
+                                {isSimulated && <th style={{ textAlign: 'right', color: 'var(--color-primary)' }}>Simulato</th>}
                             </tr>
                         </thead>
                         <tbody>
                             {chartData.map(m => (
                                 <tr key={m.name} style={{ borderBottom: '1px solid var(--border-color)' }}>
                                     <td style={{ padding: '0.5rem' }}>{m.name}</td>
-                                    <td style={{ textAlign: 'right' }}>{m.currentPercent.toFixed(1)}%</td>
-                                    <td style={{ textAlign: 'right' }}>{m.targetPercent > 0 ? m.targetPercent + '%' : '-'}</td>
-                                    <td style={{
-                                        textAlign: 'right',
-                                        color: Math.abs(m.diffValue) < 50 ? 'var(--text-muted)' : (m.action === 'Buy' ? 'var(--color-success)' : 'var(--color-danger)'),
-                                        fontWeight: 500
-                                    }}>
-                                        {Math.abs(m.diffValue) < 50 ? 'OK' : `${m.action} €${Math.abs(m.diffValue).toFixed(0)}`}
-                                    </td>
+                                    <td style={{ textAlign: 'right' }}>{m.actualPercent.toFixed(1)}%</td>
+                                    {isSimulated && (
+                                        <td style={{
+                                            textAlign: 'right',
+                                            color: Math.abs(m.currentPercent - m.actualPercent) > 0.1 ? 'var(--color-primary)' : 'var(--text-muted)',
+                                            fontWeight: 500
+                                        }}>
+                                            {m.currentPercent.toFixed(1)}%
+                                        </td>
+                                    )}
                                 </tr>
                             ))}
                         </tbody>
