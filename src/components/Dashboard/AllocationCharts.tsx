@@ -625,13 +625,6 @@ const AllocationCharts: React.FC = () => {
         [portfolioPyramidData]
     );
 
-    if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
-        // Even if no assets, if we have liquidity we might want to show it?
-        // But the checks below rely on portfolioContributionData etc.
-        // Let's check if we have ANYTHING to show.
-        if (investedVsLiquidityData.length === 0) return null;
-    }
-
     // Helper to get assets for a portfolio (including virtual cash assets)
     const getPortfolioAssets = (pid: string) => {
         const filteredTxs = transactions.filter(t => t.portfolioId === pid);
@@ -639,7 +632,6 @@ const AllocationCharts: React.FC = () => {
         return injectCashAssets(result.assets, brokers, pid);
     };
 
-    // Goal aggregation chart data
     const GOAL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6', '#F97316'];
 
     const goalChartData = useMemo(() => {
@@ -650,7 +642,6 @@ const AllocationCharts: React.FC = () => {
         return sortedGoals.map((goal, idx) => {
             const linkedPortfolios = portfolios.filter(p => p.goalId === goal.id);
 
-            // Aggregate asset class breakdown across all linked portfolios
             const classBreakdown: Record<string, number> = {};
             let totalValue = 0;
 
@@ -680,6 +671,10 @@ const AllocationCharts: React.FC = () => {
         goalChartData.reduce((sum, g) => sum + g.value, 0),
         [goalChartData]
     );
+
+    if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
+        if (investedVsLiquidityData.length === 0) return null;
+    }
 
     return (
         <div className="charts-section">
