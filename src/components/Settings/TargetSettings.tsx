@@ -418,20 +418,32 @@ const TargetSettings: React.FC = () => {
                     {/* Sync + Restore */}
                     {azureConfig.enabled && azureConfig.sasUrl && (
                         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)' }}>
-                            <button
-                                onClick={handleSyncNow}
-                                disabled={azureSyncing}
-                                style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--color-primary)', color: 'var(--color-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
-                            >
-                                Sincronizza ora
-                            </button>
-                            <button
-                                onClick={handleRestoreFromAzure}
-                                disabled={azureSyncing}
-                                style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--text-secondary)', color: 'var(--text-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
-                            >
-                                Ripristina da Azure
-                            </button>
+                            {azureConfig.lastSync === null ? (
+                                <button
+                                    onClick={handleSyncNow}
+                                    disabled={azureSyncing}
+                                    style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                    Inizializza su Azure
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={handleSyncNow}
+                                        disabled={azureSyncing}
+                                        style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--color-primary)', color: 'var(--color-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                                    >
+                                        Sincronizza ora
+                                    </button>
+                                    <button
+                                        onClick={handleRestoreFromAzure}
+                                        disabled={azureSyncing}
+                                        style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--text-secondary)', color: 'var(--text-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                                    >
+                                        Ripristina da Azure
+                                    </button>
+                                </>
+                            )}
                             <span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                                 {azureConfig.lastSync
                                     ? `Ultima sync: ${new Date(azureConfig.lastSync).toLocaleString('it-IT')}`
