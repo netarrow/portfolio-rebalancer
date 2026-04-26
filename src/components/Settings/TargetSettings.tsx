@@ -160,6 +160,8 @@ const TargetSettings: React.FC = () => {
         setConnectionStatus(result.ok ? 'ok' : 'error');
         if (!result.ok) {
             Swal.fire({ title: 'Connessione fallita', text: result.error, icon: 'error' });
+        } else if (!result.blobExists) {
+            Swal.fire({ title: 'Connessione OK', text: 'Nessun backup trovato su Azure — verrà inizializzato automaticamente al prossimo avvio.', icon: 'info', timer: 3000, showConfirmButton: false });
         }
     };
 

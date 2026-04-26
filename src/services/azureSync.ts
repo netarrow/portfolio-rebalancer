@@ -134,14 +134,17 @@ export async function downloadFromAzure(sasUrl: string): Promise<ArrayBuffer | n
     }
 }
 
-export async function testAzureConnection(sasUrl: string): Promise<{ ok: boolean; error?: string }> {
+export async function testAzureConnection(sasUrl: string): Promise<{ ok: boolean; blobExists?: boolean; error?: string }> {
     try {
         console.log(`[Azure Test Connection] Starting for ${sasUrl.substring(0, 60)}...`);
         const response = await fetch(sasUrl, { method: 'HEAD' });
-        // 200 = blob exists, 404 = blob not yet created (both are valid SAS URLs)
-        if (response.ok || response.status === 404) {
-            console.log(`[Azure Test Connection] Success (HTTP ${response.status})`);
-            return { ok: true };
+        if (response.ok) {
+            console.log(`[Azure Test Connection] Success (HTTP ${response.status}) — blob exists`);
+            return { ok: true, blobExists: true };
+        }
+        if (response.status === 404) {
+            console.log(`[Azure Test Connection] Success (HTTP 404) — blob not yet created`);
+            return { ok: true, blobExists: false };
         }
         const error = `HTTP ${response.status}: ${response.statusText}`;
         console.warn(`[Azure Test Connection] Failed: ${error}`);

@@ -477,7 +477,20 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         (async () => {
             try {
                 const buffer = await downloadFromAzure(config.sasUrl);
-                if (!buffer) return;
+                if (!buffer) {
+                    // Primo avvio con Azure configurato: blob non esiste ancora, inizializza
+                    const initPayload: SyncPayload = {
+                        syncVersion: 1,
+                        syncTimestamp: new Date().toISOString(),
+                        transactions, assetSettings, portfolios, brokers, marketData,
+                        assetAllocationSettings: storedAssetAllocationSettings,
+                        macroAllocations, goalAllocations, goals,
+                    };
+                    const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
+                    await uploadToAzure(config.sasUrl, encrypted);
+                    setAzureConfig(prev => ({ ...prev, lastSync: initPayload.syncTimestamp }));
+                    return;
+                }
 
                 const decrypted = await decrypt(buffer, config.passphrase);
                 const payload: SyncPayload = JSON.parse(decrypted);
