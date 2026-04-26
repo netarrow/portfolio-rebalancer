@@ -452,7 +452,14 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 await uploadToAzure(config.sasUrl, encrypted);
                 setAzureConfig(prev => ({ ...prev, lastSync: new Date().toISOString() }));
             } catch (e) {
-                console.error('Azure sync failed:', e);
+                const error = e instanceof Error ? e : new Error(String(e));
+                console.error(`[Azure Sync] Error at ${new Date().toISOString()}:`, {
+                    message: error.message,
+                    stack: error.stack,
+                    sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
+                    payloadSize: JSON.stringify(payload).length,
+                    passphraseLength: config.passphrase.length,
+                });
             } finally {
                 setAzureSyncing(false);
             }
@@ -494,7 +501,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     }
                 }
             } catch (e) {
-                console.error('Azure startup sync failed:', e);
+                const error = e instanceof Error ? e : new Error(String(e));
+                console.error(`[Azure Startup Sync] Error at ${new Date().toISOString()}:`, {
+                    message: error.message,
+                    stack: error.stack,
+                    sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
+                    passphraseLength: config.passphrase.length,
+                });
             }
         })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1045,11 +1058,23 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 assetAllocationSettings: storedAssetAllocationSettings,
                 macroAllocations, goalAllocations, goals,
             };
-            const encrypted = await encrypt(JSON.stringify(payload), config.passphrase);
+            const payloadJson = JSON.stringify(payload);
+            const encrypted = await encrypt(payloadJson, config.passphrase);
             await uploadToAzure(config.sasUrl, encrypted);
             setAzureConfig(prev => ({ ...prev, lastSync: new Date().toISOString() }));
+            console.log(`[Azure Sync] Success: uploaded ${encrypted.byteLength} bytes at ${new Date().toISOString()}`);
             return { ok: true };
         } catch (e) {
+            const error = e instanceof Error ? e : new Error(String(e));
+            const errorLog = {
+                timestamp: new Date().toISOString(),
+                action: 'syncToAzure',
+                message: error.message,
+                stack: error.stack,
+                sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
+                passphraseLength: config.passphrase.length,
+            };
+            console.error('[Azure Sync] Failed:', errorLog);
             return { ok: false, error: String(e) };
         } finally {
             setAzureSyncing(false);
@@ -1068,8 +1093,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             lastRestoreRef.current = Date.now();
             await importData(payload);
             setAzureConfig(prev => ({ ...prev, lastSync: payload.syncTimestamp }));
+            console.log(`[Azure Restore] Success: restored ${buffer.byteLength} bytes at ${new Date().toISOString()}`);
             return { ok: true };
         } catch (e) {
+            const error = e instanceof Error ? e : new Error(String(e));
+            const errorLog = {
+                timestamp: new Date().toISOString(),
+                action: 'restoreFromAzure',
+                message: error.message,
+                stack: error.stack,
+                sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
+                passphraseLength: config.passphrase.length,
+            };
+            console.error('[Azure Restore] Failed:', errorLog);
             return { ok: false, error: String(e) };
         } finally {
             setAzureSyncing(false);
