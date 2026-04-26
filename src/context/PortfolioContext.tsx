@@ -1,10 +1,13 @@
-import React, { createContext, useContext, useMemo, useEffect, useState } from 'react';
+import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal } from '../types';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
+import Swal from 'sweetalert2';
+import { encrypt, decrypt, uploadToAzure, downloadFromAzure } from '../services/azureSync';
+import type { AzureConfig, SyncPayload } from '../services/azureSync';
 
 // Legacy Type for Migration
 type Target = AssetDefinition & { targetPercentage?: number };
@@ -51,6 +54,12 @@ interface PortfolioContextType {
     importData: (data: any) => Promise<boolean>;
     updateMarketData: (ticker: string, price: number, lastUpdated: string) => void;
     addTransactionsBulk: (newTransactions: Transaction[]) => void;
+    // Azure sync
+    azureConfig: AzureConfig;
+    setAzureConfig: (config: AzureConfig | ((prev: AzureConfig) => AzureConfig)) => void;
+    syncToAzure: () => Promise<{ ok: boolean; error?: string }>;
+    restoreFromAzure: () => Promise<{ ok: boolean; error?: string }>;
+    azureSyncing: boolean;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -84,10 +93,23 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [macroAllocations, setMacroAllocations] = useLocalStorage<MacroAllocation>('portfolio_macro_targets', {});
     const [goalAllocations, setGoalAllocations] = useLocalStorage<GoalAllocation>('portfolio_goal_targets', {});
 
+    // Azure sync config — excluded from backup, restore and sync payload by design
+    const [azureConfig, setAzureConfig] = useLocalStorage<AzureConfig>('portfolio_azure_config', {
+        sasUrl: '', passphrase: '', enabled: false, lastSync: null
+    });
+    const [azureSyncing, setAzureSyncing] = useState(false);
+    // Ref so sync effect can read latest config without adding azureConfig to deps (avoids loop on lastSync)
+    const azureConfigRef = useRef(azureConfig);
+    // Timestamp of last restore to suppress the debounced post-restore upload
+    const lastRestoreRef = useRef<number>(0);
+    const syncDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const assetAllocationSettings = useMemo(
         () => normalizeAssetAllocationSettings(storedAssetAllocationSettings),
         [storedAssetAllocationSettings]
     );
+
+    useEffect(() => { azureConfigRef.current = azureConfig; }, [azureConfig]);
 
     // One-shot cleanup of legacy Global Rebalancing storage key
     useEffect(() => {
@@ -405,6 +427,78 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setAssetSettings(newSettings);
         }
     }, [transactions, assetSettings, setAssetSettings]);
+
+    // Debounced Azure sync: fires 3s after any portfolio data change
+    // azureConfig intentionally excluded from deps to avoid loop when lastSync updates
+    useEffect(() => {
+        const config = azureConfigRef.current;
+        if (!config.enabled || !config.sasUrl || !config.passphrase) return;
+
+        if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current);
+
+        syncDebounceRef.current = setTimeout(async () => {
+            if (Date.now() - lastRestoreRef.current < 5000) return;
+
+            const payload: SyncPayload = {
+                syncVersion: 1,
+                syncTimestamp: new Date().toISOString(),
+                transactions, assetSettings, portfolios, brokers, marketData,
+                assetAllocationSettings: storedAssetAllocationSettings,
+                macroAllocations, goalAllocations, goals,
+            };
+            try {
+                setAzureSyncing(true);
+                const encrypted = await encrypt(JSON.stringify(payload), config.passphrase);
+                await uploadToAzure(config.sasUrl, encrypted);
+                setAzureConfig(prev => ({ ...prev, lastSync: new Date().toISOString() }));
+            } catch (e) {
+                console.error('Azure sync failed:', e);
+            } finally {
+                setAzureSyncing(false);
+            }
+        }, 3000);
+
+        return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
+    }, [transactions, assetSettings, portfolios, brokers, marketData,
+        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals]);
+
+    // On mount: check if Azure has newer data and offer restore
+    useEffect(() => {
+        const config = azureConfigRef.current;
+        if (!config.enabled || !config.sasUrl || !config.passphrase) return;
+
+        (async () => {
+            try {
+                const buffer = await downloadFromAzure(config.sasUrl);
+                if (!buffer) return;
+
+                const decrypted = await decrypt(buffer, config.passphrase);
+                const payload: SyncPayload = JSON.parse(decrypted);
+
+                const remoteTime = new Date(payload.syncTimestamp).getTime();
+                const localTime = config.lastSync ? new Date(config.lastSync).getTime() : 0;
+
+                if (remoteTime > localTime) {
+                    const result = await Swal.fire({
+                        title: 'Dati remoti più recenti',
+                        text: `Azure contiene dati aggiornati al ${new Date(payload.syncTimestamp).toLocaleString('it-IT')}. Ripristinare?`,
+                        icon: 'question',
+                        showCancelButton: true,
+                        confirmButtonText: 'Ripristina da Azure',
+                        cancelButtonText: 'Mantieni locali',
+                    });
+                    if (result.isConfirmed) {
+                        lastRestoreRef.current = Date.now();
+                        await importData(payload);
+                        setAzureConfig(prev => ({ ...prev, lastSync: payload.syncTimestamp }));
+                    }
+                }
+            } catch (e) {
+                console.error('Azure startup sync failed:', e);
+            }
+        })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const updateMarketData = (ticker: string, price: number, lastUpdated: string) => {
         setMarketData(prev => ({
@@ -939,6 +1033,49 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     };
 
+    const syncToAzure = async (): Promise<{ ok: boolean; error?: string }> => {
+        const config = azureConfigRef.current;
+        if (!config.enabled || !config.sasUrl || !config.passphrase)
+            return { ok: false, error: 'Azure non configurato o disabilitato' };
+        try {
+            setAzureSyncing(true);
+            const payload: SyncPayload = {
+                syncVersion: 1, syncTimestamp: new Date().toISOString(),
+                transactions, assetSettings, portfolios, brokers, marketData,
+                assetAllocationSettings: storedAssetAllocationSettings,
+                macroAllocations, goalAllocations, goals,
+            };
+            const encrypted = await encrypt(JSON.stringify(payload), config.passphrase);
+            await uploadToAzure(config.sasUrl, encrypted);
+            setAzureConfig(prev => ({ ...prev, lastSync: new Date().toISOString() }));
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: String(e) };
+        } finally {
+            setAzureSyncing(false);
+        }
+    };
+
+    const restoreFromAzure = async (): Promise<{ ok: boolean; error?: string }> => {
+        const config = azureConfigRef.current;
+        if (!config.sasUrl || !config.passphrase) return { ok: false, error: 'Azure non configurato' };
+        try {
+            setAzureSyncing(true);
+            const buffer = await downloadFromAzure(config.sasUrl);
+            if (!buffer) return { ok: false, error: 'Nessun dato trovato su Azure' };
+            const decrypted = await decrypt(buffer, config.passphrase);
+            const payload: SyncPayload = JSON.parse(decrypted);
+            lastRestoreRef.current = Date.now();
+            await importData(payload);
+            setAzureConfig(prev => ({ ...prev, lastSync: payload.syncTimestamp }));
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: String(e) };
+        } finally {
+            setAzureSyncing(false);
+        }
+    };
+
     const value = {
         transactions,
         targets: assetSettings, // Expose as targets for compatibility
@@ -980,7 +1117,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         resetAssetAllocationSettings,
         importData,
         updateMarketData,
-        addTransactionsBulk
+        addTransactionsBulk,
+        azureConfig,
+        setAzureConfig,
+        syncToAzure,
+        restoreFromAzure,
+        azureSyncing,
     };
 
     return (
