@@ -3,6 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
 import Swal from 'sweetalert2';
+import { testAzureConnection } from '../../services/azureSync';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -21,12 +22,25 @@ const TargetSettings: React.FC = () => {
         macroAllocations,
         goalAllocations,
         goals,
-        importData
+        importData,
+        // Azure sync
+        azureConfig,
+        setAzureConfig,
+        syncToAzure,
+        restoreFromAzure,
+        azureSyncing,
     } = usePortfolio();
 
     // ... (existing state)
     const [showConfirmReset, setShowConfirmReset] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+    // Azure sync form state (local, not persisted until saved)
+    const [localSasUrl, setLocalSasUrl] = useState(azureConfig.sasUrl);
+    const [localPassphrase, setLocalPassphrase] = useState(azureConfig.passphrase);
+    const [showSasUrl, setShowSasUrl] = useState(false);
+    const [showPassphrase, setShowPassphrase] = useState(false);
+    const [connectionStatus, setConnectionStatus] = useState<'idle' | 'ok' | 'error'>('idle');
 
     // ... (existing helpers)
     const assetTickers = assets.map(a => a.ticker);
@@ -134,6 +148,49 @@ const TargetSettings: React.FC = () => {
         reader.readAsText(file);
     };
 
+
+    const handleSaveAzureConfig = () => {
+        setAzureConfig(prev => ({ ...prev, sasUrl: localSasUrl, passphrase: localPassphrase }));
+        setConnectionStatus('idle');
+        Swal.fire({ title: 'Configurazione salvata', icon: 'success', timer: 1500, showConfirmButton: false });
+    };
+
+    const handleTestConnection = async () => {
+        const result = await testAzureConnection(localSasUrl);
+        setConnectionStatus(result.ok ? 'ok' : 'error');
+        if (!result.ok) {
+            Swal.fire({ title: 'Connessione fallita', text: result.error, icon: 'error' });
+        }
+    };
+
+    const handleSyncNow = async () => {
+        const result = await syncToAzure();
+        if (result.ok) {
+            Swal.fire({ title: 'Sincronizzato!', icon: 'success', timer: 1500, showConfirmButton: false });
+        } else {
+            Swal.fire({ title: 'Errore di sincronizzazione', text: result.error, icon: 'error' });
+        }
+    };
+
+    const handleRestoreFromAzure = async () => {
+        const confirm = await Swal.fire({
+            title: 'Ripristina da Azure?',
+            text: 'I dati locali verranno sovrascritti con quelli presenti su Azure. Questa operazione non può essere annullata.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#3085d6',
+            cancelButtonColor: '#d33',
+            confirmButtonText: 'Ripristina',
+            cancelButtonText: 'Annulla',
+        });
+        if (!confirm.isConfirmed) return;
+        const result = await restoreFromAzure();
+        if (result.ok) {
+            Swal.fire({ title: 'Ripristinato!', text: 'I dati sono stati ripristinati da Azure.', icon: 'success' });
+        } else {
+            Swal.fire({ title: 'Errore', text: result.error, icon: 'error' });
+        }
+    };
 
     const renderAssetRow = (ticker: string) => {
         // ... (existing implementation)
@@ -273,6 +330,119 @@ const TargetSettings: React.FC = () => {
 
             <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
 
+            {/* Azure Cloud Sync Section */}
+            <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+                    <h2 className="section-title" style={{ margin: 0 }}>Sincronizzazione Cloud (Azure)</h2>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: 500 }}>
+                        <input
+                            type="checkbox"
+                            checked={azureConfig.enabled}
+                            onChange={e => setAzureConfig(prev => ({ ...prev, enabled: e.target.checked }))}
+                        />
+                        Abilitata
+                    </label>
+                    {azureSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Sincronizzazione in corso...</span>}
+                </div>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+                    I dati vengono cifrati con AES-256-GCM nel browser prima di essere caricati su Azure.
+                    Azure conserva solo un blob opaco: senza la passphrase i dati sono illeggibili.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '560px' }}>
+                    {/* SAS URL */}
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>SAS URL del blob Azure</label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                                type={showSasUrl ? 'text' : 'password'}
+                                value={localSasUrl}
+                                onChange={e => { setLocalSasUrl(e.target.value); setConnectionStatus('idle'); }}
+                                placeholder="https://<account>.blob.core.windows.net/<container>/<blob>?sv=..."
+                                style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.8rem' }}
+                            />
+                            <button
+                                onClick={() => setShowSasUrl(v => !v)}
+                                style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                                title={showSasUrl ? 'Nascondi' : 'Mostra'}
+                            >
+                                {showSasUrl ? '🙈' : '👁'}
+                            </button>
+                        </div>
+                        <small style={{ color: 'var(--text-muted)' }}>
+                            Azure Portal → Storage Account → Container → blob → Genera SAS (permessi Read + Write)
+                        </small>
+                    </div>
+
+                    {/* Passphrase */}
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Passphrase di cifratura</label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                                type={showPassphrase ? 'text' : 'password'}
+                                value={localPassphrase}
+                                onChange={e => setLocalPassphrase(e.target.value)}
+                                placeholder="Passphrase segreta (non salvata su Azure)"
+                                style={{ flex: 1 }}
+                            />
+                            <button
+                                onClick={() => setShowPassphrase(v => !v)}
+                                style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                                title={showPassphrase ? 'Nascondi' : 'Mostra'}
+                            >
+                                {showPassphrase ? '🙈' : '👁'}
+                            </button>
+                        </div>
+                        <small style={{ color: 'var(--text-muted)' }}>
+                            Memorizzata solo nel browser. Necessaria per decifrare i dati su ogni dispositivo.
+                        </small>
+                    </div>
+
+                    {/* Save + Test */}
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                        <button
+                            onClick={handleSaveAzureConfig}
+                            style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                            Salva configurazione
+                        </button>
+                        <button
+                            onClick={handleTestConnection}
+                            disabled={!localSasUrl}
+                            style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: `1px solid ${connectionStatus === 'ok' ? 'var(--color-success)' : connectionStatus === 'error' ? 'var(--color-danger)' : 'var(--border-color)'}`, color: connectionStatus === 'ok' ? 'var(--color-success)' : connectionStatus === 'error' ? 'var(--color-danger)' : 'var(--text-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                            {connectionStatus === 'ok' ? 'Connessione OK' : connectionStatus === 'error' ? 'Connessione fallita' : 'Test connessione'}
+                        </button>
+                    </div>
+
+                    {/* Sync + Restore */}
+                    {azureConfig.enabled && azureConfig.sasUrl && (
+                        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)' }}>
+                            <button
+                                onClick={handleSyncNow}
+                                disabled={azureSyncing}
+                                style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--color-primary)', color: 'var(--color-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                Sincronizza ora
+                            </button>
+                            <button
+                                onClick={handleRestoreFromAzure}
+                                disabled={azureSyncing}
+                                style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--text-secondary)', color: 'var(--text-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                Ripristina da Azure
+                            </button>
+                            <span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                                {azureConfig.lastSync
+                                    ? `Ultima sync: ${new Date(azureConfig.lastSync).toLocaleString('it-IT')}`
+                                    : 'Mai sincronizzato'}
+                            </span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
 
             <h2>Asset Registry & Settings</h2>
             <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-6)' }}>
