@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission, calculateCashFlows } from '../../utils/portfolioCalculations';
@@ -72,9 +73,363 @@ const AllocationOverview: React.FC = () => {
                             onAddTransactions={addTransactionsBulk}
                         />
                     ))}
+                    <AggregateAllocationSection />
                 </>
             )}
         </div>
+    );
+};
+
+const AggregateAllocationSection: React.FC = () => {
+    const { portfolios, brokers, transactions, assetSettings, marketData } = usePortfolio();
+    const [excludedTickers, setExcludedTickers] = useLocalStorage<string[]>('aggregate-excluded-tickers', []);
+    const [isEditing, setIsEditing] = useState(false);
+
+    const { assets: rawAggregateAssets, summary } = useMemo(
+        () => calculateAssets(transactions, assetSettings, marketData),
+        [transactions, assetSettings, marketData]
+    );
+
+    // Per-portfolio total values (needed for weighted targets and aggregated cash)
+    const portfolioCalcs = useMemo(() => {
+        return portfolios.map(portfolio => {
+            const pTxs = transactions.filter(t => t.portfolioId === portfolio.id);
+            const { assets: pRawAssets, summary: pSummary } = calculateAssets(pTxs, assetSettings, marketData);
+            const pAssets = injectCashAssets(pRawAssets, brokers, portfolio.id);
+            const cashAssetsValue = pAssets
+                .filter(a => isCashTicker(a.ticker))
+                .reduce((s, a) => s + a.currentValue, 0);
+            const totalValue = pSummary.totalValue + (portfolio.liquidity || 0) + cashAssetsValue;
+            return { portfolio, assets: pAssets, totalValue };
+        });
+    }, [portfolios, transactions, assetSettings, marketData, brokers]);
+
+    // Aggregate cash assets across portfolios
+    const aggregateCashAssets = useMemo<import('../../types').Asset[]>(() => {
+        const cashMap = new Map<string, import('../../types').Asset>();
+        portfolioCalcs.forEach(pc => {
+            pc.assets.filter(a => isCashTicker(a.ticker)).forEach(cashAsset => {
+                const existing = cashMap.get(cashAsset.ticker);
+                if (existing) {
+                    const newValue = existing.currentValue + cashAsset.currentValue;
+                    cashMap.set(cashAsset.ticker, { ...existing, currentValue: newValue, averagePrice: newValue, currentPrice: newValue });
+                } else {
+                    cashMap.set(cashAsset.ticker, { ...cashAsset });
+                }
+            });
+        });
+        return Array.from(cashMap.values());
+    }, [portfolioCalcs]);
+
+    // All assets (quantity > 0), including cash — used to render all rows (even excluded ones in edit mode)
+    const allVisibleAssets = useMemo(() => {
+        const real = rawAggregateAssets.filter(a => a.quantity > 0 && !isCashTicker(a.ticker));
+        return [...real, ...aggregateCashAssets].sort((a, b) => a.ticker.localeCompare(b.ticker));
+    }, [rawAggregateAssets, aggregateCashAssets]);
+
+    // Only included assets — used for totals calculation
+    const includedAssets = useMemo(
+        () => allVisibleAssets.filter(a => !excludedTickers.includes(a.ticker)),
+        [allVisibleAssets, excludedTickers]
+    );
+
+    const totalLiquidity = useMemo(
+        () => portfolios.reduce((s, p) => s + (p.liquidity || 0), 0),
+        [portfolios]
+    );
+
+    // Aggregate total value counts only included assets
+    const aggregateTotalValue = useMemo(
+        () => includedAssets.reduce((s, a) => s + a.currentValue, 0) + totalLiquidity,
+        [includedAssets, totalLiquidity]
+    );
+
+    // Realized + distributions — computed on all transactions (global, not per-asset)
+    const { totalRealized, details: realizedDetails, totalCommissions: realizedCommissions, totalTax: realizedTax } = useMemo(
+        () => calculateRealizedGains(transactions, brokers, assetSettings),
+        [transactions, brokers, assetSettings]
+    );
+    const [showRealizedModal, setShowRealizedModal] = React.useState(false);
+
+    const { totalIncome, totalDividends, totalCoupons, byTicker: cashFlowDetails } = useMemo(
+        () => calculateCashFlows(transactions),
+        [transactions]
+    );
+    const [showCashFlowModal, setShowCashFlowModal] = React.useState(false);
+
+    const includedGain = includedAssets.reduce((s, a) => s + (a.gain || 0), 0);
+    const includedCost = includedAssets.reduce((s, a) => s + a.quantity * a.averagePrice, 0);
+    const aggregateTotalReturn = includedGain + totalRealized + totalIncome;
+    const aggregateTotalReturnPerc = includedCost > 0 ? (aggregateTotalReturn / includedCost) * 100 : 0;
+
+    const getLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+
+    const toggleExcluded = (ticker: string) => {
+        setExcludedTickers(prev =>
+            prev.includes(ticker) ? prev.filter(t => t !== ticker) : [...prev, ticker]
+        );
+    };
+
+    // Weighted target % per ticker — based on included total
+    const weightedTargetFor = (ticker: string): number => {
+        if (aggregateTotalValue <= 0) return 0;
+        return portfolioCalcs.reduce((sum, pc) => {
+            const w = pc.totalValue / aggregateTotalValue;
+            const tgt = (pc.portfolio.allocations || {})[ticker] || 0;
+            return sum + w * tgt;
+        }, 0);
+    };
+
+    const excludedCount = excludedTickers.filter(t => allVisibleAssets.some(a => a.ticker === t)).length;
+
+    return (
+        <div className="allocation-card" style={{ border: '1.5px dashed rgba(148,163,184,0.45)', background: 'var(--bg-surface)' }}>
+            <div className="allocation-header-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
+                <h3 className="section-title" style={{ margin: 0 }}>
+                    <span style={{ fontSize: '0.8em', fontWeight: 500, color: 'var(--text-muted)', marginRight: 'var(--space-2)', letterSpacing: '0.05em', textTransform: 'uppercase' }}>∑</span>Aggregate <span style={{ fontSize: '0.9em', fontWeight: 'normal', color: 'var(--text-secondary)' }}>
+                        ({aggregateTotalValue.toLocaleString('en-IE', { style: 'currency', currency: 'EUR' })})
+                    </span>
+                    {realizedDetails.length > 0 && (
+                        <span
+                            style={{ fontSize: '0.75em', fontWeight: 'normal', marginLeft: 'var(--space-3)', color: totalRealized >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: '1px dashed currentColor', cursor: 'pointer' }}
+                            onClick={e => { e.stopPropagation(); setShowRealizedModal(true); }}
+                        >
+                            Realized: {totalRealized >= 0 ? '+' : ''}€{totalRealized.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                    )}
+                    {cashFlowDetails.length > 0 && (
+                        <span
+                            style={{ fontSize: '0.75em', fontWeight: 'normal', marginLeft: 'var(--space-3)', color: '#3B82F6', borderBottom: '1px dashed currentColor', cursor: 'pointer' }}
+                            onClick={e => { e.stopPropagation(); setShowCashFlowModal(true); }}
+                        >
+                            Distributions: +€{totalIncome.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                    )}
+                    {(includedGain !== 0 || totalRealized !== 0 || totalIncome !== 0) && (
+                        <span style={{ fontSize: '0.75em', fontWeight: 'normal', marginLeft: 'var(--space-3)', color: aggregateTotalReturn >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                            Total Return: {aggregateTotalReturn >= 0 ? '+' : ''}€{aggregateTotalReturn.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ({aggregateTotalReturnPerc.toFixed(1)}%)
+                        </span>
+                    )}
+                    <RealizedGainsModal isOpen={showRealizedModal} onClose={() => setShowRealizedModal(false)} title="Realized — Aggregate" details={realizedDetails} totalRealized={totalRealized} totalCommissions={realizedCommissions} totalTax={realizedTax} getLabel={getLabel} />
+                    <CashFlowModal isOpen={showCashFlowModal} onClose={() => setShowCashFlowModal(false)} details={cashFlowDetails} totalDividends={totalDividends} totalCoupons={totalCoupons} totalIncome={totalIncome} getLabel={getLabel} />
+                </h3>
+                <button
+                    onClick={() => setIsEditing(e => !e)}
+                    style={{
+                        fontSize: '0.78rem', padding: '3px 10px', borderRadius: 'var(--radius-sm)',
+                        border: isEditing ? '1px solid rgba(148,163,184,0.5)' : '1px solid var(--border-color)',
+                        background: isEditing ? 'rgba(148,163,184,0.12)' : 'transparent',
+                        color: isEditing ? 'var(--text-primary)' : 'var(--text-muted)',
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
+                    }}
+                    title="Includi/escludi asset dal conteggio"
+                >
+                    {isEditing ? '✓ Fine' : `⚙ Filtra${excludedCount > 0 ? ` (${excludedCount} esclusi)` : ''}`}
+                </button>
+            </div>
+
+            <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                <div className="allocation-row desktop-only" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
+                    {isEditing && <div style={{ width: '36px' }} />}
+                    <div style={{ flex: 1 }}>Asset</div>
+                    <div style={{ width: '100px', textAlign: 'center' }}>Qty</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Pmc</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Mkt Price</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Value</div>
+                    <div style={{ width: '110px', textAlign: 'center' }}>Gain</div>
+                    <div style={{ width: '90px', textAlign: 'center' }}>Target (w)</div>
+                    <div style={{ width: '90px', textAlign: 'center' }}>Actual</div>
+                </div>
+
+                {allVisibleAssets.length === 0 ? (
+                    <p style={{ padding: 'var(--space-4)', color: 'var(--text-muted)' }}>No assets currently held.</p>
+                ) : (
+                    allVisibleAssets.map(asset => {
+                        const isExcluded = excludedTickers.includes(asset.ticker);
+                        const isCash = isCashTicker(asset.ticker);
+                        const setting = assetSettings.find(s => s.ticker === asset.ticker);
+                        const assetClass = isCash ? 'Cash' : (setting?.assetClass || asset.assetClass || 'Stock');
+                        const label = isCash ? (asset.label || asset.ticker) : (setting?.label || asset.label || asset.ticker);
+                        const currentPerc = aggregateTotalValue > 0 ? (asset.currentValue / aggregateTotalValue) * 100 : 0;
+                        const targetPerc = isCash ? 0 : weightedTargetFor(asset.ticker);
+                        return (
+                            <AggregateRow
+                                key={asset.ticker}
+                                ticker={asset.ticker}
+                                label={label}
+                                assetClass={assetClass}
+                                isCash={isCash}
+                                quantity={asset.quantity}
+                                averagePrice={asset.averagePrice}
+                                currentPrice={asset.currentPrice || 0}
+                                currentValue={asset.currentValue}
+                                gain={asset.gain || 0}
+                                gainPerc={asset.gainPercentage || 0}
+                                currentPerc={currentPerc}
+                                targetPerc={targetPerc}
+                                isEditing={isEditing}
+                                isExcluded={isExcluded}
+                                onToggleExclude={() => toggleExcluded(asset.ticker)}
+                            />
+                        );
+                    })
+                )}
+            </div>
+        </div>
+    );
+};
+
+interface AggregateRowProps {
+    ticker: string;
+    label: string;
+    assetClass: string;
+    isCash: boolean;
+    quantity: number;
+    averagePrice: number;
+    currentPrice: number;
+    currentValue: number;
+    gain: number;
+    gainPerc: number;
+    currentPerc: number;
+    targetPerc: number;
+    isEditing: boolean;
+    isExcluded: boolean;
+    onToggleExclude: () => void;
+}
+
+const AggregateRow: React.FC<AggregateRowProps> = ({ ticker, label, assetClass, isCash, quantity, averagePrice, currentPrice, currentValue, gain, gainPerc, currentPerc, targetPerc, isEditing, isExcluded, onToggleExclude }) => {
+    const diff = currentPerc - targetPerc;
+    const colorMap: Record<string, string> = {
+        'Stock': 'dot-etf',
+        'Bond': 'dot-bond',
+        'Commodity': 'dot-commodity',
+        'Crypto': 'dot-crypto'
+    };
+    const colorClass = colorMap[assetClass] || 'dot-neutral';
+    const rowOpacity = isExcluded ? 0.35 : 1;
+
+    return (
+        <>
+            {/* Desktop */}
+            <div className="allocation-row desktop-only" style={{ padding: 'var(--space-3) 0', opacity: rowOpacity, transition: 'opacity 0.15s' }}>
+                {isEditing && (
+                    <button
+                        onClick={onToggleExclude}
+                        title={isExcluded ? 'Includi nel conteggio' : 'Escludi dal conteggio'}
+                        style={{
+                            width: '24px', height: '24px', borderRadius: '50%', border: '1.5px solid',
+                            borderColor: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
+                            background: isExcluded ? 'transparent' : 'rgba(16,185,129,0.12)',
+                            color: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
+                            cursor: 'pointer', fontSize: '0.75rem', display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', flexShrink: 0, marginRight: '8px',
+                        }}
+                    >{isExcluded ? '✕' : '✓'}</button>
+                )}
+                <div className="allocation-type" style={{ flex: 1 }}>
+                    <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
+                    <div><strong>{label || ticker}</strong></div>
+                </div>
+                <div style={{ width: '100px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
+                    {isCash ? '-' : parseFloat(quantity.toFixed(4))}
+                </div>
+                <div style={{ width: '110px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
+                    {isCash ? '-' : `€${averagePrice.toFixed(2)}`}
+                </div>
+                <div style={{ width: '110px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
+                    {isCash ? '-' : `€${currentPrice.toFixed(2)}`}
+                </div>
+                <div style={{ width: '110px', textAlign: 'center' }}>
+                    €{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <div style={{ width: '110px', textAlign: 'center', fontSize: '0.9rem' }}>
+                    {isCash ? (
+                        <div style={{ color: 'var(--text-muted)' }}>-</div>
+                    ) : (
+                        <>
+                            <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: gainPerc >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {gainPerc.toFixed(1)}%
+                            </div>
+                        </>
+                    )}
+                </div>
+                <div style={{ width: '90px', textAlign: 'center' }}>
+                    {isCash ? <span style={{ color: 'var(--text-muted)' }}>-</span> : `${targetPerc.toFixed(1)}%`}
+                </div>
+                <div style={{ width: '90px', textAlign: 'center' }}>
+                    <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
+                    {!isCash && targetPerc > 0 && (
+                        <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
+                            {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Mobile */}
+            <div className="allocation-mobile-card mobile-only" style={{ opacity: rowOpacity, transition: 'opacity 0.15s' }}>
+                <div className="mobile-card-header">
+                    <div className="mobile-card-title" style={{ gap: 'var(--space-2)' }}>
+                        {isEditing && (
+                            <button
+                                onClick={onToggleExclude}
+                                title={isExcluded ? 'Includi' : 'Escludi'}
+                                style={{
+                                    width: '22px', height: '22px', borderRadius: '50%', border: '1.5px solid',
+                                    borderColor: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
+                                    background: isExcluded ? 'transparent' : 'rgba(16,185,129,0.12)',
+                                    color: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
+                                    cursor: 'pointer', fontSize: '0.7rem', display: 'flex', alignItems: 'center',
+                                    justifyContent: 'center', flexShrink: 0,
+                                }}
+                            >{isExcluded ? '✕' : '✓'}</button>
+                        )}
+                        <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
+                        <strong>{label || ticker}</strong>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        {!isCash && (
+                            <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
+                            </div>
+                        )}
+                    </div>
+                </div>
+                <div className="mobile-card-grid">
+                    {!isCash && (
+                        <>
+                            <div className="mobile-detail-group">
+                                <span className="mobile-label">Price</span>
+                                <span className="mobile-value">€{currentPrice.toFixed(2)}</span>
+                            </div>
+                            <div className="mobile-detail-group">
+                                <span className="mobile-label">Qty</span>
+                                <span className="mobile-value">{parseFloat(quantity.toFixed(4))}</span>
+                            </div>
+                        </>
+                    )}
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Target (w)</span>
+                        <span className="mobile-value">{isCash ? '-' : `${targetPerc.toFixed(1)}%`}</span>
+                    </div>
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Actual</span>
+                        <span className="mobile-value">
+                            {currentPerc.toFixed(1)}%
+                            {!isCash && targetPerc > 0 && (
+                                <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
+                                    ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                </span>
+                            )}
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </>
     );
 };
 
