@@ -162,8 +162,8 @@ const GlobalRebalancingView: React.FC = () => {
             const firstGroup = assetAllocationSettings.ratioGroups[0];
             if (!firstGroup) {
                 Swal.fire({
-                    title: 'Nessun ratio group disponibile',
-                    text: 'Crea prima un ratio group per assegnare questo portafoglio.',
+                    title: 'No ratio group available',
+                    text: 'Create a ratio group first to assign this portfolio.',
                     icon: 'info',
                     confirmButtonColor: '#6366f1',
                     background: 'var(--bg-surface)',
@@ -248,12 +248,12 @@ const GlobalRebalancingView: React.FC = () => {
 
     const handleDeleteGroup = async (g: RatioGroupConfig) => {
         const confirmation = await Swal.fire({
-            title: `Eliminare "${g.name}"?`,
-            text: 'I portafogli che usano questo gruppo verranno resettati a Excluded.',
+            title: `Delete "${g.name}"?`,
+            text: 'Portfolios using this group will be reset to Excluded.',
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonText: 'Elimina',
-            cancelButtonText: 'Annulla',
+            confirmButtonText: 'Delete',
+            cancelButtonText: 'Cancel',
             confirmButtonColor: '#ef4444',
             background: 'var(--bg-surface)',
             color: 'var(--text-primary)'
@@ -296,9 +296,9 @@ const GlobalRebalancingView: React.FC = () => {
                 <div>
                     <h2>Asset Allocation</h2>
                     <p>
-                        Configura target high-level per ogni portfolio (fisso in EUR, % del totale, locked, escluso
-                        o ratio di gruppo). Il sistema calcola la distribuzione attesa, suggerisce sell/buy e segnala
-                        se la configurazione è sostenibile.
+                        Configure high-level targets for each portfolio (fixed in EUR, % of total, locked, excluded
+                        or ratio group). The system calculates the expected distribution, suggests sell/buy actions and signals
+                        whether the configuration is sustainable.
                     </p>
                 </div>
                 <div className="aa-metrics">
@@ -322,8 +322,8 @@ const GlobalRebalancingView: React.FC = () => {
                         <span className="aa-metric-label">Sustainability</span>
                         <strong className={result.sustainability.sustainable ? 'ok' : 'bad'}>
                             {result.sustainability.sustainable
-                                ? '✓ Sostenibile'
-                                : `⚠ Manca ${formatCurrency(result.sustainability.shortfall)}`}
+                                ? '✓ Sustainable'
+                                : `⚠ Missing ${formatCurrency(result.sustainability.shortfall)}`}
                         </strong>
                     </div>
                     <div className="aa-metric">
@@ -345,13 +345,13 @@ const GlobalRebalancingView: React.FC = () => {
                             checked={!!liquidityTarget}
                             onChange={handleToggleLiquidityTarget}
                         />
-                        <span>{liquidityTarget ? 'Attivo' : 'Disattivo'}</span>
+                        <span>{liquidityTarget ? 'Active' : 'Inactive'}</span>
                     </label>
                 </div>
                 {liquidityTarget ? (
                     <div className="aa-liquidity-row">
                         <div className="aa-field">
-                            <label>Modalità</label>
+                            <label>Mode</label>
                             <div className="aa-radio-group">
                                 <label>
                                     <input
@@ -383,11 +383,11 @@ const GlobalRebalancingView: React.FC = () => {
                                 value={liquidityDraftValue}
                                 onChange={(e) => setLiquidityDraftValue(e.target.value)}
                                 onBlur={handleLiquidityValueBlur}
-                                placeholder={liquidityTarget.mode === 'fixed' ? 'es. 30000' : 'es. 10'}
+                                placeholder={liquidityTarget.mode === 'fixed' ? 'e.g. 30000' : 'e.g. 10'}
                             />
                         </div>
                         <div className="aa-field">
-                            <label>Target calcolato</label>
+                            <label>Calculated target</label>
                             <div className="aa-readout">{formatCurrency(result.liquidity.target)}</div>
                         </div>
                         <div className="aa-field">
@@ -407,8 +407,8 @@ const GlobalRebalancingView: React.FC = () => {
                     </div>
                 ) : (
                     <p className="aa-muted">
-                        Nessun target per la liquidità. La liquidità broker corrente (
-                        {formatCurrency(result.liquidity.current)}) viene mantenuta al valore attuale.
+                        No liquidity target set. Current broker liquidity (
+                        {formatCurrency(result.liquidity.current)}) is kept at its current value.
                     </p>
                 )}
             </section>
@@ -418,13 +418,13 @@ const GlobalRebalancingView: React.FC = () => {
                 <div className="aa-section-head">
                     <h3>Ratio Groups</h3>
                     <button className="btn btn-secondary" onClick={startAddGroup}>
-                        + Nuovo gruppo
+                        + New group
                     </button>
                 </div>
                 {assetAllocationSettings.ratioGroups.length === 0 && editingGroupId !== '__new__' && (
                     <p className="aa-muted">
-                        Nessun ratio group definito. Crea un gruppo per assegnare portafogli in modalità ratio (es.
-                        "Core/Satellite" con target Remainder).
+                        No ratio group defined. Create a group to assign portfolios in ratio mode (e.g.
+                        "Core/Satellite" with Remainder target).
                     </p>
                 )}
                 <div className="aa-group-list">
@@ -484,7 +484,7 @@ const GlobalRebalancingView: React.FC = () => {
             <section className="aa-card">
                 <div className="aa-section-head">
                     <h3>Portfolio Targets</h3>
-                    <span className="aa-muted">{portfolios.length} portafogli</span>
+                    <span className="aa-muted">{portfolios.length} portfolios</span>
                 </div>
                 <div className="aa-table-scroll">
                     <table className="aa-table">
@@ -706,11 +706,11 @@ const GlobalRebalancingView: React.FC = () => {
             {/* ============ ACTIONS ============ */}
             <section className="aa-card">
                 <div className="aa-section-head">
-                    <h3>Azioni consigliate</h3>
-                    <span className="aa-muted">{result.actions.length} azioni</span>
+                    <h3>Suggested actions</h3>
+                    <span className="aa-muted">{result.actions.length} actions</span>
                 </div>
                 {result.actions.length === 0 ? (
-                    <p className="aa-muted">Il portafoglio è allineato ai target ✓</p>
+                    <p className="aa-muted">Portfolio is aligned to targets ✓</p>
                 ) : (
                     <ul className="aa-actions-list">
                         {result.actions.map((a, i) => (
@@ -734,7 +734,7 @@ const GlobalRebalancingView: React.FC = () => {
                         : 'ok'
                 }`}
             >
-                <h3>Stato configurazione</h3>
+                <h3>Configuration status</h3>
                 <p className="aa-status-main">{result.sustainability.message}</p>
                 {result.warnings.length > 0 && (
                     <ul className="aa-warning-list">
@@ -1132,15 +1132,15 @@ const GroupEditor: React.FC<GroupEditorProps> = ({ draft, setDraft, onSave, onCa
             </div>
             <div className="aa-group-editor-actions">
                 <button className="btn btn-primary" onClick={onSave}>
-                    Salva
+                    Save
                 </button>
                 <button className="btn btn-secondary" onClick={onCancel}>
-                    Annulla
+                    Cancel
                 </button>
             </div>
             {conflictRemainder && (
                 <div className="aa-conflict">
-                    ⚠ Esiste già un gruppo "remainder": verrà convertito in "percent 0" al salvataggio.
+                    ⚠ A "remainder" group already exists: it will be converted to "percent 0" on save.
                 </div>
             )}
         </div>
@@ -1160,10 +1160,10 @@ const actionIcon = (a: AssetAllocationAction): string => {
 };
 
 const actionLabel = (a: AssetAllocationAction): string => {
-    if (a.kind === 'buy') return `Inietta in ${a.name}`;
-    if (a.kind === 'sell') return `Vendi da ${a.name}`;
-    if (a.kind === 'liquidity-increase') return 'Aumenta liquidità broker';
-    return 'Riduci liquidità broker';
+    if (a.kind === 'buy') return `Inject into ${a.name}`;
+    if (a.kind === 'sell') return `Sell from ${a.name}`;
+    if (a.kind === 'liquidity-increase') return 'Increase broker liquidity';
+    return 'Reduce broker liquidity';
 };
 
 export default GlobalRebalancingView;
