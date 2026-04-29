@@ -152,45 +152,45 @@ const TargetSettings: React.FC = () => {
     const handleSaveAzureConfig = () => {
         setAzureConfig(prev => ({ ...prev, sasUrl: localSasUrl, passphrase: localPassphrase }));
         setConnectionStatus('idle');
-        Swal.fire({ title: 'Configurazione salvata', icon: 'success', timer: 1500, showConfirmButton: false });
+        Swal.fire({ title: 'Settings saved', icon: 'success', timer: 1500, showConfirmButton: false });
     };
 
     const handleTestConnection = async () => {
         const result = await testAzureConnection(localSasUrl);
         setConnectionStatus(result.ok ? 'ok' : 'error');
         if (!result.ok) {
-            Swal.fire({ title: 'Connessione fallita', text: result.error, icon: 'error' });
+            Swal.fire({ title: 'Connection failed', text: result.error, icon: 'error' });
         } else if (!result.blobExists) {
-            Swal.fire({ title: 'Connessione OK', text: 'Nessun backup trovato su Azure — verrà inizializzato automaticamente al prossimo avvio.', icon: 'info', timer: 3000, showConfirmButton: false });
+            Swal.fire({ title: 'Connection OK', text: 'No backup found on Azure — it will be initialized automatically on first sync.', icon: 'info', timer: 3000, showConfirmButton: false });
         }
     };
 
     const handleSyncNow = async () => {
         const result = await syncToAzure();
         if (result.ok) {
-            Swal.fire({ title: 'Sincronizzato!', icon: 'success', timer: 1500, showConfirmButton: false });
+            Swal.fire({ title: 'Synced!', icon: 'success', timer: 1500, showConfirmButton: false });
         } else {
-            Swal.fire({ title: 'Errore di sincronizzazione', text: result.error, icon: 'error' });
+            Swal.fire({ title: 'Sync error', text: result.error, icon: 'error' });
         }
     };
 
     const handleRestoreFromAzure = async () => {
         const confirm = await Swal.fire({
-            title: 'Ripristina da Azure?',
-            text: 'I dati locali verranno sovrascritti con quelli presenti su Azure. Questa operazione non può essere annullata.',
+            title: 'Restore from Azure?',
+            text: 'Local data will be overwritten with the data from Azure. This operation cannot be undone.',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#3085d6',
             cancelButtonColor: '#d33',
-            confirmButtonText: 'Ripristina',
-            cancelButtonText: 'Annulla',
+            confirmButtonText: 'Restore',
+            cancelButtonText: 'Cancel',
         });
         if (!confirm.isConfirmed) return;
         const result = await restoreFromAzure();
         if (result.ok) {
-            Swal.fire({ title: 'Ripristinato!', text: 'I dati sono stati ripristinati da Azure.', icon: 'success' });
+            Swal.fire({ title: 'Restored!', text: 'Data has been restored from Azure.', icon: 'success' });
         } else {
-            Swal.fire({ title: 'Errore', text: result.error, icon: 'error' });
+            Swal.fire({ title: 'Error', text: result.error, icon: 'error' });
         }
     };
 
@@ -344,11 +344,11 @@ const TargetSettings: React.FC = () => {
                         />
                         Abilitata
                     </label>
-                    {azureSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Sincronizzazione in corso...</span>}
+                    {azureSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Syncing...</span>}
                 </div>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-                    I dati vengono cifrati con AES-256-GCM nel browser prima di essere caricati su Azure.
-                    Azure conserva solo un blob opaco: senza la passphrase i dati sono illeggibili.
+                    Data is encrypted with AES-256-GCM in the browser before being uploaded to Azure.
+                    Azure stores only an opaque blob: without the passphrase, the data is unreadable.
                 </p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '560px' }}>
@@ -366,7 +366,7 @@ const TargetSettings: React.FC = () => {
                             <button
                                 onClick={() => setShowSasUrl(v => !v)}
                                 style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
-                                title={showSasUrl ? 'Nascondi' : 'Mostra'}
+                                title={showSasUrl ? 'Hide' : 'Show'}
                             >
                                 {showSasUrl ? '🙈' : '👁'}
                             </button>
@@ -378,25 +378,25 @@ const TargetSettings: React.FC = () => {
 
                     {/* Passphrase */}
                     <div className="form-group" style={{ margin: 0 }}>
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Passphrase di cifratura</label>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Encryption passphrase</label>
                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                             <input
                                 type={showPassphrase ? 'text' : 'password'}
                                 value={localPassphrase}
                                 onChange={e => setLocalPassphrase(e.target.value)}
-                                placeholder="Passphrase segreta (non salvata su Azure)"
+                                placeholder="Secret passphrase (not saved to Azure)"
                                 style={{ flex: 1 }}
                             />
                             <button
                                 onClick={() => setShowPassphrase(v => !v)}
                                 style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
-                                title={showPassphrase ? 'Nascondi' : 'Mostra'}
+                                title={showPassphrase ? 'Hide' : 'Show'}
                             >
                                 {showPassphrase ? '🙈' : '👁'}
                             </button>
                         </div>
                         <small style={{ color: 'var(--text-muted)' }}>
-                            Memorizzata solo nel browser. Necessaria per decifrare i dati su ogni dispositivo.
+                            Stored in the browser only. Required to decrypt data on every device.
                         </small>
                     </div>
 
@@ -406,14 +406,14 @@ const TargetSettings: React.FC = () => {
                             onClick={handleSaveAzureConfig}
                             style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                         >
-                            Salva configurazione
+                            Save settings
                         </button>
                         <button
                             onClick={handleTestConnection}
                             disabled={!localSasUrl}
                             style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: `1px solid ${connectionStatus === 'ok' ? 'var(--color-success)' : connectionStatus === 'error' ? 'var(--color-danger)' : 'var(--border-color)'}`, color: connectionStatus === 'ok' ? 'var(--color-success)' : connectionStatus === 'error' ? 'var(--color-danger)' : 'var(--text-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                         >
-                            {connectionStatus === 'ok' ? 'Connessione OK' : connectionStatus === 'error' ? 'Connessione fallita' : 'Test connessione'}
+                            {connectionStatus === 'ok' ? 'Connection OK' : connectionStatus === 'error' ? 'Connection failed' : 'Test connection'}
                         </button>
                     </div>
 
@@ -426,7 +426,7 @@ const TargetSettings: React.FC = () => {
                                     disabled={azureSyncing}
                                     style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                    Inizializza su Azure
+                                    Initialize on Azure
                                 </button>
                             ) : (
                                 <>
@@ -435,21 +435,21 @@ const TargetSettings: React.FC = () => {
                                         disabled={azureSyncing}
                                         style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--color-primary)', color: 'var(--color-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                                     >
-                                        Sincronizza ora
+                                        Sync now
                                     </button>
                                     <button
                                         onClick={handleRestoreFromAzure}
                                         disabled={azureSyncing}
                                         style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--text-secondary)', color: 'var(--text-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                                     >
-                                        Ripristina da Azure
+                                        Restore from Azure
                                     </button>
                                 </>
                             )}
                             <span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                                 {azureConfig.lastSync
-                                    ? `Ultima sync: ${new Date(azureConfig.lastSync).toLocaleString('it-IT')}`
-                                    : 'Mai sincronizzato'}
+                                    ? `Last sync: ${new Date(azureConfig.lastSync).toLocaleString('en-GB')}`
+                                    : 'Never synced'}
                             </span>
                         </div>
                     )}

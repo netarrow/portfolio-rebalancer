@@ -261,7 +261,7 @@ const MacroStats: React.FC = () => {
                 </div>
 
                 <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '1rem', marginBottom: 0 }}>
-                    Abbassa uno slider per aumentare la quota Cash. Alza uno slider per usare la liquidità disponibile. I dati reali non vengono modificati.
+                    Lower a slider to increase the cash portion. Raise a slider to use available liquidity. Real data is not modified.
                 </p>
             </div>
 
@@ -274,7 +274,7 @@ const MacroStats: React.FC = () => {
                             backgroundColor: includeCash ? 'var(--color-primary)' : 'var(--bg-input)',
                             color: includeCash ? '#fff' : 'var(--text-muted)',
                             cursor: 'pointer', fontWeight: 500, transition: 'all 0.2s'
-                        }}>{includeCash ? '+ Liquidità' : 'Solo Investito'}</button>
+                        }}>{includeCash ? '+ Cash' : 'Invested only'}</button>
                     </div>
                     <div style={{ width: '100%', height: 250 }}>
                         <ResponsiveContainer>
