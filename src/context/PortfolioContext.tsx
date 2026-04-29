@@ -500,12 +500,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
                 if (remoteTime > localTime) {
                     const result = await Swal.fire({
-                        title: 'Dati remoti più recenti',
-                        text: `Azure contiene dati aggiornati al ${new Date(payload.syncTimestamp).toLocaleString('it-IT')}. Ripristinare?`,
+                        title: 'Remote data is more recent',
+                        text: `Azure contains data updated at ${new Date(payload.syncTimestamp).toLocaleString('en-GB')}. Restore it?`,
                         icon: 'question',
                         showCancelButton: true,
-                        confirmButtonText: 'Ripristina da Azure',
-                        cancelButtonText: 'Mantieni locali',
+                        confirmButtonText: 'Restore from Azure',
+                        cancelButtonText: 'Keep local',
                     });
                     if (result.isConfirmed) {
                         lastRestoreRef.current = Date.now();
@@ -1096,11 +1096,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const restoreFromAzure = async (): Promise<{ ok: boolean; error?: string }> => {
         const config = azureConfigRef.current;
-        if (!config.sasUrl || !config.passphrase) return { ok: false, error: 'Azure non configurato' };
+        if (!config.sasUrl || !config.passphrase) return { ok: false, error: 'Azure not configured' };
         try {
             setAzureSyncing(true);
             const buffer = await downloadFromAzure(config.sasUrl);
-            if (!buffer) return { ok: false, error: 'Nessun dato trovato su Azure' };
+            if (!buffer) return { ok: false, error: 'No data found on Azure' };
             const decrypted = await decrypt(buffer, config.passphrase);
             const payload: SyncPayload = JSON.parse(decrypted);
             lastRestoreRef.current = Date.now();

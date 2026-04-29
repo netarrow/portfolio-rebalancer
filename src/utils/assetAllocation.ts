@@ -342,7 +342,7 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
     const memberWeightsSum = members.reduce((s, m) => s + m.weight, 0);
     const orphan = budget > 0.005 && members.length === 0;
     if (orphan) {
-      warnings.push(`Il gruppo "${g.name}" ha un budget di €${budget.toFixed(2)} ma nessun portafoglio membro.`);
+      warnings.push(`Group "${g.name}" has a budget of €${budget.toFixed(2)} but no member portfolios.`);
     }
     if (members.length > 0 && memberWeightsSum > 0 && budget > 0) {
       const alloc = allocateByLargestRemainder(
@@ -411,7 +411,7 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
     .reduce((s, p) => s + Math.max(0, p.config.value), 0);
   if (totalPercentConfig > 100.01) {
     warnings.push(
-      `La somma delle percentuali dei portafogli (${totalPercentConfig.toFixed(1)}%) supera il 100%.`
+      `The sum of portfolio percentages (${totalPercentConfig.toFixed(1)}%) exceeds 100%.`
     );
   }
 
@@ -446,13 +446,13 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
   // Sustainability message
   let sustainabilityMessage = '';
   if (!sustainable) {
-    sustainabilityMessage = `Configurazione non sostenibile: servono €${shortfall.toFixed(
+    sustainabilityMessage = `Unsustainable configuration: €${shortfall.toFixed(
       2
-    )} di liquidità aggiuntiva (oppure riduci i target).`;
+    )} of additional liquidity required (or reduce targets).`;
   } else if (unallocatedRemainder > 0.01) {
-    sustainabilityMessage = `Sostenibile con €${unallocatedRemainder.toFixed(2)} di surplus non allocato.`;
+    sustainabilityMessage = `Sustainable with €${unallocatedRemainder.toFixed(2)} of unallocated surplus.`;
   } else {
-    sustainabilityMessage = 'Configurazione sostenibile e completamente allocata.';
+    sustainabilityMessage = 'Sustainable and fully allocated.';
   }
 
   return {

@@ -183,13 +183,13 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         <button
                             className={viewMode === 'grouped' ? 'group-toggle-active' : 'group-toggle-btn'}
                             onClick={() => setViewMode('grouped')}
-                            title="Vista comparativa gruppo"
-                        >⬡ Gruppo</button>
+                            title="Group comparative view"
+                        >⬡ Group</button>
                         <button
                             className={viewMode === 'individual' ? 'group-toggle-active' : 'group-toggle-btn'}
                             onClick={() => setViewMode('individual')}
-                            title="Vista portafoglio singolo"
-                        >☰ Singolo</button>
+                            title="Single portfolio view"
+                        >☰ Single</button>
                     </div>
                 </div>
 
@@ -246,12 +246,12 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                     borderLeft: `3px solid ${color}`,
                                 }}>
                                     <span style={{ fontSize: '0.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color }}>
-                                        {isParent ? '⬡ Padre' : '↳ Figlio'}
+                                        {isParent ? '⬡ Parent' : '↳ Child'}
                                     </span>
                                     <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                                         {isParent
-                                            ? `Gruppo con: ${children.map(c => c.name).join(', ')}`
-                                            : `Parte di: ${parent.name}`}
+                                            ? `Group with: ${children.map(c => c.name).join(', ')}`
+                                            : `Part of: ${parent.name}`}
                                     </span>
                                 </div>
                                 <PortfolioAllocationTable
