@@ -84,6 +84,7 @@ const AllocationOverview: React.FC = () => {
 const AggregateAllocationSection: React.FC = () => {
     const { portfolios, brokers, transactions, assetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers } = usePortfolio();
     const [isEditing, setIsEditing] = useState(false);
+    const [additionalLiquidity, setAdditionalLiquidity] = useState<number | undefined>(undefined);
 
     const { assets: rawAggregateAssets, summary } = useMemo(
         () => calculateAssets(transactions, assetSettings, marketData),
@@ -105,7 +106,6 @@ const AggregateAllocationSection: React.FC = () => {
     }, [portfolios, transactions, assetSettings, marketData, brokers]);
 
     // Run the Asset Allocation engine to get configured target weights per portfolio
-    // This mirrors how the Asset Allocation section itself computes portfolio targets
     const allocationResult = useMemo(() => {
         const brokerLiquidity = brokers.reduce((s, b) => {
             const alloc = b.liquidityAllocations || {};
@@ -124,13 +124,10 @@ const AggregateAllocationSection: React.FC = () => {
         });
     }, [portfolioCalcs, brokers, assetAllocationSettings]);
 
-    // Map portfolioId → configured target weight (%) from the engine result
-    // Fallback: if a portfolio is excluded or not configured, use its current actual weight
+    // Map portfolioId → configured target weight (%)
     const portfolioTargetWeightById = useMemo(() => {
         const map: Record<string, number> = {};
-        allocationResult.portfolios.forEach(r => {
-            map[r.portfolioId] = r.targetWeight; // % on eligibleTotal
-        });
+        allocationResult.portfolios.forEach(r => { map[r.portfolioId] = r.targetWeight; });
         return map;
     }, [allocationResult]);
 
@@ -151,13 +148,13 @@ const AggregateAllocationSection: React.FC = () => {
         return Array.from(cashMap.values());
     }, [portfolioCalcs]);
 
-    // All assets (quantity > 0), including cash — used to render all rows (even excluded ones in edit mode)
+    // All assets (quantity > 0) — used to render rows (including excluded in edit mode)
     const allVisibleAssets = useMemo(() => {
         const real = rawAggregateAssets.filter(a => a.quantity > 0 && !isCashTicker(a.ticker));
         return [...real, ...aggregateCashAssets].sort((a, b) => a.ticker.localeCompare(b.ticker));
     }, [rawAggregateAssets, aggregateCashAssets]);
 
-    // Only included assets — used for totals calculation
+    // Only included assets — used for totals and rebalance calculations
     const includedAssets = useMemo(
         () => allVisibleAssets.filter(a => !excludedTickers.includes(a.ticker)),
         [allVisibleAssets, excludedTickers]
@@ -174,7 +171,11 @@ const AggregateAllocationSection: React.FC = () => {
         [includedAssets, totalLiquidity]
     );
 
-    // Realized + distributions — computed on all transactions (global, not per-asset)
+    // Total value including the additional liquidity input
+    const liq = additionalLiquidity ?? 0;
+    const calcTotalValue = aggregateTotalValue + liq;
+
+    // Realized + distributions
     const { totalRealized, details: realizedDetails, totalCommissions: realizedCommissions, totalTax: realizedTax } = useMemo(
         () => calculateRealizedGains(transactions, brokers, assetSettings),
         [transactions, brokers, assetSettings]
@@ -200,27 +201,65 @@ const AggregateAllocationSection: React.FC = () => {
         );
     };
 
-    // Weighted target % per ticker — uses configured target weights from Asset Allocation engine.
-    // If a portfolio has no target configured (excluded/no config), it falls back to its current
-    // actual weight so it still contributes proportionally to the aggregate.
+    // Weighted target % per ticker (memoised map)
     const totalConfiguredWeight = useMemo(() => {
-        return portfolioCalcs.reduce((sum, pc) => {
-            const tw = portfolioTargetWeightById[pc.portfolio.id] ?? 0;
-            return sum + tw;
-        }, 0);
+        return portfolioCalcs.reduce((sum, pc) => sum + (portfolioTargetWeightById[pc.portfolio.id] ?? 0), 0);
     }, [portfolioCalcs, portfolioTargetWeightById]);
 
-    const weightedTargetFor = (ticker: string): number => {
-        // Normalise weights to sum to 100 in case the allocation engine leaves gaps
-        // (e.g. some portfolios excluded → their weight is 0 → sum < 100)
+    const weightedTargets = useMemo(() => {
         const normFactor = totalConfiguredWeight > 0 ? 100 / totalConfiguredWeight : 0;
-        return portfolioCalcs.reduce((sum, pc) => {
-            const tw = portfolioTargetWeightById[pc.portfolio.id] ?? 0;
-            const w = (tw * normFactor) / 100; // normalised 0-1
-            const tgt = (pc.portfolio.allocations || {})[ticker] || 0;
-            return sum + w * tgt;
-        }, 0);
-    };
+        const result: Record<string, number> = {};
+        allVisibleAssets.forEach(a => {
+            if (isCashTicker(a.ticker)) return;
+            result[a.ticker] = portfolioCalcs.reduce((sum, pc) => {
+                const tw = portfolioTargetWeightById[pc.portfolio.id] ?? 0;
+                const w = (tw * normFactor) / 100;
+                const tgt = (pc.portfolio.allocations || {})[a.ticker] || 0;
+                return sum + w * tgt;
+            }, 0);
+        });
+        return result;
+    }, [allVisibleAssets, portfolioCalcs, portfolioTargetWeightById, totalConfiguredWeight]);
+
+    // Buy-only allocations (largest remainder method on included non-cash assets)
+    const aggregateBuyOnlyAllocations = useMemo(() => {
+        if (liq <= 0) return {} as Record<string, number>;
+
+        const candidates = includedAssets
+            .filter(a => !isCashTicker(a.ticker))
+            .map(a => {
+                const tgt = weightedTargets[a.ticker] || 0;
+                const targetValue = calcTotalValue * (tgt / 100);
+                const gap = targetValue - a.currentValue;
+                const price = a.currentPrice || 0;
+                return { ticker: a.ticker, gap, price };
+            })
+            .filter(c => c.gap > 0 && c.price > 0);
+
+        const totalGap = candidates.reduce((s, c) => s + c.gap, 0);
+        if (totalGap <= 0) return {} as Record<string, number>;
+
+        const distribution = candidates.map(c => {
+            const rawAlloc = (c.gap / totalGap) * liq;
+            const idealShares = rawAlloc / c.price;
+            const flooredShares = Math.floor(idealShares);
+            return { ...c, shares: flooredShares, fraction: idealShares - flooredShares, cost: flooredShares * c.price };
+        });
+
+        let remaining = liq - distribution.reduce((s, d) => s + d.cost, 0);
+        const sortedIdx = distribution.map((_, i) => i).sort((a, b) => distribution[b].fraction - distribution[a].fraction);
+        for (const idx of sortedIdx) {
+            if (remaining >= distribution[idx].price) {
+                distribution[idx].shares += 1;
+                distribution[idx].cost += distribution[idx].price;
+                remaining -= distribution[idx].price;
+            }
+        }
+
+        const result: Record<string, number> = {};
+        distribution.forEach(d => { if (d.shares > 0) result[d.ticker] = d.shares * d.price; });
+        return result;
+    }, [includedAssets, liq, calcTotalValue, weightedTargets]);
 
     const excludedCount = excludedTickers.filter(t => allVisibleAssets.some(a => a.ticker === t)).length;
 
@@ -255,19 +294,31 @@ const AggregateAllocationSection: React.FC = () => {
                     <RealizedGainsModal isOpen={showRealizedModal} onClose={() => setShowRealizedModal(false)} title="Realized — Aggregate" details={realizedDetails} totalRealized={totalRealized} totalCommissions={realizedCommissions} totalTax={realizedTax} getLabel={getLabel} />
                     <CashFlowModal isOpen={showCashFlowModal} onClose={() => setShowCashFlowModal(false)} details={cashFlowDetails} totalDividends={totalDividends} totalCoupons={totalCoupons} totalIncome={totalIncome} getLabel={getLabel} />
                 </h3>
-                <button
-                    onClick={() => setIsEditing(e => !e)}
-                    style={{
-                        fontSize: '0.78rem', padding: '3px 10px', borderRadius: 'var(--radius-sm)',
-                        border: isEditing ? '1px solid rgba(148,163,184,0.5)' : '1px solid var(--border-color)',
-                        background: isEditing ? 'rgba(148,163,184,0.12)' : 'transparent',
-                        color: isEditing ? 'var(--text-primary)' : 'var(--text-muted)',
-                        cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
-                    }}
-                    title="Includi/escludi asset dal conteggio"
-                >
-                    {isEditing ? '✓ Fine' : `⚙ Filtra${excludedCount > 0 ? ` (${excludedCount} esclusi)` : ''}`}
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+                    <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                        <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Liquidity:</label>
+                        <input
+                            type="number"
+                            placeholder="0.00"
+                            value={additionalLiquidity !== undefined ? additionalLiquidity : ''}
+                            onChange={e => setAdditionalLiquidity(e.target.value === '' ? undefined : parseFloat(e.target.value))}
+                            style={{ borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', width: '100px', textAlign: 'right' }}
+                        />
+                    </div>
+                    <button
+                        onClick={() => setIsEditing(e => !e)}
+                        style={{
+                            fontSize: '0.78rem', padding: '3px 10px', borderRadius: 'var(--radius-sm)',
+                            border: isEditing ? '1px solid rgba(148,163,184,0.5)' : '1px solid var(--border-color)',
+                            background: isEditing ? 'rgba(148,163,184,0.12)' : 'transparent',
+                            color: isEditing ? 'var(--text-primary)' : 'var(--text-muted)',
+                            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
+                        }}
+                        title="Includi/escludi asset dal conteggio"
+                    >
+                        {isEditing ? '✓ Fine' : `⚙ Filtra${excludedCount > 0 ? ` (${excludedCount} esclusi)` : ''}`}
+                    </button>
+                </div>
             </div>
 
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
@@ -279,8 +330,12 @@ const AggregateAllocationSection: React.FC = () => {
                     <div style={{ width: '110px', textAlign: 'center' }}>Mkt Price</div>
                     <div style={{ width: '110px', textAlign: 'center' }}>Value</div>
                     <div style={{ width: '110px', textAlign: 'center' }}>Gain</div>
-                    <div style={{ width: '90px', textAlign: 'center' }}>Target (w)</div>
-                    <div style={{ width: '90px', textAlign: 'center' }}>Actual</div>
+                    <div style={{ width: '80px', textAlign: 'center' }}>Target (w)</div>
+                    <div style={{ width: '80px', textAlign: 'center' }}>Actual</div>
+                    <div style={{ width: '130px', textAlign: 'center' }}>Action</div>
+                    <div style={{ width: '80px', textAlign: 'center' }}>Post Act %</div>
+                    <div style={{ width: '130px', textAlign: 'center' }}>Buy Only</div>
+                    <div style={{ width: '80px', textAlign: 'center' }}>Post Buy %</div>
                 </div>
 
                 {allVisibleAssets.length === 0 ? (
@@ -292,8 +347,44 @@ const AggregateAllocationSection: React.FC = () => {
                         const setting = assetSettings.find(s => s.ticker === asset.ticker);
                         const assetClass = isCash ? 'Cash' : (setting?.assetClass || asset.assetClass || 'Stock');
                         const label = isCash ? (asset.label || asset.ticker) : (setting?.label || asset.label || asset.ticker);
-                        const currentPerc = aggregateTotalValue > 0 ? (asset.currentValue / aggregateTotalValue) * 100 : 0;
-                        const targetPerc = isCash ? 0 : weightedTargetFor(asset.ticker);
+
+                        // Use calcTotalValue (includes additional liquidity) for % calcs
+                        const currentPerc = calcTotalValue > 0 ? (asset.currentValue / calcTotalValue) * 100 : 0;
+                        const targetPerc = isCash ? 0 : (weightedTargets[asset.ticker] ?? 0);
+
+                        // Rebalance (full) — only for included, non-cash assets
+                        let rebalanceShares = 0;
+                        let rebalanceAmount = 0;
+                        let postRebalancePerc = currentPerc;
+
+                        if (!isCash && !isExcluded && calcTotalValue > 0) {
+                            const targetValue = calcTotalValue * (targetPerc / 100);
+                            const idealDiff = targetValue - asset.currentValue;
+                            const price = asset.currentPrice || 0;
+                            if (price > 0) {
+                                rebalanceShares = Math.round(idealDiff / price);
+                                rebalanceAmount = rebalanceShares * price;
+                            }
+                            const postValue = asset.currentValue + rebalanceAmount;
+                            postRebalancePerc = calcTotalValue > 0 ? (postValue / calcTotalValue) * 100 : 0;
+                        }
+
+                        // Buy-only — only for included, non-cash assets
+                        const buyOnlyAmountRaw = (!isCash && !isExcluded) ? (aggregateBuyOnlyAllocations[asset.ticker] || 0) : 0;
+                        let buyOnlyShares = 0;
+                        let buyOnlyAmount = 0;
+                        let projectedPerc = currentPerc;
+
+                        if (buyOnlyAmountRaw > 0) {
+                            const price = asset.currentPrice || 0;
+                            if (price > 0) {
+                                buyOnlyShares = Math.round(buyOnlyAmountRaw / price);
+                                buyOnlyAmount = buyOnlyAmountRaw;
+                            }
+                            const postBuyValue = asset.currentValue + buyOnlyAmount;
+                            projectedPerc = calcTotalValue > 0 ? (postBuyValue / calcTotalValue) * 100 : 0;
+                        }
+
                         return (
                             <AggregateRow
                                 key={asset.ticker}
@@ -309,6 +400,12 @@ const AggregateAllocationSection: React.FC = () => {
                                 gainPerc={asset.gainPercentage || 0}
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
+                                rebalanceAmount={rebalanceAmount}
+                                rebalanceShares={rebalanceShares}
+                                buyOnlyAmount={buyOnlyAmount}
+                                buyOnlyShares={buyOnlyShares}
+                                postRebalancePerc={postRebalancePerc}
+                                projectedPerc={projectedPerc}
                                 isEditing={isEditing}
                                 isExcluded={isExcluded}
                                 onToggleExclude={() => toggleExcluded(asset.ticker)}
@@ -334,12 +431,23 @@ interface AggregateRowProps {
     gainPerc: number;
     currentPerc: number;
     targetPerc: number;
+    rebalanceAmount: number;
+    rebalanceShares: number;
+    buyOnlyAmount: number;
+    buyOnlyShares: number;
+    postRebalancePerc: number;
+    projectedPerc: number;
     isEditing: boolean;
     isExcluded: boolean;
     onToggleExclude: () => void;
 }
 
-const AggregateRow: React.FC<AggregateRowProps> = ({ ticker, label, assetClass, isCash, quantity, averagePrice, currentPrice, currentValue, gain, gainPerc, currentPerc, targetPerc, isEditing, isExcluded, onToggleExclude }) => {
+const AggregateRow: React.FC<AggregateRowProps> = ({
+    ticker, label, assetClass, isCash, quantity, averagePrice, currentPrice, currentValue,
+    gain, gainPerc, currentPerc, targetPerc,
+    rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, postRebalancePerc, projectedPerc,
+    isEditing, isExcluded, onToggleExclude,
+}) => {
     const diff = currentPerc - targetPerc;
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf',
@@ -398,16 +506,60 @@ const AggregateRow: React.FC<AggregateRowProps> = ({ ticker, label, assetClass, 
                         </>
                     )}
                 </div>
-                <div style={{ width: '90px', textAlign: 'center' }}>
+                <div style={{ width: '80px', textAlign: 'center' }}>
                     {isCash ? <span style={{ color: 'var(--text-muted)' }}>-</span> : `${targetPerc.toFixed(1)}%`}
                 </div>
-                <div style={{ width: '90px', textAlign: 'center' }}>
+                <div style={{ width: '80px', textAlign: 'center' }}>
                     <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
                     {!isCash && targetPerc > 0 && (
                         <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
                             {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
                         </div>
                     )}
+                </div>
+                {/* Action (full rebalance) */}
+                <div style={{ width: '130px', textAlign: 'center' }}>
+                    {(isCash || isExcluded) ? (
+                        <span style={{ color: 'var(--text-muted)' }}>-</span>
+                    ) : (
+                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                            {rebalanceShares === 0 ? (
+                                <span className="trend-neutral">OK</span>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+                <div style={{ width: '80px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    {(isCash || isExcluded) ? '-' : `${postRebalancePerc.toFixed(1)}%`}
+                </div>
+                {/* Buy Only */}
+                <div style={{ width: '130px', textAlign: 'center' }}>
+                    {(isCash || isExcluded) ? (
+                        <span style={{ color: 'var(--text-muted)' }}>-</span>
+                    ) : (
+                        <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                            {buyOnlyShares === 0 ? (
+                                <span className="trend-neutral">-</span>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+                <div style={{ width: '80px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                    {(isCash || isExcluded) ? '-' : `${projectedPerc.toFixed(1)}%`}
                 </div>
             </div>
 
@@ -470,6 +622,36 @@ const AggregateRow: React.FC<AggregateRowProps> = ({ ticker, label, assetClass, 
                         </span>
                     </div>
                 </div>
+                {!isCash && !isExcluded && (rebalanceShares !== 0 || buyOnlyShares !== 0) && (
+                    <div className="mobile-actions">
+                        {rebalanceShares !== 0 && (
+                            <div className="mobile-action-box">
+                                <div className="mobile-action-title">Rebalance</div>
+                                <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {buyOnlyShares !== 0 && (
+                            <div className="mobile-action-box">
+                                <div className="mobile-action-title">Buy Only</div>
+                                <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </>
     );
