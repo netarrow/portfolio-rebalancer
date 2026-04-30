@@ -752,11 +752,11 @@ const GlobalRebalancingView: React.FC = () => {
                     gap: var(--space-6);
                 }
                 .aa-card {
-                    background: linear-gradient(180deg, rgba(30, 41, 59, 0.96), rgba(15, 23, 42, 0.96));
-                    border: 1px solid rgba(148, 163, 184, 0.16);
+                    background: var(--bg-surface);
+                    border: 1px solid var(--border-color);
                     border-radius: var(--radius-lg);
                     padding: var(--space-6);
-                    box-shadow: var(--shadow-md);
+                    box-shadow: var(--shadow-sm);
                 }
                 .aa-card h2, .aa-card h3 {
                     margin: 0 0 var(--space-2) 0;
@@ -776,8 +776,8 @@ const GlobalRebalancingView: React.FC = () => {
                 .aa-metric {
                     padding: var(--space-4);
                     border-radius: var(--radius-md);
-                    background: rgba(15, 23, 42, 0.72);
-                    border: 1px solid rgba(148, 163, 184, 0.12);
+                    background: var(--bg-app);
+                    border: 1px solid var(--border-color);
                 }
                 .aa-metric-label {
                     display: block;
@@ -838,7 +838,7 @@ const GlobalRebalancingView: React.FC = () => {
                     width: 100%;
                     border-radius: var(--radius-md);
                     border: 1px solid var(--border-color);
-                    background: rgba(15, 23, 42, 0.92);
+                    background: var(--bg-app);
                     color: var(--text-primary);
                     padding: var(--space-3);
                     font: inherit;
@@ -858,8 +858,8 @@ const GlobalRebalancingView: React.FC = () => {
                 .aa-readout {
                     padding: var(--space-3);
                     border-radius: var(--radius-md);
-                    background: rgba(15, 23, 42, 0.5);
-                    border: 1px solid rgba(148, 163, 184, 0.12);
+                    background: var(--bg-app);
+                    border: 1px solid var(--border-color);
                     font-weight: 600;
                 }
                 .aa-radio-group {
@@ -884,9 +884,9 @@ const GlobalRebalancingView: React.FC = () => {
                 }
                 .aa-group-item {
                     padding: var(--space-3) var(--space-4);
-                    border: 1px solid rgba(148, 163, 184, 0.18);
+                    border: 1px solid var(--border-color);
                     border-radius: var(--radius-md);
-                    background: rgba(15, 23, 42, 0.55);
+                    background: var(--bg-app);
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
@@ -930,7 +930,7 @@ const GlobalRebalancingView: React.FC = () => {
                 .aa-select {
                     border-radius: var(--radius-md);
                     border: 1px solid var(--border-color);
-                    background: rgba(15, 23, 42, 0.92);
+                    background: var(--bg-app);
                     color: var(--text-primary);
                     padding: var(--space-2) var(--space-3);
                     font: inherit;
@@ -979,10 +979,10 @@ const GlobalRebalancingView: React.FC = () => {
 
                 .aa-mobile-list { display: none; }
                 .aa-mobile-card {
-                    border: 1px solid rgba(148, 163, 184, 0.2);
+                    border: 1px solid var(--border-color);
                     border-radius: var(--radius-md);
                     padding: var(--space-4);
-                    background: rgba(15, 23, 42, 0.7);
+                    background: var(--bg-app);
                     display: flex;
                     flex-direction: column;
                     gap: var(--space-3);
@@ -997,10 +997,10 @@ const GlobalRebalancingView: React.FC = () => {
                     margin: 0;
                 }
                 .aa-mobile-metrics div {
-                    background: rgba(15, 23, 42, 0.5);
+                    background: var(--bg-card);
                     padding: var(--space-2);
                     border-radius: var(--radius-sm);
-                    border: 1px solid rgba(148, 163, 184, 0.12);
+                    border: 1px solid var(--border-color);
                 }
                 .aa-mobile-metrics dt { color: var(--text-secondary); font-size: 0.7rem; }
                 .aa-mobile-metrics dd { margin: 2px 0 0 0; font-size: 0.85rem; font-weight: 600; }
@@ -1019,7 +1019,7 @@ const GlobalRebalancingView: React.FC = () => {
                     gap: var(--space-3);
                     padding: var(--space-3) var(--space-4);
                     border-radius: var(--radius-md);
-                    background: rgba(15, 23, 42, 0.6);
+                    background: var(--bg-app);
                     border-left: 3px solid transparent;
                 }
                 .aa-action.buy { border-left-color: var(--color-success); }
