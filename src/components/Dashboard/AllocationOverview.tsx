@@ -3,6 +3,7 @@ import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission, calculateCashFlows } from '../../utils/portfolioCalculations';
+import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
 import { CashFlowModal } from './CashFlowModal';
@@ -81,7 +82,7 @@ const AllocationOverview: React.FC = () => {
 };
 
 const AggregateAllocationSection: React.FC = () => {
-    const { portfolios, brokers, transactions, assetSettings, marketData } = usePortfolio();
+    const { portfolios, brokers, transactions, assetSettings, marketData, assetAllocationSettings } = usePortfolio();
     const [excludedTickers, setExcludedTickers] = useLocalStorage<string[]>('aggregate-excluded-tickers', []);
     const [isEditing, setIsEditing] = useState(false);
 
@@ -90,7 +91,7 @@ const AggregateAllocationSection: React.FC = () => {
         [transactions, assetSettings, marketData]
     );
 
-    // Per-portfolio total values (needed for weighted targets and aggregated cash)
+    // Per-portfolio total values (needed for aggregated cash and as input to asset allocation engine)
     const portfolioCalcs = useMemo(() => {
         return portfolios.map(portfolio => {
             const pTxs = transactions.filter(t => t.portfolioId === portfolio.id);
@@ -100,9 +101,39 @@ const AggregateAllocationSection: React.FC = () => {
                 .filter(a => isCashTicker(a.ticker))
                 .reduce((s, a) => s + a.currentValue, 0);
             const totalValue = pSummary.totalValue + (portfolio.liquidity || 0) + cashAssetsValue;
-            return { portfolio, assets: pAssets, totalValue };
+            return { portfolio, assets: pAssets, totalValue, investedValue: pSummary.totalValue, portfolioLiquidity: portfolio.liquidity || 0 };
         });
     }, [portfolios, transactions, assetSettings, marketData, brokers]);
+
+    // Run the Asset Allocation engine to get configured target weights per portfolio
+    // This mirrors how the Asset Allocation section itself computes portfolio targets
+    const allocationResult = useMemo(() => {
+        const brokerLiquidity = brokers.reduce((s, b) => {
+            const alloc = b.liquidityAllocations || {};
+            return s + Object.values(alloc).reduce((a, v) => a + (v || 0), 0);
+        }, 0);
+        return calculateAssetAllocation({
+            portfolios: portfolioCalcs.map(pc => ({
+                portfolioId: pc.portfolio.id,
+                name: pc.portfolio.name,
+                currentInvestedValue: pc.investedValue,
+                currentPortfolioLiquidity: pc.portfolioLiquidity,
+                currentTotalValue: pc.totalValue,
+            })),
+            brokerLiquidity,
+            settings: assetAllocationSettings,
+        });
+    }, [portfolioCalcs, brokers, assetAllocationSettings]);
+
+    // Map portfolioId → configured target weight (%) from the engine result
+    // Fallback: if a portfolio is excluded or not configured, use its current actual weight
+    const portfolioTargetWeightById = useMemo(() => {
+        const map: Record<string, number> = {};
+        allocationResult.portfolios.forEach(r => {
+            map[r.portfolioId] = r.targetWeight; // % on eligibleTotal
+        });
+        return map;
+    }, [allocationResult]);
 
     // Aggregate cash assets across portfolios
     const aggregateCashAssets = useMemo<import('../../types').Asset[]>(() => {
@@ -170,11 +201,23 @@ const AggregateAllocationSection: React.FC = () => {
         );
     };
 
-    // Weighted target % per ticker — based on included total
-    const weightedTargetFor = (ticker: string): number => {
-        if (aggregateTotalValue <= 0) return 0;
+    // Weighted target % per ticker — uses configured target weights from Asset Allocation engine.
+    // If a portfolio has no target configured (excluded/no config), it falls back to its current
+    // actual weight so it still contributes proportionally to the aggregate.
+    const totalConfiguredWeight = useMemo(() => {
         return portfolioCalcs.reduce((sum, pc) => {
-            const w = pc.totalValue / aggregateTotalValue;
+            const tw = portfolioTargetWeightById[pc.portfolio.id] ?? 0;
+            return sum + tw;
+        }, 0);
+    }, [portfolioCalcs, portfolioTargetWeightById]);
+
+    const weightedTargetFor = (ticker: string): number => {
+        // Normalise weights to sum to 100 in case the allocation engine leaves gaps
+        // (e.g. some portfolios excluded → their weight is 0 → sum < 100)
+        const normFactor = totalConfiguredWeight > 0 ? 100 / totalConfiguredWeight : 0;
+        return portfolioCalcs.reduce((sum, pc) => {
+            const tw = portfolioTargetWeightById[pc.portfolio.id] ?? 0;
+            const w = (tw * normFactor) / 100; // normalised 0-1
             const tgt = (pc.portfolio.allocations || {})[ticker] || 0;
             return sum + w * tgt;
         }, 0);
