@@ -26,6 +26,8 @@ const TransactionList: React.FC = () => {
     const [editingId, setEditingId] = useState<string | null>(null);
     const [editForm, setEditForm] = useState<Transaction | null>(null);
     const [editMarketPrice, setEditMarketPrice] = useState<number | undefined>(undefined);
+    const [editAmountStr, setEditAmountStr] = useState<string>('');
+    const [editPriceStr, setEditPriceStr] = useState<string>('');
 
     const getAssetPrice = (ticker: string) => {
         const asset = assets.find(a => a.ticker === ticker);
@@ -93,17 +95,28 @@ const TransactionList: React.FC = () => {
         setEditingId(tx.id);
         setEditForm({ ...tx });
         setEditMarketPrice(getAssetPrice(tx.ticker));
+        setEditAmountStr(String(tx.amount));
+        setEditPriceStr(String(tx.price));
     };
 
     const cancelEditing = () => {
         setEditingId(null);
         setEditForm(null);
         setEditMarketPrice(undefined);
+        setEditAmountStr('');
+        setEditPriceStr('');
     };
 
     const saveEditing = () => {
         if (editForm) {
-            updateTransaction(editForm);
+            const parsedAmount = parseFloat(editAmountStr.replace(',', '.'));
+            const parsedPrice = parseFloat(editPriceStr.replace(',', '.'));
+            const formToSave = {
+                ...editForm,
+                amount: isNaN(parsedAmount) ? editForm.amount : parsedAmount,
+                price: isNaN(parsedPrice) ? editForm.price : parsedPrice,
+            };
+            updateTransaction(formToSave);
 
             // Allow manual overwrite of market price
             if (editMarketPrice !== undefined && !isNaN(editMarketPrice) && editMarketPrice > 0) {
@@ -114,6 +127,8 @@ const TransactionList: React.FC = () => {
             setEditingId(null);
             setEditForm(null);
             setEditMarketPrice(undefined);
+            setEditAmountStr('');
+            setEditPriceStr('');
         }
     };
 
@@ -304,18 +319,20 @@ const TransactionList: React.FC = () => {
                                 </td>
                                 <td>
                                     <input
-                                        type="number"
-                                        value={editForm.amount}
-                                        onChange={e => handleEditChange('amount', Number(e.target.value))}
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editAmountStr}
+                                        onChange={e => setEditAmountStr(e.target.value)}
                                         className="edit-input"
                                         style={{ width: '60px' }}
                                     />
                                 </td>
                                 <td>
                                     <input
-                                        type="number"
-                                        value={editForm.price}
-                                        onChange={e => handleEditChange('price', Number(e.target.value))}
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editPriceStr}
+                                        onChange={e => setEditPriceStr(e.target.value)}
                                         className="edit-input"
                                         style={{ width: '80px' }}
                                     />
@@ -516,18 +533,20 @@ const TransactionList: React.FC = () => {
                                 <div className="mobile-edit-field">
                                     <label className="detail-label">Qty</label>
                                     <input
-                                        type="number"
-                                        value={editForm.amount}
-                                        onChange={e => handleEditChange('amount', Number(e.target.value))}
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editAmountStr}
+                                        onChange={e => setEditAmountStr(e.target.value)}
                                         className="edit-input"
                                     />
                                 </div>
                                 <div className="mobile-edit-field">
                                     <label className="detail-label">Price (Exec)</label>
                                     <input
-                                        type="number"
-                                        value={editForm.price}
-                                        onChange={e => handleEditChange('price', Number(e.target.value))}
+                                        type="text"
+                                        inputMode="decimal"
+                                        value={editPriceStr}
+                                        onChange={e => setEditPriceStr(e.target.value)}
                                         className="edit-input"
                                     />
                                 </div>
