@@ -19,6 +19,7 @@ export interface SyncPayload {
     macroAllocations: MacroAllocation;
     goalAllocations: GoalAllocation;
     goals: Goal[];
+    aggregateExcludedTickers?: string[];
 }
 
 const PBKDF2_ITERATIONS = 100000;
