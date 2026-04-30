@@ -82,8 +82,7 @@ const AllocationOverview: React.FC = () => {
 };
 
 const AggregateAllocationSection: React.FC = () => {
-    const { portfolios, brokers, transactions, assetSettings, marketData, assetAllocationSettings } = usePortfolio();
-    const [excludedTickers, setExcludedTickers] = useLocalStorage<string[]>('aggregate-excluded-tickers', []);
+    const { portfolios, brokers, transactions, assetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers } = usePortfolio();
     const [isEditing, setIsEditing] = useState(false);
 
     const { assets: rawAggregateAssets, summary } = useMemo(
