@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets } from '../../utils/portfolioCalculations';
+import { calculateAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import {
     calculateAssetAllocation,
     type AssetAllocationAction,
@@ -14,6 +14,7 @@ import type {
     RatioGroupConfig,
     RatioGroupTargetMode
 } from '../../types';
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -70,6 +71,44 @@ const groupModeLabels: Record<RatioGroupTargetMode, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Projected allocation chart helpers
+// ---------------------------------------------------------------------------
+
+const CLASS_COLORS: Record<string, string> = {
+    Stock:     '#3B82F6',
+    Bond:      '#10B981',
+    Commodity: '#F59E0B',
+    Crypto:    '#8B5CF6',
+    Cash:      '#6B7280',
+};
+const DEFAULT_CLASS_COLOR = '#9CA3AF';
+const RADIAN = Math.PI / 180;
+
+const renderProjectedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
+    if (percent < 0.05) return null;
+    const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+    return (
+        <text x={x} y={y} fill="white" textAnchor={x > cx ? 'start' : 'end'} dominantBaseline="central" fontSize={11} style={{ pointerEvents: 'none' }}>
+            {`${(percent * 100).toFixed(0)}%`}
+        </text>
+    );
+};
+
+const ProjectedTooltip = ({ active, payload }: any) => {
+    if (!active || !payload?.length) return null;
+    const d = payload[0].payload;
+    return (
+        <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', padding: '0.5rem 0.75rem', fontSize: '0.82rem', lineHeight: 1.5 }}>
+            <strong>{d.name}</strong><br />
+            €{d.value.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}<br />
+            {d.percent != null ? `${(d.percent * 100).toFixed(1)}%` : ''}
+        </div>
+    );
+};
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -117,6 +156,72 @@ const GlobalRebalancingView: React.FC = () => {
             }),
         [portfolioInputs, brokerLiquidity, assetAllocationSettings]
     );
+
+    // Simulation: projected asset class allocation after all suggested actions
+    const projectedClassData = useMemo(() => {
+        const projected: Record<string, number> = {};
+
+        for (const pResult of result.portfolios) {
+            if (pResult.mode === 'excluded') continue;
+
+            const portfolio = portfolios.find(p => p.id === pResult.portfolioId);
+            if (!portfolio) continue;
+
+            const pTxs = transactions.filter(t => t.portfolioId === pResult.portfolioId);
+            const { assets } = calculateAssets(pTxs, assetSettings, marketData);
+
+            const classValues: Record<string, number> = {};
+            for (const asset of assets) {
+                if (asset.currentValue <= 0) continue;
+                const cls = isCashTicker(asset.ticker) ? 'Cash' : (asset.assetClass || 'Other');
+                classValues[cls] = (classValues[cls] || 0) + asset.currentValue;
+            }
+
+            const liquidity = Number.isFinite(portfolio.liquidity) ? (portfolio.liquidity || 0) : 0;
+            if (liquidity > 0) {
+                classValues['Cash'] = (classValues['Cash'] || 0) + liquidity;
+            }
+
+            const scale = pResult.currentValue > 0 ? pResult.targetValue / pResult.currentValue : 1;
+            for (const [cls, val] of Object.entries(classValues)) {
+                projected[cls] = (projected[cls] || 0) + val * scale;
+            }
+        }
+
+        // Projected broker liquidity: when a Liquidity Target is configured, use its
+        // resolved value (fixed EUR or % of eligible total). Otherwise fall back to
+        // current broker liquidity. This matches the engine's own liquidityBudget logic.
+        let projectedBrokerCash: number;
+        const liqTarget = assetAllocationSettings.liquidityTarget;
+        if (liqTarget) {
+            const eligibleTotal = result.portfolios.reduce((s, p) => s + p.currentValue, 0) + brokerLiquidity;
+            projectedBrokerCash = liqTarget.mode === 'fixed'
+                ? Math.max(0, liqTarget.value)
+                : (Math.max(0, liqTarget.value) / 100) * eligibleTotal;
+        } else {
+            projectedBrokerCash = brokerLiquidity;
+        }
+        if (projectedBrokerCash > 0) {
+            projected['Cash'] = (projected['Cash'] || 0) + projectedBrokerCash;
+        }
+
+        const total = Object.values(projected).reduce((s, v) => s + v, 0);
+        if (total <= 0) return [];
+
+        return Object.entries(projected)
+            .filter(([, v]) => v > 0)
+            .map(([name, value]) => ({ name, value, percent: value / total, color: CLASS_COLORS[name] ?? DEFAULT_CLASS_COLOR }))
+            .sort((a, b) => b.value - a.value);
+    }, [result.portfolios, portfolios, transactions, assetSettings, marketData, brokerLiquidity, assetAllocationSettings.liquidityTarget]);
+
+    const [projectedIncludeCash, setProjectedIncludeCash] = useState(true);
+    const projectedChartData = useMemo(() => {
+        const filtered = projectedIncludeCash
+            ? projectedClassData
+            : projectedClassData.filter(d => d.name !== 'Cash');
+        const total = filtered.reduce((s, d) => s + d.value, 0);
+        return filtered.map(d => ({ ...d, percent: total > 0 ? d.value / total : 0 }));
+    }, [projectedClassData, projectedIncludeCash]);
 
     // --- Liquidity target handlers ---
     const liquidityTarget = assetAllocationSettings.liquidityTarget;
@@ -712,15 +817,55 @@ const GlobalRebalancingView: React.FC = () => {
                 {result.actions.length === 0 ? (
                     <p className="aa-muted">Portfolio is aligned to targets ✓</p>
                 ) : (
-                    <ul className="aa-actions-list">
-                        {result.actions.map((a, i) => (
-                            <li key={i} className={`aa-action ${actionClass(a)}`}>
-                                <span className="aa-action-icon">{actionIcon(a)}</span>
-                                <span className="aa-action-text">{actionLabel(a)}</span>
-                                <strong className="aa-action-amount">{formatCurrency(a.amount)}</strong>
-                            </li>
-                        ))}
-                    </ul>
+                    <div className="aa-actions-row">
+                        <ul className="aa-actions-list aa-actions-list--flex">
+                            {result.actions.map((a, i) => (
+                                <li key={i} className={`aa-action ${actionClass(a)}`}>
+                                    <span className="aa-action-icon">{actionIcon(a)}</span>
+                                    <span className="aa-action-text">{actionLabel(a)}</span>
+                                    <strong className="aa-action-amount">{formatCurrency(a.amount)}</strong>
+                                </li>
+                            ))}
+                        </ul>
+                        {projectedClassData.length > 0 && (
+                            <div className="aa-projected-chart">
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', marginBottom: 'var(--space-2)' }}>
+                                    <p className="aa-projected-chart__label" style={{ margin: 0 }}>Projected allocation</p>
+                                    <button
+                                        onClick={() => setProjectedIncludeCash(v => !v)}
+                                        style={{
+                                            fontSize: '0.75rem', padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-md)',
+                                            border: '1px solid var(--border-color)',
+                                            backgroundColor: projectedIncludeCash ? 'var(--color-primary)' : 'var(--bg-input)',
+                                            color: projectedIncludeCash ? '#fff' : 'var(--text-muted)',
+                                            cursor: 'pointer', fontWeight: 500, transition: 'all 0.2s', whiteSpace: 'nowrap',
+                                        }}
+                                    >{projectedIncludeCash ? '+ Cash' : 'Invested only'}</button>
+                                </div>
+                                <ResponsiveContainer width="100%" height={200}>
+                                    <PieChart key={projectedIncludeCash ? 'with-cash' : 'no-cash'}>
+                                        <Pie
+                                            data={projectedChartData}
+                                            dataKey="value"
+                                            nameKey="name"
+                                            cx="50%"
+                                            cy="50%"
+                                            labelLine={false}
+                                            label={renderProjectedLabel}
+                                            outerRadius={72}
+                                            isAnimationActive={false}
+                                        >
+                                            {projectedChartData.map((entry) => (
+                                                <Cell key={`cell-${entry.name}`} fill={entry.color} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip content={<ProjectedTooltip />} />
+                                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: '11px', paddingTop: '4px' }} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                        )}
+                    </div>
                 )}
             </section>
 
@@ -1005,6 +1150,11 @@ const GlobalRebalancingView: React.FC = () => {
                 .aa-mobile-metrics dt { color: var(--text-secondary); font-size: 0.7rem; }
                 .aa-mobile-metrics dd { margin: 2px 0 0 0; font-size: 0.85rem; font-weight: 600; }
 
+                .aa-actions-row {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: var(--space-6);
+                }
                 .aa-actions-list {
                     list-style: none;
                     padding: 0;
@@ -1012,6 +1162,21 @@ const GlobalRebalancingView: React.FC = () => {
                     display: flex;
                     flex-direction: column;
                     gap: var(--space-2);
+                }
+                .aa-actions-list--flex {
+                    flex: 1;
+                    min-width: 0;
+                }
+                .aa-projected-chart {
+                    flex: 0 0 260px;
+                    width: 260px;
+                }
+                .aa-projected-chart__label {
+                    margin: 0 0 var(--space-2) 0;
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                    color: var(--text-secondary);
+                    text-align: center;
                 }
                 .aa-action {
                     display: flex;
@@ -1058,6 +1223,8 @@ const GlobalRebalancingView: React.FC = () => {
                     .aa-card { padding: var(--space-4); }
                     .aa-page { gap: var(--space-4); }
                     .aa-metrics { grid-template-columns: 1fr 1fr; }
+                    .aa-actions-row { flex-direction: column; }
+                    .aa-projected-chart { flex: none; width: 100%; }
                 }
                 @media (max-width: 430px) {
                     .aa-table-scroll { display: none; }
