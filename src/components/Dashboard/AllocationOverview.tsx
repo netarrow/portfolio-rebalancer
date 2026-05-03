@@ -17,7 +17,7 @@ const GOAL_COLOR_PALETTE = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899
 
 
 const AllocationOverview: React.FC = () => {
-    const { portfolios, brokers, transactions, assetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals } = usePortfolio();
+    const { portfolios, brokers, transactions, assetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals, goalModeTargets: storedGoalModeTargets, setGoalModeTargets } = usePortfolio();
 
     // Goals sorted by order, with assigned colors
     const goalItems = useMemo<GoalItem[]>(() => {
@@ -54,30 +54,21 @@ const AllocationOverview: React.FC = () => {
         [currentGoalValues]
     );
 
-    // Target allocations state: goalId → %, initialised to equal split
-    const [targetGoalAllocs, setTargetGoalAllocs] = useState<Record<string, number>>(() => {
-        if (rawGoals.length === 0) return {};
-        const equalPct = parseFloat((100 / rawGoals.length).toFixed(2));
-        const allocs: Record<string, number> = {};
-        rawGoals.forEach((g, i) => {
-            allocs[g.id] = i < rawGoals.length - 1 ? equalPct : 100 - equalPct * (rawGoals.length - 1);
-        });
-        return allocs;
-    });
-
-    // If goals change (e.g. new goal added), reinitialise missing keys
+    // Target allocations: persisted via context (localStorage + Azure sync).
+    // If goals change and stored targets are missing/incomplete, reinitialise to equal split.
     useEffect(() => {
-        setTargetGoalAllocs(prev => {
-            const hasAll = goalItems.every(g => g.id in prev);
-            if (hasAll) return prev;
-            const equalPct = parseFloat((100 / goalItems.length).toFixed(2));
-            const allocs: Record<string, number> = {};
-            goalItems.forEach((g, i) => {
-                allocs[g.id] = i < goalItems.length - 1 ? equalPct : 100 - equalPct * (goalItems.length - 1);
-            });
-            return allocs;
+        const hasAll = goalItems.length > 0 && goalItems.every(g => g.id in storedGoalModeTargets);
+        if (hasAll) return;
+        if (goalItems.length === 0) return;
+        const equalPct = parseFloat((100 / goalItems.length).toFixed(2));
+        const allocs: Record<string, number> = {};
+        goalItems.forEach((g, i) => {
+            allocs[g.id] = i < goalItems.length - 1 ? equalPct : 100 - equalPct * (goalItems.length - 1);
         });
-    }, [goalItems]);
+        setGoalModeTargets(allocs);
+    }, [goalItems, storedGoalModeTargets, setGoalModeTargets]);
+
+    const targetGoalAllocs = storedGoalModeTargets;
 
     // Split portfolios into groups (parent + children) and standalones
     const { groups, standalones } = useMemo(() => {
@@ -144,7 +135,7 @@ const AllocationOverview: React.FC = () => {
                         <GoalRebalanceWidget
                             goals={goalItems}
                             targetAllocs={targetGoalAllocs}
-                            onTargetChange={setTargetGoalAllocs}
+                            onTargetChange={setGoalModeTargets}
                             currentGoalValues={currentGoalValues}
                             totalCurrentValue={goalsTotalValue}
                         />
@@ -380,42 +371,100 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
     }, [portfolioCalcs]);
 
     /**
-     * Tickers that must NOT receive buy suggestions:
-     * assets belonging exclusively to portfolios configured as 'locked' or 'excluded'
-     * in the Asset Allocation settings.
+     * Portfolio ids configured as 'locked' or 'excluded' in Asset Allocation settings.
+     * These portfolios are off-limits for both buy and sell suggestions.
      */
-    const doNotBuyTickers = useMemo<Set<string>>(() => {
-        const lockedIds = new Set<string>();
+    const lockedPortfolioIds = useMemo<Set<string>>(() => {
+        const ids = new Set<string>();
         Object.entries(assetAllocationSettings?.portfolioTargets ?? {}).forEach(([pid, t]) => {
-            if (t.mode === 'locked' || t.mode === 'excluded') lockedIds.add(pid);
+            if (t.mode === 'locked' || t.mode === 'excluded') ids.add(pid);
         });
-        if (lockedIds.size === 0) return new Set();
+        return ids;
+    }, [assetAllocationSettings]);
 
+    /**
+     * Tickers frozen by Asset Allocation constraints: assets belonging exclusively
+     * to locked/excluded portfolios. Off-limits for BOTH buy and sell suggestions.
+     */
+    const frozenTickers = useMemo<Set<string>>(() => {
+        if (lockedPortfolioIds.size === 0) return new Set();
         const tickers = new Set<string>();
         portfolioCalcs.forEach(pc => {
-            if (!lockedIds.has(pc.portfolio.id)) return;
+            if (!lockedPortfolioIds.has(pc.portfolio.id)) return;
             pc.assets.filter(a => !isCashTicker(a.ticker) && a.quantity > 0).forEach(a => {
-                // Only block if the ticker doesn't also appear in a non-locked portfolio
                 const appearsElsewhere = portfolioCalcs.some(
-                    other => !lockedIds.has(other.portfolio.id) &&
+                    other => !lockedPortfolioIds.has(other.portfolio.id) &&
                              other.assets.some(oa => oa.ticker === a.ticker && oa.quantity > 0)
                 );
                 if (!appearsElsewhere) tickers.add(a.ticker);
             });
         });
         return tickers;
-    }, [portfolioCalcs, assetAllocationSettings]);
+    }, [portfolioCalcs, lockedPortfolioIds]);
+
+    /**
+     * Cash assets grouped by goalId, excluding cash held in locked/excluded
+     * portfolios and excluding tickers the user has manually excluded from the
+     * aggregate. Used to drain own-goal cash first when a goal must shrink.
+     */
+    const cashByGoal = useMemo<Record<string, { ticker: string; value: number }[]>>(() => {
+        const map: Record<string, Record<string, number>> = {};
+        portfolioCalcs.forEach(pc => {
+            if (lockedPortfolioIds.has(pc.portfolio.id)) return;
+            const gid = pc.portfolio.goalId;
+            if (!gid) return;
+            pc.assets
+                .filter(a => isCashTicker(a.ticker) && a.currentValue > 0 && !excludedTickers.includes(a.ticker))
+                .forEach(a => {
+                    if (!map[gid]) map[gid] = {};
+                    map[gid][a.ticker] = (map[gid][a.ticker] ?? 0) + a.currentValue;
+                });
+        });
+        const result: Record<string, { ticker: string; value: number }[]> = {};
+        Object.entries(map).forEach(([gid, byTicker]) => {
+            result[gid] = Object.entries(byTicker).map(([ticker, value]) => ({ ticker, value }));
+        });
+        return result;
+    }, [portfolioCalcs, lockedPortfolioIds, excludedTickers]);
+
+    /**
+     * Non-cash value actually held within each goal (per-portfolio aware).
+     * goalId → ticker → € summed across non-locked portfolios that belong to
+     * the goal. A ticker can appear under multiple goals when it's held in
+     * portfolios with different goalIds — each goal only sees its own slice.
+     * Frozen and user-excluded tickers are filtered out.
+     */
+    const nonCashValueByGoal = useMemo<Record<string, Record<string, number>>>(() => {
+        const map: Record<string, Record<string, number>> = {};
+        portfolioCalcs.forEach(pc => {
+            if (lockedPortfolioIds.has(pc.portfolio.id)) return;
+            const gid = pc.portfolio.goalId;
+            if (!gid) return;
+            pc.assets
+                .filter(a => !isCashTicker(a.ticker) && a.quantity > 0
+                    && !excludedTickers.includes(a.ticker)
+                    && !frozenTickers.has(a.ticker))
+                .forEach(a => {
+                    if (!map[gid]) map[gid] = {};
+                    map[gid][a.ticker] = (map[gid][a.ticker] ?? 0) + a.currentValue;
+                });
+        });
+        return map;
+    }, [portfolioCalcs, lockedPortfolioIds, excludedTickers, frozenTickers]);
 
     /**
      * Goal-Rebalance allocations.
-     * Uses available liquidity (Liquidity input) first; only sells assets for the remainder.
      *
      * postTotal = aggregateTotalValue + liq
-     * sum(gaps) = liq  →  total_buy − total_sell = liq
+     * gap_per_goal = target€ − current€  →  Σ gaps = liq
      *
-     * When liq = 0: pure rebalance (buys funded entirely by sells, net = 0).
-     * When liq > 0: liquidity absorbs positive gaps first; sells only cover what liquidity can't.
-     * When liq ≥ total_buy_needed: no selling required at all.
+     * For each goal with gap < 0 (must shrink): drain own-goal cash FIRST, then
+     * (only if needed) sell own-goal non-cash proportional to currentValue.
+     * For each goal with gap > 0 (must grow): buy non-frozen assets of that goal
+     * proportional to weightedTargets.
+     *
+     * Frozen tickers (assets exclusively in locked/excluded portfolios) and cash
+     * sitting in locked portfolios are completely off-limits.
      *
      * Returns: ticker → € signed (positive = buy, negative = sell).
      */
@@ -423,10 +472,8 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
         const goalIds = Object.keys(goalModeTargets);
         if (goalIds.length === 0) return {};
 
-        // Total after deploying available liquidity
         const postTotal = aggregateTotalValue + liq;
 
-        // Gap per goal (€) — positive gaps are partly/fully funded by liq
         const goalGaps: Record<string, number> = {};
         goalIds.forEach(gid => {
             const targetEur = ((goalModeTargets[gid] ?? 0) / 100) * postTotal;
@@ -434,89 +481,94 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
             goalGaps[gid] = targetEur - currentEur;
         });
 
-        const nonCashIncluded = includedAssets.filter(a => !isCashTicker(a.ticker));
-        const cashIncluded    = includedAssets.filter(a =>  isCashTicker(a.ticker));
+        const result: Record<string, number> = {};
+        const addToResult = (ticker: string, eur: number) => {
+            if (!Number.isFinite(eur) || eur === 0) return;
+            result[ticker] = (result[ticker] ?? 0) + eur;
+        };
 
-        // Group non-cash assets by goal id via portfolio membership
-        const assetsByGoal: Record<string, typeof nonCashIncluded> = {};
-        nonCashIncluded.forEach(a => {
-            const gid = tickerToGoalId[a.ticker];
-            if (!gid) return;
-            if (!assetsByGoal[gid]) assetsByGoal[gid] = [];
-            assetsByGoal[gid].push(a);
-        });
+        // Largest-remainder distribution: split |target| € across items in integer
+        // shares, then redistribute leftover € to the items with the highest
+        // fractional residue. Guarantees Σ shares*price ≈ |target| (loss ≤ price).
+        type LRMItem = { ticker: string; weight: number; price: number };
+        const distributeLRM = (signedTarget: number, items: LRMItem[]) => {
+            const filtered = items.filter(i => i.price > 0);
+            if (filtered.length === 0 || Math.abs(signedTarget) < 0.5) return;
+            const sign = signedTarget > 0 ? 1 : -1;
+            const absTarget = Math.abs(signedTarget);
+            const totalWeight = filtered.reduce((s, i) => s + i.weight, 0);
+            const useEqual = totalWeight <= 0;
 
-        const rawAmounts: Record<string, number> = {}; // ticker → € (signed)
+            const dist = filtered.map(i => {
+                const ideal = useEqual ? absTarget / filtered.length : absTarget * (i.weight / totalWeight);
+                const idealShares = ideal / i.price;
+                const flooredShares = Math.floor(idealShares);
+                return { ticker: i.ticker, price: i.price, shares: flooredShares, fraction: idealShares - flooredShares };
+            });
+
+            let remaining = absTarget - dist.reduce((s, d) => s + d.shares * d.price, 0);
+            const sortedIdx = dist.map((_, i) => i).sort((a, b) => dist[b].fraction - dist[a].fraction);
+            for (const idx of sortedIdx) {
+                if (remaining >= dist[idx].price) {
+                    dist[idx].shares += 1;
+                    remaining -= dist[idx].price;
+                }
+            }
+            dist.forEach(d => {
+                if (d.shares > 0) addToResult(d.ticker, sign * d.shares * d.price);
+            });
+        };
 
         goalIds.forEach(gid => {
             const gap = goalGaps[gid] ?? 0;
             if (Math.abs(gap) < 1) return;
-            const assets = assetsByGoal[gid] ?? [];
-            if (assets.length === 0) return;
+
+            // Per-goal non-cash slice: each ticker appears with the € value held
+            // by this goal's portfolios only (non-locked, non-frozen).
+            const goalNonCash = nonCashValueByGoal[gid] ?? {};
+            const assets = Object.entries(goalNonCash).map(([ticker, valueInGoal]) => {
+                const a = includedAssets.find(x => x.ticker === ticker);
+                return { ticker, valueInGoal, price: a?.currentPrice || 0 };
+            }).filter(a => a.price > 0);
 
             if (gap > 0) {
-                // Buy: proportional to weightedTargets, skipping locked/excluded tickers
-                const buyableAssets = assets.filter(a => !doNotBuyTickers.has(a.ticker));
-                const totalWeight = buyableAssets.reduce((s, a) => s + (weightedTargets[a.ticker] ?? 0), 0);
-                if (totalWeight > 0) {
-                    buyableAssets.forEach(a => {
-                        rawAmounts[a.ticker] = (rawAmounts[a.ticker] ?? 0) + gap * ((weightedTargets[a.ticker] ?? 0) / totalWeight);
-                    });
-                } else if (buyableAssets.length > 0) {
-                    buyableAssets.forEach(a => {
-                        rawAmounts[a.ticker] = (rawAmounts[a.ticker] ?? 0) + gap / buyableAssets.length;
-                    });
-                }
+                // Buy: LRM proportional to current value held in the goal.
+                // Asset Allocation target % is intentionally NOT used here — the
+                // goal % targets take priority; only lock/excluded constraints
+                // (already filtered into `assets`) are respected.
+                distributeLRM(gap, assets.map(a => ({
+                    ticker: a.ticker, weight: a.valueInGoal, price: a.price,
+                })));
             } else {
-                // Sell non-cash: proportional to current value (may be scaled down below)
-                const totalCurrent = assets.reduce((s, a) => s + a.currentValue, 0);
-                if (totalCurrent > 0) {
-                    assets.forEach(a => {
-                        rawAmounts[a.ticker] = (rawAmounts[a.ticker] ?? 0) + gap * (a.currentValue / totalCurrent);
+                // Sell: drain own-goal cash first (cash is fungible, exact €)
+                let remaining = -gap;
+                const cashAssets = cashByGoal[gid] ?? [];
+                const totalCashInGoal = cashAssets.reduce((s, c) => s + c.value, 0);
+                if (totalCashInGoal > 0) {
+                    const cashSell = Math.min(remaining, totalCashInGoal);
+                    cashAssets.forEach(c => {
+                        const amt = cashSell * (c.value / totalCashInGoal);
+                        addToResult(c.ticker, -Math.round(amt));
                     });
+                    remaining -= cashSell;
+                }
+                // Residual: sell own-goal non-cash via LRM proportional to value-in-goal
+                if (remaining > 0.5) {
+                    distributeLRM(-remaining, assets.map(a => ({
+                        ticker: a.ticker, weight: a.valueInGoal, price: a.price,
+                    })));
                 }
             }
         });
 
-        // ── Cash-first priority ───────────────────────────────────────────────
-        // Cash positions (broker allocations, short-term bond ETFs tagged Cash)
-        // are sold BEFORE any equity/bond asset.  They represent deployable
-        // liquidity and should always be listed as "Sell" here, independent of
-        // the external Liquidity field (which adds new external money).
-        const totalCashPool = cashIncluded.reduce((s, a) => s + a.currentValue, 0);
-        if (totalCashPool > 0) {
-            const totalNonCashSell = Object.values(rawAmounts)
-                .reduce((s, v) => (v < 0 ? s + Math.abs(v) : s), 0);
-
-            // How much of the non-cash selling can be replaced by cash?
-            const cashToSell = Math.min(totalCashPool, totalNonCashSell);
-
-            if (cashToSell > 0) {
-                // Scale down every non-cash sell proportionally
-                const keepFraction = 1 - cashToSell / totalNonCashSell;
-                Object.keys(rawAmounts).forEach(ticker => {
-                    if (rawAmounts[ticker] < 0) rawAmounts[ticker] *= keepFraction;
-                });
-
-                // Distribute cash sells across cash assets proportionally by value
-                cashIncluded.forEach(a => {
-                    rawAmounts[a.ticker] = -(cashToSell * (a.currentValue / totalCashPool));
-                });
-            }
-        }
-
-        // Convert to integer shares (floor toward zero)
-        const result: Record<string, number> = {};
-        Object.entries(rawAmounts).forEach(([ticker, rawEur]) => {
-            const asset = includedAssets.find(a => a.ticker === ticker);
-            const price = asset?.currentPrice ?? 0;
-            if (price <= 0 || Math.abs(rawEur) < price * 0.5) return;
-            const shares = rawEur > 0 ? Math.floor(rawEur / price) : Math.ceil(rawEur / price);
-            if (shares !== 0) result[ticker] = shares * price;
+        // Drop sub-€ noise
+        const cleaned: Record<string, number> = {};
+        Object.entries(result).forEach(([ticker, eur]) => {
+            if (Math.abs(eur) >= 1) cleaned[ticker] = eur;
         });
-        return result;
+        return cleaned;
     }, [goalModeTargets, aggregateTotalValue, liq, currentGoalValuesInAggregate,
-        includedAssets, weightedTargets, tickerToGoalId]);
+        includedAssets, cashByGoal, nonCashValueByGoal]);
 
     return (
         <div className="allocation-card" style={{ border: '1.5px dashed rgba(148,163,184,0.45)', background: 'var(--bg-surface)' }}>
