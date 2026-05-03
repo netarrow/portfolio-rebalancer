@@ -42,11 +42,13 @@ interface DistributionRowProps {
     assets: Asset[];
     portfolio?: import('../../types').Portfolio;
     assetSettings?: import('../../types').AssetDefinition[];
+    showCashToggle?: boolean;
 }
 
-const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfolio, assetSettings }) => {
+const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfolio, assetSettings, showCashToggle }) => {
     // Colors (consistent palette)
     const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
+    const [includeCash, setIncludeCash] = useState(true);
 
     // Target Calculation (By Class)
     const targetClassData = useMemo(() => {
@@ -69,36 +71,46 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
     // 1. Group by Asset Class
     const classData = useMemo(() => {
         const grouped: Record<string, number> = {};
-        assets.filter(a => a.currentValue > 0).forEach(asset => {
-            const cls = asset.assetClass || 'Other';
-            grouped[cls] = (grouped[cls] || 0) + asset.currentValue;
+        assets.filter(a => a.currentValue > 0 && (includeCash || a.assetClass !== 'Cash')).forEach(asset => {
+            if (asset.assetClass === 'PensionFund') {
+                grouped['Stock'] = (grouped['Stock'] || 0) + asset.currentValue * 0.57;
+                grouped['Bond']  = (grouped['Bond']  || 0) + asset.currentValue * 0.43;
+            } else {
+                const cls = asset.assetClass || 'Other';
+                grouped[cls] = (grouped[cls] || 0) + asset.currentValue;
+            }
         });
 
         return Object.entries(grouped)
             .map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value); // Descending
-    }, [assets]);
+            .sort((a, b) => b.value - a.value);
+    }, [assets, includeCash]);
 
     // 2. Group by Asset SubClass
     const subClassData = useMemo(() => {
         const grouped: Record<string, number> = {};
-        assets.filter(a => a.currentValue > 0).forEach(asset => {
-            const sub = asset.assetSubClass || 'Other';
-            grouped[sub] = (grouped[sub] || 0) + asset.currentValue;
+        assets.filter(a => a.currentValue > 0 && (includeCash || a.assetClass !== 'Cash')).forEach(asset => {
+            if (asset.assetSubClass === 'Balanced') {
+                grouped['International'] = (grouped['International'] || 0) + asset.currentValue * 0.57;
+                grouped['Long']          = (grouped['Long']          || 0) + asset.currentValue * 0.43;
+            } else {
+                const sub = asset.assetSubClass || 'Other';
+                grouped[sub] = (grouped[sub] || 0) + asset.currentValue;
+            }
         });
 
         return Object.entries(grouped)
             .map(([name, value]) => ({ name, value }))
             .sort((a, b) => b.value - a.value);
-    }, [assets]);
+    }, [assets, includeCash]);
 
     // 3. Group by Asset Name
     const nameData = useMemo(() => {
         return assets
-            .filter(a => a.currentValue > 0)
+            .filter(a => a.currentValue > 0 && (includeCash || a.assetClass !== 'Cash'))
             .map(a => ({ name: a.label || a.ticker, value: a.currentValue }))
             .sort((a, b) => b.value - a.value);
-    }, [assets]);
+    }, [assets, includeCash]);
 
     if (assets.length === 0 || assets.every(a => a.currentValue === 0)) {
         return null;
@@ -106,15 +118,29 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
 
     return (
         <div style={{ marginBottom: '3rem' }}>
-            <h3 className="section-title" style={{
-                fontSize: '1.2rem',
-                color: 'var(--color-primary)',
-                borderBottom: '1px solid var(--border-color)',
-                paddingBottom: '0.5rem',
-                marginBottom: '1rem'
-            }}>
-                {title}
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>
+                <h3 className="section-title" style={{ fontSize: '1.2rem', color: 'var(--color-primary)', margin: 0, border: 'none', padding: 0 }}>
+                    {title}
+                </h3>
+                {showCashToggle && (
+                    <button
+                        onClick={() => setIncludeCash(v => !v)}
+                        style={{
+                            fontSize: '0.78rem',
+                            padding: '0.25rem 0.65rem',
+                            borderRadius: '999px',
+                            border: '1px solid var(--border-color)',
+                            background: includeCash ? 'var(--color-primary)' : 'transparent',
+                            color: includeCash ? '#fff' : 'var(--text-muted)',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s',
+                            whiteSpace: 'nowrap',
+                        }}
+                    >
+                        {includeCash ? 'Cash incluso' : 'Cash escluso'}
+                    </button>
+                )}
+            </div>
             <div className="charts-grid">
                 {/* Target By Class (Only if portfolio exists) */}
                 {targetClassData && targetClassData.length > 0 && (
@@ -428,26 +454,36 @@ const AllocationCharts: React.FC = () => {
         ].filter(d => d.value > 0);
     }, [totalAssets, brokers]);
 
-    // 5. Goal Distribution (New Logic)
+    // 5. Goal Distribution
     const goalDistributionData = useMemo(() => {
+        const PENSION_STOCK_RATIO = 0.57;
         const goalMap: Record<string, { value: number; breakdown: Record<string, number> }> = {
             'Growth': { value: 0, breakdown: {} },
             'Protection': { value: 0, breakdown: {} },
             'Security': { value: 0, breakdown: {} }
         };
 
-        // 1. Assets
+        // 1. Non-cash assets only (cash counted separately via currentLiquidity to avoid double-counting)
         totalAssets.forEach(asset => {
-            if (asset.currentValue <= 0) return;
-            const goal = getAssetGoal(asset.assetClass, asset.assetSubClass);
-            goalMap[goal].value += asset.currentValue;
+            if (asset.currentValue <= 0 || isCashTicker(asset.ticker) || asset.assetClass === 'Cash') return;
 
-            // Breakdown Label: e.g. "Bond (Short)" or "Stock (International)"
-            const label = `${asset.assetClass}${asset.assetSubClass ? ` (${asset.assetSubClass})` : ''}`;
-            goalMap[goal].breakdown[label] = (goalMap[goal].breakdown[label] || 0) + asset.currentValue;
+            if (asset.assetClass === 'PensionFund') {
+                // Balanced pension fund: 57% Growth (equity) + 43% Security (bonds)
+                const growthPart   = asset.currentValue * PENSION_STOCK_RATIO;
+                const securityPart = asset.currentValue * (1 - PENSION_STOCK_RATIO);
+                goalMap['Growth'].value   += growthPart;
+                goalMap['Security'].value += securityPart;
+                goalMap['Growth'].breakdown['PensionFund (equity)']  = (goalMap['Growth'].breakdown['PensionFund (equity)']  || 0) + growthPart;
+                goalMap['Security'].breakdown['PensionFund (bonds)'] = (goalMap['Security'].breakdown['PensionFund (bonds)'] || 0) + securityPart;
+            } else {
+                const goal  = getAssetGoal(asset.assetClass, asset.assetSubClass);
+                const label = `${asset.assetClass}${asset.assetSubClass ? ` (${asset.assetSubClass})` : ''}`;
+                goalMap[goal].value += asset.currentValue;
+                goalMap[goal].breakdown[label] = (goalMap[goal].breakdown[label] || 0) + asset.currentValue;
+            }
         });
 
-        // 2. Liquidity -> Protection
+        // 2. Broker liquidity -> Protection (single source of truth, no double-counting)
         const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
         if (totalLiquidity > 0) {
             goalMap['Protection'].value += totalLiquidity;
@@ -796,6 +832,7 @@ const AllocationCharts: React.FC = () => {
             <DistributionRow
                 title="Total / All Portfolios"
                 assets={totalAssets}
+                showCashToggle
             // No portfolio passed here, so no Target chart
             />
 

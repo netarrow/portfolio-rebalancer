@@ -37,8 +37,8 @@ const MacroStats: React.FC = () => {
             if (cls === 'PensionFund') {
                 const key = 'PensionFund:Balanced';
                 subclassValues[key] = (subclassValues[key] || 0) + asset.currentValue;
-                macroValues['Stock'] += asset.currentValue * 0.6;
-                macroValues['Bond'] += asset.currentValue * 0.4;
+                macroValues['Stock'] += asset.currentValue * 0.57;
+                macroValues['Bond'] += asset.currentValue * 0.43;
             } else if (cls === 'Crypto') {
                 subclassValues['Crypto'] = (subclassValues['Crypto'] || 0) + asset.currentValue;
                 macroValues['Crypto'] += asset.currentValue;
@@ -114,7 +114,7 @@ const MacroStats: React.FC = () => {
         Object.entries(effectiveValues).forEach(([key, value]) => {
             if (key === 'Cash') { macroMap['Cash'] += value; return; }
             if (key === 'Crypto') { macroMap['Crypto'] += value; return; }
-            if (key.startsWith('PensionFund')) { macroMap['Stock'] += value * 0.6; macroMap['Bond'] += value * 0.4; return; }
+            if (key.startsWith('PensionFund')) { macroMap['Stock'] += value * 0.57; macroMap['Bond'] += value * 0.43; return; }
             const [cls] = key.split(':');
             if (macroMap[cls] !== undefined) macroMap[cls] += value;
         });
@@ -122,7 +122,7 @@ const MacroStats: React.FC = () => {
         Object.entries(stats.subclassValues).forEach(([key, value]) => {
             if (key === 'Cash') { actualMap['Cash'] += value; return; }
             if (key === 'Crypto') { actualMap['Crypto'] += value; return; }
-            if (key.startsWith('PensionFund')) { actualMap['Stock'] += value * 0.6; actualMap['Bond'] += value * 0.4; return; }
+            if (key.startsWith('PensionFund')) { actualMap['Stock'] += value * 0.57; actualMap['Bond'] += value * 0.43; return; }
             const [cls] = key.split(':');
             if (actualMap[cls] !== undefined) actualMap[cls] += value;
         });
