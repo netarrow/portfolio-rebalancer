@@ -57,6 +57,9 @@ interface PortfolioContextType {
     // Aggregate section UI preferences (synced)
     aggregateExcludedTickers: string[];
     setAggregateExcludedTickers: (tickers: string[] | ((prev: string[]) => string[])) => void;
+    // Goal rebalance widget targets (persisted and synced with Azure)
+    goalModeTargets: Record<string, number>;
+    setGoalModeTargets: (targets: Record<string, number> | ((prev: Record<string, number>) => Record<string, number>)) => void;
     // Azure sync
     azureConfig: AzureConfig;
     setAzureConfig: (config: AzureConfig | ((prev: AzureConfig) => AzureConfig)) => void;
@@ -98,6 +101,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Aggregate section UI preferences (persisted and synced with Azure)
     const [aggregateExcludedTickers, setAggregateExcludedTickers] = useLocalStorage<string[]>('aggregate-excluded-tickers', []);
+    const [goalModeTargets, setGoalModeTargets] = useLocalStorage<Record<string, number>>('goal_mode_targets', {});
 
     // Azure sync config — excluded from backup, restore and sync payload by design
     const [azureConfig, setAzureConfig] = useLocalStorage<AzureConfig>('portfolio_azure_config', {
@@ -451,7 +455,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 transactions, assetSettings, portfolios, brokers, marketData,
                 assetAllocationSettings: storedAssetAllocationSettings,
                 macroAllocations, goalAllocations, goals,
-                aggregateExcludedTickers,
+                aggregateExcludedTickers, goalModeTargets,
             };
             try {
                 setAzureSyncing(true);
@@ -474,7 +478,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
-        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers]);
+        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -492,7 +496,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         transactions, assetSettings, portfolios, brokers, marketData,
                         assetAllocationSettings: storedAssetAllocationSettings,
                         macroAllocations, goalAllocations, goals,
-                        aggregateExcludedTickers,
+                        aggregateExcludedTickers, goalModeTargets,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -1034,6 +1038,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const goalAllocations = data.goalAllocations || {};
             const goals = data.goals || [];
             const aggregateExcludedTickers = Array.isArray(data.aggregateExcludedTickers) ? data.aggregateExcludedTickers : [];
+            const goalModeTargets = (data.goalModeTargets && typeof data.goalModeTargets === 'object') ? data.goalModeTargets : {};
 
             // Write directly to localStorage first to guarantee persistence
             // regardless of React effect scheduling or migration effects ordering
@@ -1049,6 +1054,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_goals', JSON.stringify(goals));
             localStorage.setItem('portfolio_targets_v2', JSON.stringify([]));
             localStorage.setItem('aggregate-excluded-tickers', JSON.stringify(aggregateExcludedTickers));
+            localStorage.setItem('goal_mode_targets', JSON.stringify(goalModeTargets));
 
             // Then update React state
             setTransactions(transactions);
@@ -1062,6 +1068,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setGoals(goals);
             setOldTargets([]);
             setAggregateExcludedTickers(aggregateExcludedTickers);
+            setGoalModeTargets(goalModeTargets);
 
             return true;
         } catch (e) {
@@ -1181,6 +1188,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         addTransactionsBulk,
         aggregateExcludedTickers,
         setAggregateExcludedTickers,
+        goalModeTargets,
+        setGoalModeTargets,
         azureConfig,
         setAzureConfig,
         syncToAzure,
