@@ -3,6 +3,7 @@ import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission, calculateCashFlows } from '../../utils/portfolioCalculations';
+import { CASH_TICKER_PREFIX } from '../../types';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
@@ -570,6 +571,47 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
     }, [goalModeTargets, aggregateTotalValue, liq, currentGoalValuesInAggregate,
         includedAssets, cashByGoal, nonCashValueByGoal]);
 
+    /**
+     * Min‑liquidity warnings for the goal rebalance: this section ignores broker
+     * minimal liquidity when computing buys/sells, but flags any broker whose
+     * post‑rebalance cash would fall below its configured threshold.
+     */
+    const brokerLiquidityWarnings = useMemo<{
+        brokerId: string; brokerName: string; postCash: number; threshold: number; deficit: number;
+    }[]>(() => {
+        // brokerId → drained € (negative) from goalRebalanceAllocations cash entries
+        const drainByBroker: Record<string, number> = {};
+        Object.entries(goalRebalanceAllocations).forEach(([ticker, eur]) => {
+            if (!ticker.startsWith(CASH_TICKER_PREFIX)) return;
+            const brokerId = ticker.slice(CASH_TICKER_PREFIX.length);
+            drainByBroker[brokerId] = (drainByBroker[brokerId] ?? 0) + eur;
+        });
+
+        const warnings: { brokerId: string; brokerName: string; postCash: number; threshold: number; deficit: number }[] = [];
+        brokers.forEach(b => {
+            const drain = drainByBroker[b.id] ?? 0;
+            if (drain >= 0) return; // only flag drains
+            const currentBrokerCash = Object.values(b.liquidityAllocations || {}).reduce((s, v) => s + (v || 0), 0);
+            const postCash = currentBrokerCash + drain;
+            let threshold = 0;
+            if (b.minLiquidityType === 'fixed') {
+                threshold = b.minLiquidityAmount || 0;
+            } else if (b.minLiquidityType === 'percent') {
+                threshold = currentBrokerCash * ((b.minLiquidityPercentage || 0) / 100);
+            }
+            if (threshold > 0 && postCash < threshold) {
+                warnings.push({
+                    brokerId: b.id,
+                    brokerName: b.name,
+                    postCash,
+                    threshold,
+                    deficit: threshold - postCash,
+                });
+            }
+        });
+        return warnings;
+    }, [goalRebalanceAllocations, brokers]);
+
     return (
         <div className="allocation-card" style={{ border: '1.5px dashed rgba(148,163,184,0.45)', background: 'var(--bg-surface)' }}>
             <div className="allocation-header-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)', flexWrap: 'wrap', gap: 'var(--space-2)' }}>
@@ -627,6 +669,30 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                     </button>
                 </div>
             </div>
+
+            {brokerLiquidityWarnings.length > 0 && (
+                <div style={{
+                    marginBottom: 'var(--space-3)',
+                    padding: 'var(--space-2) var(--space-3)',
+                    border: '1px solid rgba(245,158,11,0.45)',
+                    background: 'rgba(245,158,11,0.08)',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.82rem',
+                    color: 'var(--text-primary)',
+                }}>
+                    <div style={{ fontWeight: 600, marginBottom: '4px', color: '#B45309' }}>
+                        ⚠ Goal rebalance: alcuni broker scenderebbero sotto la min liquidity
+                    </div>
+                    {brokerLiquidityWarnings.map(w => (
+                        <div key={w.brokerId} style={{ lineHeight: 1.5 }}>
+                            <strong>{w.brokerName}</strong>: cash post‑rebalance €{w.postCash.toLocaleString('en-IE', { maximumFractionDigits: 0 })} &lt; min richiesto €{w.threshold.toLocaleString('en-IE', { maximumFractionDigits: 0 })} (Δ −€{w.deficit.toLocaleString('en-IE', { maximumFractionDigits: 0 })})
+                        </div>
+                    ))}
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                        I buy/sell sono comunque calcolati ignorando il vincolo.
+                    </div>
+                </div>
+            )}
 
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
                 <div className="allocation-row desktop-only" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
@@ -694,18 +760,20 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                             projectedPerc = calcTotalValue > 0 ? (postBuyValue / calcTotalValue) * 100 : 0;
                         }
 
-                        // Goal rebalance — only for included, non-cash assets (buy or sell, no new money)
-                        const goalRebalanceRaw = (!isCash && !isExcluded) ? (goalRebalanceAllocations[asset.ticker] ?? 0) : 0;
+                        // Goal rebalance — buy/sell with no new money. Cash rows show
+                        // the € drained (negative) when their goal must shrink — no shares.
+                        const goalRebalanceRaw = !isExcluded ? (goalRebalanceAllocations[asset.ticker] ?? 0) : 0;
                         let goalModeShares = 0;
                         let goalModeEur = 0;
                         let postGoalPerc = currentPerc;
 
                         if (goalRebalanceRaw !== 0) {
-                            const price = asset.currentPrice || 0;
-                            if (price > 0) {
-                                // shares already integer from goalRebalanceAllocations
-                                goalModeEur = goalRebalanceRaw;
-                                goalModeShares = Math.round(goalRebalanceRaw / price);
+                            goalModeEur = goalRebalanceRaw;
+                            if (!isCash) {
+                                const price = asset.currentPrice || 0;
+                                if (price > 0) {
+                                    goalModeShares = Math.round(goalRebalanceRaw / price);
+                                }
                             }
                             // Post-rebalance total = aggregateTotalValue + liq (liquidity deployed)
                             const postGoalValue = asset.currentValue + goalModeEur;
@@ -898,12 +966,19 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                 </div>
                 {/* Goal Rebalance */}
                 <div style={{ width: '130px', textAlign: 'center' }}>
-                    {(isCash || isExcluded) ? (
+                    {isExcluded ? (
                         <span style={{ color: 'var(--text-muted)' }}>-</span>
                     ) : (
                         <div style={{ fontWeight: 600, color: goalModeEur > 0 ? '#8B5CF6' : goalModeEur < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                            {goalModeShares === 0 ? (
+                            {goalModeEur === 0 ? (
                                 <span className="trend-neutral">-</span>
+                            ) : isCash ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                    <span>{goalModeEur > 0 ? 'Add' : 'Sell'}</span>
+                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                        −€{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                    </span>
+                                </div>
                             ) : (
                                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
                                     <span>{goalModeShares > 0 ? 'Buy' : 'Sell'} {Math.abs(goalModeShares)}</span>
@@ -916,7 +991,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                     )}
                 </div>
                 <div style={{ width: '80px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    {(isCash || isExcluded) ? '-' : goalModeShares !== 0 ? `${postGoalPerc.toFixed(1)}%` : '-'}
+                    {isExcluded ? '-' : goalModeEur !== 0 ? `${postGoalPerc.toFixed(1)}%` : '-'}
                 </div>
             </div>
 
@@ -979,9 +1054,9 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                         </span>
                     </div>
                 </div>
-                {!isCash && !isExcluded && (rebalanceShares !== 0 || buyOnlyShares !== 0 || goalModeShares !== 0) && (
+                {!isExcluded && (rebalanceShares !== 0 || buyOnlyShares !== 0 || goalModeEur !== 0) && (
                     <div className="mobile-actions">
-                        {rebalanceShares !== 0 && (
+                        {!isCash && rebalanceShares !== 0 && (
                             <div className="mobile-action-box">
                                 <div className="mobile-action-title">Rebalance</div>
                                 <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
@@ -994,7 +1069,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                                 </div>
                             </div>
                         )}
-                        {buyOnlyShares !== 0 && (
+                        {!isCash && buyOnlyShares !== 0 && (
                             <div className="mobile-action-box">
                                 <div className="mobile-action-title">Buy Only</div>
                                 <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
@@ -1007,14 +1082,18 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                                 </div>
                             </div>
                         )}
-                        {goalModeShares !== 0 && (
+                        {goalModeEur !== 0 && (
                             <div className="mobile-action-box">
                                 <div className="mobile-action-title" style={{ color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>Goal Rebalance</div>
                                 <div style={{ fontWeight: 600, color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>
                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                        <span>{goalModeShares > 0 ? 'Buy' : 'Sell'} {Math.abs(goalModeShares)}</span>
+                                        {isCash ? (
+                                            <span>{goalModeEur > 0 ? 'Add' : 'Sell'}</span>
+                                        ) : (
+                                            <span>{goalModeShares > 0 ? 'Buy' : 'Sell'} {Math.abs(goalModeShares)}</span>
+                                        )}
                                         <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            €{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                            {isCash && goalModeEur < 0 ? '−' : ''}€{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
                                         </span>
                                     </div>
                                 </div>
