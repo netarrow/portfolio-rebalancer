@@ -404,14 +404,14 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
     }, [portfolioCalcs, lockedPortfolioIds]);
 
     /**
-     * Cash assets grouped by goalId, excluding cash held in locked/excluded
-     * portfolios and excluding tickers the user has manually excluded from the
-     * aggregate. Used to drain own-goal cash first when a goal must shrink.
+     * Cash assets grouped by goalId. Cash is fungible: 'lock at current' /
+     * 'excluded' portfolio modes apply to non-cash assets, not to liquidity,
+     * so cash from those portfolios is still drainable for goal rebalance.
+     * Only user-excluded cash tickers are filtered out.
      */
     const cashByGoal = useMemo<Record<string, { ticker: string; value: number }[]>>(() => {
         const map: Record<string, Record<string, number>> = {};
         portfolioCalcs.forEach(pc => {
-            if (lockedPortfolioIds.has(pc.portfolio.id)) return;
             const gid = pc.portfolio.goalId;
             if (!gid) return;
             pc.assets
@@ -426,7 +426,7 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
             result[gid] = Object.entries(byTicker).map(([ticker, value]) => ({ ticker, value }));
         });
         return result;
-    }, [portfolioCalcs, lockedPortfolioIds, excludedTickers]);
+    }, [portfolioCalcs, excludedTickers]);
 
     /**
      * Non-cash value actually held within each goal (per-portfolio aware).
