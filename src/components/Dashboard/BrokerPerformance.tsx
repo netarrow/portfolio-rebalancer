@@ -79,35 +79,9 @@ const BrokerPerformance: React.FC = () => {
 
     if (brokerStats.length === 0) return null;
 
-    const totalInvested = brokerStats.reduce((sum, s) => sum + s.totalValue, 0);
-    const totalLiquidity = brokerStats.reduce((sum, s) => sum + s.liquidity, 0);
-    const grandTotal = totalInvested + totalLiquidity;
-
     return (
         <div className="broker-performance-section" style={{ marginTop: '3rem' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '1.5rem' }}>
-                <h2 className="section-title" style={{ fontSize: '1.5rem', margin: 0 }}>Broker Performance & Liquidity</h2>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Invested <strong style={{ color: 'var(--text-primary)' }}>€{totalInvested.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                    </span>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>+</span>
-                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        Cash <strong style={{ color: 'var(--text-primary)' }}>€{totalLiquidity.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
-                    </span>
-                    <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>=</span>
-                    <span style={{
-                        fontSize: '0.9rem',
-                        fontWeight: 700,
-                        color: 'var(--color-primary)',
-                        background: 'rgba(var(--color-primary-rgb, 99,102,241), 0.08)',
-                        padding: '2px 10px',
-                        borderRadius: '999px'
-                    }}>
-                        Total €{grandTotal.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                </div>
-            </div>
+            <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>Broker Performance & Liquidity</h2>
 
             <div className="summary-grid">
                 {brokerStats.map(stat => {
@@ -144,6 +118,12 @@ const BrokerPerformance: React.FC = () => {
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                 {/* Performance Section */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Total</span>
+                                    <span style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--color-primary)' }}>
+                                        €{(stat.totalValue + stat.liquidity).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span style={{ color: 'var(--text-secondary)' }}>Value</span>
                                     <span style={{ fontWeight: 600 }}>€{stat.totalValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
