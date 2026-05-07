@@ -118,6 +118,12 @@ const BrokerPerformance: React.FC = () => {
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                                 {/* Performance Section */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>Total</span>
+                                    <span style={{ fontWeight: 700, fontSize: '1.05rem', color: 'var(--color-primary)' }}>
+                                        €{(stat.totalValue + stat.liquidity).toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                </div>
                                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                     <span style={{ color: 'var(--text-secondary)' }}>Value</span>
                                     <span style={{ fontWeight: 600 }}>€{stat.totalValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
