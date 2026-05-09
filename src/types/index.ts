@@ -130,6 +130,35 @@ export interface AssetDefinition {
   assetSubClass?: AssetSubClass;
 }
 
+// YNAB integration
+
+export interface YnabConfig {
+  apiKey: string;
+  budgetId: string;
+  budgetName?: string;
+  currencyIso?: string;
+  lastSyncAt?: string;
+}
+
+export interface YnabCategory {
+  id: string;
+  groupId: string;
+  groupName: string;
+  name: string;
+  balanceMilliunits: number;
+  budgetedMilliunits?: number;
+}
+
+export type YnabMappingTarget =
+  | { kind: 'asset'; ticker: string }
+  | { kind: 'cash'; brokerId: string }
+  | { kind: 'unmapped' };
+
+export interface YnabCategoryMapping {
+  categoryId: string;
+  target: YnabMappingTarget;
+}
+
 export interface PortfolioSummary {
   totalValue: number;
   totalCost: number;

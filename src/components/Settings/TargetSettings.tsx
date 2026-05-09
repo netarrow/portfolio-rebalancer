@@ -4,6 +4,7 @@ import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
 import Swal from 'sweetalert2';
 import { testAzureConnection } from '../../services/azureSync';
+import type { YnabBudgetSummary } from '../../services/ynabApi';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -29,6 +30,12 @@ const TargetSettings: React.FC = () => {
         syncToAzure,
         restoreFromAzure,
         azureSyncing,
+        // YNAB
+        ynabConfig,
+        setYnabConfig,
+        ynabListBudgets,
+        disconnectYnab,
+        ynabSyncing,
     } = usePortfolio();
 
     // ... (existing state)
@@ -41,6 +48,13 @@ const TargetSettings: React.FC = () => {
     const [showSasUrl, setShowSasUrl] = useState(false);
     const [showPassphrase, setShowPassphrase] = useState(false);
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'ok' | 'error'>('idle');
+
+    // YNAB local form state
+    const [ynabApiKeyInput, setYnabApiKeyInput] = useState(ynabConfig?.apiKey ?? '');
+    const [showYnabKey, setShowYnabKey] = useState(false);
+    const [ynabBudgets, setYnabBudgets] = useState<YnabBudgetSummary[] | null>(null);
+    const [ynabVerifying, setYnabVerifying] = useState(false);
+    const [ynabSelectedBudgetId, setYnabSelectedBudgetId] = useState(ynabConfig?.budgetId ?? '');
 
     // ... (existing helpers)
     const assetTickers = assets.map(a => a.ticker);
@@ -192,6 +206,62 @@ const TargetSettings: React.FC = () => {
         } else {
             Swal.fire({ title: 'Error', text: result.error, icon: 'error' });
         }
+    };
+
+    const handleYnabVerify = async () => {
+        if (!ynabApiKeyInput.trim()) {
+            Swal.fire({ title: 'Inserisci la chiave API', icon: 'warning' });
+            return;
+        }
+        setYnabVerifying(true);
+        const result = await ynabListBudgets(ynabApiKeyInput.trim());
+        setYnabVerifying(false);
+        if (!result.ok || !result.budgets) {
+            setYnabBudgets(null);
+            Swal.fire({ title: 'Verifica fallita', text: result.error, icon: 'error' });
+            return;
+        }
+        setYnabBudgets(result.budgets);
+        if (result.budgets.length === 0) {
+            Swal.fire({ title: 'Nessun budget trovato', icon: 'info' });
+            return;
+        }
+        // Auto-select the first budget if none chosen yet
+        if (!ynabSelectedBudgetId) {
+            setYnabSelectedBudgetId(result.budgets[0].id);
+        }
+        Swal.fire({ title: 'Connessione YNAB OK', icon: 'success', timer: 1500, showConfirmButton: false });
+    };
+
+    const handleYnabSaveBudget = () => {
+        if (!ynabApiKeyInput.trim() || !ynabSelectedBudgetId || !ynabBudgets) return;
+        const selected = ynabBudgets.find(b => b.id === ynabSelectedBudgetId);
+        if (!selected) return;
+        setYnabConfig({
+            apiKey: ynabApiKeyInput.trim(),
+            budgetId: selected.id,
+            budgetName: selected.name,
+            currencyIso: selected.currencyIso,
+            lastSyncAt: ynabConfig?.lastSyncAt,
+        });
+        Swal.fire({ title: 'YNAB configurato', icon: 'success', timer: 1500, showConfirmButton: false });
+    };
+
+    const handleYnabDisconnect = async () => {
+        const confirm = await Swal.fire({
+            title: 'Disconnettere YNAB?',
+            text: 'Verranno rimossi chiave API, categorie importate e mapping. L\'azione non è reversibile.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Disconnetti',
+            cancelButtonText: 'Annulla',
+            confirmButtonColor: '#d33',
+        });
+        if (!confirm.isConfirmed) return;
+        disconnectYnab();
+        setYnabApiKeyInput('');
+        setYnabBudgets(null);
+        setYnabSelectedBudgetId('');
     };
 
     const renderAssetRow = (ticker: string) => {
@@ -451,6 +521,114 @@ const TargetSettings: React.FC = () => {
                                     ? `Last sync: ${new Date(azureConfig.lastSync).toLocaleString('en-GB')}`
                                     : 'Never synced'}
                             </span>
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
+
+            {/* YNAB Integration Section */}
+            <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+                    <h2 className="section-title" style={{ margin: 0 }}>YNAB (You Need A Budget)</h2>
+                    {ynabSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Syncing...</span>}
+                </div>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                    Importa i saldi delle categorie del tuo budget YNAB e associa ciascuna categoria a un asset di investimento o alla liquidità di un broker.
+                </p>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                    Le credenziali YNAB sono salvate solo su questo dispositivo e non vengono sincronizzate su Azure. I mapping categoria → asset sì.
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '560px' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Personal Access Token</label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                                type={showYnabKey ? 'text' : 'password'}
+                                value={ynabApiKeyInput}
+                                onChange={e => { setYnabApiKeyInput(e.target.value); setYnabBudgets(null); }}
+                                placeholder="Token YNAB (Account Settings → Developer Settings)"
+                                style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.8rem' }}
+                            />
+                            <button
+                                onClick={() => setShowYnabKey(v => !v)}
+                                style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                                title={showYnabKey ? 'Nascondi' : 'Mostra'}
+                            >
+                                {showYnabKey ? '🙈' : '👁'}
+                            </button>
+                        </div>
+                        <small style={{ color: 'var(--text-muted)' }}>
+                            Genera il token su app.ynab.com → Account Settings → Developer Settings → New Token.
+                        </small>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                        <button
+                            onClick={handleYnabVerify}
+                            disabled={!ynabApiKeyInput.trim() || ynabVerifying}
+                            style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                        >
+                            {ynabVerifying ? 'Verifica in corso…' : 'Verifica e carica budget'}
+                        </button>
+                        {ynabConfig && (
+                            <button
+                                onClick={handleYnabDisconnect}
+                                style={{ padding: '0.6rem 1.2rem', backgroundColor: 'transparent', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                Disconnetti YNAB
+                            </button>
+                        )}
+                    </div>
+
+                    {ynabBudgets && ynabBudgets.length > 0 && (
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Budget</label>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                <select
+                                    className="form-select"
+                                    value={ynabSelectedBudgetId}
+                                    onChange={e => setYnabSelectedBudgetId(e.target.value)}
+                                    style={{ flex: 1, minWidth: '200px' }}
+                                >
+                                    {ynabBudgets.map(b => (
+                                        <option key={b.id} value={b.id}>
+                                            {b.name} ({b.currencyIso})
+                                        </option>
+                                    ))}
+                                </select>
+                                <button
+                                    onClick={handleYnabSaveBudget}
+                                    disabled={!ynabSelectedBudgetId}
+                                    style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                    Salva budget
+                                </button>
+                            </div>
+                            {ynabSelectedBudgetId && (() => {
+                                const selected = ynabBudgets.find(b => b.id === ynabSelectedBudgetId);
+                                if (selected && selected.currencyIso !== 'EUR') {
+                                    return (
+                                        <small style={{ color: 'var(--color-warning, orange)' }}>
+                                            ⚠ La valuta del budget è {selected.currencyIso}, non EUR. I valori saranno mostrati nella valuta nativa.
+                                        </small>
+                                    );
+                                }
+                                return null;
+                            })()}
+                        </div>
+                    )}
+
+                    {ynabConfig && (
+                        <div style={{ paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            <div>Budget attivo: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> ({ynabConfig.currencyIso || '—'})</div>
+                            <div>
+                                Ultima sincronizzazione: {ynabConfig.lastSyncAt
+                                    ? new Date(ynabConfig.lastSyncAt).toLocaleString('it-IT')
+                                    : 'mai'}
+                            </div>
                         </div>
                     )}
                 </div>

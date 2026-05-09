@@ -1,7 +1,9 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget } from '../types';
+import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories } from '../services/ynabApi';
+import type { YnabBudgetSummary } from '../services/ynabApi';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
@@ -66,6 +68,16 @@ interface PortfolioContextType {
     syncToAzure: () => Promise<{ ok: boolean; error?: string }>;
     restoreFromAzure: () => Promise<{ ok: boolean; error?: string }>;
     azureSyncing: boolean;
+    // YNAB integration
+    ynabConfig: YnabConfig | null;
+    setYnabConfig: (config: YnabConfig | null) => void;
+    ynabCategories: YnabCategory[];
+    ynabMappings: YnabCategoryMapping[];
+    ynabListBudgets: (apiKey: string) => Promise<{ ok: boolean; budgets?: YnabBudgetSummary[]; error?: string }>;
+    syncYnabBudget: () => Promise<{ ok: boolean; error?: string }>;
+    setYnabMapping: (categoryId: string, target: YnabMappingTarget) => void;
+    disconnectYnab: () => void;
+    ynabSyncing: boolean;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -108,6 +120,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         sasUrl: '', passphrase: '', enabled: false, lastSync: null
     });
     const [azureSyncing, setAzureSyncing] = useState(false);
+
+    // YNAB integration — apiKey + snapshot categorie SOLO LOCALI (non sincronizzati su Azure).
+    // I mapping sono invece inclusi nel SyncPayload per propagarsi fra device.
+    const [ynabConfig, setYnabConfigState] = useLocalStorage<YnabConfig | null>('portfolio_ynab_config', null);
+    const [ynabCategories, setYnabCategories] = useLocalStorage<YnabCategory[]>('portfolio_ynab_categories', []);
+    const [ynabMappings, setYnabMappings] = useLocalStorage<YnabCategoryMapping[]>('portfolio_ynab_mappings', []);
+    const [ynabSyncing, setYnabSyncing] = useState(false);
     // Ref so sync effect can read latest config without adding azureConfig to deps (avoids loop on lastSync)
     const azureConfigRef = useRef(azureConfig);
     // Timestamp of last restore to suppress the debounced post-restore upload
@@ -456,6 +475,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 assetAllocationSettings: storedAssetAllocationSettings,
                 macroAllocations, goalAllocations, goals,
                 aggregateExcludedTickers, goalModeTargets,
+                ynabMappings,
             };
             try {
                 setAzureSyncing(true);
@@ -478,7 +498,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
-        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets]);
+        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -497,6 +517,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         assetAllocationSettings: storedAssetAllocationSettings,
                         macroAllocations, goalAllocations, goals,
                         aggregateExcludedTickers, goalModeTargets,
+                        ynabMappings,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -1039,6 +1060,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const goals = data.goals || [];
             const aggregateExcludedTickers = Array.isArray(data.aggregateExcludedTickers) ? data.aggregateExcludedTickers : [];
             const goalModeTargets = (data.goalModeTargets && typeof data.goalModeTargets === 'object') ? data.goalModeTargets : {};
+            const importedYnabMappings: YnabCategoryMapping[] = Array.isArray(data.ynabMappings) ? data.ynabMappings : [];
 
             // Write directly to localStorage first to guarantee persistence
             // regardless of React effect scheduling or migration effects ordering
@@ -1055,6 +1077,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_targets_v2', JSON.stringify([]));
             localStorage.setItem('aggregate-excluded-tickers', JSON.stringify(aggregateExcludedTickers));
             localStorage.setItem('goal_mode_targets', JSON.stringify(goalModeTargets));
+            localStorage.setItem('portfolio_ynab_mappings', JSON.stringify(importedYnabMappings));
 
             // Then update React state
             setTransactions(transactions);
@@ -1069,6 +1092,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setOldTargets([]);
             setAggregateExcludedTickers(aggregateExcludedTickers);
             setGoalModeTargets(goalModeTargets);
+            setYnabMappings(importedYnabMappings);
 
             return true;
         } catch (e) {
@@ -1088,7 +1112,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 transactions, assetSettings, portfolios, brokers, marketData,
                 assetAllocationSettings: storedAssetAllocationSettings,
                 macroAllocations, goalAllocations, goals,
-                aggregateExcludedTickers,
+                aggregateExcludedTickers, goalModeTargets,
+                ynabMappings,
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -1144,6 +1169,61 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     };
 
+    // YNAB methods
+    const setYnabConfig = (config: YnabConfig | null) => {
+        setYnabConfigState(config);
+        if (config === null) {
+            setYnabCategories([]);
+        }
+    };
+
+    const handleYnabListBudgets = async (apiKey: string) => {
+        const result = await ynabListBudgets(apiKey);
+        if (result.success && result.data) return { ok: true, budgets: result.data };
+        return { ok: false, error: result.error };
+    };
+
+    const syncYnabBudget = async (): Promise<{ ok: boolean; error?: string }> => {
+        if (!ynabConfig?.apiKey || !ynabConfig?.budgetId) {
+            return { ok: false, error: 'YNAB non configurato.' };
+        }
+        try {
+            setYnabSyncing(true);
+            const result = await ynabGetCategories(ynabConfig.apiKey, ynabConfig.budgetId);
+            if (!result.success || !result.data) {
+                return { ok: false, error: result.error || 'Errore durante la sincronizzazione.' };
+            }
+            setYnabCategories(result.data);
+            setYnabConfigState(prev => prev ? { ...prev, lastSyncAt: new Date().toISOString() } : prev);
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        } finally {
+            setYnabSyncing(false);
+        }
+    };
+
+    const setYnabMapping = (categoryId: string, target: YnabMappingTarget) => {
+        setYnabMappings(prev => {
+            const idx = prev.findIndex(m => m.categoryId === categoryId);
+            if (target.kind === 'unmapped') {
+                if (idx === -1) return prev;
+                return prev.filter(m => m.categoryId !== categoryId);
+            }
+            const next = { categoryId, target };
+            if (idx === -1) return [...prev, next];
+            const copy = prev.slice();
+            copy[idx] = next;
+            return copy;
+        });
+    };
+
+    const disconnectYnab = () => {
+        setYnabConfigState(null);
+        setYnabCategories([]);
+        setYnabMappings([]);
+    };
+
     const value = {
         transactions,
         targets: assetSettings, // Expose as targets for compatibility
@@ -1195,6 +1275,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         syncToAzure,
         restoreFromAzure,
         azureSyncing,
+        ynabConfig,
+        setYnabConfig,
+        ynabCategories,
+        ynabMappings,
+        ynabListBudgets: handleYnabListBudgets,
+        syncYnabBudget,
+        setYnabMapping,
+        disconnectYnab,
+        ynabSyncing,
     };
 
     return (
