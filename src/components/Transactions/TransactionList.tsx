@@ -713,22 +713,31 @@ const TransactionList: React.FC = () => {
                     borderRadius: 'var(--radius-md)',
                     padding: '0.8rem',
                     display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
+                    flexDirection: 'column',
+                    gap: '0.6rem',
                     marginBottom: '1rem',
                     boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
                 }}>
-                    <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>
-                        {selectedIds.size} selected
-                    </span>
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                        <span style={{ fontWeight: 600, color: 'var(--color-primary)' }}>
+                            {selectedIds.size} selected
+                        </span>
+                        <button
+                            className="btn-secondary"
+                            onClick={() => setSelectedIds(new Set())}
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem' }}
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
                         <select
                             value={bulkPortfolioId}
                             onChange={e => setBulkPortfolioId(e.target.value)}
                             className="form-input"
-                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', width: '200px' }}
+                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', flex: '1 1 160px', minWidth: 0 }}
                         >
-                            <option value="">Select Portfolio...</option>
+                            <option value="">Portfolio — keep original</option>
                             {portfolios.map(p => (
                                 <option key={p.id} value={p.id}>
                                     {p.name}
@@ -739,9 +748,9 @@ const TransactionList: React.FC = () => {
                             value={bulkBroker}
                             onChange={e => setBulkBroker(e.target.value)}
                             className="form-input"
-                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', width: '150px' }}
+                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', flex: '1 1 140px', minWidth: 0 }}
                         >
-                            <option value="">Set Broker...</option>
+                            <option value="">Broker — keep original</option>
                             {brokers.map(b => (
                                 <option key={b.id} value={b.id}>
                                     {b.name}
@@ -752,27 +761,20 @@ const TransactionList: React.FC = () => {
                             value={bulkFreeCommission}
                             onChange={e => setBulkFreeCommission(e.target.value as '' | 'free' | 'paid')}
                             className="form-input"
-                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', width: '160px' }}
+                            style={{ margin: 0, padding: '0.4rem', fontSize: '0.9rem', flex: '1 1 150px', minWidth: 0 }}
                         >
-                            <option value="">Commission...</option>
+                            <option value="">Commission — keep original</option>
                             <option value="free">Free (no fee)</option>
                             <option value="paid">Paid (use broker plan)</option>
                         </select>
-                        <button
-                            className="btn-primary"
-                            onClick={handleBulkUpdate}
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem' }}
-                        >
-                            Update
-                        </button>
-                        <button
-                            className="btn-secondary"
-                            onClick={() => setSelectedIds(new Set())}
-                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem' }}
-                        >
-                            Cancel
-                        </button>
                     </div>
+                    <button
+                        className="btn-primary"
+                        onClick={handleBulkUpdate}
+                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem', width: '100%' }}
+                    >
+                        Update
+                    </button>
                 </div>
             )}
 
