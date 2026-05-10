@@ -629,6 +629,26 @@ const TargetSettings: React.FC = () => {
                                     ? new Date(ynabConfig.lastSyncAt).toLocaleString('it-IT')
                                     : 'mai'}
                             </div>
+                            <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <label htmlFor="ynab-avg-window">Finestra media budget:</label>
+                                <input
+                                    id="ynab-avg-window"
+                                    type="number"
+                                    min={1}
+                                    max={24}
+                                    step={1}
+                                    value={ynabConfig.avgMonthsWindow ?? 6}
+                                    onChange={e => {
+                                        const raw = parseInt(e.target.value, 10);
+                                        if (Number.isNaN(raw)) return;
+                                        const clamped = Math.max(1, Math.min(24, raw));
+                                        setYnabConfig({ ...ynabConfig, avgMonthsWindow: clamped });
+                                    }}
+                                    className="form-input"
+                                    style={{ width: '80px' }}
+                                />
+                                <span>mesi (esclude il mese corrente, 1–24)</span>
+                            </div>
                         </div>
                     )}
                 </div>

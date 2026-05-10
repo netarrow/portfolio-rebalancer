@@ -138,6 +138,7 @@ export interface YnabConfig {
   budgetName?: string;
   currencyIso?: string;
   lastSyncAt?: string;
+  avgMonthsWindow?: number;
 }
 
 export interface YnabCategory {
@@ -147,6 +148,8 @@ export interface YnabCategory {
   name: string;
   balanceMilliunits: number;
   budgetedMilliunits?: number;
+  avgBudgetedMilliunits?: number;
+  avgMonthsCount?: number;
 }
 
 export type YnabMappingTarget =
