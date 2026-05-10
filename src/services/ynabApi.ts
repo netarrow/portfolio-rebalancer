@@ -101,3 +101,68 @@ export async function getCurrentMonthCategories(
 }
 
 export const milliunitsToEur = (m: number): number => m / 1000;
+
+export interface YnabAverageEntry {
+    avgBudgetedMilliunits: number;
+    monthsCount: number;
+}
+
+function previousMonthsIso(monthsBack: number, now: Date = new Date()): string[] {
+    const out: string[] = [];
+    for (let i = 1; i <= monthsBack; i++) {
+        const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+        const yyyy = d.getUTCFullYear();
+        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+        out.push(`${yyyy}-${mm}-01`);
+    }
+    return out;
+}
+
+export async function getAverageBudgetedByCategory(
+    apiKey: string,
+    budgetId: string,
+    monthsBack: number = 6,
+): Promise<YnabApiResult<Map<string, YnabAverageEntry>>> {
+    try {
+        const months = previousMonthsIso(monthsBack);
+        const headers = { Authorization: `Bearer ${apiKey}` };
+
+        const responses = await Promise.all(
+            months.map(m =>
+                axios
+                    .get(`${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/months/${m}`, { headers })
+                    .then(r => ({ ok: true as const, data: r.data?.data?.month }))
+                    .catch(e => {
+                        if (axios.isAxiosError(e) && e.response?.status === 404) {
+                            return { ok: false as const, missing: true };
+                        }
+                        throw e;
+                    }),
+            ),
+        );
+
+        const sums = new Map<string, { sum: number; count: number }>();
+        for (const r of responses) {
+            if (!r.ok) continue;
+            const cats: any[] = r.data?.categories ?? [];
+            for (const c of cats) {
+                if (c.hidden || c.deleted) continue;
+                const budgeted = typeof c.budgeted === 'number' ? c.budgeted : 0;
+                const entry = sums.get(c.id) || { sum: 0, count: 0 };
+                entry.sum += budgeted;
+                entry.count += 1;
+                sums.set(c.id, entry);
+            }
+        }
+
+        const result = new Map<string, YnabAverageEntry>();
+        for (const [id, { sum, count }] of sums) {
+            if (count === 0) continue;
+            result.set(id, { avgBudgetedMilliunits: sum / count, monthsCount: count });
+        }
+
+        return { success: true, data: result };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}

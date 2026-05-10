@@ -52,16 +52,19 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
     }, [filteredCategories]);
 
     const aggregateByTarget = useMemo(() => {
-        type Bucket = { label: string; total: number; count: number };
+        type Bucket = { label: string; total: number; totalAvg: number; count: number };
         const buckets = new Map<string, Bucket>();
         let unmappedTotal = 0;
+        let unmappedAvg = 0;
         let unmappedCount = 0;
 
         for (const c of ynabCategories) {
             const eur = milliunitsToEur(c.balanceMilliunits);
+            const eurAvg = c.avgBudgetedMilliunits != null ? milliunitsToEur(c.avgBudgetedMilliunits) : 0;
             const target = mappingByCategory.get(c.id);
             if (!target || target.kind === 'unmapped') {
                 unmappedTotal += eur;
+                unmappedAvg += eurAvg;
                 unmappedCount += 1;
                 continue;
             }
@@ -76,15 +79,17 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                 const broker = brokers.find(b => b.id === target.brokerId);
                 label = `Liquidità · ${broker?.name || target.brokerId}`;
             }
-            const existing = buckets.get(key) || { label, total: 0, count: 0 };
+            const existing = buckets.get(key) || { label, total: 0, totalAvg: 0, count: 0 };
             existing.total += eur;
+            existing.totalAvg += eurAvg;
             existing.count += 1;
             buckets.set(key, existing);
         }
 
         return {
-            items: Array.from(buckets.values()).sort((a, b) => b.total - a.total),
+            items: Array.from(buckets.values()).sort((a, b) => b.totalAvg - a.totalAvg),
             unmappedTotal,
+            unmappedAvg,
             unmappedCount,
         };
     }, [ynabCategories, mappingByCategory, assetSettings, brokers]);
@@ -93,6 +98,17 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
         () => ynabCategories.reduce((s, c) => s + milliunitsToEur(c.balanceMilliunits), 0),
         [ynabCategories]
     );
+
+    const totalBudgetAvg = useMemo(
+        () => ynabCategories.reduce((s, c) => s + (c.avgBudgetedMilliunits != null ? milliunitsToEur(c.avgBudgetedMilliunits) : 0), 0),
+        [ynabCategories]
+    );
+
+    const maxAvgMonths = useMemo(
+        () => ynabCategories.reduce((m, c) => Math.max(m, c.avgMonthsCount ?? 0), 0),
+        [ynabCategories]
+    );
+    const avgLabel = maxAvgMonths > 0 ? `Media ${maxAvgMonths}m` : 'Media';
 
     const handleSync = async () => {
         const result = await syncYnabBudget();
@@ -178,26 +194,39 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         style={{ width: '100%', maxWidth: '400px', marginBottom: '1rem' }}
                     />
 
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr', gap: '1rem', padding: '0 1rem 0.5rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <span>Categoria</span>
+                        <span style={{ textAlign: 'right' }}>Corrente</span>
+                        <span style={{ textAlign: 'right' }}>{avgLabel}</span>
+                        <span>Mappatura</span>
+                    </div>
+
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                         {grouped.map(([groupName, items]) => {
                             const groupTotal = items.reduce((s, c) => s + milliunitsToEur(c.balanceMilliunits), 0);
+                            const groupAvg = items.reduce((s, c) => s + (c.avgBudgetedMilliunits != null ? milliunitsToEur(c.avgBudgetedMilliunits) : 0), 0);
                             return (
                                 <div key={groupName} style={{ backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-                                    <div style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--bg-surface)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 600 }}>
+                                    <div style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--bg-surface)', display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr', alignItems: 'center', gap: '1rem', fontWeight: 600 }}>
                                         <span>{groupName}</span>
-                                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                        <span style={{ textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                                             {formatCurrency(groupTotal, currencyIso)}
                                         </span>
+                                        <span style={{ textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                            {formatCurrency(groupAvg, currencyIso)}
+                                        </span>
+                                        <span />
                                     </div>
                                     <div>
                                         {items.map(c => {
                                             const eur = milliunitsToEur(c.balanceMilliunits);
+                                            const eurAvg = c.avgBudgetedMilliunits != null ? milliunitsToEur(c.avgBudgetedMilliunits) : null;
                                             return (
                                                 <div
                                                     key={c.id}
                                                     style={{
                                                         display: 'grid',
-                                                        gridTemplateColumns: '1fr 140px 1fr',
+                                                        gridTemplateColumns: '1fr 120px 120px 1fr',
                                                         alignItems: 'center',
                                                         gap: '1rem',
                                                         padding: '0.6rem 1rem',
@@ -207,6 +236,9 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                     <span>{c.name}</span>
                                                     <span style={{ textAlign: 'right', fontFamily: 'monospace', color: eur < 0 ? 'var(--color-danger)' : 'inherit' }}>
                                                         {formatCurrency(eur, currencyIso)}
+                                                    </span>
+                                                    <span style={{ textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                                                        {eurAvg != null ? formatCurrency(eurAvg, currencyIso) : '—'}
                                                     </span>
                                                     <select
                                                         className="form-select"
@@ -245,24 +277,32 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                     {/* Aggregate summary */}
                     <div style={{ marginTop: '2rem', padding: '1.25rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                         <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Riepilogo per asset</h3>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.75rem', fontWeight: 600, paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            <span></span>
+                            <span style={{ textAlign: 'right' }}>Corrente</span>
+                            <span style={{ textAlign: 'right' }}>{avgLabel}</span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.75rem', fontWeight: 600, paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
                             <span>Totale budget</span>
-                            <span style={{ fontFamily: 'monospace' }}>{formatCurrency(totalBudget, currencyIso)}</span>
+                            <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudget, currencyIso)}</span>
+                            <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudgetAvg, currencyIso)}</span>
                         </div>
                         {aggregateByTarget.items.length === 0 && aggregateByTarget.unmappedCount === 0 ? (
                             <div style={{ color: 'var(--text-muted)' }}>Nessuna categoria.</div>
                         ) : (
                             <>
                                 {aggregateByTarget.items.map(item => (
-                                    <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0', borderBottom: '1px solid var(--border-color)' }}>
+                                    <div key={item.label} style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border-color)' }}>
                                         <span>{item.label} <small style={{ color: 'var(--text-muted)' }}>({item.count} cat.)</small></span>
-                                        <span style={{ fontFamily: 'monospace' }}>{formatCurrency(item.total, currencyIso)}</span>
+                                        <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(item.total, currencyIso)}</span>
+                                        <span style={{ fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatCurrency(item.totalAvg, currencyIso)}</span>
                                     </div>
                                 ))}
                                 {aggregateByTarget.unmappedCount > 0 && (
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.4rem 0', color: 'var(--text-muted)' }}>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', padding: '0.4rem 0', color: 'var(--text-muted)' }}>
                                         <span>Non mappato <small>({aggregateByTarget.unmappedCount} cat.)</small></span>
-                                        <span style={{ fontFamily: 'monospace' }}>{formatCurrency(aggregateByTarget.unmappedTotal, currencyIso)}</span>
+                                        <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedTotal, currencyIso)}</span>
+                                        <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedAvg, currencyIso)}</span>
                                     </div>
                                 )}
                             </>

@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useEffect, useState, useRef 
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget } from '../types';
-import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories } from '../services/ynabApi';
+import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
@@ -1189,11 +1189,24 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
         try {
             setYnabSyncing(true);
-            const result = await ynabGetCategories(ynabConfig.apiKey, ynabConfig.budgetId);
+            const [result, avgResult] = await Promise.all([
+                ynabGetCategories(ynabConfig.apiKey, ynabConfig.budgetId),
+                ynabGetAverages(ynabConfig.apiKey, ynabConfig.budgetId, ynabConfig.avgMonthsWindow ?? 6),
+            ]);
             if (!result.success || !result.data) {
                 return { ok: false, error: result.error || 'Errore durante la sincronizzazione.' };
             }
-            setYnabCategories(result.data);
+            const averages = avgResult.success && avgResult.data ? avgResult.data : null;
+            if (!avgResult.success) {
+                console.warn('[YNAB] Failed to fetch historical averages:', avgResult.error);
+            }
+            const merged = result.data.map(c => {
+                const avg = averages?.get(c.id);
+                return avg
+                    ? { ...c, avgBudgetedMilliunits: avg.avgBudgetedMilliunits, avgMonthsCount: avg.monthsCount }
+                    : c;
+            });
+            setYnabCategories(merged);
             setYnabConfigState(prev => prev ? { ...prev, lastSyncAt: new Date().toISOString() } : prev);
             return { ok: true };
         } catch (e) {
