@@ -219,17 +219,6 @@ Real-time feedback during multi-source scraping, powered by WebSockets.
 - **Storage**: browser `localStorage`, optional encrypted Azure Blob sync
 - **Styles**: Vanilla CSS (variables, responsive layout)
 
-## Regenerating the Screenshots
-
-The screenshots above are produced by `scripts/take_screenshots.js`, which uses Puppeteer to walk every page against a running server:
-
-```bash
-npm run dev               # starts the unified Express + Vite server on :3002
-node scripts/take_screenshots.js
-```
-
-The script loads mock data through the Settings UI, navigates each nav entry, opens key modals, and writes PNGs to `screenshots/`.
-
 ## Privacy Policy (Summary)
 
 - **Data storage**: Portfolio data (transactions including broker details, targets, market data) is saved only in your browser's `localStorage` under keys such as `portfolio_transactions`, `portfolio_targets_v2`, `portfolio_market_data`, `portfolio_goals`, and `portfolio_ynab_*`. No portfolio data is sent to our server or to third parties.
@@ -238,6 +227,3 @@ The script loads mock data through the Settings UI, navigates each nav entry, op
 - **Device responsibility**: because data lives in your browser, its protection depends on your device/browser security (login protections, screen lock, user profiles, antivirus).
 - **Removal of data**: erase all locally stored portfolio data from the **Settings** page using the existing "Clear all data" button; clearing your browser cache/localStorage or using private/incognito mode also removes it.
 - **Data transmitted to APIs**: price lookups send only the ISIN and selected source to the `/api/price` endpoint; no personal identifiers or portfolio balances are transmitted. YNAB calls go directly from your browser to YNAB using your personal access token.
-
----
-*Experiment conducted with Antigravity*
