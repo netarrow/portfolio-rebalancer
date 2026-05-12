@@ -930,6 +930,43 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Result: Cost Basis should be 65k, NOT averaged with the 50k because it was fully closed.
         addTx(pIdSpec, 'BTC-USD', 20, 0.2, 65000, 'Buy', 'Binance');
 
+        // --- SCENARIO 4: Feature coverage transactions ---
+        // Free-commission Buy (Trade Republic style)
+        txs.push({
+            id: `mock-tx-${idCounter++}`,
+            portfolioId: pIdMain,
+            ticker: 'IE00B4L5Y983',
+            date: new Date(today - (15 * ONE_DAY)).toISOString().split('T')[0],
+            amount: 10,
+            price: 93.00,
+            direction: 'Buy',
+            brokerId: 'b3',
+            freeCommission: true
+        } as any);
+
+        // Dividend on VWRL (makes VWRL non-Unmanaged and exercises Dividend income path)
+        txs.push({
+            id: `mock-tx-${idCounter++}`,
+            portfolioId: pIdMain,
+            ticker: 'IE00B3RBWM25',
+            date: new Date(today - (45 * ONE_DAY)).toISOString().split('T')[0],
+            amount: 1,
+            price: 42.75, // EUR total dividend
+            direction: 'Dividend',
+            brokerId: 'b1'
+        } as any);
+
+        // Coupon on AGGH (bond income)
+        txs.push({
+            id: `mock-tx-${idCounter++}`,
+            portfolioId: pIdMain,
+            ticker: 'IE00BDBRDM35',
+            date: new Date(today - (75 * ONE_DAY)).toISOString().split('T')[0],
+            amount: 1,
+            price: 28.50, // EUR total coupon
+            direction: 'Coupon',
+            brokerId: 'b3'
+        } as any);
 
         // 3. Create Settings
         const newSettings: AssetDefinition[] = mockAssets.map(m => ({
@@ -948,6 +985,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ];
 
         // 5. Portfolios & Allocations
+        const pIdSpecAlts = 'mock-p-spec-alts';
         const portfoliosList: Portfolio[] = [
             {
                 id: pIdMain,
@@ -955,6 +993,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 description: 'Core ETF Portfolio (World + EM + Agg)',
                 goalId: 'goal-growth',
                 order: 0,
+                liquidity: 2000,
                 allocations: {
                     'IE00B4L5Y983': 50, // SWDA
                     'IE00BKM4GZ66': 15, // EMIM
@@ -979,6 +1018,17 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 description: 'High risk bets',
                 goalId: 'goal-security',
                 order: 2,
+                allocations: {
+                    'BTC-USD': 100
+                }
+            },
+            {
+                id: pIdSpecAlts,
+                name: 'Speculative — Alt Coins',
+                description: 'Nested sub-portfolio for alt-coin bets',
+                goalId: 'goal-security',
+                parentId: pIdSpec,
+                order: 3,
                 allocations: {
                     'BTC-USD': 100
                 }
@@ -1032,11 +1082,104 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             ]
         });
         setBrokers([
-            { id: 'b1', name: 'Degiro', description: 'Main Broker' },
-            { id: 'b2', name: 'Directa', description: 'Italian Broker' },
-            { id: 'b3', name: 'Trade Republic', description: 'Savings Plans' },
-            { id: 'b4', name: 'Binance', description: 'Crypto Exchange' }
+            {
+                id: 'b1',
+                name: 'Degiro',
+                description: 'Main Broker',
+                commissionType: 'fixed',
+                commissionFixed: 2.5,
+                currentLiquidity: 1500
+            },
+            {
+                id: 'b2',
+                name: 'Directa',
+                description: 'Italian Broker',
+                commissionType: 'percent',
+                commissionPercent: 0.19,
+                commissionMin: 2.95,
+                commissionMax: 19,
+                currentLiquidity: 8000,
+                minLiquidityType: 'fixed',
+                minLiquidityAmount: 5000,
+                liquidityAllocations: { [pIdSafe]: 5000 }
+            },
+            {
+                id: 'b3',
+                name: 'Trade Republic',
+                description: 'Savings Plans',
+                commissionType: 'fixed',
+                commissionFixed: 1,
+                currentLiquidity: 500
+            },
+            {
+                id: 'b4',
+                name: 'Binance',
+                description: 'Crypto Exchange',
+                commissionType: 'percent',
+                commissionPercent: 0.1,
+                currentLiquidity: 200
+            }
         ]);
+
+        // 8. YNAB integration mock data
+        setYnabConfig({
+            apiKey: 'mock-ynab-key',
+            budgetId: 'mock-budget-id',
+            budgetName: 'Family Budget',
+            currencyIso: 'EUR',
+            avgMonthsWindow: 6,
+            lastSyncAt: timestamp
+        });
+        setYnabCategories([
+            {
+                id: 'ynab-cat-1',
+                groupId: 'ynab-grp-inv',
+                groupName: 'Investments',
+                name: 'ETF DCA',
+                balanceMilliunits: 1200000,
+                budgetedMilliunits: 500000,
+                avgBudgetedMilliunits: 480000,
+                avgMonthsCount: 6
+            },
+            {
+                id: 'ynab-cat-2',
+                groupId: 'ynab-grp-inv',
+                groupName: 'Investments',
+                name: 'Crypto',
+                balanceMilliunits: 300000,
+                budgetedMilliunits: 100000,
+                avgBudgetedMilliunits: 120000,
+                avgMonthsCount: 6
+            },
+            {
+                id: 'ynab-cat-3',
+                groupId: 'ynab-grp-savings',
+                groupName: 'Savings',
+                name: 'Emergency Fund',
+                balanceMilliunits: 5000000,
+                budgetedMilliunits: 200000,
+                avgBudgetedMilliunits: 250000,
+                avgMonthsCount: 6
+            },
+            {
+                id: 'ynab-cat-4',
+                groupId: 'ynab-grp-savings',
+                groupName: 'Savings',
+                name: 'Travel Fund',
+                balanceMilliunits: 800000,
+                budgetedMilliunits: 150000,
+                avgBudgetedMilliunits: 140000,
+                avgMonthsCount: 6
+            }
+        ]);
+        setYnabMappings([
+            { categoryId: 'ynab-cat-1', target: { kind: 'asset', ticker: 'IE00B4L5Y983' } },
+            { categoryId: 'ynab-cat-3', target: { kind: 'cash', brokerId: 'b1' } },
+            { categoryId: 'ynab-cat-2', target: { kind: 'unmapped' } }
+        ]);
+
+        // 9. Aggregate UI: exclude VWRL from the aggregate view
+        setAggregateExcludedTickers(['IE00B3RBWM25']);
 
         // Clear old legacy
         setOldTargets([]);
@@ -1194,7 +1337,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGetAverages(ynabConfig.apiKey, ynabConfig.budgetId, ynabConfig.avgMonthsWindow ?? 6),
             ]);
             if (!result.success || !result.data) {
-                return { ok: false, error: result.error || 'Errore durante la sincronizzazione.' };
+                return { ok: false, error: result.error || 'Error during synchronization.' };
             }
             const averages = avgResult.success && avgResult.data ? avgResult.data : null;
             if (!avgResult.success) {

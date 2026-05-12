@@ -28,7 +28,7 @@ const Disclaimer: React.FC = () => {
                     The true purpose of this application was to experiment with <strong>Agentic AI Development</strong>.
                 </p>
                 <p style={{ lineHeight: '1.8', fontSize: '1.05rem', color: 'var(--text-secondary)' }}>
-                    It was built by leveraging <strong>Google's Antigravity</strong> agentic capabilities with Gemini PRO and <strong>Codex</strong> models as checker and analisys agent.
+                    It was built by leveraging <strong>Google's Antigravity</strong> agentic capabilities with <strong>Gemini PRO</strong>, <strong>Codex</strong> as checker and analysis agent, and <strong>Anthropic's Claude Opus</strong> for additional implementation and review work.
                     The development process focused on testing autonomous coding, decision-making, and problem-solving capabilities of AI agents in a real-world scenario.
                 </p>
             </div>
@@ -86,6 +86,20 @@ const Disclaimer: React.FC = () => {
                         <h3 style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>Data Transmission</h3>
                         <p style={{ lineHeight: '1.7', color: 'var(--text-secondary)', margin: 0 }}>
                             Price lookups send only the ISIN and selected source to the local server proxy; no personal identifiers or portfolio balances are transmitted.
+                        </p>
+                    </div>
+
+                    <div>
+                        <h3 style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>Azure Sync (optional)</h3>
+                        <p style={{ lineHeight: '1.7', color: 'var(--text-secondary)', margin: 0 }}>
+                            If you enable Azure Sync, your portfolio data is encrypted <strong>in your browser</strong> with <strong>AES-GCM (256-bit)</strong> using a key derived (PBKDF2) from a passphrase that <strong>you choose and that never leaves your device</strong>. Only the resulting ciphertext is uploaded to the Azure Blob Storage location you provide via a user-supplied <strong>SAS URL</strong>. The SAS URL and passphrase are stored only in <code>localStorage</code> and are <strong>excluded from the synced payload by design</strong>. The app's backend never sees your SAS URL, passphrase, or decrypted data. If you lose the passphrase, the data cannot be recovered.
+                        </p>
+                    </div>
+
+                    <div>
+                        <h3 style={{ fontSize: '1.1rem', marginBottom: '0.5rem', color: 'var(--text-primary)' }}>YNAB Integration (optional)</h3>
+                        <p style={{ lineHeight: '1.7', color: 'var(--text-secondary)', margin: 0 }}>
+                            If you connect YNAB, the app uses your <strong>YNAB Personal Access Token</strong> to call the official YNAB API (<code>api.ynab.com</code>) <strong>directly from your browser</strong>. The token is stored only in <code>localStorage</code> and is <strong>never sent through the app's backend nor included in the Azure Sync payload</strong>. The fetched budget categories are cached locally; your category-to-asset mappings are part of the synced payload (and therefore subject to the same client-side encryption as the rest of the data when Azure Sync is enabled). Revoke the token anytime from your YNAB account settings.
                         </p>
                     </div>
 

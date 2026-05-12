@@ -333,8 +333,8 @@ const GlobalRebalancingView: React.FC = () => {
     const saveGroup = () => {
         if (!groupDraft.name.trim()) {
             Swal.fire({
-                title: 'Nome mancante',
-                text: 'Inserisci un nome per il ratio group.',
+                title: 'Missing name',
+                text: 'Enter a name for the ratio group.',
                 icon: 'warning',
                 confirmButtonColor: '#6366f1',
                 background: 'var(--bg-surface)',

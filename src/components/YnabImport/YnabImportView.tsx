@@ -5,7 +5,7 @@ import type { YnabCategory, YnabMappingTarget } from '../../types';
 import Swal from 'sweetalert2';
 
 const formatCurrency = (value: number, iso: string = 'EUR') =>
-    new Intl.NumberFormat('it-IT', { style: 'currency', currency: iso, maximumFractionDigits: 2 }).format(value);
+    new Intl.NumberFormat('en-IE', { style: 'currency', currency: iso, maximumFractionDigits: 2 }).format(value);
 
 interface Props {
     onNavigateToSettings?: () => void;
@@ -77,7 +77,7 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
             } else {
                 key = `cash:${target.brokerId}`;
                 const broker = brokers.find(b => b.id === target.brokerId);
-                label = `Liquidità · ${broker?.name || target.brokerId}`;
+                label = `Cash · ${broker?.name || target.brokerId}`;
             }
             const existing = buckets.get(key) || { label, total: 0, totalAvg: 0, count: 0 };
             existing.total += eur;
@@ -108,12 +108,12 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
         () => ynabCategories.reduce((m, c) => Math.max(m, c.avgMonthsCount ?? 0), 0),
         [ynabCategories]
     );
-    const avgLabel = maxAvgMonths > 0 ? `Media ${maxAvgMonths}m` : 'Media';
+    const avgLabel = maxAvgMonths > 0 ? `Avg ${maxAvgMonths}m` : 'Average';
 
     const handleSync = async () => {
         const result = await syncYnabBudget();
         if (!result.ok) {
-            Swal.fire({ title: 'Errore di sincronizzazione', text: result.error, icon: 'error' });
+            Swal.fire({ title: 'Sync error', text: result.error, icon: 'error' });
         }
     };
 
@@ -142,16 +142,16 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
     if (!ynabConfig) {
         return (
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
-                <h2 style={{ marginBottom: '1rem' }}>YNAB non configurato</h2>
+                <h2 style={{ marginBottom: '1rem' }}>YNAB not configured</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    Per importare le categorie del tuo budget, inserisci la chiave API di YNAB nelle Impostazioni.
+                    To import your budget categories, enter your YNAB API key in Settings.
                 </p>
                 {onNavigateToSettings && (
                     <button
                         onClick={onNavigateToSettings}
                         style={{ padding: '0.7rem 1.5rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                     >
-                        Vai a Impostazioni
+                        Go to Settings
                     </button>
                 )}
             </div>
@@ -164,9 +164,9 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                 <div>
                     <h2 style={{ margin: 0 }}>YNAB Budget</h2>
                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-                        Budget: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> · Valuta {currencyIso}
+                        Budget: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> · Currency {currencyIso}
                         {ynabConfig.lastSyncAt && (
-                            <> · Ultima sync: {new Date(ynabConfig.lastSyncAt).toLocaleString('it-IT')}</>
+                            <> · Last sync: {new Date(ynabConfig.lastSyncAt).toLocaleString('en-IE')}</>
                         )}
                     </div>
                 </div>
@@ -175,30 +175,30 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                     disabled={ynabSyncing}
                     style={{ padding: '0.7rem 1.4rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                 >
-                    {ynabSyncing ? 'Sincronizzazione…' : 'Sincronizza ora'}
+                    {ynabSyncing ? 'Syncing…' : 'Sync now'}
                 </button>
             </div>
 
             {ynabCategories.length === 0 ? (
                 <div style={{ padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    Nessuna categoria importata. Premi <strong>Sincronizza ora</strong> per caricare i dati dal mese corrente.
+                    No categories imported. Press <strong>Sync now</strong> to load data for the current month.
                 </div>
             ) : (
                 <>
                     <input
                         type="text"
                         className="form-input"
-                        placeholder="Cerca categoria o gruppo…"
+                        placeholder="Search category or group…"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                         style={{ width: '100%', maxWidth: '400px', marginBottom: '1rem' }}
                     />
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr', gap: '1rem', padding: '0 1rem 0.5rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                        <span>Categoria</span>
-                        <span style={{ textAlign: 'right' }}>Corrente</span>
+                        <span>Category</span>
+                        <span style={{ textAlign: 'right' }}>Current</span>
                         <span style={{ textAlign: 'right' }}>{avgLabel}</span>
-                        <span>Mappatura</span>
+                        <span>Mapping</span>
                     </div>
 
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -245,9 +245,9 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                         value={getDropdownValue(c.id)}
                                                         onChange={e => handleMappingChange(c.id, e.target.value)}
                                                     >
-                                                        <option value="__unmapped">— Non mappato —</option>
+                                                        <option value="__unmapped">— Unmapped —</option>
                                                         {assetSettings.length > 0 && (
-                                                            <optgroup label="Asset di investimento">
+                                                            <optgroup label="Investment assets">
                                                                 {assetSettings.map(a => (
                                                                     <option key={a.ticker} value={`asset:${a.ticker}`}>
                                                                         {a.label ? `${a.label} (${a.ticker})` : a.ticker}
@@ -256,10 +256,10 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                             </optgroup>
                                                         )}
                                                         {brokers.length > 0 && (
-                                                            <optgroup label="Liquidità (broker)">
+                                                            <optgroup label="Cash (broker)">
                                                                 {brokers.map(b => (
                                                                     <option key={b.id} value={`cash:${b.id}`}>
-                                                                        Liquidità · {b.name}
+                                                                        Cash · {b.name}
                                                                     </option>
                                                                 ))}
                                                             </optgroup>
@@ -276,19 +276,19 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
 
                     {/* Aggregate summary */}
                     <div style={{ marginTop: '2rem', padding: '1.25rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-                        <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Riepilogo per asset</h3>
+                        <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Summary by asset</h3>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             <span></span>
-                            <span style={{ textAlign: 'right' }}>Corrente</span>
+                            <span style={{ textAlign: 'right' }}>Current</span>
                             <span style={{ textAlign: 'right' }}>{avgLabel}</span>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.75rem', fontWeight: 600, paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
-                            <span>Totale budget</span>
+                            <span>Total budget</span>
                             <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudget, currencyIso)}</span>
                             <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudgetAvg, currencyIso)}</span>
                         </div>
                         {aggregateByTarget.items.length === 0 && aggregateByTarget.unmappedCount === 0 ? (
-                            <div style={{ color: 'var(--text-muted)' }}>Nessuna categoria.</div>
+                            <div style={{ color: 'var(--text-muted)' }}>No categories.</div>
                         ) : (
                             <>
                                 {aggregateByTarget.items.map(item => (
@@ -300,7 +300,7 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                 ))}
                                 {aggregateByTarget.unmappedCount > 0 && (
                                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', padding: '0.4rem 0', color: 'var(--text-muted)' }}>
-                                        <span>Non mappato <small>({aggregateByTarget.unmappedCount} cat.)</small></span>
+                                        <span>Unmapped <small>({aggregateByTarget.unmappedCount} cat.)</small></span>
                                         <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedTotal, currencyIso)}</span>
                                         <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedAvg, currencyIso)}</span>
                                     </div>

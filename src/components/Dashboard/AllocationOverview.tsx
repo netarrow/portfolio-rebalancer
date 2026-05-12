@@ -663,9 +663,9 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                             color: isEditing ? 'var(--text-primary)' : 'var(--text-muted)',
                             cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', flexShrink: 0,
                         }}
-                        title="Includi/escludi asset dal conteggio"
+                        title="Include/exclude assets from calculation"
                     >
-                        {isEditing ? '✓ Fine' : `⚙ Filtra${excludedCount > 0 ? ` (${excludedCount} esclusi)` : ''}`}
+                        {isEditing ? '✓ Done' : `⚙ Filter${excludedCount > 0 ? ` (${excludedCount} excluded)` : ''}`}
                     </button>
                 </div>
             </div>
@@ -681,15 +681,15 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                     color: 'var(--text-primary)',
                 }}>
                     <div style={{ fontWeight: 600, marginBottom: '4px', color: '#B45309' }}>
-                        ⚠ Goal rebalance: alcuni broker scenderebbero sotto la min liquidity
+                        ⚠ Goal rebalance: some brokers would fall below min liquidity
                     </div>
                     {brokerLiquidityWarnings.map(w => (
                         <div key={w.brokerId} style={{ lineHeight: 1.5 }}>
-                            <strong>{w.brokerName}</strong>: cash post‑rebalance €{w.postCash.toLocaleString('en-IE', { maximumFractionDigits: 0 })} &lt; min richiesto €{w.threshold.toLocaleString('en-IE', { maximumFractionDigits: 0 })} (Δ −€{w.deficit.toLocaleString('en-IE', { maximumFractionDigits: 0 })})
+                            <strong>{w.brokerName}</strong>: post-rebalance cash €{w.postCash.toLocaleString('en-IE', { maximumFractionDigits: 0 })} &lt; min required €{w.threshold.toLocaleString('en-IE', { maximumFractionDigits: 0 })} (Δ −€{w.deficit.toLocaleString('en-IE', { maximumFractionDigits: 0 })})
                         </div>
                     ))}
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                        I buy/sell sono comunque calcolati ignorando il vincolo.
+                        Buy/sell orders are calculated regardless, ignoring the constraint.
                     </div>
                 </div>
             )}
@@ -868,7 +868,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                 {isEditing && (
                     <button
                         onClick={onToggleExclude}
-                        title={isExcluded ? 'Includi nel conteggio' : 'Escludi dal conteggio'}
+                        title={isExcluded ? 'Include in calculation' : 'Exclude from calculation'}
                         style={{
                             width: '24px', height: '24px', borderRadius: '50%', border: '1.5px solid',
                             borderColor: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
@@ -1002,7 +1002,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                         {isEditing && (
                             <button
                                 onClick={onToggleExclude}
-                                title={isExcluded ? 'Includi' : 'Escludi'}
+                                title={isExcluded ? 'Include' : 'Exclude'}
                                 style={{
                                     width: '22px', height: '22px', borderRadius: '50%', border: '1.5px solid',
                                     borderColor: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
