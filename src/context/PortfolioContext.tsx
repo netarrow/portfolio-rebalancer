@@ -848,28 +848,23 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const loadMockData = () => {
         const timestamp = new Date().toISOString();
         const pIdMain = 'mock-p-main';
+        const pIdMainTilt = 'mock-p-main-tilt';
+        const pIdBonds = 'mock-p-bonds';
         const pIdSafe = 'mock-p-safe';
-        const pIdSpec = 'mock-p-spec';
 
-        // 1. Define Assets with their "canonical" settings
-        // We use a mix of ETFs for Stocks/Bonds, and Crypto
+        // 1. Define Assets — ETFs and bond ETFs only (no crypto by design).
         const mockAssets = [
             // Growth (Stocks)
             { ticker: 'IE00B4L5Y983', name: 'iShares Core MSCI World', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // SWDA
             { ticker: 'IE00BKM4GZ66', name: 'iShares Core MSCI EM IMI', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // EMIM
-            { ticker: 'IE00B3RBWM25', name: 'Vanguard FTSE All-World', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // VWRL (Unmanaged)
+            { ticker: 'IE00B3RBWM25', name: 'Vanguard FTSE All-World', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // VWRL
 
-            // Security (Bonds)
+            // Security (Bonds, medium duration)
             { ticker: 'IE00BDBRDM35', name: 'iShares Glb Agg Bond EUR-H', class: 'Bond', subClass: 'Medium', source: 'ETF', goal: 'Security' }, // AGGH
 
-            // Protection (Gov Bonds / Gold)
+            // Protection (Long-duration govt bonds + short-term EUR overnight)
             { ticker: 'IE00B1FZS798', name: 'iShares Euro Govt Bond 15-30yr', class: 'Bond', subClass: 'Long', source: 'ETF', goal: 'Protection' }, // IGLT (Proxy)
-
-            // Liquidity (Cash Equiv) -> Now Bond Short per user request
             { ticker: 'LU0290358497', name: 'Xtrackers II EUR Overnight Rate', class: 'Bond', subClass: 'Short', source: 'ETF', goal: 'Protection' }, // XEON
-
-            // Speculative (Crypto)
-            { ticker: 'BTC-USD', name: 'Bitcoin', class: 'Crypto', subClass: 'International', source: 'CPRAM', goal: 'Growth' }
         ];
 
         // 2. Generate Transactions (History)
@@ -891,46 +886,31 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             });
         };
 
-        // --- SCENARIO 1: Main Portfolio (Steady Growth) ---
+        // --- SCENARIO 1: Main Strategy (Growth parent — core ETF holdings) ---
         // SWDA: Regular Accumulation
-        addTx(pIdMain, 'IE00B4L5Y983', 365, 300, 78.50, 'Buy', 'Degiro'); // Increased from 100
+        addTx(pIdMain, 'IE00B4L5Y983', 365, 300, 78.50, 'Buy', 'Degiro');
         addTx(pIdMain, 'IE00B4L5Y983', 180, 50, 84.20, 'Buy', 'Degiro');
         addTx(pIdMain, 'IE00B4L5Y983', 30, 20, 92.10, 'Buy', 'Degiro');
 
         // EMIM: Weighted Average Test (Buy -> Sell Half -> Buy)
-        // Buy 100 @ 25
         addTx(pIdMain, 'IE00BKM4GZ66', 200, 100, 25.00, 'Buy', 'Degiro');
-        // Sell 50 @ 28 (Profit)
         addTx(pIdMain, 'IE00BKM4GZ66', 100, 50, 28.00, 'Sell', 'Degiro');
-        // Buy 50 @ 30
-        // Result: Holdings = 100. Previous Avg Cost was 25. New Buy is 30.
-        // Remaining 50 from first batch still has cost 25? Or average?
-        // App Logic: Average Cost matches weighted average.
         addTx(pIdMain, 'IE00BKM4GZ66', 10, 50, 30.00, 'Buy', 'Degiro');
 
-        // AGGH: Lump sum
-        addTx(pIdMain, 'IE00BDBRDM35', 90, 500, 4.80, 'Buy', 'Trade Republic');
+        // --- SCENARIO 2: Main Strategy — Tactical Tilt (Growth child of pIdMain) ---
+        // Child portfolio shares the Growth goal but tilts toward developed-world
+        // dividend exposure via VWRL and emerging markets via EMIM.
+        addTx(pIdMainTilt, 'IE00B3RBWM25', 120, 40, 105.00, 'Buy', 'Trade Republic');
+        addTx(pIdMainTilt, 'IE00BKM4GZ66', 50, 30, 28.50, 'Buy', 'Degiro');
 
-        // VWRL: NO TRANSACTIONS -> UNMANAGED ASSET
+        // --- SCENARIO 3: Bond Allocation (Security — global aggregate bonds) ---
+        addTx(pIdBonds, 'IE00BDBRDM35', 90, 500, 4.80, 'Buy', 'Trade Republic');
 
-        // --- SCENARIO 2: Safety Net (Liquidity & Protection) ---
-        // XEON: Big Parked Cash
-        addTx(pIdSafe, 'LU0290358497', 60, 450, 139.50, 'Buy', 'Directa'); // Increased from 250 (~63k)
-
-        // Govt Bond: Protection
+        // --- SCENARIO 4: Safety Net (Protection — long-duration & overnight) ---
+        addTx(pIdSafe, 'LU0290358497', 60, 450, 139.50, 'Buy', 'Directa');
         addTx(pIdSafe, 'IE00B1FZS798', 120, 50, 180.00, 'Buy', 'Directa');
 
-        // --- SCENARIO 3: Speculative (Crypto - Cost Reset Test) ---
-        // Bitcoin: Buy -> Sell All -> Buy lower/higher
-        // Buy 1 @ 50k
-        addTx(pIdSpec, 'BTC-USD', 500, 0.5, 50000, 'Buy', 'Binance');
-        // Sell All @ 60k
-        addTx(pIdSpec, 'BTC-USD', 400, 0.5, 60000, 'Sell', 'Binance');
-        // Buy 0.2 @ 65k
-        // Result: Cost Basis should be 65k, NOT averaged with the 50k because it was fully closed.
-        addTx(pIdSpec, 'BTC-USD', 20, 0.2, 65000, 'Buy', 'Binance');
-
-        // --- SCENARIO 4: Feature coverage transactions ---
+        // --- SCENARIO 5: Feature coverage transactions ---
         // Free-commission Buy (Trade Republic style)
         txs.push({
             id: `mock-tx-${idCounter++}`,
@@ -944,10 +924,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             freeCommission: true
         } as any);
 
-        // Dividend on VWRL (makes VWRL non-Unmanaged and exercises Dividend income path)
+        // Dividend on VWRL (exercises Dividend income path on the Tilt child)
         txs.push({
             id: `mock-tx-${idCounter++}`,
-            portfolioId: pIdMain,
+            portfolioId: pIdMainTilt,
             ticker: 'IE00B3RBWM25',
             date: new Date(today - (45 * ONE_DAY)).toISOString().split('T')[0],
             amount: 1,
@@ -959,7 +939,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Coupon on AGGH (bond income)
         txs.push({
             id: `mock-tx-${idCounter++}`,
-            portfolioId: pIdMain,
+            portfolioId: pIdBonds,
             ticker: 'IE00BDBRDM35',
             date: new Date(today - (75 * ONE_DAY)).toISOString().split('T')[0],
             amount: 1,
@@ -985,52 +965,53 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ];
 
         // 5. Portfolios & Allocations
-        const pIdSpecAlts = 'mock-p-spec-alts';
+        // Parent-child pair (pIdMain → pIdMainTilt) both have populated allocations
+        // and real transactions so nested rendering can be exercised end-to-end.
         const portfoliosList: Portfolio[] = [
             {
                 id: pIdMain,
                 name: 'Main Strategy',
-                description: 'Core ETF Portfolio (World + EM + Agg)',
+                description: 'Core developed + emerging stocks (Growth parent)',
                 goalId: 'goal-growth',
                 order: 0,
                 liquidity: 2000,
                 allocations: {
-                    'IE00B4L5Y983': 50, // SWDA
-                    'IE00BKM4GZ66': 15, // EMIM
-                    'IE00BDBRDM35': 25, // AGGH
-                    'IE00B3RBWM25': 10  // VWRL (Unmanaged)
+                    'IE00B4L5Y983': 60, // SWDA
+                    'IE00BKM4GZ66': 30, // EMIM
+                    'IE00B3RBWM25': 10  // VWRL
+                }
+            },
+            {
+                id: pIdMainTilt,
+                name: 'Main Strategy — Tactical Tilt',
+                description: 'Nested Growth sub-portfolio tilting toward EM + dividend ETF',
+                goalId: 'goal-growth',
+                parentId: pIdMain,
+                order: 1,
+                allocations: {
+                    'IE00B3RBWM25': 60, // VWRL
+                    'IE00BKM4GZ66': 40  // EMIM
+                }
+            },
+            {
+                id: pIdBonds,
+                name: 'Bond Allocation',
+                description: 'Global aggregate bond exposure (Security goal)',
+                goalId: 'goal-security',
+                order: 2,
+                allocations: {
+                    'IE00BDBRDM35': 100 // AGGH
                 }
             },
             {
                 id: pIdSafe,
                 name: 'Safety Net',
-                description: 'Emergency fund and hedging',
+                description: 'Long-duration govt bonds + EUR overnight (Protection)',
                 goalId: 'goal-protection',
-                order: 1,
-                allocations: {
-                    'LU0290358497': 70, // XEON
-                    'IE00B1FZS798': 30  // Govt Bond
-                }
-            },
-            {
-                id: pIdSpec,
-                name: 'Speculative',
-                description: 'High risk bets',
-                goalId: 'goal-security',
-                order: 2,
-                allocations: {
-                    'BTC-USD': 100
-                }
-            },
-            {
-                id: pIdSpecAlts,
-                name: 'Speculative — Alt Coins',
-                description: 'Nested sub-portfolio for alt-coin bets',
-                goalId: 'goal-security',
-                parentId: pIdSpec,
                 order: 3,
                 allocations: {
-                    'BTC-USD': 100
+                    'LU0290358497': 70, // XEON
+                    'IE00B1FZS798': 30  // IGLT
                 }
             }
         ];
@@ -1039,27 +1020,28 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const mockPrices = {
             'IE00B4L5Y983': { price: 95.50, lastUpdated: timestamp }, // Profit
             'IE00BKM4GZ66': { price: 31.20, lastUpdated: timestamp }, // Profit
-            'IE00B3RBWM25': { price: 115.00, lastUpdated: timestamp }, // No tx, just price
+            'IE00B3RBWM25': { price: 115.00, lastUpdated: timestamp }, // Profit
             'IE00BDBRDM35': { price: 5.10, lastUpdated: timestamp },  // Profit
             'IE00B1FZS798': { price: 175.50, lastUpdated: timestamp }, // Loss
-            'LU0290358497': { price: 142.10, lastUpdated: timestamp }, // Profit
-            'BTC-USD': { price: 68000, lastUpdated: timestamp }     // Profit
+            'LU0290358497': { price: 142.10, lastUpdated: timestamp }  // Profit
         };
 
         // 6. Macro & Goal Allocations (Global Targets)
+        // Goal split: 60% Growth, 20% Security, 20% Protection.
+        // Reflected in macro classes: 60% Stock (Growth), 40% Bond (Security + Protection).
         const newMacros: MacroAllocation = {
-            'Stock': 40,
-            'Bond': 53,
-            'Cash': 2,
-            'Crypto': 5,
+            'Stock': 60,
+            'Bond': 40,
+            'Cash': 0,
+            'Crypto': 0,
             'Commodity': 0
         };
 
         const newGoals: GoalAllocation = {
-            'Growth': 45,     // Stocks + Crypto
-            'Security': 5,   // Agg Bonds
-            'Protection': 48,  // Govt Bonds + XEON
-            'Liquidity': 2   // Cash
+            'Growth': 60,
+            'Security': 20,
+            'Protection': 20,
+            'Liquidity': 0
         };
 
         // 7. Apply All
@@ -1071,14 +1053,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setMacroAllocations(newMacros);
         setGoalAllocations(newGoals);
         setStoredAssetAllocationSettings({
-            liquidityTarget: { mode: 'fixed', value: 5000 },
+            liquidityTarget: { mode: 'fixed', value: 0 },
             portfolioTargets: {
-                [pIdMain]: { mode: 'percent', value: 60 },
-                [pIdSafe]: { mode: 'fixed', value: 10000 },
-                [pIdSpec]: { mode: 'ratio', value: 100, ratioGroupId: 'rg-remainder' }
+                [pIdMain]: { mode: 'percent', value: 40 },
+                [pIdMainTilt]: { mode: 'ratio', value: 100, ratioGroupId: 'rg-growth-remainder' },
+                [pIdBonds]: { mode: 'percent', value: 20 },
+                [pIdSafe]: { mode: 'fixed', value: 10000 }
             },
             ratioGroups: [
-                { id: 'rg-remainder', name: 'Growth Remainder', groupTargetMode: 'remainder', groupTargetValue: 0 }
+                { id: 'rg-growth-remainder', name: 'Growth Remainder', groupTargetMode: 'remainder', groupTargetValue: 0 }
             ]
         });
         setBrokers([
@@ -1110,14 +1093,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 commissionType: 'fixed',
                 commissionFixed: 1,
                 currentLiquidity: 500
-            },
-            {
-                id: 'b4',
-                name: 'Binance',
-                description: 'Crypto Exchange',
-                commissionType: 'percent',
-                commissionPercent: 0.1,
-                currentLiquidity: 200
             }
         ]);
 
