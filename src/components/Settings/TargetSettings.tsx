@@ -210,7 +210,7 @@ const TargetSettings: React.FC = () => {
 
     const handleYnabVerify = async () => {
         if (!ynabApiKeyInput.trim()) {
-            Swal.fire({ title: 'Inserisci la chiave API', icon: 'warning' });
+            Swal.fire({ title: 'Enter the API key', icon: 'warning' });
             return;
         }
         setYnabVerifying(true);
@@ -218,19 +218,19 @@ const TargetSettings: React.FC = () => {
         setYnabVerifying(false);
         if (!result.ok || !result.budgets) {
             setYnabBudgets(null);
-            Swal.fire({ title: 'Verifica fallita', text: result.error, icon: 'error' });
+            Swal.fire({ title: 'Verification failed', text: result.error, icon: 'error' });
             return;
         }
         setYnabBudgets(result.budgets);
         if (result.budgets.length === 0) {
-            Swal.fire({ title: 'Nessun budget trovato', icon: 'info' });
+            Swal.fire({ title: 'No budgets found', icon: 'info' });
             return;
         }
         // Auto-select the first budget if none chosen yet
         if (!ynabSelectedBudgetId) {
             setYnabSelectedBudgetId(result.budgets[0].id);
         }
-        Swal.fire({ title: 'Connessione YNAB OK', icon: 'success', timer: 1500, showConfirmButton: false });
+        Swal.fire({ title: 'YNAB connection OK', icon: 'success', timer: 1500, showConfirmButton: false });
     };
 
     const handleYnabSaveBudget = () => {
@@ -244,17 +244,17 @@ const TargetSettings: React.FC = () => {
             currencyIso: selected.currencyIso,
             lastSyncAt: ynabConfig?.lastSyncAt,
         });
-        Swal.fire({ title: 'YNAB configurato', icon: 'success', timer: 1500, showConfirmButton: false });
+        Swal.fire({ title: 'YNAB configured', icon: 'success', timer: 1500, showConfirmButton: false });
     };
 
     const handleYnabDisconnect = async () => {
         const confirm = await Swal.fire({
-            title: 'Disconnettere YNAB?',
-            text: 'Verranno rimossi chiave API, categorie importate e mapping. L\'azione non è reversibile.',
+            title: 'Disconnect YNAB?',
+            text: 'API key, imported categories, and mappings will be removed. This action cannot be undone.',
             icon: 'warning',
             showCancelButton: true,
-            confirmButtonText: 'Disconnetti',
-            cancelButtonText: 'Annulla',
+            confirmButtonText: 'Disconnect',
+            cancelButtonText: 'Cancel',
             confirmButtonColor: '#d33',
         });
         if (!confirm.isConfirmed) return;
@@ -405,14 +405,14 @@ const TargetSettings: React.FC = () => {
             {/* Azure Cloud Sync Section */}
             <div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
-                    <h2 className="section-title" style={{ margin: 0 }}>Sincronizzazione Cloud (Azure)</h2>
+                    <h2 className="section-title" style={{ margin: 0 }}>Cloud Sync (Azure)</h2>
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: 500 }}>
                         <input
                             type="checkbox"
                             checked={azureConfig.enabled}
                             onChange={e => setAzureConfig(prev => ({ ...prev, enabled: e.target.checked }))}
                         />
-                        Abilitata
+                        Enabled
                     </label>
                     {azureSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Syncing...</span>}
                 </div>
@@ -424,7 +424,7 @@ const TargetSettings: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '560px' }}>
                     {/* SAS URL */}
                     <div className="form-group" style={{ margin: 0 }}>
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>SAS URL del blob Azure</label>
+                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Azure blob SAS URL</label>
                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                             <input
                                 type={showSasUrl ? 'text' : 'password'}
@@ -442,7 +442,7 @@ const TargetSettings: React.FC = () => {
                             </button>
                         </div>
                         <small style={{ color: 'var(--text-muted)' }}>
-                            Azure Portal → Storage Account → Container → blob → Genera SAS (permessi Read + Write)
+                            Azure Portal → Storage Account → Container → blob → Generate SAS (Read + Write permissions)
                         </small>
                     </div>
 
@@ -535,10 +535,10 @@ const TargetSettings: React.FC = () => {
                     {ynabSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Syncing...</span>}
                 </div>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
-                    Importa i saldi delle categorie del tuo budget YNAB e associa ciascuna categoria a un asset di investimento o alla liquidità di un broker.
+                    Import your YNAB budget category balances and map each category to an investment asset or to broker cash.
                 </p>
                 <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
-                    Le credenziali YNAB sono salvate solo su questo dispositivo e non vengono sincronizzate su Azure. I mapping categoria → asset sì.
+                    YNAB credentials are stored only on this device and are never synced to Azure. Category → asset mappings are.
                 </p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '560px' }}>
@@ -549,19 +549,19 @@ const TargetSettings: React.FC = () => {
                                 type={showYnabKey ? 'text' : 'password'}
                                 value={ynabApiKeyInput}
                                 onChange={e => { setYnabApiKeyInput(e.target.value); setYnabBudgets(null); }}
-                                placeholder="Token YNAB (Account Settings → Developer Settings)"
+                                placeholder="YNAB token (Account Settings → Developer Settings)"
                                 style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.8rem' }}
                             />
                             <button
                                 onClick={() => setShowYnabKey(v => !v)}
                                 style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
-                                title={showYnabKey ? 'Nascondi' : 'Mostra'}
+                                title={showYnabKey ? 'Hide' : 'Show'}
                             >
                                 {showYnabKey ? '🙈' : '👁'}
                             </button>
                         </div>
                         <small style={{ color: 'var(--text-muted)' }}>
-                            Genera il token su app.ynab.com → Account Settings → Developer Settings → New Token.
+                            Generate the token at app.ynab.com → Account Settings → Developer Settings → New Token.
                         </small>
                     </div>
 
@@ -571,14 +571,14 @@ const TargetSettings: React.FC = () => {
                             disabled={!ynabApiKeyInput.trim() || ynabVerifying}
                             style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                         >
-                            {ynabVerifying ? 'Verifica in corso…' : 'Verifica e carica budget'}
+                            {ynabVerifying ? 'Verifying…' : 'Verify and load budget'}
                         </button>
                         {ynabConfig && (
                             <button
                                 onClick={handleYnabDisconnect}
                                 style={{ padding: '0.6rem 1.2rem', backgroundColor: 'transparent', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                             >
-                                Disconnetti YNAB
+                                Disconnect YNAB
                             </button>
                         )}
                     </div>
@@ -604,7 +604,7 @@ const TargetSettings: React.FC = () => {
                                     disabled={!ynabSelectedBudgetId}
                                     style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                                 >
-                                    Salva budget
+                                    Save budget
                                 </button>
                             </div>
                             {ynabSelectedBudgetId && (() => {
@@ -612,7 +612,7 @@ const TargetSettings: React.FC = () => {
                                 if (selected && selected.currencyIso !== 'EUR') {
                                     return (
                                         <small style={{ color: 'var(--color-warning, orange)' }}>
-                                            ⚠ La valuta del budget è {selected.currencyIso}, non EUR. I valori saranno mostrati nella valuta nativa.
+                                            ⚠ The budget currency is {selected.currencyIso}, not EUR. Values will be shown in the native currency.
                                         </small>
                                     );
                                 }
@@ -623,14 +623,14 @@ const TargetSettings: React.FC = () => {
 
                     {ynabConfig && (
                         <div style={{ paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                            <div>Budget attivo: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> ({ynabConfig.currencyIso || '—'})</div>
+                            <div>Active budget: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> ({ynabConfig.currencyIso || '—'})</div>
                             <div>
-                                Ultima sincronizzazione: {ynabConfig.lastSyncAt
-                                    ? new Date(ynabConfig.lastSyncAt).toLocaleString('it-IT')
-                                    : 'mai'}
+                                Last sync: {ynabConfig.lastSyncAt
+                                    ? new Date(ynabConfig.lastSyncAt).toLocaleString('en-IE')
+                                    : 'never'}
                             </div>
                             <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                <label htmlFor="ynab-avg-window">Finestra media budget:</label>
+                                <label htmlFor="ynab-avg-window">Budget average window:</label>
                                 <input
                                     id="ynab-avg-window"
                                     type="number"
@@ -647,7 +647,7 @@ const TargetSettings: React.FC = () => {
                                     className="form-input"
                                     style={{ width: '80px' }}
                                 />
-                                <span>mesi (esclude il mese corrente, 1–24)</span>
+                                <span>months (excludes the current month, 1–24)</span>
                             </div>
                         </div>
                     )}
@@ -704,7 +704,7 @@ const TargetSettings: React.FC = () => {
                         marginRight: 'var(--space-3)'
                     }}
                 >
-                    Load Mock Data (3 Test ISINs)
+                    Load Mock Data (full feature coverage)
                 </button>
             </div>
 

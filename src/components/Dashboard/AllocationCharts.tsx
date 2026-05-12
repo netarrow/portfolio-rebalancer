@@ -137,7 +137,7 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                             whiteSpace: 'nowrap',
                         }}
                     >
-                        {includeCash ? 'Cash incluso' : 'Cash escluso'}
+                        {includeCash ? 'Cash included' : 'Cash excluded'}
                     </button>
                 )}
             </div>

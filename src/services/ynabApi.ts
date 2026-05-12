@@ -18,12 +18,12 @@ export interface YnabApiResult<T> {
 function mapError(e: unknown): string {
     if (axios.isAxiosError(e)) {
         const status = e.response?.status;
-        if (status === 401) return 'Chiave API non valida o scaduta.';
-        if (status === 403) return 'Accesso negato dal server YNAB.';
-        if (status === 404) return 'Risorsa non trovata su YNAB (controlla il budget ID).';
-        if (status === 429) return 'Limite di richieste YNAB superato (200/ora). Riprova più tardi.';
-        if (status && status >= 500) return `Errore server YNAB (HTTP ${status}).`;
-        if (e.code === 'ERR_NETWORK') return 'Errore di rete: impossibile contattare YNAB.';
+        if (status === 401) return 'Invalid or expired API key.';
+        if (status === 403) return 'Access denied by the YNAB server.';
+        if (status === 404) return 'Resource not found on YNAB (check the budget ID).';
+        if (status === 429) return 'YNAB rate limit exceeded (200/hour). Try again later.';
+        if (status && status >= 500) return `YNAB server error (HTTP ${status}).`;
+        if (e.code === 'ERR_NETWORK') return 'Network error: unable to reach YNAB.';
         return e.message;
     }
     return e instanceof Error ? e.message : String(e);
