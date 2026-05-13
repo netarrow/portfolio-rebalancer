@@ -3,6 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, TransactionDirection } from '../../types';
 import { isIncomeDirection } from '../../types';
 import { calculateCommission, calculateRealizedGains, calculateCashFlows } from '../../utils/portfolioCalculations';
+import { exportTransactionsToExcel } from '../../utils/exportTransactions';
 import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
@@ -88,6 +89,15 @@ const TransactionList: React.FC = () => {
         setBulkPortfolioId('');
         setBulkBroker('');
         setBulkFreeCommission('');
+    };
+
+    const handleExportExcel = () => {
+        if (selectedIds.size === 0) return;
+        const selected = transactions.filter(
+            t => selectedIds.has(t.id) && (t.direction === 'Buy' || t.direction === 'Sell'),
+        );
+        if (selected.length === 0) return;
+        exportTransactionsToExcel(selected, brokers);
     };
 
     // --- Single Edit Handlers ---
@@ -768,13 +778,22 @@ const TransactionList: React.FC = () => {
                             <option value="paid">Paid (use broker plan)</option>
                         </select>
                     </div>
-                    <button
-                        className="btn-primary"
-                        onClick={handleBulkUpdate}
-                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem', width: '100%' }}
-                    >
-                        Update
-                    </button>
+                    <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
+                        <button
+                            className="btn-primary"
+                            onClick={handleBulkUpdate}
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem', flex: 1 }}
+                        >
+                            Update
+                        </button>
+                        <button
+                            className="btn-secondary"
+                            onClick={handleExportExcel}
+                            style={{ padding: '0.4rem 0.8rem', fontSize: '0.9rem', flex: 1 }}
+                        >
+                            Export Excel
+                        </button>
+                    </div>
                 </div>
             )}
 
