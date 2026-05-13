@@ -4,7 +4,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import type { Asset } from '../../types';
-import { CASH_TICKER_PREFIX } from '../../types';
+import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
 import './Dashboard.css';
 
@@ -353,8 +353,11 @@ const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number }> = 
     );
 };
 
+type StatsTab = 'global' | 'portfolio' | 'broker';
+
 const AllocationCharts: React.FC = () => {
     const { transactions, assetSettings, marketData, portfolios, brokers, goals } = usePortfolio();
+    const [activeTab, setActiveTab] = useState<StatsTab>('global');
 
     // 1. Total / All (including virtual cash assets from all portfolios)
     const totalAssets = useMemo(() => {
@@ -507,7 +510,7 @@ const AllocationCharts: React.FC = () => {
                     .map(([label, val]) => ({ label, value: val }))
                     .sort((a, b) => b.value - a.value)
             }))
-            .sort((a, b) => b.value - a.value); // Standard largest at bottom behavior matches "Pyramid" usually.
+            .sort((a, b) => b.value - a.value);
 
     }, [totalAssets, brokers]);
 
@@ -668,6 +671,29 @@ const AllocationCharts: React.FC = () => {
         return injectCashAssets(result.assets, brokers, pid);
     };
 
+    // Helper to get assets for a broker (including its current liquidity as cash)
+    const getBrokerAssets = (brokerId: string): Asset[] => {
+        const filteredTxs = transactions.filter(t => t.brokerId === brokerId);
+        const { assets } = calculateAssets(filteredTxs, assetSettings, marketData);
+        const broker = brokers.find(b => b.id === brokerId);
+        const liq = broker?.currentLiquidity ?? 0;
+        if (liq > 0) {
+            assets.push({
+                ticker: getCashTicker(brokerId),
+                label: 'Cash',
+                assetClass: 'Cash',
+                assetSubClass: '',
+                quantity: 1,
+                averagePrice: liq,
+                currentPrice: liq,
+                currentValue: liq,
+                gain: 0,
+                gainPercentage: 0,
+            });
+        }
+        return assets;
+    };
+
     const GOAL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6', '#F97316'];
 
     const goalChartData = useMemo(() => {
@@ -708,153 +734,199 @@ const AllocationCharts: React.FC = () => {
         [goalChartData]
     );
 
+    const hasBrokerData = brokers.some(b => {
+        const bAssets = getBrokerAssets(b.id);
+        return bAssets.some(a => a.currentValue > 0);
+    });
+
     if (totalAssets.length === 0 || totalAssets.every(a => a.currentValue === 0)) {
         if (investedVsLiquidityData.length === 0) return null;
     }
 
+    const tabs: { key: StatsTab; label: string; show: boolean }[] = [
+        { key: 'global', label: 'Overview', show: true },
+        { key: 'portfolio', label: 'By Portfolio', show: portfolios.length > 0 },
+        { key: 'broker', label: 'By Broker', show: brokers.length > 0 && hasBrokerData },
+    ];
+
     return (
         <div className="charts-section">
-            <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '2rem' }}>Portfolio Distribution</h2>
+            <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>Portfolio Distribution</h2>
 
-            <MacroStats />
-            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
+            {/* Tab Bar */}
+            <div className="stats-tab-bar">
+                {tabs.filter(t => t.show).map(t => (
+                    <button
+                        key={t.key}
+                        className={`stats-tab${activeTab === t.key ? ' active' : ''}`}
+                        onClick={() => setActiveTab(t.key)}
+                    >
+                        {t.label}
+                    </button>
+                ))}
+            </div>
 
-            {/* Goal Distribution Chart */}
-            {goalChartData.length > 0 && goalChartTotal > 0 && (
-                <GoalDistributionChart data={goalChartData} total={goalChartTotal} />
-            )}
-            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
+            {/* Overview Tab */}
+            {activeTab === 'global' && (
+                <>
+                    <MacroStats />
+                    <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }} />
 
-            {/* Portfolio Contribution Chart */}
-            {(portfolioContributionData.length > 0 || brokerContributionData.length > 0) && (
-                <div style={{ marginBottom: '3rem' }}>
-                    <h3 className="section-title" style={{
-                        fontSize: '1.2rem',
-                        color: 'var(--color-primary)',
-                        borderBottom: '1px solid var(--border-color)',
-                        paddingBottom: '0.5rem',
-                        marginBottom: '1rem'
-                    }}>
-                        Invested Capital Distribution
-                    </h3>
-                    <div className="charts-grid">
-                        {/* Invested vs Liquidity */}
-                        <div className="chart-card">
-                            <h4>Invested vs Liquidity</h4>
-                            <div style={{ width: '100%', height: 250 }}>
-                                <ResponsiveContainer>
-                                    <PieChart>
-                                        <Pie
-                                            data={investedVsLiquidityData}
-                                            cx="50%"
-                                            cy="50%"
-                                            labelLine={false}
-                                            label={renderCustomizedLabel}
-                                            outerRadius={80}
-                                            fill="#8884d8"
-                                            dataKey="value"
-                                        >
-                                            {investedVsLiquidityData.map((entry, index) => (
-                                                <Cell key={`cell-${index}`} fill={entry.name === 'Invested' ? '#3B82F6' : '#10B981'} />
-                                            ))}
-                                        </Pie>
-                                        <Tooltip content={<CustomTooltip />} />
-                                        <Legend wrapperStyle={{ fontSize: '12px' }} />
-                                    </PieChart>
-                                </ResponsiveContainer>
+                    {goalChartData.length > 0 && goalChartTotal > 0 && (
+                        <GoalDistributionChart data={goalChartData} total={goalChartTotal} />
+                    )}
+                    <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }} />
+
+                    {(portfolioContributionData.length > 0 || brokerContributionData.length > 0) && (
+                        <div style={{ marginBottom: '3rem' }}>
+                            <h3 className="section-title" style={{
+                                fontSize: '1.2rem',
+                                color: 'var(--color-primary)',
+                                borderBottom: '1px solid var(--border-color)',
+                                paddingBottom: '0.5rem',
+                                marginBottom: '1rem'
+                            }}>
+                                Invested Capital Distribution
+                            </h3>
+                            <div className="charts-grid">
+                                {/* Invested vs Liquidity */}
+                                <div className="chart-card">
+                                    <h4>Invested vs Liquidity</h4>
+                                    <div style={{ width: '100%', height: 250 }}>
+                                        <ResponsiveContainer>
+                                            <PieChart>
+                                                <Pie
+                                                    data={investedVsLiquidityData}
+                                                    cx="50%"
+                                                    cy="50%"
+                                                    labelLine={false}
+                                                    label={renderCustomizedLabel}
+                                                    outerRadius={80}
+                                                    fill="#8884d8"
+                                                    dataKey="value"
+                                                >
+                                                    {investedVsLiquidityData.map((entry, index) => (
+                                                        <Cell key={`cell-${index}`} fill={entry.name === 'Invested' ? '#3B82F6' : '#10B981'} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip content={<CustomTooltip />} />
+                                                <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </div>
+
+                                {/* By Portfolio */}
+                                {portfolioContributionData.length > 0 && (
+                                    <div className="chart-card">
+                                        <h4>Value by Portfolio</h4>
+                                        <div style={{ width: '100%', height: 250 }}>
+                                            <ResponsiveContainer>
+                                                <PieChart>
+                                                    <Pie
+                                                        data={portfolioContributionData}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        labelLine={false}
+                                                        label={renderCustomizedLabel}
+                                                        outerRadius={80}
+                                                        fill="#8884d8"
+                                                        dataKey="value"
+                                                    >
+                                                        {portfolioContributionData.map((_, index) => (
+                                                            <Cell key={`cell-${index}`} fill={['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][index % 7]} />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip content={<CustomTooltip />} />
+                                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* By Broker */}
+                                {brokerContributionData.length > 0 && (
+                                    <div className="chart-card">
+                                        <h4>Value by Broker</h4>
+                                        <div style={{ width: '100%', height: 250 }}>
+                                            <ResponsiveContainer>
+                                                <PieChart>
+                                                    <Pie
+                                                        data={brokerContributionData}
+                                                        cx="50%"
+                                                        cy="50%"
+                                                        labelLine={false}
+                                                        label={renderCustomizedLabel}
+                                                        outerRadius={80}
+                                                        fill="#8884d8"
+                                                        dataKey="value"
+                                                    >
+                                                        {brokerContributionData.map((_, index) => (
+                                                            <Cell key={`cell-${index}`} fill={['#EC4899', '#8B5CF6', '#F59E0B', '#10B981', '#3B82F6', '#6366F1', '#14B8A6'][(index + 3) % 7]} />
+                                                        ))}
+                                                    </Pie>
+                                                    <Tooltip content={<CustomTooltip />} />
+                                                    <Legend wrapperStyle={{ fontSize: '12px' }} />
+                                                </PieChart>
+                                            </ResponsiveContainer>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
+                    )}
 
-                        {/* By Portfolio */}
-                        {portfolioContributionData.length > 0 && (
-                            <div className="chart-card">
-                                <h4>Value by Portfolio</h4>
-                                <div style={{ width: '100%', height: 250 }}>
-                                    <ResponsiveContainer>
-                                        <PieChart>
-                                            <Pie
-                                                data={portfolioContributionData}
-                                                cx="50%"
-                                                cy="50%"
-                                                labelLine={false}
-                                                label={renderCustomizedLabel}
-                                                outerRadius={80}
-                                                fill="#8884d8"
-                                                dataKey="value"
-                                            >
-                                                {portfolioContributionData.map((_, index) => (
-                                                    <Cell key={`cell-${index}`} fill={['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][index % 7]} />
-                                                ))}
-                                            </Pie>
-                                            <Tooltip content={<CustomTooltip />} />
-                                            <Legend wrapperStyle={{ fontSize: '12px' }} />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* By Broker */}
-                        {brokerContributionData.length > 0 && (
-                            <div className="chart-card">
-                                <h4>Value by Broker</h4>
-                                <div style={{ width: '100%', height: 250 }}>
-                                    <ResponsiveContainer>
-                                        <PieChart>
-                                            <Pie
-                                                data={brokerContributionData}
-                                                cx="50%"
-                                                cy="50%"
-                                                labelLine={false}
-                                                label={renderCustomizedLabel}
-                                                outerRadius={80}
-                                                fill="#8884d8"
-                                                dataKey="value"
-                                            >
-                                                {brokerContributionData.map((_, index) => (
-                                                    <Cell key={`cell-${index}`} fill={['#EC4899', '#8B5CF6', '#F59E0B', '#10B981', '#3B82F6', '#6366F1', '#14B8A6'][(index + 3) % 7]} />
-                                                ))}
-                                            </Pie>
-                                            <Tooltip content={<CustomTooltip />} />
-                                            <Legend wrapperStyle={{ fontSize: '12px' }} />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                </div>
-                            </div>
-                        )}
-
-
-                    </div>
-                </div>
+                    <DistributionRow
+                        title="Total / All Portfolios"
+                        assets={totalAssets}
+                        showCashToggle
+                    />
+                </>
             )}
 
-            {/* Global View */}
-            <DistributionRow
-                title="Total / All Portfolios"
-                assets={totalAssets}
-                showCashToggle
-            // No portfolio passed here, so no Target chart
-            />
+            {/* By Portfolio Tab */}
+            {activeTab === 'portfolio' && (
+                <>
+                    {[...portfolios].sort((a, b) => a.order - b.order).map(p => {
+                        const pAssets = getPortfolioAssets(p.id);
+                        const hasAssets = pAssets.some(a => a.currentValue > 0);
+                        const hasAllocations = p.allocations && Object.keys(p.allocations).length > 0;
 
-            {/* Individual Views */}
-            {[...portfolios].sort((a, b) => a.order - b.order).map(p => {
-                const pAssets = getPortfolioAssets(p.id);
-                // Only show if there are assets OR allocations
-                const hasAssets = pAssets.some(a => a.currentValue > 0);
-                const hasAllocations = p.allocations && Object.keys(p.allocations).length > 0;
+                        if (!hasAssets && !hasAllocations) return null;
 
-                if (!hasAssets && !hasAllocations) return null;
+                        return (
+                            <DistributionRow
+                                key={p.id}
+                                title={`Portfolio: ${p.name}`}
+                                assets={pAssets}
+                                portfolio={p}
+                                assetSettings={assetSettings}
+                            />
+                        );
+                    })}
+                </>
+            )}
 
-                return (
-                    <DistributionRow
-                        key={p.id}
-                        title={`Portfolio: ${p.name}`}
-                        assets={pAssets}
-                        portfolio={p}
-                        assetSettings={assetSettings}
-                    />
-                );
-            })}
+            {/* By Broker Tab */}
+            {activeTab === 'broker' && (
+                <>
+                    {brokers.map(broker => {
+                        const bAssets = getBrokerAssets(broker.id);
+                        const hasAssets = bAssets.some(a => a.currentValue > 0);
+                        if (!hasAssets) return null;
+
+                        return (
+                            <DistributionRow
+                                key={broker.id}
+                                title={`Broker: ${broker.name}`}
+                                assets={bAssets}
+                                showCashToggle
+                            />
+                        );
+                    })}
+                </>
+            )}
         </div>
     );
 };
