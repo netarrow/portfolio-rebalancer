@@ -93,11 +93,9 @@ const TransactionList: React.FC = () => {
 
     const handleExportExcel = () => {
         if (selectedIds.size === 0) return;
-        const selected = transactions.filter(
-            t => selectedIds.has(t.id) && (t.direction === 'Buy' || t.direction === 'Sell'),
-        );
+        const selected = transactions.filter(t => selectedIds.has(t.id));
         if (selected.length === 0) return;
-        exportTransactionsToExcel(selected, brokers);
+        exportTransactionsToExcel(selected, brokers, targets);
     };
 
     // --- Single Edit Handlers ---
