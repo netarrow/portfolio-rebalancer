@@ -160,8 +160,9 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
 
     return (
         <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
-                <div>
+            {/* Page header: title + sync button */}
+            <div className="ynab-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+                <div className="ynab-page-title">
                     <h2 style={{ margin: 0 }}>YNAB Budget</h2>
                     <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
                         Budget: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> · Currency {currencyIso}
@@ -194,7 +195,8 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         style={{ width: '100%', maxWidth: '400px', marginBottom: '1rem' }}
                     />
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr', gap: '1rem', padding: '0 1rem 0.5rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    {/* Desktop column headers — hidden on mobile via CSS */}
+                    <div className="ynab-col-headers" style={{ display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr', gap: '1rem', padding: '0 1rem 0.5rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         <span>Category</span>
                         <span style={{ textAlign: 'right' }}>Current</span>
                         <span style={{ textAlign: 'right' }}>{avgLabel}</span>
@@ -207,16 +209,19 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                             const groupAvg = items.reduce((s, c) => s + (c.avgBudgetedMilliunits != null ? milliunitsToEur(c.avgBudgetedMilliunits) : 0), 0);
                             return (
                                 <div key={groupName} style={{ backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
-                                    <div style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--bg-surface)', display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr', alignItems: 'center', gap: '1rem', fontWeight: 600 }}>
-                                        <span>{groupName}</span>
-                                        <span style={{ textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                    {/* Group header row */}
+                                    <div className="ynab-group-header" style={{ padding: '0.75rem 1rem', backgroundColor: 'var(--bg-surface)', display: 'grid', gridTemplateColumns: '1fr 120px 120px 1fr', alignItems: 'center', gap: '1rem', fontWeight: 600 }}>
+                                        <span className="ynab-group-name">{groupName}</span>
+                                        <span className="ynab-group-current" data-col-label="Current" style={{ textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                                             {formatCurrency(groupTotal, currencyIso)}
                                         </span>
-                                        <span style={{ textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+                                        <span className="ynab-group-avg" data-col-label={avgLabel} style={{ textAlign: 'right', color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
                                             {formatCurrency(groupAvg, currencyIso)}
                                         </span>
-                                        <span />
+                                        <span className="ynab-group-spacer" />
                                     </div>
+
+                                    {/* Category rows */}
                                     <div>
                                         {items.map(c => {
                                             const eur = milliunitsToEur(c.balanceMilliunits);
@@ -224,6 +229,7 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                             return (
                                                 <div
                                                     key={c.id}
+                                                    className="ynab-category-row"
                                                     style={{
                                                         display: 'grid',
                                                         gridTemplateColumns: '1fr 120px 120px 1fr',
@@ -233,15 +239,15 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                         borderTop: '1px solid var(--border-color)',
                                                     }}
                                                 >
-                                                    <span>{c.name}</span>
-                                                    <span style={{ textAlign: 'right', fontFamily: 'monospace', color: eur < 0 ? 'var(--color-danger)' : 'inherit' }}>
+                                                    <span className="ynab-cat-name">{c.name}</span>
+                                                    <span className="ynab-cat-current" data-col-label="Current" style={{ textAlign: 'right', fontFamily: 'monospace', color: eur < 0 ? 'var(--color-danger)' : 'inherit' }}>
                                                         {formatCurrency(eur, currencyIso)}
                                                     </span>
-                                                    <span style={{ textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
+                                                    <span className="ynab-cat-avg" data-col-label={avgLabel} style={{ textAlign: 'right', fontFamily: 'monospace', color: 'var(--text-secondary)' }}>
                                                         {eurAvg != null ? formatCurrency(eurAvg, currencyIso) : '—'}
                                                     </span>
                                                     <select
-                                                        className="form-select"
+                                                        className="form-select ynab-cat-mapping"
                                                         value={getDropdownValue(c.id)}
                                                         onChange={e => handleMappingChange(c.id, e.target.value)}
                                                     >
@@ -275,34 +281,34 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                     </div>
 
                     {/* Aggregate summary */}
-                    <div style={{ marginTop: '2rem', padding: '1.25rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
+                    <div className="ynab-summary" style={{ marginTop: '2rem', padding: '1.25rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                         <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Summary by asset</h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <div className="ynab-summary-col-headers" style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                             <span></span>
                             <span style={{ textAlign: 'right' }}>Current</span>
                             <span style={{ textAlign: 'right' }}>{avgLabel}</span>
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.75rem', fontWeight: 600, paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
+                        <div className="ynab-summary-row ynab-summary-total" style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', marginBottom: '0.75rem', fontWeight: 600, paddingBottom: '0.5rem', borderBottom: '1px solid var(--border-color)' }}>
                             <span>Total budget</span>
-                            <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudget, currencyIso)}</span>
-                            <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudgetAvg, currencyIso)}</span>
+                            <span className="ynab-summary-current" data-col-label="Current" style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudget, currencyIso)}</span>
+                            <span className="ynab-summary-avg" data-col-label={avgLabel} style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(totalBudgetAvg, currencyIso)}</span>
                         </div>
                         {aggregateByTarget.items.length === 0 && aggregateByTarget.unmappedCount === 0 ? (
                             <div style={{ color: 'var(--text-muted)' }}>No categories.</div>
                         ) : (
                             <>
                                 {aggregateByTarget.items.map(item => (
-                                    <div key={item.label} style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border-color)' }}>
+                                    <div key={item.label} className="ynab-summary-row" style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', padding: '0.4rem 0', borderBottom: '1px solid var(--border-color)' }}>
                                         <span>{item.label} <small style={{ color: 'var(--text-muted)' }}>({item.count} cat.)</small></span>
-                                        <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(item.total, currencyIso)}</span>
-                                        <span style={{ fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatCurrency(item.totalAvg, currencyIso)}</span>
+                                        <span className="ynab-summary-current" data-col-label="Current" style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(item.total, currencyIso)}</span>
+                                        <span className="ynab-summary-avg" data-col-label={avgLabel} style={{ fontFamily: 'monospace', textAlign: 'right', color: 'var(--text-secondary)' }}>{formatCurrency(item.totalAvg, currencyIso)}</span>
                                     </div>
                                 ))}
                                 {aggregateByTarget.unmappedCount > 0 && (
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', padding: '0.4rem 0', color: 'var(--text-muted)' }}>
+                                    <div className="ynab-summary-row" style={{ display: 'grid', gridTemplateColumns: '1fr 140px 140px', gap: '1rem', padding: '0.4rem 0', color: 'var(--text-muted)' }}>
                                         <span>Unmapped <small>({aggregateByTarget.unmappedCount} cat.)</small></span>
-                                        <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedTotal, currencyIso)}</span>
-                                        <span style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedAvg, currencyIso)}</span>
+                                        <span className="ynab-summary-current" data-col-label="Current" style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedTotal, currencyIso)}</span>
+                                        <span className="ynab-summary-avg" data-col-label={avgLabel} style={{ fontFamily: 'monospace', textAlign: 'right' }}>{formatCurrency(aggregateByTarget.unmappedAvg, currencyIso)}</span>
                                     </div>
                                 )}
                             </>
