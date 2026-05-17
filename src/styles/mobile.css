@@ -324,3 +324,127 @@
         font-size: 0.85rem !important;
     }
 }
+
+/* ===== YNAB IMPORT ===== */
+@media (max-width: 480px) {
+    /* Page header: stack title above button */
+    .ynab-page-header {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+    }
+
+    .ynab-page-header button {
+        width: 100% !important;
+    }
+
+    /* Hide desktop column-header labels — replaced by data-col-label in each cell */
+    .ynab-col-headers,
+    .ynab-summary-col-headers {
+        display: none !important;
+    }
+
+    /* Group header: stack name on first row, amounts on second row */
+    .ynab-group-header {
+        grid-template-columns: 1fr 1fr !important;
+        grid-template-rows: auto auto !important;
+        gap: var(--space-1) var(--space-2) !important;
+        padding: var(--space-3) !important;
+    }
+
+    .ynab-group-name {
+        grid-column: 1 / -1 !important;
+        grid-row: 1 !important;
+    }
+
+    .ynab-group-current {
+        grid-column: 1 !important;
+        grid-row: 2 !important;
+        text-align: left !important;
+    }
+
+    .ynab-group-avg {
+        grid-column: 2 !important;
+        grid-row: 2 !important;
+        text-align: right !important;
+    }
+
+    .ynab-group-spacer {
+        display: none !important;
+    }
+
+    /* Category row: name full-width, amounts side-by-side, dropdown full-width */
+    .ynab-category-row {
+        grid-template-columns: 1fr 1fr !important;
+        grid-template-rows: auto auto auto !important;
+        gap: var(--space-1) var(--space-2) !important;
+        padding: var(--space-3) !important;
+    }
+
+    .ynab-cat-name {
+        grid-column: 1 / -1 !important;
+        grid-row: 1 !important;
+        font-weight: 500 !important;
+    }
+
+    .ynab-cat-current {
+        grid-column: 1 !important;
+        grid-row: 2 !important;
+        text-align: left !important;
+        font-size: 0.9rem !important;
+    }
+
+    .ynab-cat-avg {
+        grid-column: 2 !important;
+        grid-row: 2 !important;
+        text-align: right !important;
+        font-size: 0.9rem !important;
+    }
+
+    .ynab-cat-mapping {
+        grid-column: 1 / -1 !important;
+        grid-row: 3 !important;
+        width: 100% !important;
+    }
+
+    /* Small label above each amount cell (uses data-col-label attribute) */
+    .ynab-cat-current::before,
+    .ynab-cat-avg::before,
+    .ynab-group-current::before,
+    .ynab-group-avg::before {
+        content: attr(data-col-label);
+        display: block;
+        font-size: 0.7rem;
+        font-family: var(--font-sans, sans-serif);
+        font-weight: 400;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 2px;
+    }
+
+    /* Summary section: stack label + amounts into 1 column */
+    .ynab-summary {
+        padding: var(--space-3) !important;
+    }
+
+    .ynab-summary-row {
+        grid-template-columns: 1fr !important;
+        gap: var(--space-1) !important;
+        padding: var(--space-3) 0 !important;
+    }
+
+    .ynab-summary-current,
+    .ynab-summary-avg {
+        text-align: left !important;
+        font-size: 0.9rem !important;
+    }
+
+    .ynab-summary-current::before,
+    .ynab-summary-avg::before {
+        content: attr(data-col-label) ': ';
+        font-family: var(--font-sans, sans-serif);
+        font-weight: 400;
+        color: var(--text-muted);
+        font-size: 0.85em;
+    }
+}

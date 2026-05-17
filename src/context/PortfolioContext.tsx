@@ -1106,51 +1106,32 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             lastSyncAt: timestamp
         });
         setYnabCategories([
-            {
-                id: 'ynab-cat-1',
-                groupId: 'ynab-grp-inv',
-                groupName: 'Investments',
-                name: 'ETF DCA',
-                balanceMilliunits: 1200000,
-                budgetedMilliunits: 500000,
-                avgBudgetedMilliunits: 480000,
-                avgMonthsCount: 6
-            },
-            {
-                id: 'ynab-cat-2',
-                groupId: 'ynab-grp-inv',
-                groupName: 'Investments',
-                name: 'Crypto',
-                balanceMilliunits: 300000,
-                budgetedMilliunits: 100000,
-                avgBudgetedMilliunits: 120000,
-                avgMonthsCount: 6
-            },
-            {
-                id: 'ynab-cat-3',
-                groupId: 'ynab-grp-savings',
-                groupName: 'Savings',
-                name: 'Emergency Fund',
-                balanceMilliunits: 5000000,
-                budgetedMilliunits: 200000,
-                avgBudgetedMilliunits: 250000,
-                avgMonthsCount: 6
-            },
-            {
-                id: 'ynab-cat-4',
-                groupId: 'ynab-grp-savings',
-                groupName: 'Savings',
-                name: 'Travel Fund',
-                balanceMilliunits: 800000,
-                budgetedMilliunits: 150000,
-                avgBudgetedMilliunits: 140000,
-                avgMonthsCount: 6
-            }
+            // ── Investments ──────────────────────────────────────────────────
+            { id: 'ynab-cat-1', groupId: 'ynab-grp-inv', groupName: 'Investments', name: 'ETF DCA (SWDA)', balanceMilliunits: 1200000, budgetedMilliunits: 500000, avgBudgetedMilliunits: 480000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-2', groupId: 'ynab-grp-inv', groupName: 'Investments', name: 'Bonds ETF (AGGH)', balanceMilliunits: 400000, budgetedMilliunits: 150000, avgBudgetedMilliunits: 160000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-3', groupId: 'ynab-grp-inv', groupName: 'Investments', name: 'Pension Fund (COMETA)', balanceMilliunits: 600000, budgetedMilliunits: 200000, avgBudgetedMilliunits: 195000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-4', groupId: 'ynab-grp-inv', groupName: 'Investments', name: 'Crypto (unmapped)', balanceMilliunits: 300000, budgetedMilliunits: 100000, avgBudgetedMilliunits: 120000, avgMonthsCount: 6 },
+            // ── Savings ──────────────────────────────────────────────────────
+            { id: 'ynab-cat-5', groupId: 'ynab-grp-sav', groupName: 'Savings', name: 'Emergency Fund', balanceMilliunits: 5000000, budgetedMilliunits: 200000, avgBudgetedMilliunits: 250000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-6', groupId: 'ynab-grp-sav', groupName: 'Savings', name: 'Travel Fund', balanceMilliunits: 800000, budgetedMilliunits: 150000, avgBudgetedMilliunits: 140000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-7', groupId: 'ynab-grp-sav', groupName: 'Savings', name: 'Home Renovations', balanceMilliunits: 1500000, budgetedMilliunits: 300000, avgBudgetedMilliunits: 280000, avgMonthsCount: 6 },
+            // ── Monthly Expenses ──────────────────────────────────────────────
+            { id: 'ynab-cat-8', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', name: 'Groceries', balanceMilliunits: 350000, budgetedMilliunits: 400000, avgBudgetedMilliunits: 380000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-9', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', name: 'Restaurants & Takeaway', balanceMilliunits: 120000, budgetedMilliunits: 200000, avgBudgetedMilliunits: 175000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-10', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', name: 'Transport', balanceMilliunits: 80000, budgetedMilliunits: 120000, avgBudgetedMilliunits: 110000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-11', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', name: 'Health & Pharmacy', balanceMilliunits: -50000, budgetedMilliunits: 100000, avgBudgetedMilliunits: 90000, avgMonthsCount: 6 },
+            // ── Housing ──────────────────────────────────────────────────────
+            { id: 'ynab-cat-12', groupId: 'ynab-grp-hous', groupName: 'Housing', name: 'Mortgage / Rent', balanceMilliunits: 0, budgetedMilliunits: 900000, avgBudgetedMilliunits: 900000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-13', groupId: 'ynab-grp-hous', groupName: 'Housing', name: 'Utilities (gas, electric, water)', balanceMilliunits: 60000, budgetedMilliunits: 150000, avgBudgetedMilliunits: 140000, avgMonthsCount: 6 },
+            { id: 'ynab-cat-14', groupId: 'ynab-grp-hous', groupName: 'Housing', name: 'Internet & Phone', balanceMilliunits: 20000, budgetedMilliunits: 50000, avgBudgetedMilliunits: 50000, avgMonthsCount: 6 },
         ]);
         setYnabMappings([
             { categoryId: 'ynab-cat-1', target: { kind: 'asset', ticker: 'IE00B4L5Y983' } },
-            { categoryId: 'ynab-cat-3', target: { kind: 'cash', brokerId: 'b1' } },
-            { categoryId: 'ynab-cat-2', target: { kind: 'unmapped' } }
+            { categoryId: 'ynab-cat-2', target: { kind: 'asset', ticker: 'IE00BDBRDM35' } },
+            { categoryId: 'ynab-cat-3', target: { kind: 'asset', ticker: 'LU0290358497' } },
+            { categoryId: 'ynab-cat-5', target: { kind: 'cash', brokerId: 'b1' } },
+            { categoryId: 'ynab-cat-7', target: { kind: 'cash', brokerId: 'b2' } },
+            // cat-4 (Crypto) and housing/expenses remain unmapped
         ]);
 
         // 9. Aggregate UI: exclude VWRL from the aggregate view
