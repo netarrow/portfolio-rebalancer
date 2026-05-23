@@ -5,8 +5,11 @@ import PortfolioAllocations from './PortfolioAllocations';
 import type { Portfolio } from '../../types';
 import Swal from 'sweetalert2';
 
+const formatEur = (v: number) =>
+    new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
+
 const PortfolioList: React.FC = () => {
-    const { portfolios, addPortfolio, updatePortfolio, deletePortfolio, transactions } = usePortfolio();
+    const { portfolios, addPortfolio, updatePortfolio, deletePortfolio, transactions, getPortfolioAllocationSummary, ynabGoals } = usePortfolio();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingPortfolio, setEditingPortfolio] = useState<Portfolio | null>(null);
     const [allocatingPortfolioId, setAllocatingPortfolioId] = useState<string | null>(null);
@@ -137,6 +140,23 @@ const PortfolioList: React.FC = () => {
                                             ⬡ Group
                                         </span>
                                     )}
+                                    {(() => {
+                                        if (ynabGoals.length === 0) return null;
+                                        const s = getPortfolioAllocationSummary(portfolio.id);
+                                        if (s.allocated <= 0 && s.drift <= 0) return null;
+                                        if (s.drift > 0) {
+                                            return (
+                                                <span className="stat-pill stat-pill-over" title={`Over-allocated by ${formatEur(s.drift)}`}>
+                                                    ⚠ Over-allocated {formatEur(s.drift)}
+                                                </span>
+                                            );
+                                        }
+                                        return (
+                                            <span className="stat-pill stat-pill-alloc" title={`Allocated to YNAB goals`}>
+                                                ◧ {formatEur(s.allocated)} / {formatEur(s.currentValue)}
+                                            </span>
+                                        );
+                                    })()}
                                 </div>
                             </div>
                         </div>
@@ -258,6 +278,16 @@ const PortfolioList: React.FC = () => {
                 .stat-pill-parent {
                     background-color: rgba(16, 185, 129, 0.12);
                     color: #10B981;
+                }
+
+                .stat-pill-alloc {
+                    background-color: rgba(99, 102, 241, 0.12);
+                    color: #4F46E5;
+                }
+
+                .stat-pill-over {
+                    background-color: rgba(220, 38, 38, 0.12);
+                    color: #B91C1C;
                 }
 
                 .stats {

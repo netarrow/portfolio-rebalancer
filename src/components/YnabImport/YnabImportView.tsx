@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { milliunitsToEur } from '../../services/ynabApi';
-import type { YnabCategory, YnabMappingTarget } from '../../types';
+import type { YnabCategory, YnabCategoryGroupSummary, YnabMappingTarget, YnabGoalSyncCandidate } from '../../types';
 import Swal from 'sweetalert2';
+import YnabGoalsSyncModal from './YnabGoalsSyncModal';
 
 const formatCurrency = (value: number, iso: string = 'EUR') =>
     new Intl.NumberFormat('en-IE', { style: 'currency', currency: iso, maximumFractionDigits: 2 }).format(value);
@@ -21,9 +22,17 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
         ynabSyncing,
         assetSettings,
         brokers,
+        listYnabCategoryGroups,
+        setYnabGoalsGroup,
+        prepareYnabGoalsSync,
+        applyYnabGoalsSync,
+        ynabGoalsSyncing,
     } = usePortfolio();
 
     const [search, setSearch] = useState('');
+    const [goalGroups, setGoalGroups] = useState<YnabCategoryGroupSummary[]>([]);
+    const [groupsLoading, setGroupsLoading] = useState(false);
+    const [syncCandidates, setSyncCandidates] = useState<YnabGoalSyncCandidate[] | null>(null);
 
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
 
@@ -117,6 +126,49 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
         }
     };
 
+    useEffect(() => {
+        if (!ynabConfig) return;
+        let cancelled = false;
+        (async () => {
+            setGroupsLoading(true);
+            const res = await listYnabCategoryGroups();
+            if (!cancelled && res.ok && res.groups) setGoalGroups(res.groups);
+            if (!cancelled) setGroupsLoading(false);
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ynabConfig?.apiKey, ynabConfig?.budgetId]);
+
+    const handleGoalGroupChange = (groupId: string) => {
+        const group = goalGroups.find(g => g.id === groupId);
+        if (!group) return;
+        setYnabGoalsGroup(group.id, group.name);
+    };
+
+    const handlePrepareGoalsSync = async () => {
+        const res = await prepareYnabGoalsSync();
+        if (!res.ok) {
+            Swal.fire({ title: 'Sync error', text: res.error, icon: 'error' });
+            return;
+        }
+        setSyncCandidates(res.candidates || []);
+    };
+
+    const handleConfirmGoalsSync = (candidates: YnabGoalSyncCandidate[]) => {
+        const res = applyYnabGoalsSync(candidates);
+        setSyncCandidates(null);
+        if (!res.ok) {
+            Swal.fire({ title: 'Sync error', text: res.error, icon: 'error' });
+            return;
+        }
+        const r = res.report!;
+        Swal.fire({
+            title: 'Sync complete',
+            html: `Created ${r.created}, updated ${r.updated}, skipped ${r.skipped}, archived ${r.archived}, deleted ${r.deleted}.`,
+            icon: 'success',
+        });
+    };
+
     const handleMappingChange = (categoryId: string, value: string) => {
         if (value === '__unmapped') {
             setYnabMapping(categoryId, { kind: 'unmapped' });
@@ -178,6 +230,46 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                 >
                     {ynabSyncing ? 'Syncing…' : 'Sync now'}
                 </button>
+            </div>
+
+            <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', padding: '1.25rem', marginBottom: '1.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
+                    <div>
+                        <h3 style={{ margin: 0 }}>Investment Goals</h3>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
+                            Pick the YNAB category group that holds your long-term saving goals.
+                            {ynabConfig.lastGoalsSyncAt && (
+                                <> · Last goals sync: {new Date(ynabConfig.lastGoalsSyncAt).toLocaleString('en-IE')}</>
+                            )}
+                        </div>
+                    </div>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.75rem', marginTop: '0.75rem' }}>
+                    <select
+                        className="form-select"
+                        value={ynabConfig.goalsGroupId || ''}
+                        onChange={e => handleGoalGroupChange(e.target.value)}
+                        disabled={groupsLoading || goalGroups.length === 0}
+                        style={{ minWidth: 260 }}
+                    >
+                        <option value="" disabled>
+                            {groupsLoading ? 'Loading groups…' : goalGroups.length === 0 ? 'No groups available' : '— Select group —'}
+                        </option>
+                        {goalGroups.map(g => (
+                            <option key={g.id} value={g.id}>
+                                {g.name} ({g.categoryCount})
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handlePrepareGoalsSync}
+                        disabled={!ynabConfig.goalsGroupId || ynabGoalsSyncing}
+                    >
+                        {ynabGoalsSyncing ? 'Preparing…' : 'Prepare goals sync'}
+                    </button>
+                </div>
             </div>
 
             {ynabCategories.length === 0 ? (
@@ -315,6 +407,15 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         )}
                     </div>
                 </>
+            )}
+
+            {syncCandidates !== null && (
+                <YnabGoalsSyncModal
+                    candidates={syncCandidates}
+                    currencyIso={currencyIso}
+                    onConfirm={handleConfirmGoalsSync}
+                    onCancel={() => setSyncCandidates(null)}
+                />
             )}
         </div>
     );
