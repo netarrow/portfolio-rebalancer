@@ -1,9 +1,10 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget } from '../types';
-import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages } from '../services/ynabApi';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate } from '../types';
+import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
+import { parseGoalDescriptor } from '../utils/ynabGoalParser';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
@@ -78,6 +79,20 @@ interface PortfolioContextType {
     setYnabMapping: (categoryId: string, target: YnabMappingTarget) => void;
     disconnectYnab: () => void;
     ynabSyncing: boolean;
+    // YNAB Goals (entità separata dai Goal manuali)
+    ynabGoals: YnabGoal[];
+    ynabGoalAllocations: YnabGoalAllocation[];
+    listYnabCategoryGroups: () => Promise<{ ok: boolean; groups?: YnabCategoryGroupSummary[]; error?: string }>;
+    setYnabGoalsGroup: (groupId: string, groupName: string) => void;
+    prepareYnabGoalsSync: () => Promise<{ ok: boolean; candidates?: YnabGoalSyncCandidate[]; error?: string }>;
+    applyYnabGoalsSync: (candidates: YnabGoalSyncCandidate[]) => { ok: boolean; report?: { created: number; updated: number; skipped: number; archived: number; deleted: number }; error?: string };
+    deleteYnabGoal: (ynabGoalId: string) => { ok: boolean; error?: string };
+    addAllocation: (input: { portfolioId: string; ynabGoalId: string; amount: number; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
+    updateAllocation: (allocationId: string, input: { amount: number; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
+    removeAllocation: (allocationId: string) => void;
+    getPortfolioAllocationSummary: (portfolioId: string) => { allocated: number; available: number; drift: number; currentValue: number };
+    getYnabGoalAllocations: (ynabGoalId: string) => YnabGoalAllocation[];
+    ynabGoalsSyncing: boolean;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -127,6 +142,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabCategories, setYnabCategories] = useLocalStorage<YnabCategory[]>('portfolio_ynab_categories', []);
     const [ynabMappings, setYnabMappings] = useLocalStorage<YnabCategoryMapping[]>('portfolio_ynab_mappings', []);
     const [ynabSyncing, setYnabSyncing] = useState(false);
+    const [ynabGoals, setYnabGoals] = useLocalStorage<YnabGoal[]>('portfolio_ynab_goals', []);
+    const [ynabGoalAllocations, setYnabGoalAllocations] = useLocalStorage<YnabGoalAllocation[]>('portfolio_ynab_goal_allocations', []);
+    const [ynabGoalsSyncing, setYnabGoalsSyncing] = useState(false);
     // Ref so sync effect can read latest config without adding azureConfig to deps (avoids loop on lastSync)
     const azureConfigRef = useRef(azureConfig);
     // Timestamp of last restore to suppress the debounced post-restore upload
@@ -476,6 +494,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 macroAllocations, goalAllocations, goals,
                 aggregateExcludedTickers, goalModeTargets,
                 ynabMappings,
+                ynabGoals,
+                ynabGoalAllocations,
+                ynabGoalsGroupId: ynabConfig?.goalsGroupId,
+                ynabGoalsGroupName: ynabConfig?.goalsGroupName,
+                ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
             };
             try {
                 setAzureSyncing(true);
@@ -498,7 +521,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
-        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings]);
+        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
+        ynabGoals, ynabGoalAllocations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -518,6 +542,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         macroAllocations, goalAllocations, goals,
                         aggregateExcludedTickers, goalModeTargets,
                         ynabMappings,
+                        ynabGoals,
+                        ynabGoalAllocations,
+                        ynabGoalsGroupId: ynabConfig?.goalsGroupId,
+                        ynabGoalsGroupName: ynabConfig?.goalsGroupName,
+                        ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -602,6 +631,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const { [id]: _, ...rest } = b.liquidityAllocations;
             return { ...b, liquidityAllocations: Object.keys(rest).length > 0 ? rest : undefined };
         }));
+        // Clean up YNAB goal allocations pointing at this portfolio
+        setYnabGoalAllocations(prev => prev.filter(a => a.portfolioId !== id));
     };
 
     const addBroker = (broker: Broker) => {
@@ -1160,6 +1191,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const aggregateExcludedTickers = Array.isArray(data.aggregateExcludedTickers) ? data.aggregateExcludedTickers : [];
             const goalModeTargets = (data.goalModeTargets && typeof data.goalModeTargets === 'object') ? data.goalModeTargets : {};
             const importedYnabMappings: YnabCategoryMapping[] = Array.isArray(data.ynabMappings) ? data.ynabMappings : [];
+            const importedYnabGoals: YnabGoal[] = Array.isArray(data.ynabGoals) ? data.ynabGoals : [];
+            const importedYnabGoalAllocations: YnabGoalAllocation[] = Array.isArray(data.ynabGoalAllocations) ? data.ynabGoalAllocations : [];
+            const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
+            const importedYnabGoalsGroupName: string | undefined = typeof data.ynabGoalsGroupName === 'string' ? data.ynabGoalsGroupName : undefined;
+            const importedYnabLastGoalsSyncAt: string | undefined = typeof data.ynabLastGoalsSyncAt === 'string' ? data.ynabLastGoalsSyncAt : undefined;
 
             // Write directly to localStorage first to guarantee persistence
             // regardless of React effect scheduling or migration effects ordering
@@ -1177,6 +1213,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('aggregate-excluded-tickers', JSON.stringify(aggregateExcludedTickers));
             localStorage.setItem('goal_mode_targets', JSON.stringify(goalModeTargets));
             localStorage.setItem('portfolio_ynab_mappings', JSON.stringify(importedYnabMappings));
+            localStorage.setItem('portfolio_ynab_goals', JSON.stringify(importedYnabGoals));
+            localStorage.setItem('portfolio_ynab_goal_allocations', JSON.stringify(importedYnabGoalAllocations));
 
             // Then update React state
             setTransactions(transactions);
@@ -1192,6 +1230,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setAggregateExcludedTickers(aggregateExcludedTickers);
             setGoalModeTargets(goalModeTargets);
             setYnabMappings(importedYnabMappings);
+            setYnabGoals(importedYnabGoals);
+            setYnabGoalAllocations(importedYnabGoalAllocations);
+            if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
+                setYnabConfigState(prev => prev ? {
+                    ...prev,
+                    goalsGroupId: importedYnabGoalsGroupId ?? prev.goalsGroupId,
+                    goalsGroupName: importedYnabGoalsGroupName ?? prev.goalsGroupName,
+                    lastGoalsSyncAt: importedYnabLastGoalsSyncAt ?? prev.lastGoalsSyncAt,
+                } : prev);
+            }
 
             return true;
         } catch (e) {
@@ -1213,6 +1261,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 macroAllocations, goalAllocations, goals,
                 aggregateExcludedTickers, goalModeTargets,
                 ynabMappings,
+                ynabGoals,
+                ynabGoalAllocations,
+                ynabGoalsGroupId: ynabConfig?.goalsGroupId,
+                ynabGoalsGroupName: ynabConfig?.goalsGroupName,
+                ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -1334,6 +1387,255 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabConfigState(null);
         setYnabCategories([]);
         setYnabMappings([]);
+        setYnabGoals([]);
+        setYnabGoalAllocations([]);
+    };
+
+    // ── YNAB Goals (entità separata dai Goal manuali del tool) ──────────
+
+    const listYnabCategoryGroups = async (): Promise<{ ok: boolean; groups?: YnabCategoryGroupSummary[]; error?: string }> => {
+        if (!ynabConfig?.apiKey || !ynabConfig?.budgetId) {
+            return { ok: false, error: 'YNAB not configured.' };
+        }
+        const result = await ynabListGroups(ynabConfig.apiKey, ynabConfig.budgetId);
+        if (result.success && result.data) return { ok: true, groups: result.data };
+        return { ok: false, error: result.error };
+    };
+
+    const setYnabGoalsGroup = (groupId: string, groupName: string) => {
+        setYnabConfigState(prev => prev ? { ...prev, goalsGroupId: groupId, goalsGroupName: groupName } : prev);
+    };
+
+    const prepareYnabGoalsSync = async (): Promise<{ ok: boolean; candidates?: YnabGoalSyncCandidate[]; error?: string }> => {
+        if (!ynabConfig?.apiKey || !ynabConfig?.budgetId) {
+            return { ok: false, error: 'YNAB not configured.' };
+        }
+        if (!ynabConfig?.goalsGroupId) {
+            return { ok: false, error: 'Select an Investment Goals category group first.' };
+        }
+        try {
+            setYnabGoalsSyncing(true);
+            const res = await ynabGetGoalCategories(ynabConfig.apiKey, ynabConfig.budgetId, ynabConfig.goalsGroupId);
+            if (!res.success || !res.data) {
+                return { ok: false, error: res.error || 'Failed to fetch goal categories.' };
+            }
+            const existingById = new Map<string, YnabGoal>();
+            for (const g of ynabGoals) existingById.set(g.id, g);
+
+            const candidates: YnabGoalSyncCandidate[] = res.data.map(cat => {
+                const parsed = parseGoalDescriptor(cat.name, cat.note);
+                const existing = existingById.get(cat.id) ?? null;
+                return {
+                    ynabCategoryId: cat.id,
+                    ynabCategoryName: cat.name,
+                    rawNote: cat.note ?? null,
+                    parsedAmount: parsed.amount,
+                    parsedDate: parsed.date,
+                    confidence: parsed.confidence,
+                    cashCoverage: milliunitsToEur(cat.balanceMilliunits),
+                    ynabMonthlyFunding: cat.goalType === 'MF' && typeof cat.goalTargetMilliunits === 'number'
+                        ? milliunitsToEur(cat.goalTargetMilliunits)
+                        : null,
+                    ynabActivityThisMonth: typeof cat.activityMilliunits === 'number'
+                        ? milliunitsToEur(cat.activityMilliunits)
+                        : null,
+                    goalType: cat.goalType ?? null,
+                    matchedYnabGoalId: existing?.id ?? null,
+                    parsedSource: parsed.source,
+                    existingTargetSource: existing?.targetSource ?? null,
+                    existingTargetAmount: existing?.targetAmount ?? null,
+                    existingTargetDate: existing?.targetDate ?? null,
+                    action: existing ? 'update' : 'create',
+                };
+            });
+
+            const order = { low: 0, medium: 1, high: 2 } as const;
+            candidates.sort((a, b) => order[a.confidence] - order[b.confidence]);
+            return { ok: true, candidates };
+        } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        } finally {
+            setYnabGoalsSyncing(false);
+        }
+    };
+
+    const applyYnabGoalsSync = (candidates: YnabGoalSyncCandidate[]) => {
+        if (!ynabConfig?.budgetId) {
+            return { ok: false as const, error: 'YNAB not configured.' };
+        }
+        const now = new Date().toISOString();
+        const incomingIds = new Set(candidates.filter(c => c.action !== 'skip').map(c => c.ynabCategoryId));
+        const allFetchedIds = new Set(candidates.map(c => c.ynabCategoryId));
+        const report = { created: 0, updated: 0, skipped: 0, archived: 0, deleted: 0 };
+
+        setYnabGoals(prev => {
+            const byId = new Map<string, YnabGoal>();
+            for (const g of prev) byId.set(g.id, g);
+
+            for (const c of candidates) {
+                if (c.action === 'skip') {
+                    report.skipped += 1;
+                    continue;
+                }
+                const existing = byId.get(c.ynabCategoryId) ?? null;
+
+                let targetSource: YnabGoal['targetSource'];
+                if (existing && existing.targetSource === 'manual-override') {
+                    const sameAmount = (existing.targetAmount ?? null) === c.parsedAmount;
+                    const sameDate = (existing.targetDate ?? null) === c.parsedDate;
+                    if (sameAmount && sameDate) {
+                        targetSource = c.parsedSource ?? 'manual-override';
+                    } else {
+                        targetSource = 'manual-override';
+                    }
+                } else {
+                    targetSource = c.parsedSource ?? 'manual-override';
+                }
+
+                const next: YnabGoal = {
+                    id: c.ynabCategoryId,
+                    ynabBudgetId: ynabConfig.budgetId,
+                    name: c.ynabCategoryName,
+                    targetAmount: c.parsedAmount ?? undefined,
+                    targetDate: c.parsedDate ?? undefined,
+                    cashCoverage: c.cashCoverage,
+                    ynabMonthlyFunding: c.ynabMonthlyFunding ?? undefined,
+                    ynabActivityThisMonth: c.ynabActivityThisMonth ?? undefined,
+                    goalType: c.goalType ?? undefined,
+                    targetSource,
+                    lastSyncedAt: now,
+                    archived: false,
+                };
+                byId.set(c.ynabCategoryId, next);
+                if (existing) report.updated += 1;
+                else report.created += 1;
+            }
+
+            // Categorie scomparse dal gruppo YNAB: archive (se hanno allocations) o delete
+            for (const g of prev) {
+                if (allFetchedIds.has(g.id)) continue;
+                if (!incomingIds.has(g.id)) {
+                    const hasAllocs = ynabGoalAllocations.some(a => a.ynabGoalId === g.id);
+                    if (hasAllocs) {
+                        byId.set(g.id, { ...g, archived: true, lastSyncedAt: now });
+                        report.archived += 1;
+                    } else {
+                        byId.delete(g.id);
+                        report.deleted += 1;
+                    }
+                }
+            }
+
+            return Array.from(byId.values());
+        });
+
+        setYnabConfigState(prev => prev ? { ...prev, lastGoalsSyncAt: now } : prev);
+        return { ok: true as const, report };
+    };
+
+    const deleteYnabGoal = (ynabGoalId: string) => {
+        const hasAllocs = ynabGoalAllocations.some(a => a.ynabGoalId === ynabGoalId);
+        if (hasAllocs) {
+            return { ok: false as const, error: 'Remove allocations linked to this YNAB goal first.' };
+        }
+        setYnabGoals(prev => prev.filter(g => g.id !== ynabGoalId));
+        return { ok: true as const };
+    };
+
+    // Portfolio current value (somma del valore corrente degli asset più la cash assegnata)
+    const portfolioCurrentValue = useMemo(() => {
+        const map = new Map<string, number>();
+        for (const a of assets) {
+            const txs = transactions.filter(t => t.ticker === a.ticker);
+            const byPortfolio = new Map<string, number>();
+            const totalQty = txs.reduce((s, t) => s + (t.direction === 'Buy' ? t.amount : t.direction === 'Sell' ? -t.amount : 0), 0);
+            if (totalQty <= 0) continue;
+            for (const t of txs) {
+                if (!t.portfolioId) continue;
+                const delta = t.direction === 'Buy' ? t.amount : t.direction === 'Sell' ? -t.amount : 0;
+                byPortfolio.set(t.portfolioId, (byPortfolio.get(t.portfolioId) || 0) + delta);
+            }
+            for (const [pid, qty] of byPortfolio) {
+                if (qty <= 0) continue;
+                const share = qty / totalQty;
+                const value = (a.currentValue || 0) * share;
+                map.set(pid, (map.get(pid) || 0) + value);
+            }
+        }
+        for (const b of brokers) {
+            if (!b.liquidityAllocations) continue;
+            for (const [pid, amt] of Object.entries(b.liquidityAllocations)) {
+                if (!amt) continue;
+                map.set(pid, (map.get(pid) || 0) + amt);
+            }
+        }
+        for (const p of portfolios) {
+            if (typeof p.liquidity === 'number' && p.liquidity > 0) {
+                map.set(p.id, (map.get(p.id) || 0) + p.liquidity);
+            }
+        }
+        return map;
+    }, [assets, transactions, brokers, portfolios]);
+
+    const getPortfolioAllocationSummary = (portfolioId: string) => {
+        const currentValue = portfolioCurrentValue.get(portfolioId) || 0;
+        const allocated = ynabGoalAllocations
+            .filter(a => a.portfolioId === portfolioId)
+            .reduce((s, a) => s + a.amount, 0);
+        const available = Math.max(0, currentValue - allocated);
+        const drift = allocated - currentValue;
+        return { allocated, available, drift, currentValue };
+    };
+
+    const getYnabGoalAllocations = (ynabGoalId: string) => {
+        return ynabGoalAllocations.filter(a => a.ynabGoalId === ynabGoalId);
+    };
+
+    const addAllocation = (input: { portfolioId: string; ynabGoalId: string; amount: number; allowOverallocation?: boolean }) => {
+        const { portfolioId, ynabGoalId, amount, allowOverallocation } = input;
+        if (!(amount > 0)) return { ok: false as const, error: 'Amount must be greater than zero.' };
+        if (!portfolios.some(p => p.id === portfolioId)) return { ok: false as const, error: 'Portfolio not found.' };
+        if (!ynabGoals.some(g => g.id === ynabGoalId)) return { ok: false as const, error: 'YNAB goal not found.' };
+        const summary = getPortfolioAllocationSummary(portfolioId);
+        if (amount > summary.available && !allowOverallocation) {
+            return {
+                ok: false as const,
+                error: `Available: €${summary.available.toFixed(2)} of €${summary.currentValue.toFixed(2)} (already allocated €${summary.allocated.toFixed(2)} on other YNAB goals).`,
+            };
+        }
+        const now = new Date().toISOString();
+        const newAlloc: YnabGoalAllocation = {
+            id: crypto.randomUUID(),
+            portfolioId,
+            ynabGoalId,
+            amount,
+            createdAt: now,
+            updatedAt: now,
+        };
+        setYnabGoalAllocations(prev => [...prev, newAlloc]);
+        return { ok: true as const };
+    };
+
+    const updateAllocation = (allocationId: string, input: { amount: number; allowOverallocation?: boolean }) => {
+        const { amount, allowOverallocation } = input;
+        if (!(amount > 0)) return { ok: false as const, error: 'Amount must be greater than zero.' };
+        const existing = ynabGoalAllocations.find(a => a.id === allocationId);
+        if (!existing) return { ok: false as const, error: 'Allocation not found.' };
+        const summary = getPortfolioAllocationSummary(existing.portfolioId);
+        const availableForUpdate = summary.available + existing.amount;
+        if (amount > availableForUpdate && !allowOverallocation) {
+            return {
+                ok: false as const,
+                error: `Available: €${availableForUpdate.toFixed(2)} of €${summary.currentValue.toFixed(2)}.`,
+            };
+        }
+        const now = new Date().toISOString();
+        setYnabGoalAllocations(prev => prev.map(a => a.id === allocationId ? { ...a, amount, updatedAt: now } : a));
+        return { ok: true as const };
+    };
+
+    const removeAllocation = (allocationId: string) => {
+        setYnabGoalAllocations(prev => prev.filter(a => a.id !== allocationId));
     };
 
     const value = {
@@ -1396,6 +1698,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabMapping,
         disconnectYnab,
         ynabSyncing,
+        ynabGoals,
+        ynabGoalAllocations,
+        listYnabCategoryGroups,
+        setYnabGoalsGroup,
+        prepareYnabGoalsSync,
+        applyYnabGoalsSync,
+        deleteYnabGoal,
+        addAllocation,
+        updateAllocation,
+        removeAllocation,
+        getPortfolioAllocationSummary,
+        getYnabGoalAllocations,
+        ynabGoalsSyncing,
     };
 
     return (

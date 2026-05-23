@@ -139,6 +139,9 @@ export interface YnabConfig {
   currencyIso?: string;
   lastSyncAt?: string;
   avgMonthsWindow?: number;
+  goalsGroupId?: string;
+  goalsGroupName?: string;
+  lastGoalsSyncAt?: string;
 }
 
 export interface YnabCategory {
@@ -150,6 +153,61 @@ export interface YnabCategory {
   budgetedMilliunits?: number;
   avgBudgetedMilliunits?: number;
   avgMonthsCount?: number;
+  note?: string;
+  goalType?: string;
+  goalTargetMilliunits?: number;
+  activityMilliunits?: number;
+}
+
+export interface YnabCategoryGroupSummary {
+  id: string;
+  name: string;
+  categoryCount: number;
+}
+
+export type YnabGoalTargetSource = 'parsed-name' | 'parsed-note' | 'manual-override';
+
+export interface YnabGoal {
+  id: string;
+  ynabBudgetId: string;
+  name: string;
+  targetAmount?: number;
+  targetDate?: string;
+  cashCoverage: number;
+  ynabMonthlyFunding?: number;
+  ynabActivityThisMonth?: number;
+  goalType?: string;
+  targetSource: YnabGoalTargetSource;
+  lastSyncedAt: string;
+  archived?: boolean;
+}
+
+export interface YnabGoalAllocation {
+  id: string;
+  portfolioId: string;
+  ynabGoalId: string;
+  amount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface YnabGoalSyncCandidate {
+  ynabCategoryId: string;
+  ynabCategoryName: string;
+  rawNote: string | null;
+  parsedAmount: number | null;
+  parsedDate: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  cashCoverage: number;
+  ynabMonthlyFunding: number | null;
+  ynabActivityThisMonth: number | null;
+  goalType: string | null;
+  matchedYnabGoalId: string | null;
+  parsedSource: 'parsed-name' | 'parsed-note' | null;
+  existingTargetSource: YnabGoalTargetSource | null;
+  existingTargetAmount: number | null;
+  existingTargetDate: string | null;
+  action: 'create' | 'update' | 'skip';
 }
 
 export type YnabMappingTarget =
