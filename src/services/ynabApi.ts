@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { YnabCategory } from '../types';
+import type { YnabCategory, YnabCategoryGroupSummary } from '../types';
 
 const YNAB_BASE = 'https://api.ynab.com/v1';
 
@@ -101,6 +101,84 @@ export async function getCurrentMonthCategories(
 }
 
 export const milliunitsToEur = (m: number): number => m / 1000;
+
+export async function listCategoryGroups(
+    apiKey: string,
+    budgetId: string,
+): Promise<YnabApiResult<YnabCategoryGroupSummary[]>> {
+    try {
+        const response = await axios.get(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/categories`,
+            { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        const categoryGroups: any[] = response.data?.data?.category_groups ?? [];
+        const result: YnabCategoryGroupSummary[] = [];
+        for (const g of categoryGroups) {
+            if (g.hidden || g.deleted) continue;
+            if (HIDDEN_GROUP_NAMES.has(g.name)) continue;
+            const cats: any[] = Array.isArray(g.categories) ? g.categories : [];
+            const count = cats.filter(c => !c.hidden && !c.deleted).length;
+            result.push({ id: g.id, name: g.name, categoryCount: count });
+        }
+        return { success: true, data: result };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}
+
+export async function getGoalCategories(
+    apiKey: string,
+    budgetId: string,
+    groupId: string,
+): Promise<YnabApiResult<YnabCategory[]>> {
+    try {
+        const headers = { Authorization: `Bearer ${apiKey}` };
+        const groupsResp = await axios.get(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/categories`,
+            { headers },
+        );
+        const categoryGroups: any[] = groupsResp.data?.data?.category_groups ?? [];
+        const group = categoryGroups.find(g => g.id === groupId);
+        if (!group) {
+            return { success: false, error: 'Goal category group not found in YNAB.' };
+        }
+        if (group.hidden || group.deleted) {
+            return { success: false, error: 'Goal category group is hidden or deleted in YNAB.' };
+        }
+
+        const monthResp = await axios.get(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/months/current`,
+            { headers },
+        );
+        const monthCats: any[] = monthResp.data?.data?.month?.categories ?? [];
+        const monthById = new Map<string, any>();
+        for (const c of monthCats) monthById.set(c.id, c);
+
+        const out: YnabCategory[] = [];
+        const rawCats: any[] = Array.isArray(group.categories) ? group.categories : [];
+        for (const c of rawCats) {
+            if (c.hidden || c.deleted) continue;
+            const monthSnap = monthById.get(c.id);
+            out.push({
+                id: c.id,
+                groupId: group.id,
+                groupName: group.name,
+                name: c.name,
+                balanceMilliunits: typeof c.balance === 'number' ? c.balance : 0,
+                budgetedMilliunits: typeof c.budgeted === 'number' ? c.budgeted : 0,
+                note: typeof c.note === 'string' && c.note.length > 0 ? c.note : undefined,
+                goalType: typeof c.goal_type === 'string' && c.goal_type.length > 0 ? c.goal_type : undefined,
+                goalTargetMilliunits: typeof c.goal_target === 'number' ? c.goal_target : undefined,
+                activityMilliunits: typeof monthSnap?.activity === 'number'
+                    ? monthSnap.activity
+                    : (typeof c.activity === 'number' ? c.activity : undefined),
+            });
+        }
+        return { success: true, data: out };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}
 
 export interface YnabAverageEntry {
     avgBudgetedMilliunits: number;

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { PortfolioProvider } from './context/PortfolioContext';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing' | 'ynab';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing' | 'ynab';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -21,6 +21,7 @@ import GoalList from './components/Goals/GoalList';
 import ForecastView from './components/Forecast/ForecastView';
 import GlobalRebalancingView from './components/GlobalRebalancing/GlobalRebalancingView';
 import YnabImportView from './components/YnabImport/YnabImportView';
+import YnabGoalsView from './components/YnabGoals/YnabGoalsView';
 
 // Placeholders for views
 const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
@@ -99,6 +100,7 @@ function App() {
       case 'portfolios': return <PortfoliosView />;
       case 'brokers': return <BrokersView />;
       case 'goals': return <GoalsView />;
+      case 'ynabGoals': return <YnabGoalsView onNavigateToYnab={() => setCurrentView('ynab')} />;
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
       case 'disclaimer': return <DisclaimerView />;
