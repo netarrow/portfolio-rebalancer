@@ -67,7 +67,7 @@ export async function encrypt(plaintext: string, passphrase: string): Promise<Ar
         console.log(`[Azure Encrypt] Success: ${plaintextBytes.length} bytes → ${result.byteLength} bytes (encrypted)`);
         return result.buffer;
     } catch (e) {
-        console.error('[Azure Encrypt] Failed:', { error: String(e), passphraseLength: passphrase.length });
+        console.error('[Azure Encrypt] Failed:', { error: String(e) });
         throw e;
     }
 }
@@ -91,14 +91,14 @@ export async function decrypt(buffer: ArrayBuffer, passphrase: string): Promise<
         console.log(`[Azure Decrypt] Success: ${buffer.byteLength} bytes → ${decoded.length} chars`);
         return decoded;
     } catch (e) {
-        console.error('[Azure Decrypt] Failed:', { error: String(e), bufferSize: buffer.byteLength, passphraseLength: passphrase.length });
+        console.error('[Azure Decrypt] Failed:', { error: String(e), bufferSize: buffer.byteLength });
         throw e;
     }
 }
 
 export async function uploadToAzure(sasUrl: string, data: ArrayBuffer): Promise<void> {
     try {
-        console.log(`[Azure Upload] Starting: ${data.byteLength} bytes to ${sasUrl.substring(0, 60)}...`);
+        console.log(`[Azure Upload] Starting: ${data.byteLength} bytes`);
         const response = await fetch(sasUrl, {
             method: 'PUT',
             headers: {
@@ -113,7 +113,7 @@ export async function uploadToAzure(sasUrl: string, data: ArrayBuffer): Promise<
         }
         console.log(`[Azure Upload] Success: ${data.byteLength} bytes uploaded`);
     } catch (e) {
-        console.error('[Azure Upload] Failed:', { error: String(e), dataSize: data.byteLength, sasUrlMasked: sasUrl.substring(0, 60) });
+        console.error('[Azure Upload] Failed:', { error: String(e), dataSize: data.byteLength });
         throw e;
     }
 }
@@ -121,7 +121,7 @@ export async function uploadToAzure(sasUrl: string, data: ArrayBuffer): Promise<
 // Returns null if blob does not exist yet (404)
 export async function downloadFromAzure(sasUrl: string): Promise<ArrayBuffer | null> {
     try {
-        console.log(`[Azure Download] Starting from ${sasUrl.substring(0, 60)}...`);
+        console.log(`[Azure Download] Starting`);
         const response = await fetch(sasUrl, { method: 'GET' });
         if (response.status === 404) {
             console.log(`[Azure Download] Blob not found (404) - first sync`);
@@ -136,7 +136,7 @@ export async function downloadFromAzure(sasUrl: string): Promise<ArrayBuffer | n
         return buffer;
     } catch (e) {
         if (!(e instanceof Error && e.message.includes('404'))) {
-            console.error('[Azure Download] Failed:', { error: String(e), sasUrlMasked: sasUrl.substring(0, 60) });
+            console.error('[Azure Download] Failed:', { error: String(e) });
         }
         throw e;
     }
@@ -144,7 +144,7 @@ export async function downloadFromAzure(sasUrl: string): Promise<ArrayBuffer | n
 
 export async function testAzureConnection(sasUrl: string): Promise<{ ok: boolean; blobExists?: boolean; error?: string }> {
     try {
-        console.log(`[Azure Test Connection] Starting for ${sasUrl.substring(0, 60)}...`);
+        console.log(`[Azure Test Connection] Starting`);
         const response = await fetch(sasUrl, { method: 'HEAD' });
         if (response.ok) {
             console.log(`[Azure Test Connection] Success (HTTP ${response.status}) — blob exists`);
@@ -159,7 +159,7 @@ export async function testAzureConnection(sasUrl: string): Promise<{ ok: boolean
         return { ok: false, error };
     } catch (e) {
         const error = String(e);
-        console.error('[Azure Test Connection] Error:', { error, sasUrlMasked: sasUrl.substring(0, 60) });
+        console.error('[Azure Test Connection] Error:', { error });
         return { ok: false, error };
     }
 }
