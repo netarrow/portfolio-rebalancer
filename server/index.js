@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 import puppeteer from 'puppeteer';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -13,11 +15,54 @@ const app = express();
 const port = process.env.PORT || 3001;
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Trust Azure App Service / reverse proxy so rate-limit sees the real client IP
+// from X-Forwarded-For instead of grouping every request under the loopback hop.
+app.set('trust proxy', 1);
+
+// Security headers — only in production. In dev Vite HMR requires 'unsafe-eval'
+// / 'unsafe-inline' on script-src, which would weaken the prod policy.
+if (isProduction) {
+    app.use(helmet({
+        contentSecurityPolicy: {
+            useDefaults: true,
+            directives: {
+                'default-src': ["'self'"],
+                'script-src': ["'self'"],
+                'style-src': ["'self'", "'unsafe-inline'"],
+                'img-src': ["'self'", 'data:'],
+                'font-src': ["'self'", 'data:'],
+                'connect-src': [
+                    "'self'",
+                    'https://api.ynab.com',
+                    'https://*.blob.core.windows.net',
+                    'wss:', 'ws:',
+                ],
+                'frame-ancestors': ["'none'"],
+                'object-src': ["'none'"],
+                'base-uri': ["'self'"],
+                'form-action': ["'self'"],
+            },
+        },
+        crossOriginEmbedderPolicy: false,
+    }));
+}
+
 // Common middleware
 const allowedOrigin = process.env.cors_domain || /^http:\/\/localhost(:\d+)?$/;
 app.use(cors({ origin: allowedOrigin }));
 
 app.use(express.json()); // Enable JSON body parsing
+
+// Rate-limit the expensive Puppeteer-backed price endpoint per client IP.
+// Note: the socket.io `request_price_update` channel has the same cost profile
+// but is intentionally left unlimited here (out of scope of this change).
+const priceLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 10,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many price requests, please retry in a minute.' },
+});
 
 // --- HTTP SERVER & SOCKET.IO SETUP ---
 const httpServer = createServer(app);
@@ -303,7 +348,7 @@ io.on('connection', (socket) => {
 });
 
 // --- API ROUTES ---
-app.post('/api/price', async (req, res) => {
+app.post('/api/price', priceLimiter, async (req, res) => {
     // Keep existing API for backward compatibility or direct calls if needed
     // Logic duplicated for now, or could call a shared function. 
     // Given the task is to switch to Websocket, we can leave this as a fallback 

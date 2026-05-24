@@ -510,9 +510,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 console.error(`[Azure Sync] Error at ${new Date().toISOString()}:`, {
                     message: error.message,
                     stack: error.stack,
-                    sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
                     payloadSize: JSON.stringify(payload).length,
-                    passphraseLength: config.passphrase.length,
                 });
             } finally {
                 setAzureSyncing(false);
@@ -580,8 +578,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 console.error(`[Azure Startup Sync] Error at ${new Date().toISOString()}:`, {
                     message: error.message,
                     stack: error.stack,
-                    sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
-                    passphraseLength: config.passphrase.length,
                 });
             }
         })();
@@ -1280,8 +1276,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 action: 'syncToAzure',
                 message: error.message,
                 stack: error.stack,
-                sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
-                passphraseLength: config.passphrase.length,
             };
             console.error('[Azure Sync] Failed:', errorLog);
             return { ok: false, error: String(e) };
@@ -1311,8 +1305,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 action: 'restoreFromAzure',
                 message: error.message,
                 stack: error.stack,
-                sasUrlMasked: config.sasUrl ? config.sasUrl.substring(0, 50) + '...' : 'not set',
-                passphraseLength: config.passphrase.length,
             };
             console.error('[Azure Restore] Failed:', errorLog);
             return { ok: false, error: String(e) };
