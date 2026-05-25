@@ -214,35 +214,46 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                             </div>
 
                             <div className="goal-funding">
-                                <div className="goal-funding-head">Monthly funding</div>
+                                <div className="goal-funding-head">
+                                    <span aria-hidden className="goal-funding-icon">💸</span>
+                                    <span>Monthly funding</span>
+                                </div>
                                 {requiredMonthly != null && (
-                                    <div className="goal-funding-row">
-                                        <span className="goal-funding-label">Suggested</span>
-                                        <span className="goal-funding-value">
-                                            {formatCurrencyExact(requiredMonthly, currencyIso)}<small>/mo</small>
+                                    <div className="goal-funding-suggested">
+                                        <span className="goal-funding-suggested-label">Suggested</span>
+                                        <div className="goal-funding-suggested-amount">
+                                            <span className="goal-funding-suggested-value">{formatCurrencyExact(requiredMonthly, currencyIso)}</span>
+                                            <span className="goal-funding-suggested-unit">/mo</span>
                                             <button
                                                 type="button"
                                                 className="goal-funding-copy"
                                                 onClick={() => navigator.clipboard.writeText(requiredMonthly.toFixed(2))}
                                                 title="Copy amount"
-                                            >Copy</button>
-                                        </span>
+                                                aria-label="Copy suggested amount"
+                                            >
+                                                <span aria-hidden>📋</span> Copy
+                                            </button>
+                                        </div>
                                     </div>
                                 )}
-                                {g.ynabMonthlyFunding != null && (
-                                    <div className="goal-funding-row">
-                                        <span className="goal-funding-label">YNAB MF</span>
-                                        <span className="goal-funding-value">
-                                            {formatCurrencyExact(g.ynabMonthlyFunding, currencyIso)}<small>/mo</small>
-                                        </span>
-                                    </div>
-                                )}
-                                {g.ynabMonthlyFunding != null && g.ynabActivityThisMonth != null && (
-                                    <div className="goal-funding-row">
-                                        <span className="goal-funding-label">This month</span>
-                                        <span className="goal-funding-value goal-funding-value-muted">
-                                            {formatCurrencyExact(Math.abs(g.ynabActivityThisMonth), currencyIso)} / {formatCurrencyExact(g.ynabMonthlyFunding, currencyIso)}
-                                        </span>
+                                {(g.ynabMonthlyFunding != null || (g.ynabMonthlyFunding != null && g.ynabActivityThisMonth != null)) && (
+                                    <div className="goal-funding-rows">
+                                        {g.ynabMonthlyFunding != null && (
+                                            <div className="goal-funding-row">
+                                                <span className="goal-funding-label">YNAB MF</span>
+                                                <span className="goal-funding-value">
+                                                    {formatCurrencyExact(g.ynabMonthlyFunding, currencyIso)}<small>/mo</small>
+                                                </span>
+                                            </div>
+                                        )}
+                                        {g.ynabMonthlyFunding != null && g.ynabActivityThisMonth != null && (
+                                            <div className="goal-funding-row">
+                                                <span className="goal-funding-label">This month</span>
+                                                <span className="goal-funding-value goal-funding-value-muted">
+                                                    {formatCurrencyExact(Math.abs(g.ynabActivityThisMonth), currencyIso)} / {formatCurrencyExact(g.ynabMonthlyFunding, currencyIso)}
+                                                </span>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                                 {mfMismatch && (
@@ -260,7 +271,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                                         className="goal-allocations-add"
                                         onClick={() => setDialog({ ynabGoal: g, editing: null })}
                                         disabled={g.archived}
-                                    >+ Add</button>
+                                    >Add</button>
                                 </div>
                                 {allocations.length === 0 ? (
                                     <div className="goal-allocations-empty">No allocations yet.</div>
@@ -342,7 +353,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                     box-shadow: var(--shadow-md);
                     display: flex;
                     flex-direction: column;
-                    gap: var(--space-5);
+                    gap: var(--space-6);
                     transition: transform 0.15s ease, box-shadow 0.15s ease;
                 }
                 .goal-card:hover {
@@ -414,7 +425,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                     font-size: 0.78rem;
                 }
 
-                .goal-progress { display: flex; flex-direction: column; gap: var(--space-2); }
+                .goal-progress { display: flex; flex-direction: column; gap: var(--space-3); }
                 .goal-progress-meta {
                     display: flex;
                     align-items: baseline;
@@ -459,12 +470,13 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                 .goal-stats {
                     display: grid;
                     grid-template-columns: repeat(3, 1fr);
-                    gap: var(--space-4) var(--space-3);
+                    gap: var(--space-5) var(--space-4);
+                    padding: var(--space-3) 0;
                 }
                 .goal-stat {
                     display: flex;
                     flex-direction: column;
-                    gap: var(--space-1);
+                    gap: var(--space-2);
                     min-width: 0;
                 }
                 .goal-stat-label {
@@ -483,20 +495,86 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                 .goal-stat-gap { color: var(--color-warning); }
 
                 .goal-funding {
-                    background: var(--bg-surface);
-                    border-radius: var(--radius-md);
+                    background: linear-gradient(135deg, rgba(99, 102, 241, 0.08), rgba(6, 182, 212, 0.04));
+                    border: 1px solid rgba(99, 102, 241, 0.18);
+                    border-radius: var(--radius-lg);
                     padding: var(--space-4);
                     display: flex;
                     flex-direction: column;
-                    gap: var(--space-2);
+                    gap: var(--space-3);
                 }
                 .goal-funding-head {
-                    font-size: 0.68rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.45rem;
+                    font-size: 0.7rem;
                     text-transform: uppercase;
-                    letter-spacing: 0.06em;
+                    letter-spacing: 0.08em;
+                    color: var(--text-secondary);
+                    font-weight: 700;
+                }
+                .goal-funding-icon { font-size: 0.95rem; }
+
+                .goal-funding-suggested {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-1);
+                    padding: var(--space-3) var(--space-3) var(--space-3);
+                    background: rgba(15, 23, 42, 0.35);
+                    border-radius: var(--radius-md);
+                    border-left: 3px solid var(--color-primary);
+                }
+                .goal-funding-suggested-label {
+                    font-size: 0.7rem;
                     color: var(--text-muted);
                     font-weight: 600;
-                    margin-bottom: var(--space-1);
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                }
+                .goal-funding-suggested-amount {
+                    display: flex;
+                    align-items: baseline;
+                    gap: var(--space-2);
+                    flex-wrap: wrap;
+                }
+                .goal-funding-suggested-value {
+                    font-size: 1.35rem;
+                    font-weight: 700;
+                    color: var(--text-primary);
+                    font-variant-numeric: tabular-nums;
+                    letter-spacing: -0.02em;
+                }
+                .goal-funding-suggested-unit {
+                    font-size: 0.78rem;
+                    color: var(--text-muted);
+                    font-weight: 500;
+                }
+                .goal-funding-copy {
+                    margin-left: auto;
+                    background: rgba(99, 102, 241, 0.15);
+                    border: 1px solid rgba(99, 102, 241, 0.35);
+                    color: #c7d2fe;
+                    border-radius: var(--radius-sm);
+                    padding: 0.3rem 0.65rem;
+                    font-size: 0.72rem;
+                    font-weight: 600;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.3rem;
+                    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+                }
+                .goal-funding-copy:hover {
+                    background: var(--color-primary);
+                    border-color: var(--color-primary);
+                    color: white;
+                }
+
+                .goal-funding-rows {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-3);
+                    padding: var(--space-1) var(--space-2) 0;
                 }
                 .goal-funding-row {
                     display: flex;
@@ -505,37 +583,28 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                     gap: var(--space-3);
                     font-size: 0.85rem;
                 }
-                .goal-funding-label { color: var(--text-secondary); }
+                .goal-funding-label {
+                    color: var(--text-secondary);
+                    font-size: 0.78rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.04em;
+                    font-weight: 600;
+                }
                 .goal-funding-value {
                     font-weight: 600;
                     color: var(--text-primary);
                     font-variant-numeric: tabular-nums;
                     display: inline-flex;
                     align-items: baseline;
-                    gap: var(--space-2);
+                    gap: 0.15rem;
                 }
                 .goal-funding-value small {
                     font-size: 0.7rem;
                     font-weight: 500;
                     color: var(--text-muted);
-                    margin-left: -0.15rem;
                 }
                 .goal-funding-value-muted { color: var(--text-secondary); font-weight: 500; }
-                .goal-funding-copy {
-                    background: transparent;
-                    border: 1px solid var(--bg-card);
-                    color: var(--color-primary);
-                    border-radius: var(--radius-sm);
-                    padding: 0.15rem 0.5rem;
-                    font-size: 0.7rem;
-                    font-weight: 500;
-                    cursor: pointer;
-                    transition: background 0.15s ease, border-color 0.15s ease;
-                }
-                .goal-funding-copy:hover {
-                    background: rgba(99, 102, 241, 0.12);
-                    border-color: var(--color-primary);
-                }
+
                 .goal-funding-warn {
                     margin-top: var(--space-1);
                     font-size: 0.78rem;
@@ -543,13 +612,18 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                     display: flex;
                     align-items: center;
                     gap: 0.4rem;
+                    background: rgba(245, 158, 11, 0.1);
+                    border-radius: var(--radius-sm);
+                    padding: 0.4rem 0.6rem;
                 }
 
-                .goal-allocations { display: flex; flex-direction: column; gap: var(--space-2); }
+                .goal-allocations { display: flex; flex-direction: column; gap: var(--space-3); }
                 .goal-allocations-head {
                     display: flex;
                     align-items: center;
                     justify-content: space-between;
+                    gap: var(--space-3);
+                    padding-bottom: var(--space-1);
                 }
                 .goal-allocations-title {
                     font-size: 0.68rem;
@@ -559,25 +633,50 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                     font-weight: 600;
                 }
                 .goal-allocations-add {
-                    background: transparent;
+                    background: var(--color-primary);
                     border: 1px solid var(--color-primary);
-                    color: var(--color-primary);
-                    border-radius: var(--radius-md);
-                    padding: 0.3rem 0.75rem;
+                    color: white;
+                    border-radius: 999px;
+                    padding: 0.35rem 0.85rem 0.35rem 0.7rem;
                     font-size: 0.78rem;
                     font-weight: 600;
                     cursor: pointer;
-                    transition: background 0.15s ease, color 0.15s ease;
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 0.25rem;
+                    line-height: 1;
+                    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+                    transition: background 0.15s ease, border-color 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
+                }
+                .goal-allocations-add::before {
+                    content: '+';
+                    font-size: 1rem;
+                    font-weight: 700;
+                    line-height: 0.8;
+                    margin-right: 0.1rem;
                 }
                 .goal-allocations-add:hover:not(:disabled) {
-                    background: var(--color-primary);
-                    color: white;
+                    background: var(--color-primary-hover);
+                    border-color: var(--color-primary-hover);
+                    box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.18);
                 }
-                .goal-allocations-add:disabled { opacity: 0.4; cursor: not-allowed; }
+                .goal-allocations-add:active:not(:disabled) { transform: translateY(1px); }
+                .goal-allocations-add:disabled {
+                    background: var(--bg-surface);
+                    border-color: rgba(148, 163, 184, 0.2);
+                    color: var(--text-muted);
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                    box-shadow: none;
+                }
                 .goal-allocations-empty {
                     font-size: 0.85rem;
                     color: var(--text-muted);
-                    padding: var(--space-2) 0;
+                    padding: var(--space-3) var(--space-3);
+                    background: rgba(15, 23, 42, 0.35);
+                    border-radius: var(--radius-md);
+                    border: 1px dashed rgba(148, 163, 184, 0.18);
+                    text-align: center;
                 }
                 .goal-allocations-list {
                     list-style: none;
@@ -585,16 +684,16 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                     padding: 0;
                     display: flex;
                     flex-direction: column;
-                    gap: var(--space-1);
+                    gap: var(--space-2);
                 }
                 .goal-allocation-row {
                     display: grid;
                     grid-template-columns: 1fr auto auto;
                     align-items: center;
                     gap: var(--space-3);
-                    padding: var(--space-2) var(--space-3);
+                    padding: var(--space-3);
                     background: var(--bg-surface);
-                    border-radius: var(--radius-sm);
+                    border-radius: var(--radius-md);
                     font-size: 0.85rem;
                     transition: background 0.15s ease;
                 }
