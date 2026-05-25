@@ -16,15 +16,19 @@ COPY package*.json ./
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
   PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Install dependencies
-# Note: npm ci is generally better for CI/Docker builds but user might just have package.json without lock or sync issues.
-RUN npm install
+# Install dependencies (reproducible build from package-lock.json)
+RUN npm ci
 
 # Copy application source
 COPY . .
 
 # Build the frontend
 RUN npm run build
+
+# Run as non-root user
+RUN useradd --create-home --shell /bin/bash appuser \
+  && chown -R appuser:appuser /usr/src/app
+USER appuser
 
 # Expose port 80
 EXPOSE 80

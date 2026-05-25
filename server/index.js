@@ -51,11 +51,24 @@ if (isProduction) {
 const allowedOrigin = process.env.cors_domain || /^http:\/\/localhost(:\d+)?$/;
 app.use(cors({ origin: allowedOrigin }));
 
-app.use(express.json()); // Enable JSON body parsing
+app.use(express.json({ limit: '16kb' })); // Enable JSON body parsing with size cap
+
+// Catch body-parser errors (oversized payloads, malformed JSON) and return a
+// clean JSON response instead of Express's default HTML stack-trace page.
+app.use((err, req, res, next) => {
+    if (err.type === 'entity.too.large') {
+        return res.status(413).json({ error: 'Request body too large.' });
+    }
+    if (err.type === 'entity.parse.failed') {
+        return res.status(400).json({ error: 'Invalid JSON payload.' });
+    }
+    next(err);
+});
+
+// Max ISINs accepted in a single price request (HTTP or socket).
+const MAX_TOKENS_PER_REQUEST = 50;
 
 // Rate-limit the expensive Puppeteer-backed price endpoint per client IP.
-// Note: the socket.io `request_price_update` channel has the same cost profile
-// but is intentionally left unlimited here (out of scope of this change).
 const priceLimiter = rateLimit({
     windowMs: 60_000,
     limit: 10,
@@ -63,6 +76,12 @@ const priceLimiter = rateLimit({
     legacyHeaders: false,
     message: { error: 'Too many price requests, please retry in a minute.' },
 });
+
+// Per-socket sliding-window limiter for `request_price_update`. The socket path
+// triggers the same Puppeteer cost as /api/price, so without this an attacker
+// could spawn a single WS connection and bypass the HTTP limit entirely.
+const SOCKET_RATE_WINDOW_MS = 60_000;
+const SOCKET_RATE_LIMIT = 10;
 
 // --- HTTP SERVER & SOCKET.IO SETUP ---
 const httpServer = createServer(app);
@@ -75,12 +94,25 @@ const io = new Server(httpServer, {
 
 io.on('connection', (socket) => {
     console.log('New client connected', socket.id);
+    let socketRequestTimestamps = [];
 
     socket.on('request_price_update', async (tokens) => {
+        const now = Date.now();
+        socketRequestTimestamps = socketRequestTimestamps.filter(t => now - t < SOCKET_RATE_WINDOW_MS);
+        if (socketRequestTimestamps.length >= SOCKET_RATE_LIMIT) {
+            socket.emit('price_update_error', { message: 'Too many price requests, please retry in a minute.' });
+            return;
+        }
+        socketRequestTimestamps.push(now);
+
         console.log(`Received socket price update request for ${tokens?.length} assets from ${socket.id}`);
-        
+
         if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
             socket.emit('price_update_error', { message: 'List of tokens (ISINs) is required' });
+            return;
+        }
+        if (tokens.length > MAX_TOKENS_PER_REQUEST) {
+            socket.emit('price_update_error', { message: `Too many tokens in one request (max ${MAX_TOKENS_PER_REQUEST}).` });
             return;
         }
 
@@ -336,7 +368,7 @@ io.on('connection', (socket) => {
 
         } catch (globalError) {
             console.error('Global puppeteer error:', globalError);
-            socket.emit('price_update_error', { message: 'Major server error', details: globalError.message });
+            socket.emit('price_update_error', { message: 'Server error while fetching prices. Please try again.' });
         } finally {
             if (browser) await browser.close();
         }
@@ -362,6 +394,9 @@ app.post('/api/price', priceLimiter, async (req, res) => {
 
     if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
         return res.status(400).json({ error: 'List of tokens (ISINs) is required' });
+    }
+    if (tokens.length > MAX_TOKENS_PER_REQUEST) {
+        return res.status(400).json({ error: `Too many tokens in one request (max ${MAX_TOKENS_PER_REQUEST}).` });
     }
 
     // ... (Existing logic logic reused or kept) ...
@@ -499,7 +534,8 @@ app.post('/api/price', priceLimiter, async (req, res) => {
             }
         }
     } catch (globalError) {
-        return res.status(500).json({ error: 'Major server error', details: globalError.message });
+        console.error('Global puppeteer error (HTTP):', globalError);
+        return res.status(500).json({ error: 'Server error while fetching prices. Please try again.' });
     } finally {
         if (browser) await browser.close();
     }
