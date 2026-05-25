@@ -3,7 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, TransactionDirection } from '../../types';
 import { isIncomeDirection } from '../../types';
 import { calculateCommission, calculateRealizedGains, calculateCashFlows } from '../../utils/portfolioCalculations';
-import { exportTransactionsToExcel } from '../../utils/exportTransactions';
+import { exportTransactionsToExcel, EXPORT_TEMPLATES, type ExportTemplate } from '../../utils/exportTransactions';
 import ImportTransactionsModal from './ImportTransactionsModal';
 import './Transactions.css';
 
@@ -11,6 +11,8 @@ const TransactionList: React.FC = () => {
     const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios, brokers, updateMarketData } = usePortfolio();
     const [updating, setUpdating] = useState(false);
     const [showImport, setShowImport] = useState(false);
+    const [exportModalOpen, setExportModalOpen] = useState(false);
+    const [exportTemplate, setExportTemplate] = useState<ExportTemplate>('fineco-omney');
 
     // View State
     const [groupBy, setGroupBy] = useState<'None' | 'Portfolio' | 'Broker' | 'Ticker'>('None');
@@ -93,9 +95,17 @@ const TransactionList: React.FC = () => {
 
     const handleExportExcel = () => {
         if (selectedIds.size === 0) return;
+        setExportModalOpen(true);
+    };
+
+    const handleExportConfirm = () => {
         const selected = transactions.filter(t => selectedIds.has(t.id));
-        if (selected.length === 0) return;
-        exportTransactionsToExcel(selected, brokers, targets);
+        if (selected.length === 0) {
+            setExportModalOpen(false);
+            return;
+        }
+        exportTransactionsToExcel(selected, brokers, targets, exportTemplate);
+        setExportModalOpen(false);
     };
 
     // --- Single Edit Handlers ---
@@ -903,6 +913,52 @@ const TransactionList: React.FC = () => {
                         newTransactions.forEach(addTransaction);
                     }}
                 />
+            )}
+
+            {exportModalOpen && (
+                <div className="modal-overlay" onClick={() => setExportModalOpen(false)}>
+                    <div
+                        className="modal-content"
+                        style={{ position: 'relative', maxWidth: '420px' }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <button
+                            className="modal-close-btn"
+                            type="button"
+                            onClick={() => setExportModalOpen(false)}
+                        >×</button>
+                        <h3>Export Excel</h3>
+                        <div className="form-group">
+                            <label htmlFor="export-template">Template</label>
+                            <select
+                                id="export-template"
+                                className="form-input"
+                                value={exportTemplate}
+                                onChange={e => setExportTemplate(e.target.value as ExportTemplate)}
+                            >
+                                {EXPORT_TEMPLATES.map(t => (
+                                    <option key={t.id} value={t.id}>{t.label}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+                            <button
+                                className="btn-primary"
+                                onClick={handleExportConfirm}
+                                style={{ flex: 1 }}
+                            >
+                                Export
+                            </button>
+                            <button
+                                className="btn-secondary"
+                                onClick={() => setExportModalOpen(false)}
+                                style={{ flex: 1 }}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
