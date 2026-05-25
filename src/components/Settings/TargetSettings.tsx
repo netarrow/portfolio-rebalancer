@@ -164,7 +164,25 @@ const TargetSettings: React.FC = () => {
 
 
     const handleSaveAzureConfig = () => {
-        setAzureConfig(prev => ({ ...prev, sasUrl: localSasUrl, passphrase: localPassphrase }));
+        const trimmed = localSasUrl.trim();
+        if (trimmed) {
+            let parsed: URL;
+            try {
+                parsed = new URL(trimmed);
+            } catch {
+                Swal.fire({ title: 'Invalid SAS URL', text: 'The SAS URL is not a valid URL.', icon: 'error' });
+                return;
+            }
+            if (parsed.protocol !== 'https:') {
+                Swal.fire({ title: 'Invalid SAS URL', text: 'The SAS URL must use HTTPS.', icon: 'error' });
+                return;
+            }
+            if (!parsed.hostname.endsWith('.blob.core.windows.net')) {
+                Swal.fire({ title: 'Invalid SAS URL', text: 'The SAS URL must point to an Azure Blob Storage endpoint (*.blob.core.windows.net).', icon: 'error' });
+                return;
+            }
+        }
+        setAzureConfig(prev => ({ ...prev, sasUrl: trimmed, passphrase: localPassphrase }));
         setConnectionStatus('idle');
         Swal.fire({ title: 'Settings saved', icon: 'success', timer: 1500, showConfirmButton: false });
     };
