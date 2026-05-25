@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { PortfolioProvider } from './context/PortfolioContext';
+import { SecurityProvider } from './context/SecurityContext';
+import UnlockGate from './components/Security/UnlockGate';
 import Layout from './components/Layout/Layout';
 
 type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing' | 'ynab';
@@ -111,11 +113,15 @@ function App() {
   };
 
   return (
-    <PortfolioProvider>
-      <Layout currentView={currentView} onNavigate={(view) => setCurrentView(view as View)}>
-        {renderView()}
-      </Layout>
-    </PortfolioProvider>
+    <SecurityProvider>
+      <UnlockGate>
+        <PortfolioProvider>
+          <Layout currentView={currentView} onNavigate={(view) => setCurrentView(view as View)}>
+            {renderView()}
+          </Layout>
+        </PortfolioProvider>
+      </UnlockGate>
+    </SecurityProvider>
   );
 }
 

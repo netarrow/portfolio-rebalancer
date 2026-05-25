@@ -5,6 +5,7 @@ import type { AssetClass, AssetSubClass } from '../../types';
 import Swal from 'sweetalert2';
 import { testAzureConnection } from '../../services/azureSync';
 import type { YnabBudgetSummary } from '../../services/ynabApi';
+import EncryptionSettingsCard from '../Security/EncryptionSettingsCard';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -366,11 +367,16 @@ const TargetSettings: React.FC = () => {
 
     return (
         <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
+            <EncryptionSettingsCard />
+
             {/* Data Management Section */}
             <div>
                 <h2 className="section-title">Data Management</h2>
-                <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+                <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
                     Backup your entire portfolio data to a JSON file or restore from a previous backup.
+                </p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                    Backup files are exported as plaintext JSON. For an encrypted off-device copy use the Azure backup below.
                 </p>
                 <div className="data-management-buttons" style={{ display: 'flex', gap: '1rem', marginBottom: '3rem' }}>
                     <button

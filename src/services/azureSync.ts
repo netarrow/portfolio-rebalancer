@@ -47,6 +47,88 @@ async function deriveKey(passphrase: string, salt: Uint8Array): Promise<CryptoKe
     );
 }
 
+// --- Second-Layer Encryption (SLE) primitives ---
+// Used to encrypt every portfolio_* localStorage entry at rest with a user passphrase.
+// Key is derived once at unlock with a shared persisted salt and reused for all writes.
+
+export const SLE_SALT_BYTES = SALT_BYTES;
+
+export async function deriveKeyFromPassphrase(passphrase: string, salt: Uint8Array): Promise<CryptoKey> {
+    return deriveKey(passphrase, salt);
+}
+
+// Per-value blob: [12B IV][ciphertext+16B tag]. Salt lives once in SLEConfig.
+export async function encryptWithKey(plaintext: string, key: CryptoKey): Promise<Uint8Array> {
+    const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+    const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        new TextEncoder().encode(plaintext)
+    );
+    const out = new Uint8Array(IV_BYTES + ciphertext.byteLength);
+    out.set(iv, 0);
+    out.set(new Uint8Array(ciphertext), IV_BYTES);
+    return out;
+}
+
+export async function decryptWithKey(blob: Uint8Array, key: CryptoKey): Promise<string> {
+    if (blob.length < IV_BYTES + 16) {
+        throw new Error('Encrypted blob too short');
+    }
+    const iv = blob.slice(0, IV_BYTES);
+    const ciphertext = blob.slice(IV_BYTES);
+    const plaintext = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv },
+        key,
+        ciphertext
+    );
+    return new TextDecoder().decode(plaintext);
+}
+
+// --- enc:v1:<base64> framing for localStorage values ---
+
+const ENC_PREFIX = 'enc:v1:';
+
+function bytesToBase64(bytes: Uint8Array): string {
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s);
+}
+
+function base64ToBytes(b64: string): Uint8Array {
+    const bin = atob(b64);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+}
+
+export function isEncryptedValue(raw: string | null): boolean {
+    return typeof raw === 'string' && raw.startsWith(ENC_PREFIX);
+}
+
+export async function wrapEncrypted(plaintext: string, key: CryptoKey): Promise<string> {
+    const blob = await encryptWithKey(plaintext, key);
+    return ENC_PREFIX + bytesToBase64(blob);
+}
+
+export async function unwrapEncrypted(framed: string, key: CryptoKey): Promise<string> {
+    if (!isEncryptedValue(framed)) throw new Error('Not an encrypted value');
+    const blob = base64ToBytes(framed.slice(ENC_PREFIX.length));
+    return decryptWithKey(blob, key);
+}
+
+export function randomSalt(): Uint8Array {
+    return crypto.getRandomValues(new Uint8Array(SLE_SALT_BYTES));
+}
+
+export function saltToBase64(salt: Uint8Array): string {
+    return bytesToBase64(salt);
+}
+
+export function saltFromBase64(b64: string): Uint8Array {
+    return base64ToBytes(b64);
+}
+
 // Output format: [16B salt][12B IV][ciphertext + 16B auth tag]
 export async function encrypt(plaintext: string, passphrase: string): Promise<ArrayBuffer> {
     try {

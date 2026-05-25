@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useContext, useEffect, useState } from 'react';
+import { SecurityContext } from '../context/SecurityContext';
 
-function getStorageValue<T>(key: string, defaultValue: T) {
-    // getting stored value
+function getPlaintextStorageValue<T>(key: string, defaultValue: T): T {
     const saved = localStorage.getItem(key);
-    if (!saved) return defaultValue;
+    if (saved == null) return defaultValue;
+    // If the raw value is in the encrypted framing but we have no SecurityContext
+    // (SLE disabled or not yet mounted), we can't decrypt — return default rather
+    // than crashing JSON.parse on the framing prefix.
+    if (saved.startsWith('enc:v1:')) return defaultValue;
     try {
-        const initial = JSON.parse(saved);
-        return initial;
+        return JSON.parse(saved) as T;
     } catch (e) {
         console.error(`Error parsing localStorage key "${key}":`, e);
         return defaultValue;
@@ -14,14 +17,30 @@ function getStorageValue<T>(key: string, defaultValue: T) {
 }
 
 export const useLocalStorage = <T>(key: string, defaultValue: T) => {
+    const security = useContext(SecurityContext);
+    const sleActive = !!(security && security.sleEnabled && !security.isLocked);
+
     const [value, setValue] = useState<T>(() => {
-        return getStorageValue(key, defaultValue);
+        if (sleActive && security) {
+            const cached = security.readEncryptedKey(key);
+            if (cached == null) return defaultValue;
+            try {
+                return JSON.parse(cached) as T;
+            } catch {
+                return defaultValue;
+            }
+        }
+        return getPlaintextStorageValue(key, defaultValue);
     });
 
     useEffect(() => {
-        // storing input name
-        localStorage.setItem(key, JSON.stringify(value));
-    }, [key, value]);
+        const json = JSON.stringify(value);
+        if (sleActive && security) {
+            security.writeEncryptedKey(key, json);
+        } else {
+            localStorage.setItem(key, json);
+        }
+    }, [key, value, sleActive, security]);
 
     return [value, setValue] as const;
 };

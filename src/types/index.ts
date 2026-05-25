@@ -228,3 +228,11 @@ export interface PortfolioSummary {
   totalGainPercentage: number;
 }
 
+// Second-Layer Encryption: persisted opt-in config (itself stored in plaintext).
+export interface SLEConfig {
+  enabled: boolean;
+  salt: string;                  // base64-encoded random salt for PBKDF2
+  verifier: string;              // enc:v1:... of a known plaintext, used to validate passphrase
+  idleTimeoutMinutes: number;    // auto-lock after N minutes of inactivity
+}
+
