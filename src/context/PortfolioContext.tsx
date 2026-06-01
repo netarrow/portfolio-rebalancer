@@ -35,6 +35,9 @@ interface PortfolioContextType {
     updateGoalAllocation: (allocations: GoalAllocation) => void;
     updateTransactionsBulk: (ids: string[], updates: Partial<Transaction>) => void;
     refreshPrices: () => Promise<void>;
+    // Premium "Update Price" unlock key (local-only, never synced to Azure).
+    premiumPriceKey: string;
+    setPremiumPriceKey: (key: string) => void;
     resetPortfolio: () => void;
     loadMockData: () => void;
     marketData: Record<string, { price: number, lastUpdated: string }>;
@@ -136,6 +139,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
     const [azureSyncing, setAzureSyncing] = useState(false);
 
+    // Premium "Update Price" key — entered by the user, stored locally only
+    // (benefits from SLE encryption when enabled) and intentionally excluded
+    // from the Azure sync payload. The matching valid keys live in the server's
+    // Azure env config; the client just forwards whatever the user typed.
+    const [premiumPriceKey, setPremiumPriceKey] = useLocalStorage<string>('portfolio_premium_price_key', '');
+
     // YNAB integration — apiKey + snapshot categorie SOLO LOCALI (non sincronizzati su Azure).
     // I mapping sono invece inclusi nel SyncPayload per propagarsi fra device.
     const [ynabConfig, setYnabConfigState] = useLocalStorage<YnabConfig | null>('portfolio_ynab_config', null);
@@ -213,7 +222,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             ));
         });
 
-        socket.on('price_update_item', ({ isin, success, data, error }) => {
+        socket.on('price_update_item', ({ isin, success, data, error, cached }) => {
             setPriceUpdateItems(prev => prev.map(item => {
                 if (item.isin === isin) {
                     return {
@@ -221,7 +230,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         status: success ? 'success' : 'error',
                         price: data?.currentPrice,
                         currency: data?.currency,
-                        error: error
+                        error: error,
+                        cached: !!cached
                     };
                 }
                 return item;
@@ -825,6 +835,24 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return;
         }
 
+        const trimmedKey = premiumPriceKey.trim();
+
+        // Without a Premium Key the update runs on the limited free tier
+        // (shared concurrency cap + up-to-one-day cached prices). Warn first.
+        if (!trimmedKey) {
+            const confirm = await Swal.fire({
+                title: 'Limited free update',
+                html: `<p style="text-align:left;font-size:0.9rem">You don't have a <b>Premium Update Price</b> key configured.</p>
+                       <p style="text-align:left;font-size:0.9rem;color:#b45309">This feature is strongly limited without it: prices are throttled and served from a shared cache, so the data you get back may be <b>delayed by up to a day</b>.</p>
+                       <p style="text-align:left;font-size:0.9rem">Add a Premium Key in Settings for unlimited, real-time updates.</p>`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Update anyway',
+                cancelButtonText: 'Cancel',
+            });
+            if (!confirm.isConfirmed) return;
+        }
+
         // Prepare tokens from active assets
         const tokens = activeAssets.map(asset => {
             const setting = assetSettings.find(t => t.ticker === asset.ticker);
@@ -846,7 +874,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Emit socket event
         if (socket) {
-            socket.emit('request_price_update', tokens);
+            socket.emit('request_price_update', { tokens, premiumKey: trimmedKey || undefined });
         } else {
             console.error('Socket not connected');
             setPriceUpdateItems(prev => prev.map(t => ({ ...t, status: 'error', error: 'Socket disconnected' })));
@@ -1648,6 +1676,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateMacroAllocation,
         updateGoalAllocation,
         refreshPrices,
+        premiumPriceKey,
+        setPremiumPriceKey,
         resetPortfolio,
         loadMockData,
         marketData,

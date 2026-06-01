@@ -7,6 +7,7 @@ export interface PriceUpdateItem {
     price?: number;
     currency?: string;
     error?: string;
+    cached?: boolean;
 }
 
 interface Props {
@@ -51,6 +52,11 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete 
                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
                                     <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.isin}</span>
                                     {item.error && <span style={{ fontSize: '0.8rem', color: 'var(--color-danger)' }}>{item.error}</span>}
+                                    {item.cached && item.status === 'success' && (
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }} title="Served from the free-tier cache — may be up to a day old">
+                                            cached · may be delayed
+                                        </span>
+                                    )}
                                 </div>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
