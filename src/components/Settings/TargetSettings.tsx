@@ -6,6 +6,7 @@ import Swal from 'sweetalert2';
 import { testAzureConnection } from '../../services/azureSync';
 import type { YnabBudgetSummary } from '../../services/ynabApi';
 import EncryptionSettingsCard from '../Security/EncryptionSettingsCard';
+import PremiumPriceCard from './PremiumPriceCard';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -367,6 +368,8 @@ const TargetSettings: React.FC = () => {
 
     return (
         <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
+            <PremiumPriceCard />
+
             <EncryptionSettingsCard />
 
             {/* Data Management Section */}

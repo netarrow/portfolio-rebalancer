@@ -7,6 +7,14 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import {
+    acquireFreeSlot,
+    releaseFreeSlot,
+    waitWhilePremium,
+    beginFreeWork,
+    endFreeWork,
+    runExclusivePremium,
+} from './concurrency.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -68,6 +76,60 @@ app.use((err, req, res, next) => {
 // Max ISINs accepted in a single price request (HTTP or socket).
 const MAX_TOKENS_PER_REQUEST = 50;
 
+const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
+
+// --- PREMIUM ACCESS ---------------------------------------------------------
+// Valid premium keys live ONLY in the Azure App Service configuration
+// (env var PREMIUM_KEYS, comma-separated). They must never be committed to the
+// repo or exposed to the client. A request that presents a valid key bypasses
+// the free-tier concurrency cap and the in-memory cache; an absent or unknown
+// key is treated as "free tier".
+const PREMIUM_KEYS = new Set(
+    (process.env.PREMIUM_KEYS || '')
+        .split(',')
+        .map((k) => k.trim())
+        .filter(Boolean)
+);
+if (PREMIUM_KEYS.size === 0) {
+    console.warn('[premium] No PREMIUM_KEYS configured — every request runs on the rate-limited free tier.');
+}
+
+function isValidPremiumKey(key) {
+    return typeof key === 'string' && key.length > 0 && PREMIUM_KEYS.has(key.trim());
+}
+
+// --- FREE-TIER PRICE CACHE --------------------------------------------------
+// Keyless requests for an ISIN are served from this in-memory cache for up to a
+// day, so repeated free-tier polling returns the previously scraped (possibly
+// stale) value without ever launching Puppeteer. Entries auto-expire via a
+// timer; premium requests neither read nor write this cache.
+const FREE_CACHE_TTL_MS = Number(process.env.FREE_PRICE_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
+const priceCache = new Map(); // `${source}:${isin}` -> { result, expiresAt, timer }
+
+function cacheKey(source, isin) {
+    return `${source}:${isin}`;
+}
+
+function getCached(source, isin) {
+    const entry = priceCache.get(cacheKey(source, isin));
+    if (!entry) return null;
+    if (Date.now() > entry.expiresAt) {
+        clearTimeout(entry.timer);
+        priceCache.delete(cacheKey(source, isin));
+        return null;
+    }
+    return entry.result;
+}
+
+function setCached(source, isin, result) {
+    const key = cacheKey(source, isin);
+    const existing = priceCache.get(key);
+    if (existing?.timer) clearTimeout(existing.timer);
+    const timer = setTimeout(() => priceCache.delete(key), FREE_CACHE_TTL_MS);
+    if (timer.unref) timer.unref();
+    priceCache.set(key, { result, expiresAt: Date.now() + FREE_CACHE_TTL_MS, timer });
+}
+
 // Rate-limit the expensive Puppeteer-backed price endpoint per client IP.
 const priceLimiter = rateLimit({
     windowMs: 60_000,
@@ -83,6 +145,258 @@ const priceLimiter = rateLimit({
 const SOCKET_RATE_WINDOW_MS = 60_000;
 const SOCKET_RATE_LIMIT = 10;
 
+// --- SHARED SCRAPING --------------------------------------------------------
+// Single source of truth for turning one (isin, source) into a price result.
+// Used by both the socket and HTTP paths so the scraping logic lives in one
+// place instead of being duplicated.
+async function withBrowser(fn) {
+    let browser;
+    try {
+        browser = await puppeteer.launch({
+            headless: 'new',
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+        });
+        const page = await browser.newPage();
+        await page.setUserAgent(USER_AGENT);
+        return await fn(page);
+    } finally {
+        if (browser) await browser.close();
+    }
+}
+
+async function scrapeToken(page, isin, source = 'ETF') {
+    // Re-validate per ISIN
+    const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
+    if (source !== 'COMETA' && !isinRegex.test(isin)) {
+        return { isin, success: false, error: 'Invalid ISIN format' };
+    }
+
+    console.log(`Processing: ${isin} (${source})`);
+
+    try {
+        let url, priceText;
+        let currency = 'EUR'; // Default
+
+        if (source === 'MOT') {
+            url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
+
+            await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+            // Cookie handling
+            try {
+                const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
+                for (const sel of cookieSelectors) {
+                    if (await page.$(sel)) {
+                        await page.click(sel);
+                        await new Promise(r => setTimeout(r, 1000));
+                        break;
+                    }
+                }
+            } catch (e) {}
+
+            const priceSelector = 'span.-formatPrice strong';
+            try {
+                await page.waitForSelector(priceSelector, { timeout: 10000 });
+                const cleanPriceText = await page.$eval(priceSelector, el => el.textContent.trim());
+
+                // Extract Rateo Lordo (gross accrued interest) to compute tel quel (dirty price)
+                const rateoText = await page.evaluate(() => {
+                    const rows = document.querySelectorAll('table.m-table tr');
+                    for (const row of rows) {
+                        if (row.textContent.includes('Rateo Lordo')) {
+                            const valueCell = row.querySelector('td:last-child span.t-text');
+                            if (valueCell) return valueCell.textContent.trim();
+                        }
+                    }
+                    return null;
+                });
+
+                const cleanPrice = parseFloat(cleanPriceText.replace(/\./g, '').replace(',', '.'));
+                const rateo = rateoText ? parseFloat(rateoText.replace(/\./g, '').replace(',', '.')) : 0;
+                // Tel quel = corso secco + rateo lordo
+                priceText = String(cleanPrice + rateo);
+            } catch (e) {}
+
+        } else if (source === 'CPRAM') {
+            url = `https://cpram.com/ita/it/privati/products/${isin}`;
+            await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+            try {
+                const btns = await page.$$('button, a');
+                for (const b of btns) {
+                    const t = await b.evaluate(el => el.textContent);
+                    if (t && (t.includes('Sì, accetto') || t.includes('Accettare tutto'))) {
+                        await b.click();
+                        await new Promise(r => setTimeout(r, 1000));
+                    }
+                }
+            } catch (e) {}
+
+            try {
+                await page.waitForSelector('.headline-4', { timeout: 10000 });
+                const extractedData = await page.evaluate(() => {
+                    const items = document.querySelectorAll('#list-item');
+                    for (const item of items) {
+                        if (item.textContent.includes('Valore dalla quota')) {
+                            const valueEl = item.querySelector('.headline-4');
+                            if (valueEl) return valueEl.textContent.trim();
+                        }
+                    }
+                    return null;
+                });
+                if (extractedData) priceText = extractedData;
+            } catch (e) {}
+
+        } else if (source === 'COMETA') {
+            url = 'https://www.cometafondo.it/andamenti/crescita/';
+            await page.goto(url, { waitUntil: 'networkidle2' });
+
+            const extractedPrice = await page.evaluate(() => {
+                // Method 1: wpDataCharts JS global
+                try {
+                    if (typeof wpDataCharts !== 'undefined' && wpDataCharts[6]) {
+                        const chart = wpDataCharts[6];
+                        const series = (chart.render_data || chart).series;
+                        if (series?.[0]?.data?.length > 0) {
+                            const dataArray = series[0].data;
+                            const lastValue = dataArray[dataArray.length - 1];
+                            let val;
+                            if (typeof lastValue === 'number') {
+                                val = lastValue;
+                            } else if (Array.isArray(lastValue)) {
+                                val = lastValue[1] ?? lastValue[0];
+                            } else if (typeof lastValue === 'object' && lastValue !== null) {
+                                val = lastValue.y ?? lastValue.value ?? lastValue.v;
+                            }
+                            if (typeof val === 'number' && !isNaN(val)) return String(val);
+                        }
+                    }
+                } catch (e) {}
+                // Method 2: regex on script tag source
+                try {
+                    for (const script of document.scripts) {
+                        const txt = script.textContent || '';
+                        if (!txt.includes('wpDataCharts')) continue;
+                        // Extract last decimal number before closing ] of the data array
+                        const m = txt.match(/"data"\s*:\s*\[[\s\S]*?([\d]+\.[\d]+)\s*\]/);
+                        if (m) return m[1];
+                    }
+                } catch (e) {}
+                return null;
+            });
+            if (extractedPrice && !isNaN(parseFloat(extractedPrice))) {
+                priceText = extractedPrice;
+            } else {
+                // Fallback: HTML table last row, QUOTA column (Italian decimal: comma)
+                const fallbackPrice = await page.evaluate(() => {
+                    const rows = document.querySelectorAll('table tbody tr');
+                    if (rows.length === 0) return null;
+                    const lastRow = rows[rows.length - 1];
+                    const cells = lastRow.querySelectorAll('td');
+                    return cells.length >= 2 ? cells[1].textContent.trim() : null;
+                });
+                if (fallbackPrice) priceText = fallbackPrice;
+            }
+            currency = 'EUR';
+
+        } else {
+            // ETF: try Borsa Italiana (MIL) first, fall back to JustETF (XETRA/gettex)
+            let fetchedFromMIL = false;
+
+            try {
+                await page.goto(`https://www.borsaitaliana.it/borsa/etf/scheda/${isin}.html?lang=it`, { waitUntil: 'domcontentloaded' });
+
+                // Cookie handling (same as MOT)
+                try {
+                    const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
+                    for (const sel of cookieSelectors) {
+                        if (await page.$(sel)) {
+                            await page.click(sel);
+                            await new Promise(r => setTimeout(r, 1000));
+                            break;
+                        }
+                    }
+                } catch (e) {}
+
+                const priceEl = await page.$('span.-formatPrice strong');
+                if (priceEl) {
+                    const raw = await priceEl.evaluate(el => el.textContent.trim());
+                    // Italian format: "114,65" or "1.234,56" → normalize to JS number string
+                    const parsed = parseFloat(raw.replace(/\./g, '').replace(',', '.'));
+                    if (!isNaN(parsed)) {
+                        priceText = String(parsed);
+                        fetchedFromMIL = true;
+                        console.log(`[ETF] ${isin} fetched from Borsa Italiana (MIL): ${priceText}`);
+                    }
+                }
+            } catch (e) {}
+
+            // Fallback: JustETF (XETRA / gettex)
+            if (!fetchedFromMIL) {
+                console.log(`[ETF] ${isin} not on MIL, falling back to JustETF`);
+                url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
+                await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+                const priceSelector = '[data-testid="realtime-quotes_price-value"]';
+                const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
+
+                try {
+                    await page.waitForSelector(priceSelector, { timeout: 10000 });
+                    priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
+                    currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+                } catch (e) {}
+            }
+        }
+
+        if (!priceText) {
+            throw new Error('Price element empty or not found');
+        }
+
+        // Parse Price
+        let cleanPrice;
+        if (source === 'ETF') {
+            cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim();
+        } else if (source === 'COMETA') {
+            if (priceText.includes(',') && !priceText.includes('.')) {
+                cleanPrice = priceText.replace(/[^\d,]/g, '').replace(/,/g, '.').trim();
+            } else {
+                cleanPrice = priceText.replace(/[^\d.]/g, '').trim();
+            }
+        } else if (source === 'MOT') {
+            // Already computed as JS number string (tel quel = corso secco + rateo)
+            cleanPrice = priceText;
+        } else {
+            cleanPrice = priceText.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(/,/g, '.').trim();
+        }
+
+        const finalPrice = parseFloat(cleanPrice);
+        if (isNaN(finalPrice)) throw new Error(`Failed to parse price: ${priceText}`);
+
+        return {
+            isin,
+            success: true,
+            data: {
+                currentPrice: finalPrice,
+                currency: currency,
+                lastUpdated: new Date().toISOString(),
+            },
+        };
+    } catch (err) {
+        console.warn(`Error processing ${isin}: ${err.message}`);
+        return { isin, success: false, error: err.message };
+    }
+}
+
+function validateTokens(tokens) {
+    if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
+        return 'List of tokens (ISINs) is required';
+    }
+    if (tokens.length > MAX_TOKENS_PER_REQUEST) {
+        return `Too many tokens in one request (max ${MAX_TOKENS_PER_REQUEST}).`;
+    }
+    return null;
+}
+
 // --- HTTP SERVER & SOCKET.IO SETUP ---
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
@@ -96,281 +410,105 @@ io.on('connection', (socket) => {
     console.log('New client connected', socket.id);
     let socketRequestTimestamps = [];
 
-    socket.on('request_price_update', async (tokens) => {
-        const now = Date.now();
-        socketRequestTimestamps = socketRequestTimestamps.filter(t => now - t < SOCKET_RATE_WINDOW_MS);
-        if (socketRequestTimestamps.length >= SOCKET_RATE_LIMIT) {
-            socket.emit('price_update_error', { message: 'Too many price requests, please retry in a minute.' });
-            return;
-        }
-        socketRequestTimestamps.push(now);
-
-        console.log(`Received socket price update request for ${tokens?.length} assets from ${socket.id}`);
-
-        if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
-            socket.emit('price_update_error', { message: 'List of tokens (ISINs) is required' });
-            return;
-        }
-        if (tokens.length > MAX_TOKENS_PER_REQUEST) {
-            socket.emit('price_update_error', { message: `Too many tokens in one request (max ${MAX_TOKENS_PER_REQUEST}).` });
-            return;
+    socket.on('request_price_update', async (payload) => {
+        // Accept both the legacy bare-array payload and the new
+        // { tokens, premiumKey } envelope.
+        let tokens, premiumKey;
+        if (Array.isArray(payload)) {
+            tokens = payload;
+            premiumKey = undefined;
+        } else {
+            tokens = payload?.tokens;
+            premiumKey = payload?.premiumKey;
         }
 
-        let browser;
+        const isPremium = isValidPremiumKey(premiumKey);
+
+        // Per-socket sliding-window rate limit applies to free tier only.
+        if (!isPremium) {
+            const now = Date.now();
+            socketRequestTimestamps = socketRequestTimestamps.filter(t => now - t < SOCKET_RATE_WINDOW_MS);
+            if (socketRequestTimestamps.length >= SOCKET_RATE_LIMIT) {
+                socket.emit('price_update_error', { message: 'Too many price requests, please retry in a minute.' });
+                return;
+            }
+            socketRequestTimestamps.push(now);
+        }
+
+        console.log(`Received socket price update request for ${tokens?.length} assets from ${socket.id} (${isPremium ? 'PREMIUM' : 'free'})`);
+
+        const validationError = validateTokens(tokens);
+        if (validationError) {
+            socket.emit('price_update_error', { message: validationError });
+            return;
+        }
+
         try {
-            browser = await puppeteer.launch({
-                headless: 'new',
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-            });
-
-            const page = await browser.newPage();
-            await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36');
-
-            for (const token of tokens) {
-                const { isin, source = 'ETF' } = token;
-
-                // Notify client we are starting this ISIN
-                socket.emit('price_update_progress', { isin, status: 'processing' });
-
-                // Re-validate per ISIN
-                const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
-                if (source !== 'COMETA' && !isinRegex.test(isin)) {
-                    socket.emit('price_update_item', { isin, error: 'Invalid ISIN format', success: false });
-                    continue;
+            if (isPremium) {
+                // Premium: exclusive priority — one premium scrape at a time, and
+                // all free scrapes are held until it finishes. No cache, no cap.
+                await runExclusivePremium(() => withBrowser(async (page) => {
+                    for (const token of tokens) {
+                        const { isin, source = 'ETF' } = token;
+                        socket.emit('price_update_progress', { isin, status: 'processing' });
+                        const result = await scrapeToken(page, isin, source);
+                        socket.emit('price_update_item', result);
+                    }
+                }));
+            } else {
+                // Free tier: serve cached ISINs immediately, scrape the rest under
+                // the global concurrency cap and refresh the cache.
+                const uncached = [];
+                for (const token of tokens) {
+                    const { isin, source = 'ETF' } = token;
+                    socket.emit('price_update_progress', { isin, status: 'processing' });
+                    const cached = getCached(source, isin);
+                    if (cached) {
+                        socket.emit('price_update_item', { ...cached, cached: true });
+                    } else {
+                        uncached.push(token);
+                    }
                 }
 
-                console.log(`Processing: ${isin} (${source})`);
-                
-                try {
-                    let url, priceText;
-                    let currency = 'EUR'; // Default
-
-                    if (source === 'MOT') {
-                         url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
-                         
-                         await page.goto(url, { waitUntil: 'domcontentloaded' });
-                         
-                         // Cookie handling
-                         try {
-                            const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
-                            for (const sel of cookieSelectors) {
-                                if (await page.$(sel)) {
-                                    await page.click(sel);
-                                    await new Promise(r => setTimeout(r, 1000));
-                                    break;
+                if (uncached.length > 0) {
+                    let slotAcquired = false;
+                    try {
+                        // Yield to any active/pending premium before opening a browser.
+                        await waitWhilePremium();
+                        await acquireFreeSlot();
+                        slotAcquired = true;
+                        await withBrowser(async (page) => {
+                            for (const token of uncached) {
+                                const { isin, source = 'ETF' } = token;
+                                // Park between ISINs if a premium wants the machine.
+                                await waitWhilePremium();
+                                beginFreeWork();
+                                try {
+                                    const result = await scrapeToken(page, isin, source);
+                                    if (result.success) setCached(source, isin, result);
+                                    socket.emit('price_update_item', result);
+                                } finally {
+                                    endFreeWork();
                                 }
                             }
-                         } catch (e) {}
-                         
-                         const priceSelector = 'span.-formatPrice strong';
-                         try {
-                            await page.waitForSelector(priceSelector, { timeout: 10000 });
-                            const cleanPriceText = await page.$eval(priceSelector, el => el.textContent.trim());
-
-                            // Extract Rateo Lordo (gross accrued interest) to compute tel quel (dirty price)
-                            const rateoText = await page.evaluate(() => {
-                                const rows = document.querySelectorAll('table.m-table tr');
-                                for (const row of rows) {
-                                    if (row.textContent.includes('Rateo Lordo')) {
-                                        const valueCell = row.querySelector('td:last-child span.t-text');
-                                        if (valueCell) return valueCell.textContent.trim();
-                                    }
-                                }
-                                return null;
-                            });
-
-                            const cleanPrice = parseFloat(cleanPriceText.replace(/\./g, '').replace(',', '.'));
-                            const rateo = rateoText ? parseFloat(rateoText.replace(/\./g, '').replace(',', '.')) : 0;
-                            // Tel quel = corso secco + rateo lordo
-                            priceText = String(cleanPrice + rateo);
-                         } catch(e) {}
-
-                    } else if (source === 'CPRAM') {
-                         url = `https://cpram.com/ita/it/privati/products/${isin}`;
-                         await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-                         try {
-                            const btns = await page.$$('button, a');
-                            for(const b of btns) {
-                                const t = await b.evaluate(el => el.textContent);
-                                if(t && (t.includes('Sì, accetto') || t.includes('Accettare tutto'))) {
-                                    await b.click();
-                                    await new Promise(r => setTimeout(r, 1000));
-                                }
-                            }
-                         } catch(e) {}
-
-                         try {
-                            await page.waitForSelector('.headline-4', { timeout: 10000 });
-                            const extractedData = await page.evaluate(() => {
-                               const items = document.querySelectorAll('#list-item');
-                               for (const item of items) {
-                                   if (item.textContent.includes('Valore dalla quota')) {
-                                       const valueEl = item.querySelector('.headline-4');
-                                       if (valueEl) return valueEl.textContent.trim();
-                                   }
-                               }
-                               return null;
-                            });
-                            if (extractedData) priceText = extractedData;
-                         } catch (e) {}
-
-                    } else if (source === 'COMETA') {
-                         url = 'https://www.cometafondo.it/andamenti/crescita/';
-                         await page.goto(url, { waitUntil: 'networkidle2' });
-
-                         const extractedPrice = await page.evaluate(() => {
-                            // Method 1: wpDataCharts JS global
-                            try {
-                                if (typeof wpDataCharts !== 'undefined' && wpDataCharts[6]) {
-                                    const chart = wpDataCharts[6];
-                                    const series = (chart.render_data || chart).series;
-                                    if (series?.[0]?.data?.length > 0) {
-                                        const dataArray = series[0].data;
-                                        const lastValue = dataArray[dataArray.length - 1];
-                                        let val;
-                                        if (typeof lastValue === 'number') {
-                                            val = lastValue;
-                                        } else if (Array.isArray(lastValue)) {
-                                            val = lastValue[1] ?? lastValue[0];
-                                        } else if (typeof lastValue === 'object' && lastValue !== null) {
-                                            val = lastValue.y ?? lastValue.value ?? lastValue.v;
-                                        }
-                                        if (typeof val === 'number' && !isNaN(val)) return String(val);
-                                    }
-                                }
-                            } catch (e) {}
-                            // Method 2: regex on script tag source
-                            try {
-                                for (const script of document.scripts) {
-                                    const txt = script.textContent || '';
-                                    if (!txt.includes('wpDataCharts')) continue;
-                                    // Extract last decimal number before closing ] of the data array
-                                    const m = txt.match(/"data"\s*:\s*\[[\s\S]*?([\d]+\.[\d]+)\s*\]/);
-                                    if (m) return m[1];
-                                }
-                            } catch (e) {}
-                            return null;
-                         });
-                         if (extractedPrice && !isNaN(parseFloat(extractedPrice))) {
-                            priceText = extractedPrice;
-                         } else {
-                            // Fallback: HTML table last row, QUOTA column (Italian decimal: comma)
-                            const fallbackPrice = await page.evaluate(() => {
-                                const rows = document.querySelectorAll('table tbody tr');
-                                if (rows.length === 0) return null;
-                                const lastRow = rows[rows.length - 1];
-                                const cells = lastRow.querySelectorAll('td');
-                                return cells.length >= 2 ? cells[1].textContent.trim() : null;
-                            });
-                            if (fallbackPrice) priceText = fallbackPrice;
-                         }
-                         currency = 'EUR';
-
-                    } else {
-                         // ETF: try Borsa Italiana (MIL) first, fall back to JustETF (XETRA/gettex)
-                         let fetchedFromMIL = false;
-
-                         try {
-                            await page.goto(`https://www.borsaitaliana.it/borsa/etf/scheda/${isin}.html?lang=it`, { waitUntil: 'domcontentloaded' });
-
-                            // Cookie handling (same as MOT)
-                            try {
-                                const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
-                                for (const sel of cookieSelectors) {
-                                    if (await page.$(sel)) {
-                                        await page.click(sel);
-                                        await new Promise(r => setTimeout(r, 1000));
-                                        break;
-                                    }
-                                }
-                            } catch (e) {}
-
-                            const priceEl = await page.$('span.-formatPrice strong');
-                            if (priceEl) {
-                                const raw = await priceEl.evaluate(el => el.textContent.trim());
-                                // Italian format: "114,65" or "1.234,56" → normalize to JS number string
-                                const parsed = parseFloat(raw.replace(/\./g, '').replace(',', '.'));
-                                if (!isNaN(parsed)) {
-                                    priceText = String(parsed);
-                                    fetchedFromMIL = true;
-                                    console.log(`[ETF] ${isin} fetched from Borsa Italiana (MIL): ${priceText}`);
-                                }
-                            }
-                         } catch (e) {}
-
-                         // Fallback: JustETF (XETRA / gettex)
-                         if (!fetchedFromMIL) {
-                            console.log(`[ETF] ${isin} not on MIL, falling back to JustETF`);
-                            url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
-                            await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-                            const priceSelector = '[data-testid="realtime-quotes_price-value"]';
-                            const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
-
-                            try {
-                                await page.waitForSelector(priceSelector, { timeout: 10000 });
-                                priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
-                                currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
-                            } catch (e) {}
-                         }
-                    }
-
-                    if (!priceText) {
-                        throw new Error('Price element empty or not found');
-                    }
-
-                    // Parse Price
-                    let cleanPrice;
-                    if (source === 'ETF') {
-                        cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim();
-                    } else if (source === 'COMETA') {
-                        if (priceText.includes(',') && !priceText.includes('.')) {
-                            cleanPrice = priceText.replace(/[^\d,]/g, '').replace(/,/g, '.').trim();
-                        } else {
-                            cleanPrice = priceText.replace(/[^\d.]/g, '').trim();
+                        });
+                    } catch (slotErr) {
+                        // Couldn't get a slot (server saturated): mark the uncached ISINs as failed.
+                        for (const token of uncached) {
+                            socket.emit('price_update_item', { isin: token.isin, success: false, error: slotErr.message });
                         }
-                    } else if (source === 'MOT') {
-                        // Already computed as JS number string (tel quel = corso secco + rateo)
-                        cleanPrice = priceText;
-                    } else {
-                        cleanPrice = priceText.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(/,/g, '.').trim();
+                    } finally {
+                        if (slotAcquired) releaseFreeSlot();
                     }
-                    
-                    const finalPrice = parseFloat(cleanPrice);
-                    if (isNaN(finalPrice)) throw new Error(`Failed to parse price: ${priceText}`);
-
-                    const result = {
-                        isin,
-                        success: true,
-                        data: {
-                            currentPrice: finalPrice,
-                            currency: currency,
-                            lastUpdated: new Date().toISOString()
-                        }
-                    };
-                    
-                    // Emit success for this ISIN
-                    socket.emit('price_update_item', result);
-
-                } catch (err) {
-                    console.warn(`Error processing ${isin}: ${err.message}`);
-                    socket.emit('price_update_item', {
-                        isin,
-                        success: false,
-                        error: err.message
-                    });
                 }
             }
-            
+
             // Finished all
             socket.emit('price_update_complete', { message: 'All requested prices processed' });
 
         } catch (globalError) {
             console.error('Global puppeteer error:', globalError);
             socket.emit('price_update_error', { message: 'Server error while fetching prices. Please try again.' });
-        } finally {
-            if (browser) await browser.close();
         }
     });
 
@@ -381,163 +519,70 @@ io.on('connection', (socket) => {
 
 // --- API ROUTES ---
 app.post('/api/price', priceLimiter, async (req, res) => {
-    // Keep existing API for backward compatibility or direct calls if needed
-    // Logic duplicated for now, or could call a shared function. 
-    // Given the task is to switch to Websocket, we can leave this as a fallback 
-    // or eventually deprecate it. The user asked for the update flow to be modified.
-    // For SAFETY, I will keep the original implementation here (abbreviated in thought, but full in code)
-    // Actually, to avoid huge code duplication, I should probably extract the logic.
-    // However, for this specific task, I'll just keep the existing handler as is 
-    // (copy-pasted from original read) so standard HTTP calls still work if any.
-    
-    const { tokens } = req.body; 
+    const { tokens, premiumKey } = req.body;
 
-    if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
-        return res.status(400).json({ error: 'List of tokens (ISINs) is required' });
-    }
-    if (tokens.length > MAX_TOKENS_PER_REQUEST) {
-        return res.status(400).json({ error: `Too many tokens in one request (max ${MAX_TOKENS_PER_REQUEST}).` });
+    const validationError = validateTokens(tokens);
+    if (validationError) {
+        return res.status(400).json({ error: validationError });
     }
 
-    // ... (Existing logic logic reused or kept) ...
-    // Since I'm replacing the file, I must provide the full content.
-    // I'll paste the original logic back here for safety.
-    
-    console.log(`Received bulk price request for ${tokens.length} assets (HTTP)`);
-    let browser;
+    const isPremium = isValidPremiumKey(premiumKey);
+    console.log(`Received bulk price request for ${tokens.length} assets (HTTP, ${isPremium ? 'PREMIUM' : 'free'})`);
+
     const results = [];
     try {
-        browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36');
-
-        for (const token of tokens) {
-            const { isin, source = 'ETF' } = token;
-            const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
-            if (source !== 'COMETA' && !isinRegex.test(isin)) { results.push({ isin, error: 'Invalid ISIN format', success: false }); continue; }
-            
-            try {
-                let url, priceText, currency = 'EUR';
-                if (source === 'MOT') {
-                     url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
-                     await page.goto(url, { waitUntil: 'domcontentloaded' });
-                     try {
-                        const cookieSelectors = ['#ccc-recommended-settings', '#cookiewall-container button', '#onetrust-accept-btn-handler', '.qc-cmp2-summary-buttons button:last-child'];
-                        for (const sel of cookieSelectors) {
-                            if (await page.$(sel)) { await page.click(sel); await new Promise(r => setTimeout(r, 1000)); break; }
-                        }
-                     } catch (e) {}
-                     const priceSelector = 'span.-formatPrice strong';
-                     await page.waitForSelector(priceSelector, { timeout: 10000 });
-                     priceText = await page.$eval(priceSelector, el => el.textContent.trim());
-                } else if (source === 'CPRAM') {
-                     url = `https://cpram.com/ita/it/privati/products/${isin}`;
-                     await page.goto(url, { waitUntil: 'domcontentloaded' });
-                     try {
-                        const btns = await page.$$('button, a');
-                        for(const b of btns) {
-                            const t = await b.evaluate(el => el.textContent);
-                            if(t && (t.includes('Sì, accetto') || t.includes('Accettare tutto'))) { await b.click(); await new Promise(r => setTimeout(r, 1000)); }
-                        }
-                     } catch(e) {}
-                     try {
-                        await page.waitForSelector('.headline-4', { timeout: 10000 });
-                        const extractedData = await page.evaluate(() => {
-                           const items = document.querySelectorAll('#list-item');
-                           for (const item of items) {
-                               if (item.textContent.includes('Valore dalla quota')) {
-                                   const valueEl = item.querySelector('.headline-4');
-                                   if (valueEl) return valueEl.textContent.trim();
-                               }
-                           }
-                           return null;
-                        });
-                        if (extractedData) priceText = extractedData;
-                     } catch (e) {}
-                } else if (source === 'COMETA') {
-                     url = 'https://www.cometafondo.it/andamenti/crescita/';
-                     await page.goto(url, { waitUntil: 'networkidle2' });
-
-                     const extractedPrice = await page.evaluate(() => {
-                        // Method 1: wpDataCharts JS global
-                        try {
-                            if (typeof wpDataCharts !== 'undefined' && wpDataCharts[6]) {
-                                const chart = wpDataCharts[6];
-                                const series = (chart.render_data || chart).series;
-                                if (series?.[0]?.data?.length > 0) {
-                                    const dataArray = series[0].data;
-                                    const lastValue = dataArray[dataArray.length - 1];
-                                    let val;
-                                    if (typeof lastValue === 'number') {
-                                        val = lastValue;
-                                    } else if (Array.isArray(lastValue)) {
-                                        val = lastValue[1] ?? lastValue[0];
-                                    } else if (typeof lastValue === 'object' && lastValue !== null) {
-                                        val = lastValue.y ?? lastValue.value ?? lastValue.v;
-                                    }
-                                    if (typeof val === 'number' && !isNaN(val)) return String(val);
-                                }
-                            }
-                        } catch (e) {}
-                        // Method 2: regex on script tag source
-                        try {
-                            for (const script of document.scripts) {
-                                const txt = script.textContent || '';
-                                if (!txt.includes('wpDataCharts')) continue;
-                                const m = txt.match(/"data"\s*:\s*\[[\s\S]*?([\d]+\.[\d]+)\s*\]/);
-                                if (m) return m[1];
-                            }
-                        } catch (e) {}
-                        return null;
-                     });
-                     if (extractedPrice && !isNaN(parseFloat(extractedPrice))) {
-                        priceText = extractedPrice;
-                     } else {
-                        // Fallback: HTML table last row, QUOTA column (Italian decimal: comma)
-                        const fallbackPrice = await page.evaluate(() => {
-                            const rows = document.querySelectorAll('table tbody tr');
-                            if (rows.length === 0) return null;
-                            const lastRow = rows[rows.length - 1];
-                            const cells = lastRow.querySelectorAll('td');
-                            return cells.length >= 2 ? cells[1].textContent.trim() : null;
-                        });
-                        if (fallbackPrice) priceText = fallbackPrice;
-                     }
-                     currency = 'EUR';
+        if (isPremium) {
+            // Premium: exclusive priority, holds all free scrapes until done.
+            await runExclusivePremium(() => withBrowser(async (page) => {
+                for (const token of tokens) {
+                    const { isin, source = 'ETF' } = token;
+                    results.push(await scrapeToken(page, isin, source));
+                }
+            }));
+        } else {
+            const uncached = [];
+            for (const token of tokens) {
+                const { isin, source = 'ETF' } = token;
+                const cached = getCached(source, isin);
+                if (cached) {
+                    results.push({ ...cached, cached: true });
                 } else {
-                     url = `https://www.justetf.com/en/etf-profile.html?isin=${isin}`;
-                     await page.goto(url, { waitUntil: 'domcontentloaded' });
-                     const priceSelector = '[data-testid="realtime-quotes_price-value"]';
-                     const currencySelector = '[data-testid="realtime-quotes_price-currency"]';
-                     await page.waitForSelector(priceSelector, { timeout: 10000 });
-                     priceText = await page.$eval(priceSelector, el => el.textContent?.trim());
-                     currency = await page.$eval(currencySelector, el => el.textContent?.trim()).catch(() => 'EUR');
+                    uncached.push(token);
                 }
+            }
 
-                if (!priceText) throw new Error('Price element empty');
-                let cleanPrice;
-                if (source === 'ETF') cleanPrice = priceText.replace(/EUR/g, '').replace(/,/g, '').trim();
-                else if (source === 'COMETA') {
-                    if (priceText.includes(',') && !priceText.includes('.')) {
-                        cleanPrice = priceText.replace(/[^\d,]/g, '').replace(/,/g, '.').trim();
-                    } else {
-                        cleanPrice = priceText.replace(/[^\d.]/g, '').trim();
-                    }
+            if (uncached.length > 0) {
+                let slotAcquired = false;
+                try {
+                    // Yield to any active/pending premium before opening a browser.
+                    await waitWhilePremium();
+                    await acquireFreeSlot();
+                    slotAcquired = true;
+                    await withBrowser(async (page) => {
+                        for (const token of uncached) {
+                            const { isin, source = 'ETF' } = token;
+                            // Park between ISINs if a premium wants the machine.
+                            await waitWhilePremium();
+                            beginFreeWork();
+                            try {
+                                const result = await scrapeToken(page, isin, source);
+                                if (result.success) setCached(source, isin, result);
+                                results.push(result);
+                            } finally {
+                                endFreeWork();
+                            }
+                        }
+                    });
+                } catch (slotErr) {
+                    return res.status(503).json({ error: slotErr.message });
+                } finally {
+                    if (slotAcquired) releaseFreeSlot();
                 }
-                else cleanPrice = priceText.replace(/[^\d.,-]/g, '').replace(/\./g, '').replace(/,/g, '.').trim();
-                const finalPrice = parseFloat(cleanPrice);
-                if (isNaN(finalPrice)) throw new Error(`Failed to parse: ${priceText}`);
-
-                results.push({ isin, success: true, data: { currentPrice: finalPrice, currency: currency, lastUpdated: new Date().toISOString() } });
-            } catch (err) {
-                results.push({ isin, success: false, error: err.message });
             }
         }
     } catch (globalError) {
         console.error('Global puppeteer error (HTTP):', globalError);
         return res.status(500).json({ error: 'Server error while fetching prices. Please try again.' });
-    } finally {
-        if (browser) await browser.close();
     }
     res.json({ results });
 });
@@ -556,8 +601,8 @@ async function setupServer() {
         const { createServer: createViteServer } = await import('vite');
         const vite = await createViteServer({
             server: { middlewareMode: true },
-            appType: 'spa', 
-            root: path.resolve(__dirname, '..') 
+            appType: 'spa',
+            root: path.resolve(__dirname, '..')
         });
         app.use(vite.middlewares);
     }
