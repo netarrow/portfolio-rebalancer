@@ -18,9 +18,9 @@ export interface PriceResult {
     error?: string;
 }
 
-export const fetchAssetPrices = async (tokens: PriceRequestToken[]): Promise<PriceResult[]> => {
+export const fetchAssetPrices = async (tokens: PriceRequestToken[], premiumKey?: string): Promise<PriceResult[]> => {
     try {
-        const response = await axios.post('/api/price', { tokens });
+        const response = await axios.post('/api/price', { tokens, premiumKey: premiumKey?.trim() || undefined });
         return response.data.results;
     } catch (error: any) {
         console.error('Error fetching bulk prices:', error);
