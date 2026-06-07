@@ -1617,7 +1617,6 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                                 <React.Fragment key={gc.group.id}>
                                     <GroupSummaryRow
                                         label={gc.group.label}
-                                        memberTickers={gc.group.members.map(m => m.toUpperCase())}
                                         expanded={expanded}
                                         onToggle={() => setExpandedGroupRows(prev => ({ ...prev, [gc.group.id]: !expanded }))}
                                         currentValue={gc.currentValue}
@@ -2021,7 +2020,6 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
 
 interface GroupSummaryRowProps {
     label: string;
-    memberTickers: string[];
     expanded: boolean;
     onToggle: () => void;
     currentValue: number;
@@ -2036,7 +2034,7 @@ interface GroupSummaryRowProps {
 }
 
 const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
-    label, memberTickers, expanded, onToggle, currentValue, gain, targetPerc, currentPerc,
+    label, expanded, onToggle, currentValue, gain, targetPerc, currentPerc,
     actionEur, blocked, postRebalancePerc, buyOnlyEur, postBuyPerc,
 }) => {
     const diff = currentPerc - targetPerc;
@@ -2057,15 +2055,12 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
     return (
         <React.Fragment>
             {/* Desktop Table Row */}
-            <div className="allocation-row desktop-only" style={{ padding: 'var(--space-3) 0', backgroundColor: tint, cursor: 'pointer' }} onClick={onToggle}>
+            <div className="allocation-row desktop-only" style={{ padding: 'var(--space-3) 0', backgroundColor: tint, cursor: 'pointer', position: 'relative' }} onClick={onToggle}>
+                <span style={{ position: 'absolute', left: '-16px', top: '50%', transform: 'translateY(-50%)', color: '#3B82F6', fontSize: '0.95rem', fontWeight: 700 }}>{expanded ? '▾' : '▸'}</span>
                 <div className="allocation-type" style={{ flex: 1 }}>
-                    <span style={{ color: 'var(--text-secondary)', width: '14px', display: 'inline-block' }}>{expanded ? '▾' : '▸'}</span>
                     <div className="dot" style={{ backgroundColor: '#3B82F6' }} />
                     <div>
                         <strong>{label}</strong>
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                            Group · {memberTickers.join(' + ')}
-                        </div>
                     </div>
                 </div>
 
@@ -2117,7 +2112,7 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
             <div className="allocation-mobile-card mobile-only" style={{ backgroundColor: tint }} onClick={onToggle}>
                 <div className="mobile-card-header">
                     <div className="mobile-card-title">
-                        <span style={{ color: 'var(--text-secondary)' }}>{expanded ? '▾' : '▸'}</span>
+                        <span style={{ color: '#3B82F6', fontSize: '0.95rem', fontWeight: 700 }}>{expanded ? '▾' : '▸'}</span>
                         <div className="dot" style={{ backgroundColor: '#3B82F6' }} />
                         <strong>{label}</strong>
                     </div>
