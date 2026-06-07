@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate } from '../types';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
 import { parseGoalDescriptor } from '../utils/ynabGoalParser';
@@ -31,6 +31,8 @@ interface PortfolioContextType {
     deleteTransaction: (id: string) => void;
     updateAssetSettings: (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     updatePortfolioAllocation: (portfolioId: string, ticker: string, percentage: number) => void;
+    upsertAllocationGroup: (portfolioId: string, group: AllocationGroup) => void;
+    deleteAllocationGroup: (portfolioId: string, groupId: string) => void;
     updateMacroAllocation: (allocations: MacroAllocation) => void;
     updateGoalAllocation: (allocations: GoalAllocation) => void;
     updateTransactionsBulk: (ids: string[], updates: Partial<Transaction>) => void;
@@ -787,6 +789,30 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 return { ...p, allocations: newAllocations };
             }
             return p;
+        }));
+    };
+
+    const upsertAllocationGroup = (portfolioId: string, group: AllocationGroup) => {
+        setPortfolios(prev => prev.map(p => {
+            if (p.id !== portfolioId) return p;
+            const existing = p.allocationGroups || [];
+            const idx = existing.findIndex(g => g.id === group.id);
+            const groups = idx >= 0
+                ? existing.map(g => g.id === group.id ? group : g)
+                : [...existing, group];
+            // Members live under the group, never as standalone allocation keys.
+            const allocations = { ...(p.allocations || {}) };
+            group.members.forEach(m => { delete allocations[m]; delete allocations[m.toUpperCase()]; });
+            return { ...p, allocationGroups: groups, allocations };
+        }));
+    };
+
+    const deleteAllocationGroup = (portfolioId: string, groupId: string) => {
+        setPortfolios(prev => prev.map(p => {
+            if (p.id !== portfolioId) return p;
+            const groups = (p.allocationGroups || []).filter(g => g.id !== groupId);
+            const { [groupId]: _removed, ...allocations } = (p.allocations || {});
+            return { ...p, allocationGroups: groups, allocations };
         }));
     };
 
@@ -1673,6 +1699,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateTarget,
         updateAssetSettings,
         updatePortfolioAllocation,
+        upsertAllocationGroup,
+        deleteAllocationGroup,
         updateMacroAllocation,
         updateGoalAllocation,
         refreshPrices,

@@ -1,7 +1,7 @@
 import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition, Broker, CommissionType } from '../types';
 export type { CommissionType };
-import { CASH_TICKER_PREFIX, getCashTicker, isIncomeDirection } from '../types';
-export { CASH_TICKER_PREFIX, getCashTicker };
+import { CASH_TICKER_PREFIX, GROUP_TICKER_PREFIX, getCashTicker, isIncomeDirection } from '../types';
+export { CASH_TICKER_PREFIX, GROUP_TICKER_PREFIX, getCashTicker };
 
 export const calculateAssets = (
     transactions: Transaction[],
@@ -354,6 +354,13 @@ export const injectCashAssets = (
 
 /** Check if a ticker is a virtual cash liquidity ticker */
 export const isCashTicker = (ticker: string): boolean => ticker.startsWith(CASH_TICKER_PREFIX);
+
+/** Check if an allocation key is a multi-asset group id (rather than a real ticker) */
+export const isGroupKey = (key: string): boolean => key.startsWith(GROUP_TICKER_PREFIX);
+
+/** Generate a new unique allocation group id */
+export const makeGroupId = (): string =>
+    `${GROUP_TICKER_PREFIX}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 /**
  * Calculates the estimated commission for a transaction given a broker's commission plan.
