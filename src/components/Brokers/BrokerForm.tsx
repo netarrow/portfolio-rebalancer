@@ -494,8 +494,10 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
                     .form-actions {
                         position: sticky;
                         bottom: 0;
-                        margin: var(--space-4) -24px -24px;
-                        padding: var(--space-4) 24px;
+                        margin-top: var(--space-4);
+                        margin-left: calc(-1 * var(--space-6));
+                        margin-right: calc(-1 * var(--space-6));
+                        padding: var(--space-4) var(--space-6);
                         background-color: var(--bg-surface);
                         border-top: 1px solid var(--bg-app);
                         z-index: 10;
