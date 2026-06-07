@@ -2,7 +2,8 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, calculateRealizedGains, calculateCommission, calculateCashFlows } from '../../utils/portfolioCalculations';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, calculateRealizedGains, calculateCommission, calculateCashFlows } from '../../utils/portfolioCalculations';
+import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipientOf, memberInfoFromAssets, type BuyOnlyCandidate, type MemberAction } from '../../utils/allocationGroups';
 import { CASH_TICKER_PREFIX } from '../../types';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { WithdrawalModal } from './WithdrawalModal';
@@ -1118,6 +1119,7 @@ interface AllocationTableProps {
 
 export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions }) => {
     const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = React.useState(false);
+    const [expandedGroupRows, setExpandedGroupRows] = React.useState<Record<string, boolean>>({});
 
     // Filter Txs for this portfolio
     const portfolioTxs = useMemo(() => {
@@ -1168,85 +1170,83 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
 
     const totalPortfolioValue = summary.totalValue + liquidity + cashAssetsValue;
 
+    // --- Multi-asset market groups (per-portfolio) ---
+    const groupList = useMemo(() => portfolio.allocationGroups || [], [portfolio.allocationGroups]);
+    const { tickerToGroupId } = useMemo(() => resolveGroups(portfolio), [portfolio]);
+
+    // Standalone tickers = everything that is not a group id and not a member of a group.
+    const standaloneTickers = useMemo(
+        () => allTickers.filter(t => !isGroupKey(t) && !tickerToGroupId[t.toUpperCase()]),
+        [allTickers, tickerToGroupId]
+    );
+
+    // Per-group aggregates + full-rebalance member actions.
+    const groupComputations = useMemo(() => {
+        return groupList.map(group => {
+            const memberInfo = memberInfoFromAssets(group.members, assets);
+            const memberAssets = group.members.map(m => assets.find(a => a.ticker.toUpperCase() === m.toUpperCase()));
+            const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
+            const gain = memberAssets.reduce((s, a) => s + (a?.gain || 0), 0);
+            const targetPerc = allocations[group.id] || 0;
+            const targetValue = totalPortfolioValue * (targetPerc / 100);
+            const delta = targetValue - currentValue;
+            const full = distributeGroupDelta({ deltaEur: delta, members: group.members, memberInfo, rules: group.memberRules });
+            const currentPerc = totalPortfolioValue > 0 ? (currentValue / totalPortfolioValue) * 100 : 0;
+            const actionEur = Object.values(full.actions).reduce((s, a) => s + a.eur, 0);
+            const postRebalancePerc = totalPortfolioValue > 0 ? ((currentValue + actionEur) / totalPortfolioValue) * 100 : 0;
+            return { group, memberInfo, currentValue, gain, targetPerc, targetValue, delta, full, currentPerc, actionEur, postRebalancePerc };
+        });
+    }, [groupList, assets, allocations, totalPortfolioValue]);
+
+    const groupCompById = useMemo(() => {
+        const map: Record<string, typeof groupComputations[number]> = {};
+        groupComputations.forEach(gc => { map[gc.group.id] = gc; });
+        return map;
+    }, [groupComputations]);
+
     // Helper to calculate Buy Only amounts with integer share optimization
     // Strategy: Proportional Gap Filling + Largest Remainder Method
-    const buyOnlyAllocations = useMemo(() => {
+    // Each competing unit is a standalone ticker OR a whole group (priced at its buy-recipient
+    // member). After liquidity is assigned per unit, group euro is routed to member buy actions.
+    const buyOnly = useMemo(() => {
         const liq = portfolio.liquidity || 0;
-        if (liq <= 0) return {};
+        const empty = { byUnit: {} as Record<string, number>, memberBuy: {} as Record<string, MemberAction> };
+        if (liq <= 0) return empty;
 
         const totalVal = summary.totalValue + liq + cashAssetsValue;
+        const candidates: BuyOnlyCandidate[] = [];
 
-        // 1. Calculate weighted gaps (Ideal Allocation - Current Value)
-        // We only care about positive gaps (Underweight assets)
-        // Skip cash tickers - they are not tradeable
-        const candidates = allTickers.filter(t => !isCashTicker(t)).map(ticker => {
+        // Standalone tickers
+        standaloneTickers.filter(t => !isCashTicker(t)).forEach(ticker => {
             const asset = assets.find(a => a.ticker === ticker);
-            const currentValue = asset ? asset.currentValue : 0;
-            const price = asset?.currentPrice || 0;
+            const currentValue = asset?.currentValue ?? 0;
+            const price = asset?.currentPrice ?? 0;
             const targetPerc = allocations[ticker] || 0;
-            const targetValue = totalVal * (targetPerc / 100);
-            const gap = targetValue - currentValue;
-
-            return { ticker, gap, price };
-        }).filter(c => c.gap > 0 && c.price > 0);
-
-        const totalPositiveGap = candidates.reduce((sum, c) => sum + c.gap, 0);
-
-        if (totalPositiveGap <= 0) return {};
-
-        // 2. Initial Flow: Distribute Liquidity Proportional to Gap
-        // This gives us the "Ideal Cash" for each asset.
-        // Then convert to "Ideal Shares".
-        let distribution = candidates.map(c => {
-            const rawAlloc = (c.gap / totalPositiveGap) * liq;
-            const idealShares = rawAlloc / c.price;
-            const flooredShares = Math.floor(idealShares);
-            const fraction = idealShares - flooredShares;
-
-            return {
-                ...c,
-                shares: flooredShares,
-                fraction: fraction,
-                cost: flooredShares * c.price
-            };
+            const gap = totalVal * (targetPerc / 100) - currentValue;
+            candidates.push({ key: ticker, gap, price });
         });
 
-        // 3. Optimization: Spend Remaining Liquidity
-        // Sort by fractional part descending (Largest Remainder Methodish)
-        // Only consider buying if we have enough cash for the share price
-        let spent = distribution.reduce((sum, d) => sum + d.cost, 0);
-        let remaining = liq - spent;
-
-        // Sort candidates by potential benefit (fraction high = close to next share)
-        const sortedIndices = distribution.map((_, i) => i).sort((a, b) => {
-            return distribution[b].fraction - distribution[a].fraction;
+        // Groups — one candidate each, priced at the buy-eligible recipient member.
+        groupComputations.forEach(gc => {
+            const recipient = buyRecipientOf(gc.group, gc.memberInfo);
+            if (!recipient) return;
+            const gap = totalVal * (gc.targetPerc / 100) - gc.currentValue;
+            candidates.push({ key: gc.group.id, gap, price: recipient.price });
         });
 
-        // Greedy pass to buy extra shares
-        // We iterate sorted candidates. If we can afford one share, we buy it.
-        // We might need multiple passes or just one. Usually one pass through prioritized list is good.
-        // But price constraint matters. High fraction but Price > Remaining -> Skip.
-        for (const idx of sortedIndices) {
-            const candidate = distribution[idx];
+        const byUnit = largestRemainderBuyOnly(candidates, liq);
 
-            if (remaining >= candidate.price) {
-                distribution[idx].shares += 1;
-                distribution[idx].cost += candidate.price;
-                remaining -= candidate.price;
-                // Update spent not strictly needed if we track remaining
-            }
-        }
-
-        // 4. Build Result Map
-        const finalMap: Record<string, number> = {};
-        distribution.forEach(d => {
-            if (d.shares > 0) {
-                finalMap[d.ticker] = d.shares * d.price;
-            }
+        // Route each group's assigned euro to its member buy action(s).
+        const memberBuy: Record<string, MemberAction> = {};
+        groupComputations.forEach(gc => {
+            const euro = byUnit[gc.group.id] || 0;
+            if (euro <= 0) return;
+            const dist = distributeGroupDelta({ deltaEur: euro, members: gc.group.members, memberInfo: gc.memberInfo, rules: gc.group.memberRules });
+            Object.values(dist.actions).forEach(a => { memberBuy[a.ticker.toUpperCase()] = a; });
         });
 
-        return finalMap;
-    }, [allTickers, allocations, assets, portfolio.liquidity, summary.totalValue]);
+        return { byUnit, memberBuy };
+    }, [standaloneTickers, groupComputations, allocations, assets, portfolio.liquidity, summary.totalValue, cashAssetsValue]);
 
     // --- Execution Handlers ---
     const handleExecuteRebalance = async (mode: 'Full' | 'BuyOnly') => {
@@ -1254,54 +1254,53 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
 
         const transactionsToCreate: import('../../types').Transaction[] = [];
 
-        // Wait, for Full Rebalance we iterate allTickers and calc difference to Target.
-        // For Buy Only, we iterate allTickers and use buyOnlyAllocations.
+        const pushTx = (ticker: string, shares: number, price: number) => {
+            if (shares === 0 || price <= 0) return;
+            const lastTx = allTransactions.filter(t => t.ticker === ticker && t.portfolioId === portfolio.id).pop();
+            transactionsToCreate.push({
+                id: `auto-rebal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                portfolioId: portfolio.id,
+                ticker,
+                date: new Date().toISOString().split('T')[0],
+                amount: Math.abs(shares),
+                price,
+                direction: shares > 0 ? 'Buy' : 'Sell',
+                brokerId: lastTx?.brokerId,
+            });
+        };
 
-        allTickers.forEach(ticker => {
-            // Skip cash tickers - they are not tradeable
+        // Standalone tickers
+        standaloneTickers.forEach(ticker => {
             if (isCashTicker(ticker)) return;
-
             const asset = assets.find(a => a.ticker === ticker);
             const currentPrice = asset?.currentPrice || 0;
             const targetPerc = allocations[ticker] || 0;
             const quantity = asset?.quantity || 0;
-
             if (quantity <= 0 && targetPerc <= 0) return;
 
             let shares = 0;
-
-
             if (mode === 'Full') {
-                // Rebalance Calc
                 const targetValue = totalPortfolioValue * (targetPerc / 100);
                 const idealDiff = targetValue - (asset ? asset.currentValue : 0);
-                if (currentPrice > 0) {
-                    shares = Math.round(idealDiff / currentPrice);
-                }
+                if (currentPrice > 0) shares = Math.round(idealDiff / currentPrice);
             } else {
-                // Buy Only Calc
-                const buyOnlyAmountIdeal = buyOnlyAllocations[ticker] || 0;
-                if (currentPrice > 0) {
-                    shares = Math.round(buyOnlyAmountIdeal / currentPrice);
-                }
+                const buyOnlyAmountIdeal = buyOnly.byUnit[ticker] || 0;
+                if (currentPrice > 0) shares = Math.round(buyOnlyAmountIdeal / currentPrice);
             }
+            pushTx(ticker, shares, currentPrice);
+        });
 
-            if (shares !== 0 && currentPrice > 0) {
-                // Try to resolve broker. 
-                const lastTx = allTransactions.filter(t => t.ticker === ticker && t.portfolioId === portfolio.id).pop();
-                const brokerId = lastTx?.brokerId;
-
-                transactionsToCreate.push({
-                    id: `auto-rebal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                    portfolioId: portfolio.id,
-                    ticker: ticker,
-                    date: new Date().toISOString().split('T')[0],
-                    amount: Math.abs(shares),
-                    price: currentPrice,
-                    direction: shares > 0 ? 'Buy' : 'Sell',
-                    brokerId: brokerId
-                });
-            }
+        // Group members
+        groupComputations.forEach(gc => {
+            const actions: MemberAction[] = mode === 'Full'
+                ? Object.values(gc.full.actions)
+                : gc.group.members
+                    .map(m => buyOnly.memberBuy[m.toUpperCase()])
+                    .filter((a): a is MemberAction => !!a);
+            actions.forEach(a => {
+                const price = gc.memberInfo[a.ticker.toUpperCase()]?.price || 0;
+                pushTx(a.ticker, a.shares, price);
+            });
         });
 
         if (transactionsToCreate.length === 0) {
@@ -1341,6 +1340,97 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 color: 'var(--text-primary)'
             });
         }
+    };
+
+    // Renders a single asset row. Used for standalone tickers (target-based actions) and,
+    // when `member` is provided, for a group member (actions come from the group distribution).
+    const renderTickerRow = (ticker: string, opts?: {
+        hideTarget?: boolean;
+        indent?: boolean;
+        member?: { fullEur: number; fullShares: number; buyEur: number; buyShares: number };
+    }) => {
+        const asset = assets.find(a => a.ticker === ticker);
+        const currentValue = asset ? asset.currentValue : 0;
+        const currentPrice = asset?.currentPrice || 0;
+        const currentPerc = totalPortfolioValue > 0 ? (currentValue / totalPortfolioValue) * 100 : 0;
+        const targetPerc = opts?.member ? 0 : (allocations[ticker] || 0);
+        const quantity = asset?.quantity || 0;
+
+        // Standalone: hide if neither held nor targeted.
+        if (!opts?.member && quantity <= 0 && targetPerc <= 0) return null;
+
+        // Full rebalance action
+        let rebalanceShares = 0;
+        let rebalanceAmount = 0;
+        if (opts?.member) {
+            rebalanceShares = opts.member.fullShares;
+            rebalanceAmount = opts.member.fullEur;
+        } else {
+            const idealDiff = totalPortfolioValue * (targetPerc / 100) - currentValue;
+            rebalanceAmount = idealDiff;
+            if (currentPrice > 0) {
+                rebalanceShares = Math.round(idealDiff / currentPrice);
+                rebalanceAmount = rebalanceShares * currentPrice;
+            }
+        }
+        const postRebalancePerc = totalPortfolioValue > 0 ? ((currentValue + rebalanceAmount) / totalPortfolioValue) * 100 : 0;
+
+        // Buy-only action
+        let buyOnlyShares = 0;
+        let buyOnlyAmount = 0;
+        if (opts?.member) {
+            buyOnlyShares = opts.member.buyShares;
+            buyOnlyAmount = opts.member.buyEur;
+        } else {
+            buyOnlyAmount = buyOnly.byUnit[ticker] || 0;
+            if (currentPrice > 0) buyOnlyShares = Math.round(buyOnlyAmount / currentPrice);
+        }
+        const projectedPerc = totalPortfolioValue > 0 ? ((currentValue + buyOnlyAmount) / totalPortfolioValue) * 100 : 0;
+
+        const isCash = isCashTicker(ticker);
+        const setting = assetSettings.find(s => s.ticker === ticker);
+        const assetClass = isCash ? 'Cash' : (setting?.assetClass || asset?.assetClass || 'Stock');
+        const label = isCash ? asset?.label : (setting?.label || asset?.label);
+
+        const tickerTxs = portfolioTxs.filter(t => t.ticker === ticker);
+        const totalFees = tickerTxs.reduce((sum, t) => {
+            if (t.freeCommission) return sum;
+            const broker = brokers.find(b => b.id === t.brokerId);
+            return sum + (calculateCommission(t, broker) || 0);
+        }, 0);
+
+        const assetCashFlow = portfolioCashFlowDetails.find(d => d.ticker === ticker.toUpperCase());
+        const assetDistributions = assetCashFlow?.totalIncome ?? 0;
+        const assetDistributionEvents = assetCashFlow?.events.length ?? 0;
+
+        return (
+            <AllocationRow
+                key={ticker}
+                ticker={ticker}
+                label={label}
+                assetClass={assetClass}
+                isCash={isCash}
+                currentPerc={currentPerc}
+                targetPerc={targetPerc}
+                hideTarget={opts?.hideTarget}
+                indent={opts?.indent}
+                rebalanceAmount={rebalanceAmount}
+                rebalanceShares={rebalanceShares}
+                buyOnlyAmount={buyOnlyAmount}
+                buyOnlyShares={buyOnlyShares}
+                currentValue={asset?.currentValue || 0}
+                quantity={asset?.quantity || 0}
+                averagePrice={asset?.averagePrice || 0}
+                currentPrice={asset?.currentPrice || 0}
+                gain={asset?.gain || 0}
+                gainPerc={asset?.gainPercentage || 0}
+                postRebalancePerc={postRebalancePerc}
+                projectedPerc={projectedPerc}
+                totalFees={totalFees}
+                assetDistributions={assetDistributions}
+                assetDistributionEvents={assetDistributionEvents}
+            />
+        );
     };
 
     return (
@@ -1515,114 +1605,51 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 {allTickers.length === 0 ? (
                     <p style={{ padding: 'var(--space-4)', color: 'var(--text-muted)' }}>No activity or targets.</p>
                 ) : (
-                    allTickers.map(ticker => {
-                        const asset = assets.find(a => a.ticker === ticker);
-                        const currentValue = asset ? asset.currentValue : 0;
-                        const currentPrice = asset?.currentPrice || 0;
+                    <>
+                        {/* Market group rows (summary + expandable members) */}
+                        {groupComputations.map(gc => {
+                            const expanded = !!expandedGroupRows[gc.group.id];
+                            const buyOnlyEur = buyOnly.byUnit[gc.group.id] || 0;
+                            const postBuyPerc = totalPortfolioValue > 0
+                                ? ((gc.currentValue + buyOnlyEur) / totalPortfolioValue) * 100
+                                : 0;
+                            return (
+                                <React.Fragment key={gc.group.id}>
+                                    <GroupSummaryRow
+                                        label={gc.group.label}
+                                        expanded={expanded}
+                                        onToggle={() => setExpandedGroupRows(prev => ({ ...prev, [gc.group.id]: !expanded }))}
+                                        currentValue={gc.currentValue}
+                                        gain={gc.gain}
+                                        targetPerc={gc.targetPerc}
+                                        currentPerc={gc.currentPerc}
+                                        actionEur={gc.actionEur}
+                                        blocked={gc.full.blocked}
+                                        postRebalancePerc={gc.postRebalancePerc}
+                                        buyOnlyEur={buyOnlyEur}
+                                        postBuyPerc={postBuyPerc}
+                                    />
+                                    {expanded && gc.group.members.map(m => {
+                                        const full = gc.full.actions[m.toUpperCase()];
+                                        const buy = buyOnly.memberBuy[m.toUpperCase()];
+                                        return renderTickerRow(m, {
+                                            hideTarget: true,
+                                            indent: true,
+                                            member: {
+                                                fullEur: full?.eur || 0,
+                                                fullShares: full?.shares || 0,
+                                                buyEur: buy?.eur || 0,
+                                                buyShares: buy?.shares || 0,
+                                            },
+                                        });
+                                    })}
+                                </React.Fragment>
+                            );
+                        })}
 
-                        // Actual % should be based on TOTAL (Invested + Liquidity) or just Invested?
-                        // Usually Rebalancing compares Target % vs (Asset / TotalCapital).
-                        // If I add liquidity, the TotalCapital increases.
-                        // So correct math: currentPerc = (currentValue / totalPortfolioValue) * 100
-                        const currentPerc = totalPortfolioValue > 0 ? (currentValue / totalPortfolioValue) * 100 : 0;
-
-                        const targetPerc = allocations[ticker] || 0;
-                        const quantity = asset?.quantity || 0;
-
-                        // Filter: Hide if we don't hold it AND don't target it
-                        if (quantity <= 0 && targetPerc <= 0) return null;
-
-                        // Rebalance Calc
-                        // 1. Ideal Monetary Diff
-                        const targetValue = totalPortfolioValue * (targetPerc / 100);
-                        const idealDiff = targetValue - currentValue;
-
-                        // 2. Integer Share Optimization (Executability)
-                        let rebalanceShares = 0;
-                        let rebalanceAmount = idealDiff; // Default to ideal if no price (shouldn't happen for active assets)
-
-                        if (currentPrice > 0) {
-                            // Round to nearest share
-                            rebalanceShares = Math.round(idealDiff / currentPrice);
-                            rebalanceAmount = rebalanceShares * currentPrice;
-                        }
-
-                        const buyOnlyAmountIdeal = buyOnlyAllocations[ticker] || 0;
-                        let buyOnlyShares = 0;
-                        let buyOnlyAmount = buyOnlyAmountIdeal;
-
-                        if (currentPrice > 0) {
-                            // Buy Only is already conceptually "shares" in previous logic, but stored as amount.
-                            // Let's recover shares:
-                            buyOnlyShares = Math.round(buyOnlyAmountIdeal / currentPrice);
-                            buyOnlyAmount = buyOnlyAmountIdeal; // It is already integer-aligned from computation
-                        }
-
-
-                        // Projected % after Buy Only
-                        // Assumption: Buy Only action consumes existing Liquidity, so TotalPortfolioValue (Equity + Cash) is constant.
-                        // projectedPerc = (NewEquity / TotalPortfolioValue) * 100
-                        const projectedPerc = totalPortfolioValue > 0
-                            ? ((currentValue + buyOnlyAmount) / totalPortfolioValue) * 100
-                            : 0;
-
-                        // Projected % after Rebalancing (Buy/Sell)
-                        // This assumes full rebalancing: NewValue = CurrentValue + RebalanceAmount (Buy is +, Sell is -)
-                        // And usually Standard Rebalancing tends to keep Total Portfolio Value same (Sell X to Buy Y), 
-                        // UNLESS we are adding liquidity? 
-                        // Standard rebalance in this tool seems to be "Ideal Diff" based on CURRENT Total Value (Assets + Liq).
-                        // So if we execute it, the Asset Value becomes TargetValue.
-                        // So PostRebalance % should be virtually equal to Target %, unless integer share rounding makes it slightly different.
-                        // Let's calculate exactly based on integer shares:
-                        const postRebalanceValue = currentValue + rebalanceAmount;
-                        const postRebalancePerc = totalPortfolioValue > 0
-                            ? (postRebalanceValue / totalPortfolioValue) * 100
-                            : 0;
-
-                        const isCash = isCashTicker(ticker);
-                        const setting = assetSettings.find(s => s.ticker === ticker);
-                        const assetClass = isCash ? 'Cash' : (setting?.assetClass || asset?.assetClass || 'Stock');
-
-                        const label = isCash ? asset?.label : (setting?.label || asset?.label);
-
-                        const tickerTxs = portfolioTxs.filter(t => t.ticker === ticker);
-                        const totalFees = tickerTxs.reduce((sum, t) => {
-                            if (t.freeCommission) return sum;
-                            const broker = brokers.find(b => b.id === t.brokerId);
-                            return sum + (calculateCommission(t, broker) || 0);
-                        }, 0);
-
-                        const assetCashFlow = portfolioCashFlowDetails.find(d => d.ticker === ticker.toUpperCase());
-                        const assetDistributions = assetCashFlow?.totalIncome ?? 0;
-                        const assetDistributionEvents = assetCashFlow?.events.length ?? 0;
-
-                        return (
-                            <AllocationRow
-                                key={ticker}
-                                ticker={ticker}
-                                label={label}
-                                assetClass={assetClass}
-                                isCash={isCash}
-                                currentPerc={currentPerc}
-                                targetPerc={targetPerc}
-                                rebalanceAmount={rebalanceAmount}
-                                rebalanceShares={rebalanceShares}
-                                buyOnlyAmount={buyOnlyAmount}
-                                buyOnlyShares={buyOnlyShares}
-                                currentValue={asset?.currentValue || 0}
-                                quantity={asset?.quantity || 0}
-                                averagePrice={asset?.averagePrice || 0}
-                                currentPrice={asset?.currentPrice || 0}
-                                gain={asset?.gain || 0}
-                                gainPerc={asset?.gainPercentage || 0}
-                                postRebalancePerc={postRebalancePerc}
-                                projectedPerc={projectedPerc}
-                                totalFees={totalFees}
-                                assetDistributions={assetDistributions}
-                                assetDistributionEvents={assetDistributionEvents}
-                            />
-                        );
-                    })
+                        {/* Standalone ticker rows */}
+                        {standaloneTickers.map(ticker => renderTickerRow(ticker))}
+                    </>
                 )}
             </div>
 
@@ -1661,9 +1688,13 @@ interface RowProps {
     totalFees: number;
     assetDistributions: number;
     assetDistributionEvents: number;
+    /** Hide the Target column + drift (used for group members, whose target lives on the group). */
+    hideTarget?: boolean;
+    /** Visually nest this row under a group summary row. */
+    indent?: boolean;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, hideTarget, indent }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
@@ -1688,11 +1719,12 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
     return (
         <React.Fragment>
             {/* Desktop Table Row */}
-            <div className="allocation-row desktop-only" style={{ padding: 'var(--space-3) 0' }}>
-                <div className="allocation-type" style={{ flex: 1 }}>
+            <div className="allocation-row desktop-only" style={{ padding: 'var(--space-3) 0', ...(indent ? { paddingLeft: 'var(--space-5)', borderLeft: '2px solid var(--border-color)' } : {}) }}>
+                <div className="allocation-type" style={{ flex: 1, opacity: indent ? 0.9 : 1 }}>
+                    {indent && <span style={{ color: 'var(--text-muted)', marginRight: 'var(--space-1)' }}>↳</span>}
                     <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
                     <div>
-                        <strong>{label || ticker}</strong>
+                        <strong style={{ fontWeight: indent ? 400 : undefined }}>{label || ticker}</strong>
                     </div>
                 </div>
 
@@ -1825,15 +1857,17 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     document.body
                 )}
 
-                <div style={{ width: '80px', textAlign: 'center' }}>
-                    {targetPerc}%
+                <div style={{ width: '80px', textAlign: 'center', color: hideTarget ? 'var(--text-muted)' : undefined }}>
+                    {hideTarget ? '—' : `${targetPerc}%`}
                 </div>
 
                 <div style={{ width: '80px', textAlign: 'center' }}>
                     <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
-                    <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
-                        {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
-                    </div>
+                    {!hideTarget && (
+                        <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
+                            {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
+                        </div>
+                    )}
                 </div>
 
                 <div style={{ width: '130px', textAlign: 'center' }}>
@@ -1926,17 +1960,21 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                             </div>
                         </>
                     )}
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Target</span>
-                        <span className="mobile-value">{targetPerc}%</span>
-                    </div>
+                    {!hideTarget && (
+                        <div className="mobile-detail-group">
+                            <span className="mobile-label">Target</span>
+                            <span className="mobile-value">{targetPerc}%</span>
+                        </div>
+                    )}
                     <div className="mobile-detail-group">
                         <span className="mobile-label">Actual</span>
                         <span className="mobile-value">
                             {currentPerc.toFixed(1)}%
-                            <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
-                                ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
-                            </span>
+                            {!hideTarget && (
+                                <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
+                                    ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                </span>
+                            )}
                         </span>
                     </div>
                 </div>
@@ -1979,6 +2017,143 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
         </React.Fragment>
     );
 }
+
+interface GroupSummaryRowProps {
+    label: string;
+    expanded: boolean;
+    onToggle: () => void;
+    currentValue: number;
+    gain: number;
+    targetPerc: number;
+    currentPerc: number;
+    actionEur: number;
+    blocked: boolean;
+    postRebalancePerc: number;
+    buyOnlyEur: number;
+    postBuyPerc: number;
+}
+
+const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
+    label, expanded, onToggle, currentValue, gain, targetPerc, currentPerc,
+    actionEur, blocked, postRebalancePerc, buyOnlyEur, postBuyPerc,
+}) => {
+    const diff = currentPerc - targetPerc;
+    const tint = 'rgba(59, 130, 246, 0.06)';
+
+    const ActionCell = (
+        blocked ? (
+            <span style={{ color: 'var(--color-warning)', fontSize: '0.8rem' }} title="No eligible member to act on (check Never buy / Never sell rules)">Blocked</span>
+        ) : Math.abs(actionEur) < 0.5 ? (
+            <span className="trend-neutral">OK</span>
+        ) : (
+            <div style={{ fontWeight: 600, color: actionEur > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                {actionEur > 0 ? 'Buy' : 'Sell'} €{Math.abs(actionEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+            </div>
+        )
+    );
+
+    return (
+        <React.Fragment>
+            {/* Desktop Table Row */}
+            <div className="allocation-row desktop-only" style={{ padding: 'var(--space-3) 0', backgroundColor: tint, cursor: 'pointer', position: 'relative' }} onClick={onToggle}>
+                <span style={{ position: 'absolute', left: '-16px', top: '50%', transform: 'translateY(-50%)', color: '#3B82F6', fontSize: '0.95rem', fontWeight: 700 }}>{expanded ? '▾' : '▸'}</span>
+                <div className="allocation-type" style={{ flex: 1 }}>
+                    <div className="dot" style={{ backgroundColor: '#3B82F6' }} />
+                    <div>
+                        <strong>{label}</strong>
+                    </div>
+                </div>
+
+                <div style={{ width: '100px', textAlign: 'center', color: 'var(--text-muted)' }}>-</div>
+                <div style={{ width: '110px', textAlign: 'center', color: 'var(--text-muted)' }}>-</div>
+                <div style={{ width: '110px', textAlign: 'center', color: 'var(--text-muted)' }}>-</div>
+
+                <div style={{ width: '110px', textAlign: 'center', fontWeight: 600 }}>
+                    €{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+
+                <div style={{ width: '110px', textAlign: 'center', fontSize: '0.9rem' }}>
+                    <div style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+                    </div>
+                </div>
+
+                <div style={{ width: '80px', textAlign: 'center' }}>{targetPerc}%</div>
+
+                <div style={{ width: '80px', textAlign: 'center' }}>
+                    <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
+                    <div className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ fontSize: '0.75rem' }}>
+                        {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
+                    </div>
+                </div>
+
+                <div style={{ width: '130px', textAlign: 'center' }}>{ActionCell}</div>
+
+                <div style={{ width: '90px', textAlign: 'center' }}>
+                    <div style={{ color: 'var(--text-muted)' }}>{postRebalancePerc.toFixed(1)}%</div>
+                </div>
+
+                <div style={{ width: '130px', textAlign: 'center' }}>
+                    {buyOnlyEur > 0 ? (
+                        <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
+                            Buy €{Math.abs(buyOnlyEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                        </div>
+                    ) : (
+                        <span className="trend-neutral">-</span>
+                    )}
+                </div>
+
+                <div style={{ width: '90px', textAlign: 'center' }}>
+                    <div style={{ color: 'var(--text-muted)' }}>{postBuyPerc.toFixed(1)}%</div>
+                </div>
+            </div>
+
+            {/* Mobile Card */}
+            <div className="allocation-mobile-card mobile-only" style={{ backgroundColor: tint }} onClick={onToggle}>
+                <div className="mobile-card-header">
+                    <div className="mobile-card-title">
+                        <span style={{ color: '#3B82F6', fontSize: '0.95rem', fontWeight: 700 }}>{expanded ? '▾' : '▸'}</span>
+                        <div className="dot" style={{ backgroundColor: '#3B82F6' }} />
+                        <strong>{label}</strong>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                            {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+                        </div>
+                    </div>
+                </div>
+                <div className="mobile-card-grid">
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Target</span>
+                        <span className="mobile-value">{targetPerc}%</span>
+                    </div>
+                    <div className="mobile-detail-group">
+                        <span className="mobile-label">Actual</span>
+                        <span className="mobile-value">
+                            {currentPerc.toFixed(1)}%
+                            <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
+                                ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                            </span>
+                        </span>
+                    </div>
+                </div>
+                <div className="mobile-actions">
+                    <div className="mobile-action-box">
+                        <div className="mobile-action-title">Standard Rebal</div>
+                        <div>{ActionCell}</div>
+                    </div>
+                    <div className="mobile-action-box">
+                        <div className="mobile-action-title">Buy Only</div>
+                        <div style={{ fontWeight: 600, color: buyOnlyEur > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                            {buyOnlyEur > 0 ? `Buy €${Math.abs(buyOnlyEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}` : '-'}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </React.Fragment>
+    );
+};
 
 // Inline helper for colors until CSS is fully updated (though existing classes work too)
 function getColorForClass(assetClass: string): string {

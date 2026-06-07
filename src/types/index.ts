@@ -24,6 +24,11 @@ export interface Broker {
 export const CASH_TICKER_PREFIX = '_CASH_';
 export const getCashTicker = (brokerId: string) => `${CASH_TICKER_PREFIX}${brokerId}`;
 
+// Allocation groups: a single target % covering several interchangeable tickers
+// (e.g. "All World" = VWCE + XMAU). The group id is used as a key in
+// Portfolio.allocations just like a ticker, so the "sum to 100%" math is unchanged.
+export const GROUP_TICKER_PREFIX = '_GRP_';
+
 export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto' | 'Cash' | 'PensionFund';
 export type AssetSubClass =
   | 'International' | 'Local'     // Stock
@@ -49,11 +54,26 @@ export interface Goal {
   order: number;
 }
 
+// Per-member rule inside an allocation group.
+export interface AllocationMemberRule {
+  noBuy?: boolean;   // never add to this member (e.g. a promo that ended)
+  noSell?: boolean;  // never reduce this member (e.g. avoid realizing gains/tax)
+}
+
+// A market group: one target % shared by several interchangeable tickers.
+export interface AllocationGroup {
+  id: string;            // group key (GROUP_TICKER_PREFIX + uuid); also a key in Portfolio.allocations
+  label: string;         // e.g. "All World"
+  members: string[];     // ordered priority tickers (index 0 = buy-first / sell-last)
+  memberRules?: Record<string, AllocationMemberRule>;
+}
+
 export interface Portfolio {
   id: string;
   name: string;
   description?: string;
-  allocations?: Record<string, number>; // Ticker -> Percentage (0-100)
+  allocations?: Record<string, number>; // Ticker | groupId -> Percentage (0-100)
+  allocationGroups?: AllocationGroup[];  // multi-asset "market" groups (target stored in allocations[groupId])
   liquidity?: number; // Cash available for rebalancing
   goalId?: string;
   parentId?: string; // ID of parent portfolio for nested Core/Satellite grouping
