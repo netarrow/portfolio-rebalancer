@@ -101,7 +101,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
     onUpdatePortfolio,
     onAddTransactions,
 }) => {
-    const [viewMode, setViewMode] = useState<'grouped' | 'individual'>('grouped');
+    const [viewMode, setViewMode] = useState<'grouped' | 'individual'>('individual');
     const allPortfolios = useMemo(() => [parent, ...children], [parent, children]);
 
     const portfolioCalcs = useMemo((): PortfolioCalc[] => {
@@ -181,15 +181,15 @@ const PortfolioGroupSection: React.FC<Props> = ({
                     <span className="group-total-value">{fmt(totalGroupValue)}</span>
                     <div className="group-view-toggle">
                         <button
-                            className={viewMode === 'grouped' ? 'group-toggle-active' : 'group-toggle-btn'}
-                            onClick={() => setViewMode('grouped')}
-                            title="Group comparative view"
-                        >⬡ Group</button>
-                        <button
                             className={viewMode === 'individual' ? 'group-toggle-active' : 'group-toggle-btn'}
                             onClick={() => setViewMode('individual')}
                             title="Single portfolio view"
                         >☰ Single</button>
+                        <button
+                            className={viewMode === 'grouped' ? 'group-toggle-active' : 'group-toggle-btn'}
+                            onClick={() => setViewMode('grouped')}
+                            title="Group comparative view"
+                        >⬡ Group</button>
                     </div>
                 </div>
 
