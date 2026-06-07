@@ -161,6 +161,7 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
                     max-width: 500px;
                     border: 1px solid var(--bg-card);
                     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+                    overflow-x: hidden;
                 }
 
                 .modal-content h3 {

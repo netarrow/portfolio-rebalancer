@@ -335,6 +335,7 @@
     max-height: 90vh;
     display: flex;
     flex-direction: column;
+    overflow-x: hidden;
 }
 
 .modal-close-btn {
