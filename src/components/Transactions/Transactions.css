@@ -78,6 +78,21 @@
   transition: background-color 0.2s;
 }
 
+@media (max-width: 768px) {
+  .btn-submit {
+    position: sticky;
+    bottom: var(--space-3);
+    margin-left: calc(-1 * var(--space-4));
+    margin-right: calc(-1 * var(--space-4));
+    margin-bottom: 0;
+    width: calc(100% + 2 * var(--space-4));
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    z-index: 10;
+    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+  }
+}
+
 .btn-submit:hover {
   background-color: var(--color-primary-hover);
 }
