@@ -433,6 +433,7 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
                     max-width: 500px;
                     max-height: 90vh;
                     overflow-y: auto;
+                    overflow-x: hidden;
                     border: 1px solid var(--bg-card);
                     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
                 }
