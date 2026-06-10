@@ -1,4 +1,4 @@
-import type { Portfolio, Broker } from '../types';
+import type { Portfolio, Broker, AssetClass, AssetSubClass } from '../types';
 
 export interface ForecastResult {
     month: number;
@@ -24,6 +24,18 @@ export interface ForecastExpense {
     erosionAllowed?: boolean; // If true, can take from liquidity
 }
 
+// Returns the fractional return (e.g. 0.005 = +0.5%) applied to a portfolio for a given month.
+// When omitted, the deterministic monthly-compounded CAGR is used.
+export type MonthlyReturnSampler = (portfolioId: string, month: number) => number;
+
+export interface ForecastOptions {
+    // When true, monthly contributions are split by the year-0 value mix and the
+    // invested total is rebalanced back to that mix once a year. When false,
+    // contributions follow current weights, so winners attract more new money
+    // (momentum drift).
+    rebalanceToInitialWeights?: boolean;
+}
+
 export const calculateForecastWithState = (
     portfolios: ForecastPortfolioInput[],
     brokers: Broker[],
@@ -31,7 +43,9 @@ export const calculateForecastWithState = (
     monthlyExpenses: number,
     timeHorizonYears: number,
     portfolioReturns: Record<string, number>,
-    yearlyExpenses: ForecastExpense[] = []
+    yearlyExpenses: ForecastExpense[] = [],
+    monthlyReturnSampler?: MonthlyReturnSampler,
+    options: ForecastOptions = {}
 ): ForecastResult[] => {
     const months = timeHorizonYears * 12;
     const results: ForecastResult[] = [];
@@ -49,6 +63,15 @@ export const calculateForecastWithState = (
         value: p.currentValue,
         primaryGoal: p.primaryGoal || 'Growth' // Default fallback
     }));
+
+    // Year-0 value mix, used when rebalanceToInitialWeights is on
+    const initialTotal = portfolios.reduce((sum, p) => sum + p.currentValue, 0);
+    const initialWeights: Record<string, number> = {};
+    portfolios.forEach(p => {
+        initialWeights[p.id] = initialTotal > 0
+            ? p.currentValue / initialTotal
+            : (portfolios.length > 0 ? 1 / portfolios.length : 0);
+    });
 
     let hasInsolvency = false;
     let hasRuleBreach = false;
@@ -209,28 +232,48 @@ export const calculateForecastWithState = (
 
         // 3. Investment of Surplus
         if (monthlyInflow > 0) {
-            // Distribute remaining inflow to portfolios based on their CURRENT value ratios 
-            const totalPortfolioValue = portfolioState.reduce((sum, p) => sum + p.value, 0);
-
-            if (totalPortfolioValue > 0) {
+            if (options.rebalanceToInitialWeights) {
+                // Contributions stick to the year-0 mix
                 portfolioState.forEach(p => {
-                    const weight = p.value / totalPortfolioValue;
-                    const allocation = monthlyInflow * weight;
-                    p.value += allocation;
+                    p.value += monthlyInflow * (initialWeights[p.id] || 0);
                 });
             } else {
-                // Split evenly if starting from 0
-                const share = monthlyInflow / portfolioState.length;
-                portfolioState.forEach(p => p.value += share);
+                // Distribute remaining inflow to portfolios based on their CURRENT value ratios
+                const totalPortfolioValue = portfolioState.reduce((sum, p) => sum + p.value, 0);
+
+                if (totalPortfolioValue > 0) {
+                    portfolioState.forEach(p => {
+                        const weight = p.value / totalPortfolioValue;
+                        const allocation = monthlyInflow * weight;
+                        p.value += allocation;
+                    });
+                } else {
+                    // Split evenly if starting from 0
+                    const share = monthlyInflow / portfolioState.length;
+                    portfolioState.forEach(p => p.value += share);
+                }
             }
         }
 
         // 4. Compound Growth
         portfolioState.forEach(p => {
-            const annualRate = portfolioReturns[p.id] || 0; // %
-            const monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
+            let monthlyRate: number;
+            if (monthlyReturnSampler) {
+                monthlyRate = monthlyReturnSampler(p.id, month);
+            } else {
+                const annualRate = portfolioReturns[p.id] || 0; // %
+                monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
+            }
             p.value = p.value * (1 + monthlyRate);
         });
+
+        // 4b. Annual rebalance back to the year-0 mix (end of each year)
+        if (options.rebalanceToInitialWeights && month % 12 === 0) {
+            const totalInvestedNow = portfolioState.reduce((sum, p) => sum + p.value, 0);
+            portfolioState.forEach(p => {
+                p.value = totalInvestedNow * (initialWeights[p.id] || 0);
+            });
+        }
 
         // 5. Record Results
         totalInvested = portfolioState.reduce((sum, p) => sum + p.value, 0);
@@ -253,4 +296,165 @@ export const calculateForecastWithState = (
     }
 
     return results;
+};
+
+// ---------------------------------------------------------------------------
+// Monte Carlo simulation (simplified)
+// ---------------------------------------------------------------------------
+// Each portfolio's monthly return is sampled from a lognormal distribution
+// calibrated so that the *median* compound growth matches the deterministic
+// CAGR. Portfolios are treated as independent (no cross-correlation) — a
+// deliberate simplification.
+
+// Typical annualized volatility (%) by asset class, used as a default estimate.
+export const getAssetVolatility = (assetClass: AssetClass, assetSubClass?: AssetSubClass): number => {
+    switch (assetClass) {
+        case 'Stock': return 15;
+        case 'Bond':
+            if (assetSubClass === 'Short') return 2;
+            if (assetSubClass === 'Long') return 9;
+            return 5; // Medium / unspecified
+        case 'Commodity': return 14;
+        case 'Crypto': return 60;
+        case 'Cash': return 0.5;
+        case 'PensionFund': return 8;
+        default: return 10;
+    }
+};
+
+export interface MonteCarloSummary {
+    months: number[];
+    p10: number[];
+    p25: number[];
+    p50: number[];
+    p75: number[];
+    p90: number[];
+    /** Share of runs ending solvent with final net worth >= starting net worth */
+    successProbability: number;
+    /** Share of runs hitting insolvency at any point */
+    insolvencyProbability: number;
+    finalP10: number;
+    finalP50: number;
+    finalP90: number;
+    startValue: number;
+    simulations: number;
+}
+
+// Deterministic PRNG so the same inputs render the same chart (re-roll via seed).
+const mulberry32 = (seed: number) => {
+    let a = seed >>> 0;
+    return () => {
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+};
+
+const percentile = (sorted: number[], p: number): number => {
+    if (sorted.length === 0) return 0;
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+};
+
+export const runMonteCarloForecast = (
+    portfolios: ForecastPortfolioInput[],
+    brokers: Broker[],
+    monthlySavings: number,
+    monthlyExpenses: number,
+    timeHorizonYears: number,
+    portfolioReturns: Record<string, number>,
+    portfolioVolatilities: Record<string, number>, // annualized %
+    yearlyExpenses: ForecastExpense[] = [],
+    simulations: number = 500,
+    seed: number = 12345,
+    options: ForecastOptions = {}
+): MonteCarloSummary => {
+    const months = timeHorizonYears * 12;
+    const rng = mulberry32(seed);
+
+    // Box-Muller transform, caching the spare deviate
+    let spare: number | null = null;
+    const gaussian = (): number => {
+        if (spare !== null) {
+            const v = spare;
+            spare = null;
+            return v;
+        }
+        let u = 0, v = 0;
+        while (u === 0) u = rng();
+        while (v === 0) v = rng();
+        const mag = Math.sqrt(-2 * Math.log(u));
+        spare = mag * Math.sin(2 * Math.PI * v);
+        return mag * Math.cos(2 * Math.PI * v);
+    };
+
+    // Pre-compute lognormal params per portfolio:
+    // monthly return = exp(m + s*Z) - 1, with median compounding to the CAGR
+    const params: Record<string, { m: number; s: number }> = {};
+    portfolios.forEach(p => {
+        const mu = (portfolioReturns[p.id] || 0) / 100;
+        const sigma = Math.max(0, portfolioVolatilities[p.id] || 0) / 100;
+        const s = sigma / Math.sqrt(12);
+        const m = Math.log(1 + Math.max(mu, -0.99)) / 12;
+        params[p.id] = { m, s };
+    });
+
+    const startValue =
+        portfolios.reduce((sum, p) => sum + p.currentValue, 0) +
+        brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+
+    // totalsByMonth[month][sim] = total net worth
+    const totalsByMonth: number[][] = Array.from({ length: months }, () => new Array<number>(simulations));
+    let successes = 0;
+    let insolvencies = 0;
+
+    for (let sim = 0; sim < simulations; sim++) {
+        const sampler: MonthlyReturnSampler = (pid) => {
+            const { m, s } = params[pid] || { m: 0, s: 0 };
+            if (s === 0) return Math.exp(m) - 1;
+            return Math.exp(m + s * gaussian()) - 1;
+        };
+
+        const run = calculateForecastWithState(
+            portfolios, brokers, monthlySavings, monthlyExpenses,
+            timeHorizonYears, portfolioReturns, yearlyExpenses, sampler, options
+        );
+
+        for (let i = 0; i < months; i++) {
+            totalsByMonth[i][sim] = run[i]?.totalValue ?? 0;
+        }
+
+        const last = run[run.length - 1];
+        if (last?.insolvent) insolvencies++;
+        if (last && !last.insolvent && last.totalValue >= startValue) successes++;
+    }
+
+    const p10: number[] = [], p25: number[] = [], p50: number[] = [], p75: number[] = [], p90: number[] = [];
+    const monthIdx: number[] = [];
+
+    for (let i = 0; i < months; i++) {
+        const sorted = [...totalsByMonth[i]].sort((a, b) => a - b);
+        monthIdx.push(i + 1);
+        p10.push(percentile(sorted, 0.10));
+        p25.push(percentile(sorted, 0.25));
+        p50.push(percentile(sorted, 0.50));
+        p75.push(percentile(sorted, 0.75));
+        p90.push(percentile(sorted, 0.90));
+    }
+
+    return {
+        months: monthIdx,
+        p10, p25, p50, p75, p90,
+        successProbability: simulations > 0 ? successes / simulations : 0,
+        insolvencyProbability: simulations > 0 ? insolvencies / simulations : 0,
+        finalP10: p10[p10.length - 1] ?? 0,
+        finalP50: p50[p50.length - 1] ?? 0,
+        finalP90: p90[p90.length - 1] ?? 0,
+        startValue,
+        simulations
+    };
 };

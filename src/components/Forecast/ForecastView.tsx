@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateForecastWithState } from '../../utils/forecastCalculations';
+import { calculateForecastWithState, runMonteCarloForecast, getAssetVolatility } from '../../utils/forecastCalculations';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import { isIncomeDirection } from '../../types';
@@ -16,6 +16,14 @@ const ForecastView: React.FC = () => {
     const [timeHorizon, setTimeHorizon] = useState<number | ''>('');
     const [monthlyIncome, setMonthlyIncome] = useState<number | ''>('');
     const [monthlyExpenses, setMonthlyExpenses] = useState<number | ''>('');
+
+    // Monte Carlo (volatility) simulation
+    const [monteCarloEnabled, setMonteCarloEnabled] = useState(false);
+    const [mcSeed, setMcSeed] = useState(12345);
+    const [volatilityOverrides, setVolatilityOverrides] = useState<Record<string, number | ''>>({});
+
+    // Contribution strategy: false = momentum (current weights), true = year-0 mix + annual rebalance
+    const [rebalanceAnnually, setRebalanceAnnually] = useState(false);
 
     // Expense State
     const [yearlyExpenses, setYearlyExpenses] = useState<{
@@ -117,21 +125,30 @@ const ForecastView: React.FC = () => {
         return values;
     }, [transactions, marketData, portfolios]);
 
-    // Calculate Primary Goal for each Portfolio
-    const portfolioGoals = useMemo(() => {
+    // Calculate Primary Goal and estimated volatility for each Portfolio
+    const { portfolioGoals, estimatedVolatilities } = useMemo(() => {
         const goals: Record<string, string> = {};
+        const volatilities: Record<string, number> = {};
 
         portfolios.forEach(p => {
             const pTx = transactions.filter(t => t.portfolioId === p.id);
             const { assets } = calculateAssets(pTx, assetSettings, marketData);
 
-            // Sum value by Goal
+            // Sum value by Goal + value-weighted volatility by asset class
             const goalValues: Record<string, number> = { 'Growth': 0, 'Protection': 0, 'Security': 0 };
+            let totalValue = 0;
+            let weightedVol = 0;
 
             assets.forEach(asset => {
                 const goal = getAssetGoal(asset.assetClass, asset.assetSubClass);
                 goalValues[goal] = (goalValues[goal] || 0) + asset.currentValue;
+                if (asset.currentValue > 0) {
+                    totalValue += asset.currentValue;
+                    weightedVol += asset.currentValue * getAssetVolatility(asset.assetClass, asset.assetSubClass);
+                }
             });
+
+            volatilities[p.id] = totalValue > 0 ? weightedVol / totalValue : 0;
 
             // Find max
             let maxGoal = 'Growth';
@@ -145,7 +162,7 @@ const ForecastView: React.FC = () => {
             goals[p.id] = maxGoal;
         });
 
-        return goals;
+        return { portfolioGoals: goals, estimatedVolatilities: volatilities };
     }, [portfolios, transactions, assetSettings, marketData]);
 
     // Generate Forecast Data
@@ -173,9 +190,56 @@ const ForecastView: React.FC = () => {
                 amount: e.amount,
                 allowedTypes: e.allowedTypes,
                 erosionAllowed: e.erosionAllowed
-            }))
+            })),
+            undefined,
+            { rebalanceToInitialWeights: rebalanceAnnually }
         );
-    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, portfolioGoals]);
+    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, portfolioGoals, rebalanceAnnually]);
+
+    // Effective volatility per portfolio (manual override wins over the estimate)
+    const effectiveVolatilities = useMemo(() => {
+        const vols: Record<string, number> = {};
+        portfolios.forEach(p => {
+            const override = volatilityOverrides[p.id];
+            vols[p.id] = override !== undefined && override !== '' ? Number(override) : (estimatedVolatilities[p.id] || 0);
+        });
+        return vols;
+    }, [portfolios, volatilityOverrides, estimatedVolatilities]);
+
+    // Monte Carlo simulation (only when enabled)
+    const monteCarloData = useMemo(() => {
+        if (!monteCarloEnabled) return null;
+
+        const inputPortfolios = portfolios.map(p => ({
+            ...p,
+            currentValue: currentPortfolioValues[p.id] || 0,
+            primaryGoal: portfolioGoals[p.id]
+        }));
+
+        const returnsMap: Record<string, number> = {};
+        portfolios.forEach(p => {
+            returnsMap[p.id] = portfolioPerformance[p.id]?.cagr || 0;
+        });
+
+        return runMonteCarloForecast(
+            inputPortfolios,
+            brokers,
+            Number(monthlyIncome) || 0,
+            Number(monthlyExpenses) || 0,
+            Number(timeHorizon) || 10,
+            returnsMap,
+            effectiveVolatilities,
+            yearlyExpenses.map(e => ({
+                year: e.year,
+                amount: e.amount,
+                allowedTypes: e.allowedTypes,
+                erosionAllowed: e.erosionAllowed
+            })),
+            500,
+            mcSeed,
+            { rebalanceToInitialWeights: rebalanceAnnually }
+        );
+    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, portfolioGoals, effectiveVolatilities, mcSeed, rebalanceAnnually]);
 
     // Chart Config
     const chartOptions = {
@@ -229,6 +293,77 @@ const ForecastView: React.FC = () => {
         }))
     ];
 
+    // Monte Carlo chart: percentile bands (10-90, 25-75) + median line
+    const mcChartOptions = {
+        chart: {
+            id: 'forecast-mc-chart',
+            background: 'transparent',
+            toolbar: { show: false },
+            animations: { enabled: false }
+        },
+        theme: { mode: 'dark' as const },
+        colors: ['#3B82F6', '#3B82F6', '#10B981'],
+        fill: { opacity: [0.18, 0.35, 1] },
+        stroke: { curve: 'straight' as const, width: [0, 0, 2.5] },
+        dataLabels: { enabled: false },
+        legend: { labels: { colors: '#9ca3af' } },
+        xaxis: {
+            type: 'numeric' as const,
+            tickAmount: 10,
+            labels: {
+                formatter: (val: string) => `Year ${Math.ceil(Number(val) / 12)}`,
+                style: { colors: '#9ca3af' }
+            }
+        },
+        yaxis: {
+            labels: {
+                formatter: (val: number) => `€${Math.round(val).toLocaleString()}`,
+                style: { colors: '#9ca3af' }
+            }
+        },
+        tooltip: {
+            theme: 'dark',
+            shared: true,
+            x: {
+                formatter: (val: number) => {
+                    const year = Math.ceil(val / 12);
+                    const monthInYear = ((val - 1) % 12) + 1;
+                    return `Year ${year}, Month ${monthInYear}`;
+                }
+            },
+            y: {
+                formatter: (val: number) => (val !== null && val !== undefined ? `€${Math.round(val).toLocaleString()}` : '')
+            }
+        }
+    };
+
+    const mcChartSeries = monteCarloData ? [
+        {
+            type: 'rangeArea',
+            name: '10th–90th percentile',
+            data: monteCarloData.months.map((m, i) => ({
+                x: m,
+                y: [Math.round(monteCarloData.p10[i]), Math.round(monteCarloData.p90[i])]
+            }))
+        },
+        {
+            type: 'rangeArea',
+            name: '25th–75th percentile',
+            data: monteCarloData.months.map((m, i) => ({
+                x: m,
+                y: [Math.round(monteCarloData.p25[i]), Math.round(monteCarloData.p75[i])]
+            }))
+        },
+        {
+            type: 'line',
+            name: 'Median',
+            data: monteCarloData.months.map((m, i) => ({
+                x: m,
+                y: Math.round(monteCarloData.p50[i])
+            }))
+        }
+    ] : [];
+
     const finalResult = forecastData[forecastData.length - 1] || { totalValue: 0, investedValue: 0, liquidityValue: 0, insolvent: false, ruleBreach: false, failureReason: '' };
     const startValue = forecastData[0]?.totalValue || 0;
 
@@ -238,6 +373,51 @@ const ForecastView: React.FC = () => {
 
     const sustainabilityStatus = useMemo(() => {
         if (!startValue) return { status: 'Unknown', color: 'var(--text-tertiary)', icon: '?' };
+
+        // Monte Carlo mode: judge by probability of success across simulations
+        if (monteCarloData) {
+            const prob = monteCarloData.successProbability;
+            const probPct = `${Math.round(prob * 100)}% of simulations succeed`;
+            if (prob >= 0.85) {
+                return {
+                    status: 'Sustainable',
+                    label: 'Sustainable',
+                    tooltip: probPct,
+                    color: '#10B981',
+                    icon: (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                    )
+                };
+            } else if (prob >= 0.6) {
+                return {
+                    status: 'Fragile',
+                    label: 'Fragile',
+                    tooltip: probPct,
+                    color: '#F59E0B',
+                    icon: (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 2a10 10 0 1 0 10 10H12V2z"></path>
+                        </svg>
+                    )
+                };
+            }
+            return {
+                status: 'Failed',
+                label: 'At Risk',
+                tooltip: probPct,
+                color: '#EF4444',
+                icon: (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                )
+            };
+        }
 
         if (insolvencyDetected) {
             return {
@@ -308,7 +488,7 @@ const ForecastView: React.FC = () => {
                 )
             };
         }
-    }, [startValue, finalResult.totalValue, insolvencyDetected, ruleBreachDetected]);
+    }, [startValue, finalResult.totalValue, insolvencyDetected, ruleBreachDetected, monteCarloData]);
 
     return (
         <div className="forecast-container" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 320px) 1fr 280px', gap: '1.5rem', width: '100%', maxWidth: '100%' }}>
@@ -347,6 +527,47 @@ const ForecastView: React.FC = () => {
                         placeholder="0"
                         style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     />
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                        <label style={{ color: 'var(--text-secondary)' }}>Annual Rebalance (Year-0 Mix)</label>
+                        <input
+                            type="checkbox"
+                            checked={rebalanceAnnually}
+                            onChange={e => setRebalanceAnnually(e.target.checked)}
+                        />
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                        {rebalanceAnnually
+                            ? 'Contributions follow the starting mix; invested total rebalanced to it yearly.'
+                            : 'Contributions follow current weights — winners attract more new money (momentum).'}
+                    </div>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <label style={{ color: 'var(--text-secondary)' }}>Monte Carlo (Volatility)</label>
+                        <input
+                            type="checkbox"
+                            checked={monteCarloEnabled}
+                            onChange={e => setMonteCarloEnabled(e.target.checked)}
+                        />
+                    </div>
+                    {monteCarloEnabled && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem' }}>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                500 simulations, percentile bands
+                            </span>
+                            <button
+                                onClick={() => setMcSeed(Math.floor(Math.random() * 1_000_000))}
+                                title="Re-roll simulations"
+                                style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: '0.8rem' }}
+                            >
+                                ↻ Re-roll
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
@@ -445,6 +666,7 @@ const ForecastView: React.FC = () => {
 
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '1rem', fontStyle: 'italic' }}>
                     * Projections use historical returns. Expenses deplete specified portfolios if possible.
+                    {monteCarloEnabled && ' Monte Carlo samples monthly returns from each portfolio\'s volatility (lognormal, uncorrelated); volatility is estimated from asset-class mix and can be overridden per portfolio.'}
                 </div>
             </div>
 
@@ -452,38 +674,78 @@ const ForecastView: React.FC = () => {
             <div className="forecast-results" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
                 <div className="summary-grid forecast-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
                     <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', position: 'relative' }}>
-                        <div style={{ position: 'absolute', top: '1rem', right: '1rem', color: sustainabilityStatus.color }} title={sustainabilityStatus.label}>
+                        <div style={{ position: 'absolute', top: '1rem', right: '1rem', color: sustainabilityStatus.color }} title={sustainabilityStatus.tooltip || sustainabilityStatus.label}>
                             {sustainabilityStatus.icon}
                         </div>
-                        <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Projected Net Worth</h4>
+                        <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>
+                            {monteCarloData ? 'Projected Net Worth (Median)' : 'Projected Net Worth'}
+                        </h4>
                         <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--color-primary)' }}>
-                            €{Math.round(finalResult.totalValue).toLocaleString()}
+                            €{Math.round(monteCarloData ? monteCarloData.finalP50 : finalResult.totalValue).toLocaleString()}
                         </div>
                         <div style={{ fontSize: '0.8rem', color: sustainabilityStatus.color, marginTop: '0.25rem', fontWeight: 500 }}>
                             {sustainabilityStatus.label}
                         </div>
                     </div>
-                    <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-                        <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Invested Total</h4>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--color-accent)' }}>
-                            €{Math.round(finalResult.investedValue).toLocaleString()}
-                        </div>
-                    </div>
-                    <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
-                        <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Liquidity Total</h4>
-                        <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#10b981' }}>
-                            €{Math.round(finalResult.liquidityValue).toLocaleString()}
-                        </div>
-                    </div>
+                    {monteCarloData ? (
+                        <>
+                            <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
+                                <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Pessimistic / Optimistic</h4>
+                                <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--color-accent)' }}>
+                                    €{Math.round(monteCarloData.finalP10).toLocaleString()} – €{Math.round(monteCarloData.finalP90).toLocaleString()}
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                                    10th – 90th percentile
+                                </div>
+                            </div>
+                            <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
+                                <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Success Probability</h4>
+                                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: monteCarloData.successProbability >= 0.85 ? '#10b981' : monteCarloData.successProbability >= 0.6 ? '#F59E0B' : '#EF4444' }}>
+                                    {Math.round(monteCarloData.successProbability * 100)}%
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                                    {monteCarloData.insolvencyProbability > 0
+                                        ? `${Math.round(monteCarloData.insolvencyProbability * 100)}% runs hit insolvency`
+                                        : `${monteCarloData.simulations} runs ending above start value`}
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
+                                <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Invested Total</h4>
+                                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--color-accent)' }}>
+                                    €{Math.round(finalResult.investedValue).toLocaleString()}
+                                </div>
+                            </div>
+                            <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
+                                <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Liquidity Total</h4>
+                                <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#10b981' }}>
+                                    €{Math.round(finalResult.liquidityValue).toLocaleString()}
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 <div className="card forecast-chart-card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', flex: 1, minHeight: '400px' }}>
-                    <Chart
-                        options={chartOptions}
-                        series={chartSeries}
-                        type="area"
-                        height="100%"
-                    />
+                    {monteCarloData ? (
+                        <Chart
+                            key="mc"
+                            options={mcChartOptions}
+                            series={mcChartSeries}
+                            type="rangeArea"
+                            height="100%"
+                        />
+                    ) : (
+                        <Chart
+                            key="det"
+                            options={chartOptions}
+                            series={chartSeries}
+                            type="area"
+                            height="100%"
+                        />
+                    )}
                 </div>
             </div>
 
@@ -528,6 +790,28 @@ const ForecastView: React.FC = () => {
                                         )}
                                     </div>
                                 </div>
+
+                                {/* Volatility input — only relevant in Monte Carlo mode */}
+                                {monteCarloEnabled && (
+                                    <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
+                                        <span style={{ color: 'var(--text-tertiary)' }}>Volatility (σ ann.)</span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                            <input
+                                                type="number"
+                                                min={0}
+                                                step={0.5}
+                                                value={volatilityOverrides[p.id] ?? ''}
+                                                placeholder={(estimatedVolatilities[p.id] || 0).toFixed(1)}
+                                                onChange={e => setVolatilityOverrides({
+                                                    ...volatilityOverrides,
+                                                    [p.id]: e.target.value === '' ? '' : Number(e.target.value)
+                                                })}
+                                                style={{ width: '64px', padding: '0.25rem 0.4rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.75rem', textAlign: 'right' }}
+                                            />
+                                            <span style={{ color: 'var(--text-tertiary)' }}>%</span>
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* P/L breakdown — shown when there are realized gains or income */}
                                 {hasRealized && (
