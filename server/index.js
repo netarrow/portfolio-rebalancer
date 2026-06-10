@@ -274,6 +274,7 @@ async function scrapeToken(page, isin, source = 'ETF') {
     try {
         let url, priceText;
         let currency = 'EUR'; // Default
+        let fetchedFromMIL = false;
 
         if (source === 'MOT') {
             url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
@@ -399,8 +400,6 @@ async function scrapeToken(page, isin, source = 'ETF') {
 
         } else {
             // ETF: try Borsa Italiana (MIL) first, fall back to JustETF (XETRA/gettex)
-            let fetchedFromMIL = false;
-
             try {
                 await page.goto(`https://www.borsaitaliana.it/borsa/etf/scheda/${isin}.html?lang=it`, { waitUntil: 'domcontentloaded' });
 
@@ -470,7 +469,22 @@ async function scrapeToken(page, isin, source = 'ETF') {
         const finalPrice = parseFloat(cleanPrice);
         if (isNaN(finalPrice)) throw new Error(`Failed to parse price: ${priceText}`);
 
-        const { spreadPercent, volatility } = await extractSpreadAndVolatility(page, finalPrice);
+        let { spreadPercent, volatility } = await extractSpreadAndVolatility(page, finalPrice);
+
+        // If the price came from Borsa Italiana (MIL) and that page didn't expose
+        // Denaro/Lettera/Volatilità/Spread, do a best-effort extra visit to JustETF
+        // just for these supplemental fields (price/currency are kept from MIL).
+        if (source === 'ETF' && fetchedFromMIL && spreadPercent === null && volatility === null) {
+            try {
+                await page.goto(`https://www.justetf.com/en/etf-profile.html?isin=${isin}`, { waitUntil: 'domcontentloaded' });
+                await page.waitForSelector('[data-testid="realtime-quotes_price-value"]', { timeout: 10000 });
+                const extra = await extractSpreadAndVolatility(page, finalPrice);
+                spreadPercent = extra.spreadPercent;
+                volatility = extra.volatility;
+            } catch (e) {
+                // JustETF doesn't have this ISIN or layout differs — leave as null
+            }
+        }
 
         return {
             isin,
@@ -564,7 +578,10 @@ io.on('connection', (socket) => {
                 for (const token of tokens) {
                     const { isin, source = 'ETF' } = token;
                     socket.emit('price_update_progress', { isin, status: 'processing' });
-                    const cached = getCached(source, isin);
+                    // In local development, always re-scrape so changes to the
+                    // scraping logic can be verified without waiting out the
+                    // free-tier cache TTL.
+                    const cached = isProduction ? getCached(source, isin) : null;
                     if (cached) {
                         socket.emit('price_update_item', { ...cached, cached: true });
                     } else {
@@ -587,7 +604,7 @@ io.on('connection', (socket) => {
                                 beginFreeWork();
                                 try {
                                     const result = await scrapeToken(page, isin, source);
-                                    if (result.success) setCached(source, isin, result);
+                                    if (result.success && isProduction) setCached(source, isin, result);
                                     socket.emit('price_update_item', result);
                                 } finally {
                                     endFreeWork();
