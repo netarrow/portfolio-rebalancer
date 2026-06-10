@@ -6,6 +6,8 @@ export interface PriceUpdateItem {
     status: 'pending' | 'processing' | 'success' | 'error';
     price?: number;
     currency?: string;
+    spreadPercent?: number | null;
+    volatility?: number | null;
     error?: string;
     cached?: boolean;
 }
@@ -55,6 +57,13 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete 
                                     {item.cached && item.status === 'success' && (
                                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }} title="Served from the free-tier cache — may be up to a day old">
                                             cached · may be delayed
+                                        </span>
+                                    )}
+                                    {item.status === 'success' && (item.spreadPercent != null || item.volatility != null) && (
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                            {item.spreadPercent != null && `Spread: ${item.spreadPercent.toFixed(2)}%`}
+                                            {item.spreadPercent != null && item.volatility != null && ' · '}
+                                            {item.volatility != null && `Vol: ${item.volatility.toFixed(2)}%`}
                                         </span>
                                     )}
                                 </div>

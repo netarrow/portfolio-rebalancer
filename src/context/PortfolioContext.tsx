@@ -42,7 +42,7 @@ interface PortfolioContextType {
     setPremiumPriceKey: (key: string) => void;
     resetPortfolio: () => void;
     loadMockData: () => void;
-    marketData: Record<string, { price: number, lastUpdated: string }>;
+    marketData: Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null }>;
     addPortfolio: (portfolio: Portfolio) => void;
     updatePortfolio: (portfolio: Portfolio) => void;
     deletePortfolio: (id: string) => void;
@@ -60,7 +60,7 @@ interface PortfolioContextType {
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
     importData: (data: any) => Promise<boolean>;
-    updateMarketData: (ticker: string, price: number, lastUpdated: string) => void;
+    updateMarketData: (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null }) => void;
     addTransactionsBulk: (newTransactions: Transaction[]) => void;
     // Aggregate section UI preferences (synced)
     aggregateExcludedTickers: string[];
@@ -121,7 +121,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [portfolios, setPortfolios] = useLocalStorage<Portfolio[]>('portfolio_list', []);
     const [brokers, setBrokers] = useLocalStorage<Broker[]>('portfolio_brokers', []);
     const [goals, setGoals] = useLocalStorage<Goal[]>('portfolio_goals', []);
-    const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string }>>('portfolio_market_data', {});
+    const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null }>>('portfolio_market_data', {});
     const [storedAssetAllocationSettings, setStoredAssetAllocationSettings] = useLocalStorage<AssetAllocationSettings>(
         'portfolio_asset_allocation_v1',
         { portfolioTargets: {}, ratioGroups: [] }
@@ -232,6 +232,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         status: success ? 'success' : 'error',
                         price: data?.currentPrice,
                         currency: data?.currency,
+                        spreadPercent: data?.spreadPercent,
+                        volatility: data?.volatility,
                         error: error,
                         cached: !!cached
                     };
@@ -240,7 +242,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }));
 
             if (success && data && data.currentPrice) {
-                updateMarketData(isin, data.currentPrice, data.lastUpdated);
+                updateMarketData(isin, data.currentPrice, data.lastUpdated, { spreadPercent: data.spreadPercent, volatility: data.volatility });
             }
         });
 
@@ -596,10 +598,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const updateMarketData = (ticker: string, price: number, lastUpdated: string) => {
+    const updateMarketData = (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null }) => {
         setMarketData(prev => ({
             ...prev,
-            [ticker.toUpperCase()]: { price, lastUpdated }
+            [ticker.toUpperCase()]: {
+                price,
+                lastUpdated,
+                spreadPercent: extra?.spreadPercent ?? undefined,
+                volatility: extra?.volatility ?? undefined
+            }
         }));
     };
 
