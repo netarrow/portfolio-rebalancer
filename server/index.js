@@ -164,6 +164,104 @@ async function withBrowser(fn) {
     }
 }
 
+// Best-effort extraction of bid/ask spread (%) and average annual volatility (%)
+// from whatever page is currently loaded. Both fields are purely supplemental:
+// if the page doesn't expose them (layout differs, data not published, etc.)
+// this returns nulls and the caller proceeds as if they were never requested.
+async function extractSpreadAndVolatility(page, currentPrice) {
+    let bid = null, ask = null, volatility = null, spread = null;
+
+    try {
+        const result = await page.evaluate(() => {
+            const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
+            const parseNum = (s) => {
+                if (!s) return null;
+                let cleaned = s.replace(/[^\d.,-]/g, '');
+                if (!cleaned) return null;
+                if (cleaned.includes(',') && cleaned.includes('.')) {
+                    cleaned = cleaned.replace(/\./g, '').replace(',', '.');
+                } else if (cleaned.includes(',')) {
+                    cleaned = cleaned.replace(',', '.');
+                }
+                const val = parseFloat(cleaned);
+                return isNaN(val) ? null : val;
+            };
+
+            let bidVal = null, askVal = null, volVal = null, spreadVal = null;
+
+            // 1. Table-row based labels (Borsa Italiana style: "Denaro" / "Lettera" / "Volatilità" / "Spread")
+            const rows = document.querySelectorAll('table tr');
+            for (const row of rows) {
+                const cells = row.querySelectorAll('td, th');
+                if (cells.length < 2) continue;
+                const label = norm(row.textContent);
+                const lastCellText = norm(cells[cells.length - 1].textContent);
+
+                if (bidVal === null && /(^|\s)(denaro|bid)(\s|$)/i.test(label)) {
+                    bidVal = parseNum(lastCellText);
+                }
+                if (askVal === null && /(^|\s)(lettera|ask)(\s|$)/i.test(label)) {
+                    askVal = parseNum(lastCellText);
+                }
+                if (volVal === null && /volatilit[aà]|volatility/i.test(label)) {
+                    volVal = parseNum(lastCellText);
+                }
+                if (spreadVal === null && /(^|\s)spread(\s|$)/i.test(label)) {
+                    spreadVal = parseNum(lastCellText);
+                }
+            }
+
+            // 2. data-testid based (JustETF realtime quote widget)
+            const bidEl = document.querySelector('[data-testid="realtime-quotes_bid-value"]');
+            const askEl = document.querySelector('[data-testid="realtime-quotes_ask-value"]');
+            if (bidVal === null && bidEl) bidVal = parseNum(bidEl.textContent);
+            if (askVal === null && askEl) askVal = parseNum(askEl.textContent);
+
+            // 3. Generic label/value pairs (e.g. "Spread" / "Volatility 1Y" stat cards on JustETF)
+            const candidates = document.querySelectorAll('dt, th, label, span, div, td');
+            for (const el of candidates) {
+                const text = norm(el.textContent);
+
+                if (spreadVal === null && /^spread:?$/i.test(text)) {
+                    const valueEl = el.nextElementSibling;
+                    if (valueEl) {
+                        const v = parseNum(valueEl.textContent);
+                        if (v !== null) spreadVal = v;
+                    }
+                }
+
+                if (volVal === null && /^(volatility|volatilit[aà])(\s*1\s*y|\s*1\s*anno|\s*annua)?:?$/i.test(text)) {
+                    const valueEl = el.nextElementSibling;
+                    if (valueEl) {
+                        const v = parseNum(valueEl.textContent);
+                        if (v !== null) volVal = v;
+                    }
+                }
+
+                if (spreadVal !== null && volVal !== null) break;
+            }
+
+            return { bidVal, askVal, volVal, spreadVal };
+        });
+
+        bid = result.bidVal;
+        ask = result.askVal;
+        volatility = result.volVal;
+        spread = result.spreadVal;
+    } catch (e) {
+        // Defensive: extraction is best-effort and must never break the price scrape
+    }
+
+    let spreadPercent = null;
+    if (spread !== null) {
+        spreadPercent = spread;
+    } else if (bid !== null && ask !== null && currentPrice > 0) {
+        spreadPercent = ((ask - bid) / currentPrice) * 100;
+    }
+
+    return { spreadPercent, volatility };
+}
+
 async function scrapeToken(page, isin, source = 'ETF') {
     // Re-validate per ISIN
     const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
@@ -372,6 +470,8 @@ async function scrapeToken(page, isin, source = 'ETF') {
         const finalPrice = parseFloat(cleanPrice);
         if (isNaN(finalPrice)) throw new Error(`Failed to parse price: ${priceText}`);
 
+        const { spreadPercent, volatility } = await extractSpreadAndVolatility(page, finalPrice);
+
         return {
             isin,
             success: true,
@@ -379,6 +479,8 @@ async function scrapeToken(page, isin, source = 'ETF') {
                 currentPrice: finalPrice,
                 currency: currency,
                 lastUpdated: new Date().toISOString(),
+                spreadPercent,
+                volatility,
             },
         };
     } catch (err) {

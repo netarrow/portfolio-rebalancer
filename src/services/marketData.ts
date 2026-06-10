@@ -4,6 +4,9 @@ interface MarketData {
     currentPrice: number;
     currency: string;
     lastUpdated: string;
+    // Optional supplemental data — present only when the scraped page exposes it.
+    spreadPercent?: number | null;
+    volatility?: number | null;
 }
 
 export interface PriceRequestToken {
