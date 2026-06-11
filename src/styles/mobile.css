@@ -120,18 +120,41 @@
 
 /* ===== MODALS ===== */
 @media (max-width: 480px) {
+    /* Lock the page behind an open modal: without this, iOS Safari often
+       routes touch scrolling to the background page instead of the form
+       (scroll chaining). Browsers without :has() simply ignore the rule. */
+    body:has(.modal-overlay, .realized-modal-overlay) {
+        overflow: hidden !important;
+    }
+
     .modal-overlay {
         align-items: flex-start !important;
         padding: var(--space-3) !important;
+        overscroll-behavior: contain !important;
     }
 
     .modal-content {
         max-width: 100% !important;
         width: 100% !important;
         padding: var(--space-4) !important;
-        max-height: calc(100vh - var(--space-6)) !important;
+        padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px)) !important;
+        /* Size against the fixed-position overlay (100%), which tracks the
+           *visible* viewport on iOS Safari — unlike 100vh, which includes the
+           area hidden behind the collapsed address bar and cut off the bottom
+           of long forms. */
+        max-height: calc(100% - var(--space-3)) !important;
         overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch !important;
+        overscroll-behavior: contain !important;
         margin-top: var(--space-3) !important;
+    }
+
+    /* Keep a single scroll container. Transactions.css also makes the inner
+       <form> scrollable at ≤768px; two nested scroll areas trap touch
+       gestures on iOS, making long forms feel unscrollable. */
+    .modal-content form {
+        overflow-y: visible !important;
+        flex: 0 0 auto !important;
     }
 
     .form-actions {
