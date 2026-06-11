@@ -138,6 +138,46 @@ export function getPortfolioValueSeries(
     return series;
 }
 
+/**
+ * Net external cash flow per date (Buy cost minus Sell proceeds, scoped by
+ * portfolioId). A Buy injects external cash into the scope's value (the
+ * money used to pay for it isn't part of the value series), a Sell removes
+ * it (proceeds leave the scope). Used to strip cash-flow effects from TWR.
+ */
+export function getCashFlowsByDate(
+    transactions: Transaction[],
+    portfolioId?: string
+): Map<string, number> {
+    const flows = new Map<string, number>();
+    for (const tx of transactions) {
+        if (isIncomeDirection(tx.direction || 'Buy')) continue;
+        if (portfolioId && tx.portfolioId !== portfolioId) continue;
+        const date = (tx.date || '').slice(0, 10);
+        const cost = (Number(tx.amount) || 0) * (Number(tx.price) || 0);
+        const sign = (tx.direction || 'Buy') === 'Buy' ? 1 : -1;
+        flows.set(date, (flows.get(date) || 0) + sign * cost);
+    }
+    return flows;
+}
+
+/**
+ * Time-Weighted Return (%) over a value series, given external cash flows by
+ * date. Links daily returns with same-day flows removed from the numerator,
+ * so contributions/withdrawals don't distort the result (unlike a simple
+ * first-vs-last % change, which is money-weighted).
+ */
+export function computeTWR(series: ValuePoint[], cashFlows: Map<string, number>): number {
+    if (series.length < 2) return 0;
+    let factor = 1;
+    for (let i = 1; i < series.length; i++) {
+        const prev = series[i - 1].value;
+        if (prev <= 0) continue;
+        const cf = cashFlows.get(series[i].date) || 0;
+        factor *= (series[i].value - cf) / prev;
+    }
+    return (factor - 1) * 100;
+}
+
 /** Close-price series for a single ticker within an optional range. */
 export function getAssetPriceSeries(
     ticker: string,

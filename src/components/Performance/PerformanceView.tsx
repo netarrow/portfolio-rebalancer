@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, computeTWR } from '../../utils/performanceCalculations';
 import '../Dashboard/Dashboard.css';
 
 type RangeKey = '1M' | '6M' | '1Y' | 'MAX';
@@ -22,6 +22,7 @@ const PerformanceView: React.FC = () => {
     const [scope, setScope] = useState('networth');
     const [range, setRange] = useState<RangeKey>('1Y');
     const [includeLiquidity, setIncludeLiquidity] = useState(true);
+    const [returnMode, setReturnMode] = useState<'mwr' | 'twr'>('twr');
 
     const hasHistory = Object.keys(priceHistory).length > 0;
 
@@ -135,6 +136,13 @@ const PerformanceView: React.FC = () => {
     const delta = lastValue - firstValue;
     const deltaPct = firstValue > 0 ? (delta / firstValue) * 100 : 0;
 
+    const twrPct = useMemo(() => {
+        if (isAssetScope) return null;
+        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
+        const cashFlows = getCashFlowsByDate(transactions, portfolioId);
+        return computeTWR(series, cashFlows);
+    }, [series, scope, isAssetScope, transactions]);
+
     if (!hasHistory) {
         return (
             <div className="dashboard-container">
@@ -243,10 +251,45 @@ const PerformanceView: React.FC = () => {
                         </div>
                     </div>
                     <div>
-                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Change over range</div>
-                        <div style={{ color: delta >= 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 700, fontSize: '1.3rem' }}>
-                            {delta >= 0 ? '+' : ''}€{delta.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                            {firstValue > 0 && ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)`}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Change over range</div>
+                            {!isAssetScope && (
+                                <div style={{ display: 'flex', gap: '0.15rem' }}>
+                                    {(['twr', 'mwr'] as const).map(m => (
+                                        <button
+                                            key={m}
+                                            onClick={() => setReturnMode(m)}
+                                            title={m === 'mwr'
+                                                ? 'Money-Weighted Return: includes the effect of cash deposits/withdrawals'
+                                                : 'Time-Weighted Return: excludes the effect of cash deposits/withdrawals'}
+                                            style={{
+                                                padding: '0.05rem 0.4rem',
+                                                background: returnMode === m ? 'var(--color-primary)' : 'var(--bg-card)',
+                                                color: returnMode === m ? 'white' : 'var(--text-secondary)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: '999px', cursor: 'pointer', fontWeight: 600, fontSize: '0.65rem',
+                                                textTransform: 'uppercase'
+                                            }}
+                                        >
+                                            {m}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div style={{
+                            color: (returnMode === 'twr' && !isAssetScope && twrPct !== null ? twrPct : delta) >= 0
+                                ? 'var(--color-success)' : 'var(--color-danger)',
+                            fontWeight: 700, fontSize: '1.3rem'
+                        }}>
+                            {returnMode === 'mwr' || isAssetScope || twrPct === null ? (
+                                <>
+                                    {delta >= 0 ? '+' : ''}€{delta.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                    {firstValue > 0 && ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)`}
+                                </>
+                            ) : (
+                                `${twrPct >= 0 ? '+' : ''}${twrPct.toFixed(2)}%`
+                            )}
                         </div>
                     </div>
                 </div>
