@@ -353,7 +353,9 @@
 @media (max-width: 600px) {
     .realized-modal {
         max-width: 100%;
-        max-height: 90vh;
+        /* % of the fixed overlay tracks the visible viewport on iOS Safari;
+           90vh extends behind the collapsed address bar */
+        max-height: 90%;
         border-radius: var(--radius-md) var(--radius-md) 0 0;
         margin-top: auto;
     }
@@ -361,6 +363,13 @@
     .realized-modal-overlay {
         align-items: flex-end;
         padding: 0;
+        overscroll-behavior: contain;
+    }
+
+    .realized-modal-body {
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior: contain;
+        padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom, 0px));
     }
 
     .charts-grid {
