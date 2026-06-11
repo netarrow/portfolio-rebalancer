@@ -15,6 +15,7 @@ import {
     endFreeWork,
     runExclusivePremium,
 } from './concurrency.js';
+import { fetchHistoryForToken } from './history.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -631,6 +632,91 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('request_history_update', async (payload) => {
+        const tokens = payload?.tokens;
+        const premiumKey = payload?.premiumKey;
+        const isPremium = isValidPremiumKey(premiumKey);
+
+        // Same per-socket sliding window as price updates: history fetches hit
+        // external services too, just via fetch instead of Puppeteer.
+        if (!isPremium) {
+            const now = Date.now();
+            socketRequestTimestamps = socketRequestTimestamps.filter(t => now - t < SOCKET_RATE_WINDOW_MS);
+            if (socketRequestTimestamps.length >= SOCKET_RATE_LIMIT) {
+                socket.emit('history_update_error', { message: 'Too many price requests, please retry in a minute.' });
+                return;
+            }
+            socketRequestTimestamps.push(now);
+        }
+
+        console.log(`Received socket history request for ${tokens?.length} assets from ${socket.id} (${isPremium ? 'PREMIUM' : 'free'})`);
+
+        const validationError = validateTokens(tokens);
+        if (validationError) {
+            socket.emit('history_update_error', { message: validationError });
+            return;
+        }
+
+        try {
+            if (isPremium) {
+                await runExclusivePremium(async () => {
+                    for (const token of tokens) {
+                        socket.emit('history_update_progress', { isin: token.isin, status: 'processing' });
+                        const result = await fetchHistoryForToken(token, { withBrowserFn: withBrowser });
+                        socket.emit('history_update_item', result);
+                    }
+                });
+            } else {
+                // Serve cached histories immediately, fetch the rest under the
+                // free-tier discipline (browser opened lazily, only for COMETA).
+                const uncached = [];
+                for (const token of tokens) {
+                    const { isin, source = 'ETF', beginDate = '' } = token;
+                    socket.emit('history_update_progress', { isin, status: 'processing' });
+                    const cached = isProduction ? getCached(`hist:${beginDate}:${source}`, isin) : null;
+                    if (cached) {
+                        socket.emit('history_update_item', { ...cached, cached: true });
+                    } else {
+                        uncached.push(token);
+                    }
+                }
+
+                if (uncached.length > 0) {
+                    let slotAcquired = false;
+                    try {
+                        await waitWhilePremium();
+                        await acquireFreeSlot();
+                        slotAcquired = true;
+                        for (const token of uncached) {
+                            const { isin, source = 'ETF', beginDate = '' } = token;
+                            await waitWhilePremium();
+                            beginFreeWork();
+                            try {
+                                const result = await fetchHistoryForToken(token, { withBrowserFn: withBrowser });
+                                if (result.success && isProduction) setCached(`hist:${beginDate}:${source}`, isin, result);
+                                socket.emit('history_update_item', result);
+                            } finally {
+                                endFreeWork();
+                            }
+                        }
+                    } catch (slotErr) {
+                        for (const token of uncached) {
+                            socket.emit('history_update_item', { isin: token.isin, success: false, error: slotErr.message });
+                        }
+                    } finally {
+                        if (slotAcquired) releaseFreeSlot();
+                    }
+                }
+            }
+
+            socket.emit('history_update_complete', { message: 'All requested histories processed' });
+
+        } catch (globalError) {
+            console.error('Global history error:', globalError);
+            socket.emit('history_update_error', { message: 'Server error while fetching price history. Please try again.' });
+        }
+    });
+
     socket.on('disconnect', () => {
         console.log('Client disconnected', socket.id);
     });
@@ -702,6 +788,69 @@ app.post('/api/price', priceLimiter, async (req, res) => {
     } catch (globalError) {
         console.error('Global puppeteer error (HTTP):', globalError);
         return res.status(500).json({ error: 'Server error while fetching prices. Please try again.' });
+    }
+    res.json({ results });
+});
+
+app.post('/api/history', priceLimiter, async (req, res) => {
+    const { tokens, premiumKey } = req.body;
+
+    const validationError = validateTokens(tokens);
+    if (validationError) {
+        return res.status(400).json({ error: validationError });
+    }
+
+    const isPremium = isValidPremiumKey(premiumKey);
+    console.log(`Received bulk history request for ${tokens.length} assets (HTTP, ${isPremium ? 'PREMIUM' : 'free'})`);
+
+    const results = [];
+    try {
+        if (isPremium) {
+            await runExclusivePremium(async () => {
+                for (const token of tokens) {
+                    results.push(await fetchHistoryForToken(token, { withBrowserFn: withBrowser }));
+                }
+            });
+        } else {
+            const uncached = [];
+            for (const token of tokens) {
+                const { isin, source = 'ETF', beginDate = '' } = token;
+                const cached = getCached(`hist:${beginDate}:${source}`, isin);
+                if (cached) {
+                    results.push({ ...cached, cached: true });
+                } else {
+                    uncached.push(token);
+                }
+            }
+
+            if (uncached.length > 0) {
+                let slotAcquired = false;
+                try {
+                    await waitWhilePremium();
+                    await acquireFreeSlot();
+                    slotAcquired = true;
+                    for (const token of uncached) {
+                        const { isin, source = 'ETF', beginDate = '' } = token;
+                        await waitWhilePremium();
+                        beginFreeWork();
+                        try {
+                            const result = await fetchHistoryForToken(token, { withBrowserFn: withBrowser });
+                            if (result.success) setCached(`hist:${beginDate}:${source}`, isin, result);
+                            results.push(result);
+                        } finally {
+                            endFreeWork();
+                        }
+                    }
+                } catch (slotErr) {
+                    return res.status(503).json({ error: slotErr.message });
+                } finally {
+                    if (slotAcquired) releaseFreeSlot();
+                }
+            }
+        }
+    } catch (globalError) {
+        console.error('Global history error (HTTP):', globalError);
+        return res.status(500).json({ error: 'Server error while fetching price history. Please try again.' });
     }
     res.json({ results });
 });
