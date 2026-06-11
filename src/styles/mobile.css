@@ -158,6 +158,9 @@
     }
 
     .form-actions {
+        /* display:flex here too: some forms (e.g. GoalForm) have no base
+           .form-actions rule of their own, and column-reverse needs it */
+        display: flex !important;
         flex-direction: column-reverse !important;
         gap: var(--space-2) !important;
     }
