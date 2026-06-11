@@ -271,7 +271,12 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           .navbar-links.show {
             display: flex;
             max-height: calc(100vh - 64px);
+            /* dvh tracks the iOS Safari collapsing address bar; vh above is
+               the fallback for older browsers */
+            max-height: calc(100dvh - 64px);
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
           }
 
           .nav-link {
