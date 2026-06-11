@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'disclaimer' | 'globalRebalancing' | 'ynab';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab';
 
 interface LayoutProps {
   currentView: View;
@@ -43,6 +43,12 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             onClick={() => handleNavigate('stats')}
           >
             Stats
+          </button>
+          <button
+            className={`nav-link ${currentView === 'performance' ? 'active' : ''}`}
+            onClick={() => handleNavigate('performance')}
+          >
+            Performance
           </button>
           <button
             className={`nav-link ${currentView === 'transactions' ? 'active' : ''}`}

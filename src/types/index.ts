@@ -141,6 +141,23 @@ export interface Asset {
   gainPercentage?: number;
 }
 
+// Daily/monthly close-price history per ticker, accumulated by price updates
+// and backfilled from the chart APIs of the scraped sources. Kept compact
+// ([date, price] tuples) because the whole map lives in localStorage.
+export type PricePoint = [string, number]; // ['YYYY-MM-DD', closePrice]
+
+export interface TickerPriceHistory {
+  points: PricePoint[]; // ascending by date, unique dates
+  granularity: 'D' | 'M';
+  // 'clean' = corso secco (MOT bonds from the chart API, no accrued interest);
+  // 'dirty' = market price / NAV. Daily tel-quel snapshots must never be
+  // appended to a clean series.
+  priceBasis?: 'clean' | 'dirty';
+  lastHistoryFetch?: string;
+}
+
+export type PriceHistoryMap = Record<string, TickerPriceHistory>;
+
 // Formerly "Target", now acts as Asset Registry/Settings
 export interface AssetDefinition {
   ticker: string;

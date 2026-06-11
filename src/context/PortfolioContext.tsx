@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint } from '../types';
+import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps } from '../utils/priceHistory';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
 import { parseGoalDescriptor } from '../utils/ynabGoalParser';
@@ -37,6 +38,10 @@ interface PortfolioContextType {
     updateGoalAllocation: (allocations: GoalAllocation) => void;
     updateTransactionsBulk: (ids: string[], updates: Partial<Transaction>) => void;
     refreshPrices: () => Promise<void>;
+    // Day-by-day price history (local-only, NOT synced to Azure; separate backup JSON)
+    priceHistory: PriceHistoryMap;
+    refreshHistory: () => Promise<void>;
+    importPriceHistory: (history: PriceHistoryMap, mode: 'merge' | 'replace') => boolean;
     // Premium "Update Price" unlock key (local-only, never synced to Azure).
     premiumPriceKey: string;
     setPremiumPriceKey: (key: string) => void;
@@ -122,6 +127,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [brokers, setBrokers] = useLocalStorage<Broker[]>('portfolio_brokers', []);
     const [goals, setGoals] = useLocalStorage<Goal[]>('portfolio_goals', []);
     const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null }>>('portfolio_market_data', {});
+    // Day-by-day close-price history per ticker. Local-only by design: NOT part
+    // of the Azure SyncPayload (it would re-upload megabytes on every debounced
+    // sync) and NOT part of the v4 backup — it has its own export/import JSON.
+    const [priceHistory, setPriceHistory] = useLocalStorage<PriceHistoryMap>('portfolio_price_history', {});
     const [storedAssetAllocationSettings, setStoredAssetAllocationSettings] = useLocalStorage<AssetAllocationSettings>(
         'portfolio_asset_allocation_v1',
         { portfolioTargets: {}, ratioGroups: [] }
@@ -197,6 +206,40 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [isPriceModalOpen, setIsPriceModalOpen] = useState(false);
     const [priceUpdateItems, setPriceUpdateItems] = useState<PriceUpdateItem[]>([]);
     const [isUpdateComplete, setIsUpdateComplete] = useState(false);
+    const [priceModalTitle, setPriceModalTitle] = useState('Updating Prices');
+
+    // Buffers for history writes. useLocalStorage re-serializes (and, under
+    // SLE, re-encrypts) the whole map on every set, so per-item writes during a
+    // batch would be O(items × map size). Points accumulate here and flush with
+    // a single setPriceHistory when the batch completes (or errors out).
+    const historyBufferRef = useRef<Array<{ isin: string; points: PricePoint[]; granularity: 'D' | 'M'; priceBasis?: 'clean' | 'dirty' }>>([]);
+    const snapshotBufferRef = useRef<Array<{ isin: string; price: number; date: string }>>([]);
+
+    const flushSnapshotBuffer = () => {
+        const snapshots = snapshotBufferRef.current;
+        if (snapshots.length === 0) return;
+        snapshotBufferRef.current = [];
+        setPriceHistory(prev => {
+            let next = prev;
+            for (const { isin, price, date } of snapshots) {
+                next = appendDailySnapshot(next, isin, price, date);
+            }
+            return next;
+        });
+    };
+
+    const flushHistoryBuffer = () => {
+        const batches = historyBufferRef.current;
+        if (batches.length === 0) return;
+        historyBufferRef.current = [];
+        setPriceHistory(prev => {
+            let next = prev;
+            for (const { isin, points, granularity, priceBasis } of batches) {
+                next = upsertTickerHistory(next, isin, points, { granularity, priceBasis });
+            }
+            return next;
+        });
+    };
 
     // Initialize Socket
     useEffect(() => {
@@ -243,15 +286,74 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
             if (success && data && data.currentPrice) {
                 updateMarketData(isin, data.currentPrice, data.lastUpdated, { spreadPercent: data.spreadPercent, volatility: data.volatility });
+                // Accumulate today's point so every regular price update also
+                // grows the local history (CPRAM only ever grows this way).
+                snapshotBufferRef.current.push({
+                    isin,
+                    price: data.currentPrice,
+                    date: (data.lastUpdated || new Date().toISOString()).slice(0, 10),
+                });
             }
         });
 
         socket.on('price_update_complete', () => {
+            flushSnapshotBuffer();
             setIsUpdateComplete(true);
         });
 
         socket.on('price_update_error', ({ message }) => {
             console.error('Socket Global Error:', message);
+            flushSnapshotBuffer();
+            setPriceUpdateItems(prev => prev.map(item =>
+                (item.status === 'pending' || item.status === 'processing')
+                    ? { ...item, status: 'error', error: message }
+                    : item
+            ));
+            setIsUpdateComplete(true);
+        });
+
+        // History updates share the modal plumbing with price updates
+        socket.on('history_update_progress', ({ isin, status }) => {
+            setPriceUpdateItems(prev => prev.map(item =>
+                item.isin === isin ? { ...item, status } : item
+            ));
+        });
+
+        socket.on('history_update_item', ({ isin, success, data, error, cached }) => {
+            setPriceUpdateItems(prev => prev.map(item => {
+                if (item.isin === isin) {
+                    const lastPoint = data?.points?.[data.points.length - 1];
+                    return {
+                        ...item,
+                        status: success ? 'success' : 'error',
+                        price: lastPoint?.price,
+                        currency: data?.currency,
+                        pointsCount: data?.points?.length,
+                        error: error,
+                        cached: !!cached
+                    };
+                }
+                return item;
+            }));
+
+            if (success && Array.isArray(data?.points) && data.points.length > 0) {
+                historyBufferRef.current.push({
+                    isin,
+                    points: data.points.map((p: { date: string; price: number }) => [p.date, p.price] as PricePoint),
+                    granularity: data.granularity === 'M' ? 'M' : 'D',
+                    priceBasis: data.priceBasis,
+                });
+            }
+        });
+
+        socket.on('history_update_complete', () => {
+            flushHistoryBuffer();
+            setIsUpdateComplete(true);
+        });
+
+        socket.on('history_update_error', ({ message }) => {
+            console.error('Socket History Error:', message);
+            flushHistoryBuffer();
             setPriceUpdateItems(prev => prev.map(item =>
                 (item.status === 'pending' || item.status === 'processing')
                     ? { ...item, status: 'error', error: message }
@@ -279,6 +381,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             socket.off('price_update_item');
             socket.off('price_update_complete');
             socket.off('price_update_error');
+            socket.off('history_update_progress');
+            socket.off('history_update_item');
+            socket.off('history_update_complete');
+            socket.off('history_update_error');
             socket.off('disconnect');
             socket.off('connect_error');
         };
@@ -851,6 +957,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setMacroAllocations({});
         setGoalAllocations({});
         setGoals([]);
+        setPriceHistory({});
     };
 
     const refreshPrices = async () => {
@@ -901,6 +1008,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             status: 'pending'
         }));
 
+        setPriceModalTitle('Updating Prices');
         setPriceUpdateItems(initialItems);
         setIsUpdateComplete(false);
         setIsPriceModalOpen(true);
@@ -912,6 +1020,73 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             console.error('Socket not connected');
             setPriceUpdateItems(prev => prev.map(t => ({ ...t, status: 'error', error: 'Socket disconnected' })));
             setIsUpdateComplete(true);
+        }
+    };
+
+    const refreshHistory = async () => {
+        const { assets } = calculateAssets(transactions, assetSettings, marketData);
+        const activeAssets = assets.filter(a => a.quantity > 0);
+        if (activeAssets.length === 0) {
+            console.log('No assets with quantity >= 1 found for history update.');
+            return;
+        }
+
+        const trimmedKey = premiumPriceKey.trim();
+        if (!trimmedKey) {
+            const confirm = await Swal.fire({
+                title: 'Limited free update',
+                html: `<p style="text-align:left;font-size:0.9rem">You don't have a <b>Premium Update Price</b> key configured.</p>
+                       <p style="text-align:left;font-size:0.9rem;color:#b45309">Without it history requests are throttled and served from a shared cache, so the data may be <b>delayed by up to a day</b>.</p>`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Update anyway',
+                cancelButtonText: 'Cancel',
+            });
+            if (!confirm.isConfirmed) return;
+        }
+
+        // Backfill each asset from its first purchase date (server falls back
+        // to one year ago when a ticker has no Buy transaction).
+        const tokens = activeAssets.map(asset => {
+            const setting = assetSettings.find(t => t.ticker === asset.ticker);
+            const buyDates = transactions
+                .filter(t => t.ticker === asset.ticker && t.direction === 'Buy' && t.date)
+                .map(t => t.date.slice(0, 10));
+            const beginDate = buyDates.length > 0 ? buyDates.sort()[0] : undefined;
+            return {
+                isin: asset.ticker,
+                source: setting?.source || 'ETF',
+                beginDate,
+            };
+        });
+
+        const initialItems: PriceUpdateItem[] = tokens.map(t => ({
+            isin: t.isin,
+            status: 'pending'
+        }));
+
+        setPriceModalTitle('Updating Price History');
+        setPriceUpdateItems(initialItems);
+        setIsUpdateComplete(false);
+        setIsPriceModalOpen(true);
+
+        if (socket) {
+            socket.emit('request_history_update', { tokens, premiumKey: trimmedKey || undefined });
+        } else {
+            console.error('Socket not connected');
+            setPriceUpdateItems(prev => prev.map(t => ({ ...t, status: 'error', error: 'Socket disconnected' })));
+            setIsUpdateComplete(true);
+        }
+    };
+
+    const importPriceHistory = (history: PriceHistoryMap, mode: 'merge' | 'replace'): boolean => {
+        try {
+            if (!history || typeof history !== 'object' || Array.isArray(history)) return false;
+            setPriceHistory(prev => mergeHistoryMaps(prev, history, mode));
+            return true;
+        } catch (e) {
+            console.error('Failed to import price history', e);
+            return false;
         }
     };
 
@@ -1311,6 +1486,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return { ok: false, error: 'Azure non configurato o disabilitato' };
         try {
             setAzureSyncing(true);
+            // NOTE: priceHistory is intentionally NOT in the payload — it can grow
+            // to megabytes and would be re-uploaded on every debounced sync. It is
+            // local-only, with its own export/import JSON in Settings.
             const payload: SyncPayload = {
                 syncVersion: 1, syncTimestamp: new Date().toISOString(),
                 transactions, assetSettings, portfolios, brokers, marketData,
@@ -1711,6 +1889,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateMacroAllocation,
         updateGoalAllocation,
         refreshPrices,
+        priceHistory,
+        refreshHistory,
+        importPriceHistory,
         premiumPriceKey,
         setPremiumPriceKey,
         resetPortfolio,
@@ -1778,6 +1959,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 onClose={() => setIsPriceModalOpen(false)}
                 items={priceUpdateItems}
                 isComplete={isUpdateComplete}
+                title={priceModalTitle}
             />
         </PortfolioContext.Provider>
     );

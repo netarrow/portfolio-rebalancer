@@ -10,6 +10,8 @@ export interface PriceUpdateItem {
     volatility?: number | null;
     error?: string;
     cached?: boolean;
+    // Number of historical points received (history updates only)
+    pointsCount?: number;
 }
 
 interface Props {
@@ -17,9 +19,10 @@ interface Props {
     onClose: () => void;
     items: PriceUpdateItem[];
     isComplete: boolean;
+    title?: string;
 }
 
-const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete }) => {
+const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete, title = 'Updating Prices' }) => {
     const listRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to bottom as items update
@@ -36,7 +39,7 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete 
             <div className="modal-content" style={{ maxWidth: '500px', width: '90%', maxHeight: '80vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
                 <button className="modal-close-btn" type="button" onClick={onClose} disabled={!isComplete}>×</button>
                 <h3 style={{ marginBottom: '1rem', color: 'var(--text-primary)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    Updating Prices
+                    {title}
                     {!isComplete && <span className="loader-spinner" style={{ width: '20px', height: '20px', border: '3px solid var(--text-muted)', borderTop: '3px solid var(--color-primary)', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></span>}
                 </h3>
 
@@ -57,6 +60,11 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete 
                                     {item.cached && item.status === 'success' && (
                                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }} title="Served from the free-tier cache — may be up to a day old">
                                             cached · may be delayed
+                                        </span>
+                                    )}
+                                    {item.status === 'success' && item.pointsCount != null && (
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                            {item.pointsCount} points
                                         </span>
                                     )}
                                     {item.status === 'success' && (item.spreadPercent != null || item.volatility != null) && (

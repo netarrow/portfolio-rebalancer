@@ -26,6 +26,10 @@ const TargetSettings: React.FC = () => {
         goalAllocations,
         goals,
         importData,
+        // Price history (separate backup JSON, local-only)
+        priceHistory,
+        refreshHistory,
+        importPriceHistory,
         // Azure sync
         azureConfig,
         setAzureConfig,
@@ -43,6 +47,7 @@ const TargetSettings: React.FC = () => {
     // ... (existing state)
     const [showConfirmReset, setShowConfirmReset] = useState(false);
     const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const historyFileInputRef = React.useRef<HTMLInputElement>(null);
 
     // Azure sync form state (local, not persisted until saved)
     const [localSasUrl, setLocalSasUrl] = useState(azureConfig.sasUrl);
@@ -164,6 +169,68 @@ const TargetSettings: React.FC = () => {
         reader.readAsText(file);
     };
 
+
+    const handleHistoryBackup = () => {
+        const backupData = {
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            history: priceHistory,
+        };
+
+        const blob = new Blob([JSON.stringify(backupData)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `portfolio-price-history-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleHistoryRestore = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+            const resetInput = () => { if (historyFileInputRef.current) historyFileInputRef.current.value = ''; };
+            try {
+                const content = e.target?.result as string;
+                const data = JSON.parse(content);
+                if (data?.version !== 1 || !data?.history || typeof data.history !== 'object') {
+                    throw new Error('Invalid price history file');
+                }
+
+                const result = await Swal.fire({
+                    title: 'Import price history?',
+                    html: `<p style="text-align:left;font-size:0.9rem"><b>Merge</b> unions the imported daily points with the existing ones (recommended).</p>
+                           <p style="text-align:left;font-size:0.9rem"><b>Replace</b> discards the current history entirely.</p>`,
+                    icon: 'question',
+                    showCancelButton: true,
+                    showDenyButton: true,
+                    confirmButtonText: 'Merge',
+                    denyButtonText: 'Replace',
+                    cancelButtonText: 'Cancel',
+                });
+
+                if (result.isConfirmed || result.isDenied) {
+                    const success = importPriceHistory(data.history, result.isConfirmed ? 'merge' : 'replace');
+                    if (success) {
+                        Swal.fire('Imported!', 'Price history has been imported.', 'success');
+                    } else {
+                        Swal.fire('Error!', 'Failed to import price history.', 'error');
+                    }
+                }
+                resetInput();
+            } catch (err) {
+                console.error('Price history parse error', err);
+                Swal.fire('Error!', 'Invalid price history file format.', 'error');
+                resetInput();
+            }
+        };
+        reader.readAsText(file);
+    };
 
     const handleSaveAzureConfig = () => {
         const trimmed = localSasUrl.trim();
@@ -423,6 +490,80 @@ const TargetSettings: React.FC = () => {
                         style={{ display: 'none' }}
                         accept=".json"
                         onChange={handleRestore}
+                    />
+                </div>
+
+                {/* Price History (separate backup) */}
+                <h3 style={{ color: 'var(--text-primary)', marginBottom: '0.5rem' }}>Price History</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.5rem' }}>
+                    Day-by-day price history powers the Performance charts. It is kept separate from the
+                    main backup above and from Azure sync: export/import it with its own JSON file.
+                </p>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '1rem' }}>
+                    "Update History" backfills each asset from its first purchase date. Notes: MOT bonds are
+                    stored as clean price (corso secco, no accrued interest), COMETA has monthly NAV points,
+                    CPRAM has no historical source and only accumulates from regular price updates.
+                </p>
+                <div className="data-management-buttons" style={{ display: 'flex', gap: '1rem', marginBottom: '3rem', flexWrap: 'wrap' }}>
+                    <button
+                        onClick={() => refreshHistory()}
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            backgroundColor: 'var(--bg-card)',
+                            border: '1px solid var(--color-primary)',
+                            color: 'var(--color-primary)',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                        }}
+                    >
+                        <span style={{ fontSize: '1.2rem' }}>⟳</span> Update History
+                    </button>
+
+                    <button
+                        onClick={handleHistoryBackup}
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            backgroundColor: 'var(--bg-card)',
+                            border: '1px solid var(--text-secondary)',
+                            color: 'var(--text-primary)',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                        }}
+                    >
+                        <span style={{ fontSize: '1.2rem' }}>↓</span> Export History
+                    </button>
+
+                    <button
+                        onClick={() => historyFileInputRef.current?.click()}
+                        style={{
+                            padding: '0.75rem 1.5rem',
+                            backgroundColor: 'var(--bg-card)',
+                            border: '1px solid var(--text-secondary)',
+                            color: 'var(--text-primary)',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                        }}
+                    >
+                        <span style={{ fontSize: '1.2rem' }}>↑</span> Import History
+                    </button>
+                    <input
+                        type="file"
+                        ref={historyFileInputRef}
+                        style={{ display: 'none' }}
+                        accept=".json"
+                        onChange={handleHistoryRestore}
                     />
                 </div>
             </div>
