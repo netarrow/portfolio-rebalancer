@@ -14,13 +14,15 @@ export interface ForecastResult {
 
 export interface ForecastPortfolioInput extends Portfolio {
     currentValue: number;
-    primaryGoal?: string; // e.g. 'Growth', 'Protection'
+    // goalId (inherited from Portfolio) links the portfolio to a user-defined Goal;
+    // expense eligibility is matched on it.
 }
 
 export interface ForecastExpense {
     year: number;
     amount: number;
-    allowedTypes?: string[]; // If empty/undefined, all allowed
+    allowedGoalIds?: string[]; // Goal ids whose linked portfolios may fund this. Empty/undefined = all portfolios.
+    allowedGoalLabels?: string[]; // Display titles for warnings only (not used for matching)
     erosionAllowed?: boolean; // If true, can take from liquidity
 }
 
@@ -61,7 +63,7 @@ export const calculateForecastWithState = (
     let portfolioState = portfolios.map(p => ({
         id: p.id,
         value: p.currentValue,
-        primaryGoal: p.primaryGoal || 'Growth' // Default fallback
+        goalId: p.goalId // undefined = not linked to any Goal
     }));
 
     // Year-0 value mix, used when rebalanceToInitialWeights is on
@@ -117,11 +119,12 @@ export const calculateForecastWithState = (
 
             if (expenseAmount <= 0) continue;
 
-            // 3. Pay with Allowed Portfolios
-            const allowedTypes = expense.allowedTypes;
+            // 3. Pay with Allowed Portfolios (matched on the Portfolio→Goal link)
+            const allowedGoalIds = expense.allowedGoalIds;
+            const restricted = !!allowedGoalIds && allowedGoalIds.length > 0;
             const eligiblePortfolios = portfolioState.filter(p => {
-                if (!allowedTypes || allowedTypes.length === 0) return true;
-                return allowedTypes.includes(p.primaryGoal);
+                if (!restricted) return true;
+                return !!p.goalId && allowedGoalIds!.includes(p.goalId);
             });
 
             const eligibleTotalValue = eligiblePortfolios.reduce((sum, p) => sum + p.value, 0);
@@ -141,31 +144,38 @@ export const calculateForecastWithState = (
                     hasRuleBreach = true;
                     // Only overwrite reason if it's the first breach, or if we escalate to insolvency later
                     if (!failureReason || !hasInsolvency) {
-                        failureReason = `Risk Warning Year ${currentYear}: Insufficient funds in ${allowedTypes?.join(', ') || 'All Allowed Protocols'}. Needed €${expenseAmount.toFixed(0)}.`;
+                        const sourcesLabel = expense.allowedGoalLabels?.join(', ') || 'the allowed goals';
+                        failureReason = `Risk Warning Year ${currentYear}: Insufficient funds in portfolios linked to ${sourcesLabel}. Needed €${expenseAmount.toFixed(0)}.`;
                     }
                 }
             }
 
+            // Withdraw from eligible portfolios proportionally
             if (eligibleTotalValue > 0) {
+                const fromEligible = Math.min(eligibleTotalValue, expenseAmount);
                 eligiblePortfolios.forEach(p => {
-                    const share = (p.value / eligibleTotalValue) * expenseAmount;
-                    const withdraw = Math.min(p.value, share);
-                    p.value -= withdraw;
+                    const share = (p.value / eligibleTotalValue) * fromEligible;
+                    p.value -= Math.min(p.value, share);
                 });
-            } else {
-                // Fallback: If we are here, we either breached rules or are insolvent.
-                // Logic: Iterate ALL portfolios if eligible are empty/insufficient, to show the impact on Net Worth.
-                if (portfolioState.length > 0) {
-                    const totalP = portfolioState.reduce((sum, p) => sum + p.value, 0);
-                    if (totalP > 0) {
-                        portfolioState.forEach(p => {
-                            const share = (p.value / totalP) * expenseAmount;
-                            p.value -= Math.min(p.value, share);
-                        });
-                    } else {
-                        // Debt on broker
-                        if (brokerState.length > 0) brokerState[0].liquidity -= expenseAmount;
-                    }
+                expenseAmount -= fromEligible;
+            }
+
+            // Remainder: rules already breached above — pull from the other
+            // portfolios so Net Worth reflects the payment, then debt as last resort.
+            if (expenseAmount > 0) {
+                const otherPortfolios = portfolioState.filter(p => !eligiblePortfolios.includes(p));
+                const otherTotal = otherPortfolios.reduce((sum, p) => sum + p.value, 0);
+                if (otherTotal > 0) {
+                    const fromOthers = Math.min(otherTotal, expenseAmount);
+                    otherPortfolios.forEach(p => {
+                        const share = (p.value / otherTotal) * fromOthers;
+                        p.value -= Math.min(p.value, share);
+                    });
+                    expenseAmount -= fromOthers;
+                }
+                if (expenseAmount > 0 && brokerState.length > 0) {
+                    // Debt on broker
+                    brokerState[0].liquidity -= expenseAmount;
                 }
             }
         }

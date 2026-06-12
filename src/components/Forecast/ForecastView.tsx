@@ -3,14 +3,18 @@ import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateForecastWithState, runMonteCarloForecast, getAssetVolatility } from '../../utils/forecastCalculations';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
-import { getAssetGoal } from '../../utils/goalCalculations';
 import { isIncomeDirection } from '../../types';
 import type { TransactionDirection } from '../../types';
 
-const EXPENSE_TYPES = ['Growth', 'Protection', 'Security'];
-
 const ForecastView: React.FC = () => {
-    const { portfolios, brokers, marketData, transactions, assetSettings } = usePortfolio();
+    const { portfolios, brokers, marketData, transactions, assetSettings, goals } = usePortfolio();
+
+    const sortedGoals = useMemo(() => [...goals].sort((a, b) => a.order - b.order), [goals]);
+    const goalTitleById = useMemo(() => {
+        const map: Record<string, string> = {};
+        goals.forEach(g => { map[g.id] = g.title; });
+        return map;
+    }, [goals]);
 
     // Inputs
     const [timeHorizon, setTimeHorizon] = useState<number | ''>('');
@@ -31,7 +35,7 @@ const ForecastView: React.FC = () => {
         year: number;
         amount: number;
         description: string;
-        allowedTypes: string[];
+        allowedGoalIds: string[];
         erosionAllowed: boolean;
     }[]>([]);
 
@@ -39,7 +43,7 @@ const ForecastView: React.FC = () => {
     const [newExpYear, setNewExpYear] = useState<number | ''>('');
     const [newExpAmount, setNewExpAmount] = useState<number | ''>('');
     const [newExpDesc, setNewExpDesc] = useState('');
-    const [newExpAllowedTypes, setNewExpAllowedTypes] = useState<string[]>(['Growth', 'Protection', 'Security']);
+    const [newExpAllowedGoalIds, setNewExpAllowedGoalIds] = useState<string[]>(() => goals.map(g => g.id));
     const [newExpErosionAllowed, setNewExpErosionAllowed] = useState(false);
 
     const handleAddExpense = () => {
@@ -49,14 +53,14 @@ const ForecastView: React.FC = () => {
             year: Number(newExpYear),
             amount: Number(newExpAmount),
             description: newExpDesc || 'Expense',
-            allowedTypes: newExpAllowedTypes,
+            allowedGoalIds: newExpAllowedGoalIds,
             erosionAllowed: newExpErosionAllowed
         }]);
         setNewExpYear('');
         setNewExpAmount('');
         setNewExpDesc('');
         // Reset defaults
-        setNewExpAllowedTypes(['Growth', 'Protection', 'Security']);
+        setNewExpAllowedGoalIds(goals.map(g => g.id));
         setNewExpErosionAllowed(false);
     };
 
@@ -64,11 +68,11 @@ const ForecastView: React.FC = () => {
         setYearlyExpenses(yearlyExpenses.filter(e => e.id !== id));
     };
 
-    const toggleAllowedType = (type: string) => {
-        if (newExpAllowedTypes.includes(type)) {
-            setNewExpAllowedTypes(newExpAllowedTypes.filter(t => t !== type));
+    const toggleAllowedGoal = (goalId: string) => {
+        if (newExpAllowedGoalIds.includes(goalId)) {
+            setNewExpAllowedGoalIds(newExpAllowedGoalIds.filter(id => id !== goalId));
         } else {
-            setNewExpAllowedTypes([...newExpAllowedTypes, type]);
+            setNewExpAllowedGoalIds([...newExpAllowedGoalIds, goalId]);
         }
     };
 
@@ -125,23 +129,18 @@ const ForecastView: React.FC = () => {
         return values;
     }, [transactions, marketData, portfolios]);
 
-    // Calculate Primary Goal and estimated volatility for each Portfolio
-    const { portfolioGoals, estimatedVolatilities } = useMemo(() => {
-        const goals: Record<string, string> = {};
+    // Estimated volatility for each Portfolio (value-weighted by asset class)
+    const estimatedVolatilities = useMemo(() => {
         const volatilities: Record<string, number> = {};
 
         portfolios.forEach(p => {
             const pTx = transactions.filter(t => t.portfolioId === p.id);
             const { assets } = calculateAssets(pTx, assetSettings, marketData);
 
-            // Sum value by Goal + value-weighted volatility by asset class
-            const goalValues: Record<string, number> = { 'Growth': 0, 'Protection': 0, 'Security': 0 };
             let totalValue = 0;
             let weightedVol = 0;
 
             assets.forEach(asset => {
-                const goal = getAssetGoal(asset.assetClass, asset.assetSubClass);
-                goalValues[goal] = (goalValues[goal] || 0) + asset.currentValue;
                 if (asset.currentValue > 0) {
                     totalValue += asset.currentValue;
                     weightedVol += asset.currentValue * getAssetVolatility(asset.assetClass, asset.assetSubClass);
@@ -149,28 +148,16 @@ const ForecastView: React.FC = () => {
             });
 
             volatilities[p.id] = totalValue > 0 ? weightedVol / totalValue : 0;
-
-            // Find max
-            let maxGoal = 'Growth';
-            let maxValue = -1;
-            Object.entries(goalValues).forEach(([g, v]) => {
-                if (v > maxValue) {
-                    maxValue = v;
-                    maxGoal = g;
-                }
-            });
-            goals[p.id] = maxGoal;
         });
 
-        return { portfolioGoals: goals, estimatedVolatilities: volatilities };
+        return volatilities;
     }, [portfolios, transactions, assetSettings, marketData]);
 
     // Generate Forecast Data
     const forecastData = useMemo(() => {
         const inputPortfolios = portfolios.map(p => ({
             ...p,
-            currentValue: currentPortfolioValues[p.id] || 0,
-            primaryGoal: portfolioGoals[p.id]
+            currentValue: currentPortfolioValues[p.id] || 0
         }));
 
         const returnsSearchMap: Record<string, number> = {};
@@ -188,13 +175,14 @@ const ForecastView: React.FC = () => {
             yearlyExpenses.map(e => ({
                 year: e.year,
                 amount: e.amount,
-                allowedTypes: e.allowedTypes,
+                allowedGoalIds: e.allowedGoalIds,
+                allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
                 erosionAllowed: e.erosionAllowed
             })),
             undefined,
             { rebalanceToInitialWeights: rebalanceAnnually }
         );
-    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, portfolioGoals, rebalanceAnnually]);
+    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, goalTitleById, rebalanceAnnually]);
 
     // Effective volatility per portfolio (manual override wins over the estimate)
     const effectiveVolatilities = useMemo(() => {
@@ -212,8 +200,7 @@ const ForecastView: React.FC = () => {
 
         const inputPortfolios = portfolios.map(p => ({
             ...p,
-            currentValue: currentPortfolioValues[p.id] || 0,
-            primaryGoal: portfolioGoals[p.id]
+            currentValue: currentPortfolioValues[p.id] || 0
         }));
 
         const returnsMap: Record<string, number> = {};
@@ -232,14 +219,15 @@ const ForecastView: React.FC = () => {
             yearlyExpenses.map(e => ({
                 year: e.year,
                 amount: e.amount,
-                allowedTypes: e.allowedTypes,
+                allowedGoalIds: e.allowedGoalIds,
+                allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
                 erosionAllowed: e.erosionAllowed
             })),
             500,
             mcSeed,
             { rebalanceToInitialWeights: rebalanceAnnually }
         );
-    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, portfolioGoals, effectiveVolatilities, mcSeed, rebalanceAnnually]);
+    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, goalTitleById, effectiveVolatilities, mcSeed, rebalanceAnnually]);
 
     // Chart Config
     const chartOptions = {
@@ -608,25 +596,34 @@ const ForecastView: React.FC = () => {
                                 onChange={e => setNewExpErosionAllowed(e.target.checked)}
                             />
                         </div>
-                        <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Allowed Sources:</label>
+                        <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Allowed Goals (linked portfolios):</label>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            {EXPENSE_TYPES.map(type => (
+                            {sortedGoals.map(goal => (
                                 <div
-                                    key={type}
-                                    onClick={() => toggleAllowedType(type)}
+                                    key={goal.id}
+                                    onClick={() => toggleAllowedGoal(goal.id)}
                                     style={{
                                         padding: '0.2rem 0.6rem',
                                         borderRadius: '12px',
-                                        background: newExpAllowedTypes.includes(type) ? 'var(--color-primary)' : 'var(--bg-card)',
-                                        color: newExpAllowedTypes.includes(type) ? 'white' : 'var(--text-secondary)',
+                                        background: newExpAllowedGoalIds.includes(goal.id) ? 'var(--color-primary)' : 'var(--bg-card)',
+                                        color: newExpAllowedGoalIds.includes(goal.id) ? 'white' : 'var(--text-secondary)',
                                         cursor: 'pointer',
                                         border: '1px solid var(--border-color)'
                                     }}
                                 >
-                                    {type}
+                                    {goal.title}
                                 </div>
                             ))}
                         </div>
+                        {sortedGoals.length === 0 ? (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
+                                No goals defined — the expense can draw from all portfolios.
+                            </div>
+                        ) : newExpAllowedGoalIds.length === 0 && (
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
+                                No goal selected — the expense can draw from all portfolios.
+                            </div>
+                        )}
                     </div>
 
                     <button
@@ -657,7 +654,11 @@ const ForecastView: React.FC = () => {
                                         {expense.erosionAllowed ? '⚠ Liquidity Eroded' : '🛡 Liquidity Safe'}
                                     </span>
                                     <span>|</span>
-                                    <span>{expense.allowedTypes.length === 4 ? 'All Portfolios' : expense.allowedTypes.join(', ')}</span>
+                                    <span>
+                                        {expense.allowedGoalIds.length === 0 || expense.allowedGoalIds.length === goals.length
+                                            ? 'All Portfolios'
+                                            : expense.allowedGoalIds.map(id => goalTitleById[id] || id).join(', ')}
+                                    </span>
                                 </div>
                             </div>
                         ))}
@@ -665,7 +666,7 @@ const ForecastView: React.FC = () => {
                 </div>
 
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '1rem', fontStyle: 'italic' }}>
-                    * Projections use historical returns. Expenses deplete specified portfolios if possible.
+                    * Projections use historical returns. Expenses deplete only the portfolios linked to the allowed Goals; other portfolios are touched only if those are insufficient (flagged as risk).
                     {monteCarloEnabled && ' Monte Carlo samples monthly returns from each portfolio\'s volatility (lognormal, uncorrelated); volatility is estimated from asset-class mix and can be overridden per portfolio.'}
                 </div>
             </div>
@@ -755,8 +756,8 @@ const ForecastView: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {portfolios.map(p => {
                         const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0, unrealizedGain: 0, realizedGain: 0, totalIncome: 0, totalGain: 0, totalCost: 0 };
-                        const goal = portfolioGoals[p.id] || 'Growth';
-                        const goalColor = goal === 'Security' ? '#8B5CF6' : goal === 'Protection' ? '#10B981' : '#3B82F6';
+                        const goal = (p.goalId && goalTitleById[p.goalId]) || 'No goal';
+                        const goalColor = goal === 'No goal' ? '#6B7280' : goal === 'Security' ? '#8B5CF6' : goal === 'Protection' ? '#10B981' : '#3B82F6';
                         const hasRealized = perf.realizedGain !== 0 || perf.totalIncome !== 0;
                         const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 
