@@ -6,7 +6,7 @@ import { CashFlowModal } from './CashFlowModal';
 import './Dashboard.css';
 
 const SummaryCards: React.FC = () => {
-    const { summary, brokers, transactions, assetSettings } = usePortfolio();
+    const { summary, brokers, portfolios, transactions, assetSettings } = usePortfolio();
     const [showRealizedModal, setShowRealizedModal] = React.useState(false);
     const [showCashFlowModal, setShowCashFlowModal] = React.useState(false);
 
@@ -20,17 +20,29 @@ const SummaryCards: React.FC = () => {
         [transactions]
     );
 
-    const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+    // Liquidity = broker cash + per-portfolio cash (same composition the
+    // Performance view uses for its net-worth liquidity overlay).
+    const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0)
+        + portfolios.reduce((sum, p) => sum + (p.liquidity || 0), 0);
     const netWorth = summary.totalValue + totalLiquidity;
 
     const returnValue = summary.totalValue - summary.totalCost;
     const returnPerc = summary.totalCost > 0 ? (returnValue / summary.totalCost) * 100 : 0;
 
+    // Denominator for the realized-inclusive percentages: all capital ever
+    // deployed via Buys, so gains on positions later sold are measured against
+    // the capital that produced them (cost of current holdings would overstate
+    // the % whenever something was sold).
+    const totalBuyInvested = React.useMemo(() => transactions
+        .filter(t => (t.direction || 'Buy') === 'Buy')
+        .reduce((sum, t) => sum + Number(t.amount) * Number(t.price), 0), [transactions]);
+    const costBase = totalBuyInvested > 0 ? totalBuyInvested : summary.totalCost;
+
     const totalAppreciation = returnValue + totalRealized;
-    const totalAppreciationPerc = summary.totalCost > 0 ? (totalAppreciation / summary.totalCost) * 100 : 0;
+    const totalAppreciationPerc = costBase > 0 ? (totalAppreciation / costBase) * 100 : 0;
 
     const totalReturn = totalAppreciation + totalIncome;
-    const totalReturnPerc = summary.totalCost > 0 ? (totalReturn / summary.totalCost) * 100 : 0;
+    const totalReturnPerc = costBase > 0 ? (totalReturn / costBase) * 100 : 0;
 
     const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const getLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;

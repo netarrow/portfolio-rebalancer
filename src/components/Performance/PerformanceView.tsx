@@ -49,12 +49,12 @@ const PerformanceView: React.FC = () => {
 
     const from = rangeFrom(range);
 
-    const series = useMemo(() => {
+    // Series without the liquidity overlay: returns (TWR/MWR) are computed on
+    // this one, because a constant cash overlay has no history and would dampen
+    // every percentage toward zero.
+    const baseSeries = useMemo(() => {
         if (scope === 'networth') {
-            return getNetWorthSeries(transactions, priceHistory, {
-                from,
-                liquidity: includeLiquidity ? currentLiquidity : 0,
-            });
+            return getPortfolioValueSeries(transactions, priceHistory, { from });
         }
         if (scope.startsWith('p:')) {
             return getPortfolioValueSeries(transactions, priceHistory, {
@@ -63,7 +63,15 @@ const PerformanceView: React.FC = () => {
             });
         }
         return getAssetPriceSeries(scope.slice(2), priceHistory, { from });
-    }, [scope, from, includeLiquidity, transactions, priceHistory, currentLiquidity]);
+    }, [scope, from, transactions, priceHistory]);
+
+    // Chart series: net worth optionally overlays today's liquidity as a constant.
+    const series = useMemo(() => {
+        if (scope === 'networth' && includeLiquidity && currentLiquidity !== 0) {
+            return getNetWorthSeries(transactions, priceHistory, { from, liquidity: currentLiquidity });
+        }
+        return baseSeries;
+    }, [scope, includeLiquidity, currentLiquidity, baseSeries, transactions, priceHistory, from]);
 
     const isAssetScope = scope.startsWith('a:');
     const assetHistory = isAssetScope ? priceHistory[scope.slice(2).toUpperCase()] : undefined;
@@ -84,6 +92,21 @@ const PerformanceView: React.FC = () => {
         }
         return Array.from(tickers).sort();
     }, [scope, isAssetScope, transactions, tickersWithHistory]);
+
+    // Tickers in scope whose history is the clean price (corso secco): their
+    // series value excludes accrued interest, while the Dashboard values them
+    // at the tel-quel live price — totals can differ by the accrued part.
+    const cleanBasisTickers = useMemo(() => {
+        if (isAssetScope) return [];
+        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
+        const tickers = new Set<string>();
+        for (const tx of transactions) {
+            if (portfolioId && tx.portfolioId !== portfolioId) continue;
+            const t = tx.ticker.toUpperCase();
+            if (priceHistory[t]?.priceBasis === 'clean') tickers.add(t);
+        }
+        return Array.from(tickers).sort();
+    }, [scope, isAssetScope, transactions, priceHistory]);
 
     const chartOptions = {
         chart: {
@@ -140,8 +163,34 @@ const PerformanceView: React.FC = () => {
         if (isAssetScope) return null;
         const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const cashFlows = getCashFlowsByDate(transactions, portfolioId);
-        return computeTWR(series, cashFlows);
-    }, [series, scope, isAssetScope, transactions]);
+        return computeTWR(baseSeries, cashFlows);
+    }, [baseSeries, scope, isAssetScope, transactions]);
+
+    // Money-Weighted Return: net gain (value change minus net contributions)
+    // over capital deployed (initial value + buys in range). On MAX this matches
+    // the Dashboard's "Total Appreciation" (unrealized + realized over total
+    // capital invested); distributions are tracked separately in the Dashboard.
+    const mwr = useMemo(() => {
+        if (isAssetScope || baseSeries.length === 0) return null;
+        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
+        const first = baseSeries[0];
+        const last = baseSeries[baseSeries.length - 1];
+        let netFlows = 0;
+        let buys = 0;
+        for (const tx of transactions) {
+            if (portfolioId && tx.portfolioId !== portfolioId) continue;
+            const direction = tx.direction || 'Buy';
+            if (direction !== 'Buy' && direction !== 'Sell') continue;
+            const date = (tx.date || '').slice(0, 10);
+            if (date <= first.date || date > last.date) continue;
+            const cost = (Number(tx.amount) || 0) * (Number(tx.price) || 0);
+            if (direction === 'Buy') { netFlows += cost; buys += cost; }
+            else netFlows -= cost;
+        }
+        const gain = last.value - first.value - netFlows;
+        const capital = first.value + buys;
+        return { gain, pct: capital > 0 ? (gain / capital) * 100 : 0 };
+    }, [baseSeries, scope, isAssetScope, transactions]);
 
     if (!hasHistory) {
         return (
@@ -260,7 +309,7 @@ const PerformanceView: React.FC = () => {
                                             key={m}
                                             onClick={() => setReturnMode(m)}
                                             title={m === 'mwr'
-                                                ? 'Money-Weighted Return: includes the effect of cash deposits/withdrawals'
+                                                ? 'Money-Weighted Return: net gain (deposits/withdrawals stripped out) over capital deployed — on MAX it matches the Dashboard\'s Total Appreciation'
                                                 : 'Time-Weighted Return: excludes the effect of cash deposits/withdrawals'}
                                             style={{
                                                 padding: '0.05rem 0.4rem',
@@ -278,17 +327,24 @@ const PerformanceView: React.FC = () => {
                             )}
                         </div>
                         <div style={{
-                            color: (returnMode === 'twr' && !isAssetScope && twrPct !== null ? twrPct : delta) >= 0
+                            color: (isAssetScope || (returnMode === 'mwr' ? mwr === null : twrPct === null)
+                                ? delta
+                                : returnMode === 'mwr' ? mwr!.gain : twrPct!) >= 0
                                 ? 'var(--color-success)' : 'var(--color-danger)',
                             fontWeight: 700, fontSize: '1.3rem'
                         }}>
-                            {returnMode === 'mwr' || isAssetScope || twrPct === null ? (
+                            {isAssetScope || (returnMode === 'mwr' ? mwr === null : twrPct === null) ? (
                                 <>
                                     {delta >= 0 ? '+' : ''}€{delta.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                                     {firstValue > 0 && ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)`}
                                 </>
+                            ) : returnMode === 'mwr' ? (
+                                <>
+                                    {mwr!.gain >= 0 ? '+' : ''}€{mwr!.gain.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                                    {` (${mwr!.pct >= 0 ? '+' : ''}${mwr!.pct.toFixed(2)}%)`}
+                                </>
                             ) : (
-                                `${twrPct >= 0 ? '+' : ''}${twrPct.toFixed(2)}%`
+                                `${twrPct! >= 0 ? '+' : ''}${twrPct!.toFixed(2)}%`
                             )}
                         </div>
                     </div>
@@ -308,6 +364,11 @@ const PerformanceView: React.FC = () => {
                 {isAssetScope && assetSource === 'CPRAM' && (
                     <span style={badgeStyle} title="No historical source for CPRAM — points accumulate from regular price updates only">
                         snapshots only{assetHistory?.points?.[0] ? ` since ${assetHistory.points[0][0]}` : ''}
+                    </span>
+                )}
+                {!isAssetScope && cleanBasisTickers.length > 0 && (
+                    <span style={badgeStyle} title={`Bond history is the clean price (corso secco), without accrued interest: ${cleanBasisTickers.join(', ')} — the Dashboard uses the tel-quel live price, so totals can differ by the accrued part`}>
+                        {cleanBasisTickers.length} bond{cleanBasisTickers.length > 1 ? 's' : ''} at corso secco
                     </span>
                 )}
                 {!isAssetScope && missingHistoryTickers.length > 0 && (
