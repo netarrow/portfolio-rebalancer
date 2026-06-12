@@ -1,4 +1,4 @@
-import type { Transaction, PriceHistoryMap } from '../types';
+import type { Transaction, PriceHistoryMap, TickerPriceHistory } from '../types';
 import { CASH_TICKER_PREFIX, isIncomeDirection } from '../types';
 import { priceAt } from './priceHistory';
 
@@ -191,6 +191,48 @@ export function getAssetPriceSeries(
     return history.points
         .filter(([date]) => date >= from && date <= to)
         .map(([date, price]) => ({ date, value: price }));
+}
+
+/**
+ * Annualized realized volatility (%) from a ticker's close-price history.
+ * Std-dev of consecutive log-returns, annualized by granularity
+ * (√252 for 'D', √12 for 'M'). Returns null when there aren't enough points
+ * (no downloaded volatility and too little history → caller falls back to the
+ * asset-class estimate).
+ */
+export function computeRealizedVolatility(
+    history: TickerPriceHistory | undefined,
+    opts: { minPoints?: number; lookbackYears?: number } = {}
+): number | null {
+    const minPoints = opts.minPoints ?? 8;
+    const lookbackYears = opts.lookbackYears ?? 2;
+    if (!history || !history.points || history.points.length < minPoints + 1) return null;
+
+    // Keep only the recent window so the estimate reflects current volatility.
+    let points = history.points;
+    const lastDate = points[points.length - 1][0];
+    const cutoff = new Date(lastDate);
+    cutoff.setFullYear(cutoff.getFullYear() - lookbackYears);
+    const cutoffISO = cutoff.toISOString().slice(0, 10);
+    const windowed = points.filter(([date]) => date >= cutoffISO);
+    // Use the window only if it still has enough data; otherwise fall back to all points.
+    if (windowed.length >= minPoints + 1) points = windowed;
+
+    // Consecutive log-returns over positive prices.
+    const returns: number[] = [];
+    for (let i = 1; i < points.length; i++) {
+        const prev = points[i - 1][1];
+        const curr = points[i][1];
+        if (prev > 0 && curr > 0) returns.push(Math.log(curr / prev));
+    }
+    if (returns.length < minPoints) return null;
+
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, r) => a + (r - mean) * (r - mean), 0) / (returns.length - 1);
+    const stdDev = Math.sqrt(variance);
+
+    const periodsPerYear = history.granularity === 'M' ? 12 : 252;
+    return stdDev * Math.sqrt(periodsPerYear) * 100;
 }
 
 /**
