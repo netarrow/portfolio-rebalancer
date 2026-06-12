@@ -3,11 +3,12 @@ import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateForecastWithState, runMonteCarloForecast, getAssetVolatility } from '../../utils/forecastCalculations';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
+import { computeRealizedVolatility } from '../../utils/performanceCalculations';
 import { isIncomeDirection } from '../../types';
 import type { TransactionDirection } from '../../types';
 
 const ForecastView: React.FC = () => {
-    const { portfolios, brokers, marketData, transactions, assetSettings, goals } = usePortfolio();
+    const { portfolios, brokers, marketData, transactions, assetSettings, goals, priceHistory } = usePortfolio();
 
     const sortedGoals = useMemo(() => [...goals].sort((a, b) => a.order - b.order), [goals]);
     const goalTitleById = useMemo(() => {
@@ -129,7 +130,10 @@ const ForecastView: React.FC = () => {
         return values;
     }, [transactions, marketData, portfolios]);
 
-    // Estimated volatility for each Portfolio (value-weighted by asset class)
+    // Estimated volatility for each Portfolio (value-weighted). Per ticker we
+    // prefer the volatility downloaded by "Update Prices"; otherwise we compute
+    // the realized volatility from the local price history (Performance data);
+    // otherwise we fall back to the static asset-class estimate.
     const estimatedVolatilities = useMemo(() => {
         const volatilities: Record<string, number> = {};
 
@@ -142,8 +146,13 @@ const ForecastView: React.FC = () => {
 
             assets.forEach(asset => {
                 if (asset.currentValue > 0) {
+                    const md = marketData[asset.ticker] || marketData[asset.ticker.toUpperCase()];
+                    const vol =
+                        (md?.volatility != null ? md.volatility : null)
+                        ?? computeRealizedVolatility(priceHistory[asset.ticker.toUpperCase()])
+                        ?? getAssetVolatility(asset.assetClass, asset.assetSubClass);
                     totalValue += asset.currentValue;
-                    weightedVol += asset.currentValue * getAssetVolatility(asset.assetClass, asset.assetSubClass);
+                    weightedVol += asset.currentValue * vol;
                 }
             });
 
@@ -151,7 +160,7 @@ const ForecastView: React.FC = () => {
         });
 
         return volatilities;
-    }, [portfolios, transactions, assetSettings, marketData]);
+    }, [portfolios, transactions, assetSettings, marketData, priceHistory]);
 
     // Generate Forecast Data
     const forecastData = useMemo(() => {
