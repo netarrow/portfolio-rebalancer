@@ -2,7 +2,7 @@ import React, { createContext, useContext, useMemo, useEffect, useState, useRef 
 import { calculateAssets } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint } from '../types';
-import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps } from '../utils/priceHistory';
+import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
 import { parseGoalDescriptor } from '../utils/ynabGoalParser';
@@ -1090,10 +1090,17 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     };
 
+    // Market data enriched with the freshest local-history close, so the
+    // Dashboard values assets with the same price the Performance view uses.
+    const effectiveMarketData = useMemo(
+        () => mergeLatestCloses(marketData, priceHistory),
+        [marketData, priceHistory]
+    );
+
     // Derive Assets and Summary
     const { assets, summary } = useMemo(() => {
-        return calculateAssets(transactions, assetSettings, marketData);
-    }, [transactions, assetSettings, marketData]);
+        return calculateAssets(transactions, assetSettings, effectiveMarketData);
+    }, [transactions, assetSettings, effectiveMarketData]);
 
     const updateTransaction = (updatedTransaction: Transaction) => {
         setTransactions((prev) => prev.map((t) => (t.id === updatedTransaction.id ? updatedTransaction : t)));
@@ -1896,7 +1903,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setPremiumPriceKey,
         resetPortfolio,
         loadMockData,
-        marketData,
+        marketData: effectiveMarketData,
         portfolios,
         addPortfolio,
         updatePortfolio,

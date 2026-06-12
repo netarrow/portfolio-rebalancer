@@ -88,6 +88,29 @@ export function priceAt(history: TickerPriceHistory | undefined, date: string): 
     return ans >= 0 ? points[ans][1] : null;
 }
 
+export type MarketDataMap = Record<string, { price: number; lastUpdated: string; spreadPercent?: number | null; volatility?: number | null }>;
+
+/**
+ * Market data enriched with the freshest local-history close: tickers whose
+ * history has a point newer than (or missing from) the last price update are
+ * valued at that close — the same price the Performance view uses — so the
+ * Dashboard and the Performance net worth agree. Clean-basis series (MOT
+ * bonds, corso secco) are skipped: their closes are not comparable with the
+ * tel-quel live price.
+ */
+export function mergeLatestCloses(marketData: MarketDataMap, history: PriceHistoryMap): MarketDataMap {
+    let out = marketData;
+    for (const [ticker, h] of Object.entries(history)) {
+        if (!h || h.priceBasis === 'clean' || h.points.length === 0) continue;
+        const [date, price] = h.points[h.points.length - 1];
+        const existing = marketData[ticker];
+        if (existing && existing.lastUpdated.slice(0, 10) >= date) continue;
+        if (out === marketData) out = { ...marketData };
+        out[ticker] = { price, lastUpdated: date };
+    }
+    return out;
+}
+
 /** Merge or replace an imported history map (separate backup JSON). */
 export function mergeHistoryMaps(
     current: PriceHistoryMap,

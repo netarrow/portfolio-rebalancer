@@ -11,14 +11,16 @@ const CLASS_ORDER = ['Stock', 'Bond', 'Commodity', 'Crypto', 'PensionFund'];
 const fmt = (v: number) => `€${Math.round(v).toLocaleString('it-IT')}`;
 
 const MacroStats: React.FC = () => {
-    const { assets, brokers, macroAllocations, goalAllocations, assetSettings } = usePortfolio();
+    const { assets, brokers, portfolios, macroAllocations, goalAllocations, assetSettings } = usePortfolio();
 
     const [simulatedValues, setSimulatedValues] = useState<Record<string, number> | null>(null);
     const [includeCash, setIncludeCash] = useState(true);
 
     const stats = useMemo(() => {
         const totalInvested = assets.reduce((sum, a) => sum + (a.currentValue || 0), 0);
-        const currentLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+        // Broker cash + per-portfolio cash, same composition as the Net Worth card
+        const currentLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0)
+            + portfolios.reduce((sum, p) => sum + (p.liquidity || 0), 0);
         const totalValue = totalInvested + currentLiquidity;
 
         if (totalValue === 0) return null;
@@ -77,7 +79,7 @@ const MacroStats: React.FC = () => {
         const stepSize = Math.max(10, Math.round(totalValue / 1000 / 10) * 10);
 
         return { totalInvested, totalValue, currentLiquidity, macros, goals, goalProjected, subclassValues, stepSize };
-    }, [assets, brokers, macroAllocations, goalAllocations, assetSettings]);
+    }, [assets, brokers, portfolios, macroAllocations, goalAllocations, assetSettings]);
 
     // Effective EUR values per subclass (simulated or actual)
     const effectiveValues = useMemo(() => {
