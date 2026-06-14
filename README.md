@@ -105,17 +105,47 @@ The full history of buys, sells, dividends and coupons, with a quick-add form.
 ![Transactions list](screenshots/transactions_page.png)
 
 - **Add Transaction** (left) — ticker, direction (Buy / Sell / Dividend / Coupon), quantity, price, date, portfolio, broker, and a *free commission* flag.
-- **History** (right) — sortable table, **Group by Portfolio or Broker**; each group header shows running totals and **total fees** (toggleable between EUR and %).
+- **History** (right) — sortable table, **Group by Portfolio, Broker or Asset**; each group header shows running totals and **total fees** (toggleable between EUR and %).
 - **Inline & modal editing** for quick fixes vs full entry.
 - **Update Prices** triggers the live multi-source price refresh (see below).
 
-**Bulk Edit** — select multiple rows to change broker / portfolio / fees together; unchanged fields keep a "keep original" label so you know exactly what will change.
+**Bulk Edit** — select multiple rows to change broker / portfolio / commission together; unchanged fields keep a "keep original" label so you know exactly what will change. The toolbar also offers a quick **Export Excel** for the selected rows.
 
 ![Bulk edit toolbar](screenshots/transactions_bulk_edit.png)
 
 **Excel Import** — import an `.xlsx` history from your broker; the importer recognises a `Broker` column and maps it onto each transaction.
 
 ![Import modal](screenshots/transactions_import_modal.png)
+
+#### Grouping transactions
+
+The **Group By** button cycles the history through `None → Portfolio → Broker → Asset`, splitting the transaction list into sections with a running summary in each header.
+
+![Grouped by Portfolio](screenshots/transactions_group_by_portfolio.png)
+
+- **By Portfolio** — every transaction routed to that portfolio (including its sub-portfolios' tickers when shared).
+
+![Grouped by Broker](screenshots/transactions_group_by_broker.png)
+
+- **By Broker** — transactions executed at that broker, useful for checking per-broker activity and fees.
+
+![Grouped by Asset](screenshots/transactions_group_by_asset.png)
+
+- **By Asset** — every Buy/Sell/Dividend/Coupon for a single ticker, grouped under its display name.
+
+Each group header shows:
+
+- **Number of transactions** in the group.
+- **Bought** / **Sold** — total quantity bought and sold.
+- **Cost Basis** — current book value of the held quantity (quantity × average purchase price).
+- **Market Value** — current market value of the same holdings.
+- **P&L** — unrealized gain/loss on the open position.
+- **Realized** — gains/losses already locked in from past sells.
+- **Total Fees** — sum of commissions paid (hidden if zero).
+- **Distributions** — dividends/coupons received (hidden if zero).
+- **Total Return** — P&L + Realized + Distributions, the overall result for the group.
+
+A small **€ / %** toggle on each header switches P&L, Realized, Total Fees, Distributions and Total Return between absolute euro amounts and percentages of the cost basis.
 
 ### Portfolios
 
