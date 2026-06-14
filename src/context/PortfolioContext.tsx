@@ -1245,11 +1245,23 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 goalId: 'goal-growth',
                 order: 0,
                 liquidity: 2000,
+                // SWDA + VWRL are interchangeable world-equity holdings collapsed
+                // into one "World Equity" market group with a single 70% target;
+                // EMIM keeps its own 30% standalone target. New money buys SWDA
+                // first (priority order); VWRL is flagged noBuy so it is never
+                // topped up — only held / trimmed — demonstrating intra-group rules.
                 allocations: {
-                    'IE00B4L5Y983': 60, // SWDA
-                    'IE00BKM4GZ66': 30, // EMIM
-                    'IE00B3RBWM25': 10  // VWRL
-                }
+                    '_GRP_world': 70,   // World Equity group (SWDA + VWRL)
+                    'IE00BKM4GZ66': 30  // EMIM
+                },
+                allocationGroups: [
+                    {
+                        id: '_GRP_world',
+                        label: 'World Equity',
+                        members: ['IE00B4L5Y983', 'IE00B3RBWM25'], // SWDA (buy-first), VWRL
+                        memberRules: { 'IE00B3RBWM25': { noBuy: true } }
+                    }
+                ]
             },
             {
                 id: pIdMainTilt,
@@ -1287,14 +1299,51 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ];
 
         // 5. Market Data (Soft Mocks for immediate display)
+        // spreadPercent / volatility mimic the supplemental data that "Update
+        // Price" extracts when the source exposes it (null spread for bonds
+        // priced on MIL). Volatility feeds the Forecast's per-portfolio estimate.
         const mockPrices = {
-            'IE00B4L5Y983': { price: 95.50, lastUpdated: timestamp }, // Profit
-            'IE00BKM4GZ66': { price: 31.20, lastUpdated: timestamp }, // Profit
-            'IE00B3RBWM25': { price: 115.00, lastUpdated: timestamp }, // Profit
-            'IE00BDBRDM35': { price: 5.10, lastUpdated: timestamp },  // Profit
-            'IE00B1FZS798': { price: 175.50, lastUpdated: timestamp }, // Loss
-            'LU0290358497': { price: 142.10, lastUpdated: timestamp }  // Profit
+            'IE00B4L5Y983': { price: 95.50, lastUpdated: timestamp, spreadPercent: 0.03, volatility: 14.2 }, // Profit
+            'IE00BKM4GZ66': { price: 31.20, lastUpdated: timestamp, spreadPercent: 0.08, volatility: 16.8 }, // Profit
+            'IE00B3RBWM25': { price: 115.00, lastUpdated: timestamp, spreadPercent: 0.05, volatility: 13.5 }, // Profit
+            'IE00BDBRDM35': { price: 5.10, lastUpdated: timestamp, spreadPercent: 0.06, volatility: 5.1 },  // Profit
+            'IE00B1FZS798': { price: 175.50, lastUpdated: timestamp, spreadPercent: null, volatility: 11.0 }, // Loss
+            'LU0290358497': { price: 142.10, lastUpdated: timestamp, spreadPercent: 0.02, volatility: 0.4 }  // Profit
         };
+
+        // 5b. Price History — daily close series from each asset's first purchase
+        // to today, ending exactly at the current mock price so the Dashboard
+        // (which values non-clean tickers at the latest close) stays consistent
+        // with the Performance net-worth chart. The long govt bond is marked
+        // 'clean' (corso secco) to exercise the accrued-interest caveat badge.
+        const histConfig: Record<string, { days: number; start: number; end: number; vol: number; basis?: 'clean' | 'dirty' }> = {
+            'IE00B4L5Y983': { days: 365, start: 78.50, end: 95.50, vol: 0.012 },
+            'IE00BKM4GZ66': { days: 200, start: 25.00, end: 31.20, vol: 0.015 },
+            'IE00B3RBWM25': { days: 120, start: 105.00, end: 115.00, vol: 0.011 },
+            'IE00BDBRDM35': { days: 90, start: 4.80, end: 5.10, vol: 0.004 },
+            'IE00B1FZS798': { days: 120, start: 180.00, end: 175.50, vol: 0.007, basis: 'clean' },
+            'LU0290358497': { days: 60, start: 139.50, end: 142.10, vol: 0.001 },
+        };
+        const priceHistoryMap: PriceHistoryMap = {};
+        for (const [ticker, cfg] of Object.entries(histConfig)) {
+            const points: PricePoint[] = [];
+            for (let d = cfg.days; d >= 0; d--) {
+                const t = cfg.days === 0 ? 1 : (cfg.days - d) / cfg.days; // 0..1 progress
+                const trend = cfg.start + (cfg.end - cfg.start) * t;
+                // Deterministic wobble, damped to 0 on the final point so the
+                // series lands exactly on the current price.
+                const wobble = d === 0 ? 0 : Math.sin((cfg.days - d) * 1.7) * trend * cfg.vol;
+                const price = Math.round((trend + wobble) * 100) / 100;
+                const date = new Date(today - d * ONE_DAY).toISOString().split('T')[0];
+                points.push([date, price]);
+            }
+            priceHistoryMap[ticker] = {
+                points,
+                granularity: 'D',
+                priceBasis: cfg.basis ?? 'dirty',
+                lastHistoryFetch: timestamp,
+            };
+        }
 
         // 6. Macro & Goal Allocations (Global Targets)
         // Goal split: 60% Growth, 20% Security, 20% Protection.
@@ -1320,6 +1369,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setPortfolios(portfoliosList);
         setGoals(mockGoals);
         setMarketData(mockPrices);
+        setPriceHistory(priceHistoryMap);
         setMacroAllocations(newMacros);
         setGoalAllocations(newGoals);
         setStoredAssetAllocationSettings({
@@ -1373,7 +1423,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             budgetName: 'Family Budget',
             currencyIso: 'EUR',
             avgMonthsWindow: 6,
-            lastSyncAt: timestamp
+            lastSyncAt: timestamp,
+            goalsGroupId: 'ynab-grp-goals',
+            goalsGroupName: 'Investment Goals',
+            lastGoalsSyncAt: timestamp
         });
         setYnabCategories([
             // ── Investments ──────────────────────────────────────────────────
@@ -1402,6 +1455,20 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             { categoryId: 'ynab-cat-5', target: { kind: 'cash', brokerId: 'b1' } },
             { categoryId: 'ynab-cat-7', target: { kind: 'cash', brokerId: 'b2' } },
             // cat-4 (Crypto) and housing/expenses remain unmapped
+        ]);
+
+        // 8b. YNAB Goals — synced from the "Investment Goals" category group.
+        // Each goal carries the YNAB target/coverage and is funded by one or
+        // more portfolios via goal allocations (drives the YNAB Goals page).
+        setYnabGoals([
+            { id: 'yg-house', ynabBudgetId: 'mock-budget-id', name: 'House Down Payment', targetAmount: 60000, targetDate: '2027-12-01', cashCoverage: 15000, ynabMonthlyFunding: 800, ynabActivityThisMonth: 800, goalType: 'TB', targetSource: 'parsed-name', lastSyncedAt: timestamp },
+            { id: 'yg-car', ynabBudgetId: 'mock-budget-id', name: 'New Car', targetAmount: 25000, targetDate: '2026-09-01', cashCoverage: 9000, ynabMonthlyFunding: 400, ynabActivityThisMonth: 400, goalType: 'TBD', targetSource: 'parsed-note', lastSyncedAt: timestamp },
+            { id: 'yg-sabbatical', ynabBudgetId: 'mock-budget-id', name: 'Sabbatical Year', targetAmount: 40000, cashCoverage: 5000, ynabMonthlyFunding: 300, targetSource: 'manual-override', lastSyncedAt: timestamp },
+        ]);
+        setYnabGoalAllocations([
+            { id: 'yga-1', portfolioId: pIdSafe, ynabGoalId: 'yg-house', amount: 12000, createdAt: timestamp, updatedAt: timestamp },
+            { id: 'yga-2', portfolioId: pIdBonds, ynabGoalId: 'yg-house', amount: 8000, createdAt: timestamp, updatedAt: timestamp },
+            { id: 'yga-3', portfolioId: pIdSafe, ynabGoalId: 'yg-car', amount: 6000, createdAt: timestamp, updatedAt: timestamp },
         ]);
 
         // 9. Aggregate UI: exclude VWRL from the aggregate view
