@@ -98,17 +98,24 @@ async function scrollAndShoot(page, base) {
   await sleep(800);
   await scrollAndShoot(page, 'dashboard');
 
-  // Withdrawal simulation: find a button or section labeled accordingly
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  await sleep(400);
-  await page.evaluate(() => {
-    const el = [...document.querySelectorAll('h2,h3,h4')].find((h) =>
-      /withdrawal/i.test(h.textContent)
+  // Withdrawal simulation: open the "Simulate Withdrawal" popup
+  const withdrawalClicked = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) =>
+      /simulate withdrawal/i.test(b.textContent)
     );
-    if (el) el.scrollIntoView({ block: 'center' });
+    if (btn) {
+      btn.scrollIntoView({ block: 'center' });
+      btn.click();
+      return true;
+    }
+    return false;
   });
-  await sleep(400);
-  await shot(page, 'dashboard_withdrawal_simulation');
+  if (withdrawalClicked) {
+    await sleep(600);
+    await shot(page, 'dashboard_withdrawal_simulation');
+    await page.keyboard.press('Escape');
+    await sleep(300);
+  }
 
   // ---------- STATS ----------
   console.log('Stats');
@@ -286,6 +293,21 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'Brokers');
   await sleep(700);
   await shot(page, 'brokers_page');
+  // Edit Broker modal — shows commission plan & minimum liquidity settings
+  const brokerEditClicked = await page.evaluate(() => {
+    const btn = document.querySelector('button[title*="Edit" i], button[aria-label*="Edit" i]');
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  });
+  if (brokerEditClicked) {
+    await sleep(500);
+    await shot(page, 'brokers_edit_modal');
+    await page.keyboard.press('Escape');
+    await sleep(300);
+  }
 
   // ---------- FORECAST ----------
   console.log('Forecast');
