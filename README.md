@@ -199,6 +199,10 @@ Manage brokers, their commission model and their cash positions.
 - **Liquidity tracking** — available cash per broker, with an optional **minimum threshold** the forecast and rebalancer respect.
 - **Liquidity allocations** — earmark part of a broker's cash to specific portfolios.
 
+Editing a broker lets you configure its **commission rules** (fixed fee, or percentage with optional min/max) and the **minimum liquidity** to keep on hand, either as a percentage of the broker's value or a fixed amount, optionally split across portfolios:
+
+![Edit broker — commission & minimum liquidity](screenshots/brokers_edit_modal_commission.png)
+
 ### Forecast
 
 Project net worth and liquidity over a configurable horizon.
