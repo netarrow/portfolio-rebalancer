@@ -140,6 +140,26 @@ async function scrollAndShoot(page, base) {
     }
   }
 
+  // ---------- PERFORMANCE ----------
+  console.log('Performance');
+  await navTo(page, 'Performance');
+  await sleep(1200);
+  await shot(page, 'performance_page');
+  // Switch the scope selector to a single asset to show the per-asset price series + caveat badges
+  const assetScoped = await page.evaluate(() => {
+    const sel = document.querySelector('select');
+    if (!sel) return false;
+    const opt = [...sel.options].find((o) => o.value.startsWith('a:'));
+    if (!opt) return false;
+    sel.value = opt.value;
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  });
+  if (assetScoped) {
+    await sleep(900);
+    await shot(page, 'performance_asset');
+  }
+
   // ---------- TRANSACTIONS ----------
   console.log('Transactions');
   await navTo(page, 'Transactions');
@@ -207,20 +227,28 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'Portfolios');
   await sleep(700);
   await shot(page, 'portfolios_page');
-  // Click first portfolio to view targets
+  // Open the first portfolio's allocation editor (Main Strategy → has the
+  // "World Equity" market group) via the "Manage allocations" button.
   const targets = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('button')].find((b) =>
-      /target|edit|view/i.test(b.textContent)
-    );
-    if (btn) {
-      btn.click();
-      return true;
-    }
+    const btn = document.querySelector('button[aria-label="Manage allocations"], button[title="Allocations"]');
+    if (btn) { btn.click(); return true; }
     return false;
   });
   if (targets) {
     await sleep(700);
     await shot(page, 'portfolio_targets');
+    // Expand the World Equity allocation group to reveal members, priority and rules
+    const expanded = await page.evaluate(() => {
+      const el = [...document.querySelectorAll('*')].find(
+        (e) => e.children.length === 0 && /world equity/i.test(e.textContent || '')
+      );
+      if (el) { el.click(); return true; }
+      return false;
+    });
+    if (expanded) {
+      await sleep(500);
+      await shot(page, 'portfolio_allocation_group');
+    }
     await page.keyboard.press('Escape');
     await sleep(300);
   }
@@ -264,6 +292,26 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'Forecast');
   await sleep(800);
   await shot(page, 'forecast_ok');
+  // Monte Carlo (volatility) simulation toggle
+  const mcOn = await page.evaluate(() => {
+    const label = [...document.querySelectorAll('label')].find((l) => /monte carlo/i.test(l.textContent));
+    const cb = label?.parentElement?.querySelector('input[type="checkbox"]');
+    if (cb) { cb.click(); return true; }
+    return false;
+  });
+  if (mcOn) {
+    await sleep(1000);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await sleep(300);
+    await shot(page, 'forecast_montecarlo');
+    // turn it back off so the risky/failed shots below use the deterministic plan
+    await page.evaluate(() => {
+      const label = [...document.querySelectorAll('label')].find((l) => /monte carlo/i.test(l.textContent));
+      const cb = label?.parentElement?.querySelector('input[type="checkbox"]');
+      if (cb) cb.click();
+    });
+    await sleep(500);
+  }
   // Try to push the plan into risky/failed by inflating annual expense
   const expenseInputs = await page.$$('input[type="number"]');
   if (expenseInputs.length) {
@@ -298,11 +346,39 @@ async function scrollAndShoot(page, base) {
   await sleep(700);
   await shot(page, 'ynab_import');
 
+  // ---------- YNAB GOALS ----------
+  console.log('YNAB Goals');
+  await navTo(page, 'YNAB Goals');
+  await sleep(800);
+  await shot(page, 'ynab_goals');
+
   // ---------- SETTINGS ----------
   console.log('Settings');
   await navTo(page, 'Settings');
   await sleep(700);
   await scrollAndShoot(page, 'settings');
+  // Premium Update Price card (free tier vs unlocked)
+  const premiumFound = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h3')].find((e) => /premium update price/i.test(e.textContent));
+    if (h) { h.scrollIntoView({ block: 'center' }); return true; }
+    return false;
+  });
+  if (premiumFound) {
+    await sleep(400);
+    await shot(page, 'settings_premium');
+  }
+  // Price History backup / Update History section
+  const historyFound = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h3')].find((e) => /price history/i.test(e.textContent));
+    if (h) { h.scrollIntoView({ block: 'center' }); return true; }
+    return false;
+  });
+  if (historyFound) {
+    await sleep(400);
+    await shot(page, 'settings_price_history');
+  }
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await sleep(300);
   // Mock-data confirm popup
   await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')].find((b) =>
