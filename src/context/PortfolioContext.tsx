@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
-import { calculateAssets } from '../utils/portfolioCalculations';
+import { calculateAssets, isGroupKey, isCashTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
@@ -968,7 +968,31 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // User Requirement: "quantità residua di almeno 1 o superiore"
         const activeAssets = assets.filter(a => a.quantity > 0);
 
-        if (activeAssets.length === 0) {
+        // Also fetch prices for tickers that are allocated (>= 1%) but not held —
+        // directly in a portfolio's allocations, or as a member of an allocated
+        // group. Without their market price the rebalancer can't compute buys for
+        // an unheld target (the group/ticker would show "Blocked").
+        const heldTickers = new Set(activeAssets.map(a => a.ticker.toUpperCase()));
+        const allocatedUnheld = new Set<string>();
+        const addUnheld = (ticker: string) => {
+            const t = ticker.toUpperCase();
+            if (!t || isCashTicker(t) || isGroupKey(t) || heldTickers.has(t)) return;
+            allocatedUnheld.add(ticker);
+        };
+        portfolios.forEach(p => {
+            const allocs = p.allocations || {};
+            const groupById = Object.fromEntries((p.allocationGroups || []).map(g => [g.id, g]));
+            Object.entries(allocs).forEach(([key, perc]) => {
+                if ((perc || 0) < 1) return;
+                if (isGroupKey(key)) {
+                    groupById[key]?.members.forEach(addUnheld);
+                } else {
+                    addUnheld(key);
+                }
+            });
+        });
+
+        if (activeAssets.length === 0 && allocatedUnheld.size === 0) {
             // Optional: Notify user that no assets met criteria?
             // For now, just return to avoid socket error on empty list.
             console.log('No assets with quantity >= 1 found for update.');
@@ -993,11 +1017,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             if (!confirm.isConfirmed) return;
         }
 
-        // Prepare tokens from active assets
-        const tokens = activeAssets.map(asset => {
-            const setting = assetSettings.find(t => t.ticker === asset.ticker);
+        // Prepare tokens from active assets + allocated-but-unheld tickers
+        const tokenTickers = [
+            ...activeAssets.map(a => a.ticker),
+            ...Array.from(allocatedUnheld),
+        ];
+        const tokens = tokenTickers.map(ticker => {
+            const setting = assetSettings.find(t => t.ticker === ticker);
             return {
-                isin: asset.ticker,
+                isin: ticker,
                 source: setting?.source || 'ETF'
             };
         });
