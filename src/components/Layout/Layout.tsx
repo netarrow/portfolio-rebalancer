@@ -22,6 +22,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
         <div className="navbar-header">
           <div className="navbar-brand">
             <h1>Portfolio Rebalancer</h1>
+            <span className="app-version" title="Build version">v{__APP_VERSION__}</span>
           </div>
           <button 
             className="hamburger-btn" 
@@ -145,12 +146,33 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           width: 100%;
         }
 
+        .navbar-brand {
+          display: flex;
+          align-items: flex-start;
+          gap: var(--space-1);
+        }
+
         .navbar-brand h1 {
           font-size: 1.25rem;
           font-weight: 600;
+          white-space: nowrap;
           background: linear-gradient(to right, var(--color-primary), var(--color-accent));
           -webkit-background-clip: text;
           -webkit-text-fill-color: transparent;
+        }
+
+        .app-version {
+          flex-shrink: 0;
+          margin-top: 1px;
+          padding: 1px 6px;
+          border-radius: 999px;
+          background-color: var(--bg-card);
+          color: var(--text-muted);
+          font-size: 0.65rem;
+          font-weight: 600;
+          line-height: 1.4;
+          letter-spacing: 0.02em;
+          white-space: nowrap;
         }
 
         .navbar-links {

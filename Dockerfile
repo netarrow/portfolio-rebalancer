@@ -22,6 +22,10 @@ RUN npm ci
 # Copy application source
 COPY . .
 
+# App version stamped into the built frontend (passed from CI).
+ARG APP_VERSION=dev
+ENV APP_VERSION=$APP_VERSION
+
 # Build the frontend
 RUN npm run build
 

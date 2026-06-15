@@ -102,6 +102,9 @@ const UnlockGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 >
                     Reset &amp; wipe local data
                 </button>
+                <div style={{ marginTop: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.75rem' }}>
+                    v{__APP_VERSION__}
+                </div>
             </form>
         </div>
     );
