@@ -1183,7 +1183,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
     // Per-group aggregates + full-rebalance member actions.
     const groupComputations = useMemo(() => {
         return groupList.map(group => {
-            const memberInfo = memberInfoFromAssets(group.members, assets);
+            const memberInfo = memberInfoFromAssets(group.members, assets, marketData);
             const memberAssets = group.members.map(m => assets.find(a => a.ticker.toUpperCase() === m.toUpperCase()));
             const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
             const gain = memberAssets.reduce((s, a) => s + (a?.gain || 0), 0);
@@ -1196,7 +1196,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             const postRebalancePerc = totalPortfolioValue > 0 ? ((currentValue + actionEur) / totalPortfolioValue) * 100 : 0;
             return { group, memberInfo, currentValue, gain, targetPerc, targetValue, delta, full, currentPerc, actionEur, postRebalancePerc };
         });
-    }, [groupList, assets, allocations, totalPortfolioValue]);
+    }, [groupList, assets, allocations, totalPortfolioValue, marketData]);
 
     const groupCompById = useMemo(() => {
         const map: Record<string, typeof groupComputations[number]> = {};

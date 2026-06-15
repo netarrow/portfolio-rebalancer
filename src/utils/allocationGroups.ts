@@ -177,18 +177,30 @@ export const buyRecipientOf = (
     return undefined;
 };
 
-/** Build the member market-info map for a group from an assets list. */
+/**
+ * Build the member market-info map for a group from an assets list.
+ *
+ * A member may be added to a group purely as an alternative buy target before
+ * any shares are held (e.g. VWCE set to `noBuy`, ACWI added to receive buys).
+ * Such a member is absent from `assets` (which is derived from transactions),
+ * so its price falls back to `marketData` when available — otherwise the group
+ * would have no buy-eligible member and report "Blocked".
+ */
 export const memberInfoFromAssets = (
     members: string[],
-    assets: Asset[]
+    assets: Asset[],
+    marketData?: Record<string, { price: number }>
 ): Record<string, MemberMarketInfo> => {
     const map: Record<string, MemberMarketInfo> = {};
     members.forEach(m => {
         const asset = assets.find(a => a.ticker.toUpperCase() === m.toUpperCase());
+        const fallbackPrice = marketData
+            ? (marketData[m]?.price ?? marketData[m.toUpperCase()]?.price ?? 0)
+            : 0;
         map[m.toUpperCase()] = {
             ticker: m,
             currentValue: asset?.currentValue ?? 0,
-            price: asset?.currentPrice ?? 0,
+            price: asset?.currentPrice ?? (fallbackPrice || 0),
         };
     });
     return map;
