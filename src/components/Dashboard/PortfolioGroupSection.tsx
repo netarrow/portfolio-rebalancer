@@ -4,6 +4,7 @@ import {
     calculateRequiredLiquidityForOnlyBuy,
     injectCashAssets,
     isCashTicker,
+    isGroupKey,
 } from '../../utils/portfolioCalculations';
 import { WithdrawalModal } from './WithdrawalModal';
 import { PortfolioAllocationTable } from './AllocationOverview';
@@ -157,6 +158,30 @@ const PortfolioGroupSection: React.FC<Props> = ({
         return Array.from(set).sort();
     }, [portfolioCalcs]);
 
+    // Allocation-group metadata (label + members) resolved across all portfolios
+    // in this group. A group's target lives in allocations[groupId], so its id
+    // shows up as a row in the comparison table; we resolve it to a readable
+    // label and aggregate its members' value for the actual/deviation columns.
+    const groupMeta = useMemo(() => {
+        const map: Record<string, { label: string; members: string[] }> = {};
+        allPortfolios.forEach(p => {
+            (p.allocationGroups || []).forEach(g => {
+                map[g.id] = { label: g.label, members: g.members };
+            });
+        });
+        return map;
+    }, [allPortfolios]);
+
+    // Current value of an allocation group within a single portfolio = sum of
+    // its members' current values.
+    const groupValueInPortfolio = (pc: PortfolioCalc, groupId: string): number => {
+        const members = groupMeta[groupId]?.members || [];
+        return members.reduce((s, m) => {
+            const a = pc.assets.find(x => x.ticker.toUpperCase() === m.toUpperCase());
+            return s + (a?.currentValue || 0);
+        }, 0);
+    };
+
     // Pre-compute buy-only allocations for every portfolio (used in table + action bars)
     const portfolioBuyOnlyMap = useMemo(() => {
         const map: Record<string, Record<string, number>> = {};
@@ -307,8 +332,11 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         <div className="ct-empty">No assets or targets configured.</div>
                     ) : (
                         allTickers.map(ticker => {
+                            const isGroup = isGroupKey(ticker);
                             const groupAsset = groupAssets.find(a => a.ticker === ticker);
-                            const groupValue = groupAsset?.currentValue || 0;
+                            const groupValue = isGroup
+                                ? portfolioCalcs.reduce((s, pc) => s + groupValueInPortfolio(pc, ticker), 0)
+                                : (groupAsset?.currentValue || 0);
                             const groupActual = totalGroupValue > 0 ? (groupValue / totalGroupValue) * 100 : 0;
 
                             const groupWeightedTarget = portfolioCalcs.reduce((sum, pc) => {
@@ -322,9 +350,11 @@ const PortfolioGroupSection: React.FC<Props> = ({
                             const assetClass = isCash
                                 ? 'Cash'
                                 : (setting?.assetClass || groupAsset?.assetClass || 'Stock');
-                            const label = isCash
-                                ? (groupAsset?.label || ticker)
-                                : (setting?.label || groupAsset?.label || ticker);
+                            const label = isGroup
+                                ? (groupMeta[ticker]?.label || ticker)
+                                : isCash
+                                    ? (groupAsset?.label || ticker)
+                                    : (setting?.label || groupAsset?.label || ticker);
 
                             return (
                                 <div key={ticker} className="ct-row ct-data-row">
@@ -348,12 +378,16 @@ const PortfolioGroupSection: React.FC<Props> = ({
 
                                     {portfolioCalcs.map(pc => {
                                         const asset = pc.assets.find(a => a.ticker === ticker);
-                                        const currentValue = asset?.currentValue || 0;
+                                        const currentValue = isGroup
+                                            ? groupValueInPortfolio(pc, ticker)
+                                            : (asset?.currentValue || 0);
                                         const price = asset?.currentPrice || 0;
                                         const actual = pc.totalValue > 0 ? (currentValue / pc.totalValue) * 100 : 0;
                                         const target = (pc.portfolio.allocations || {})[ticker] || 0;
                                         const diff = actual - target;
-                                        const hasPosition = (asset?.quantity || 0) > 0 || currentValue > 0;
+                                        const hasPosition = isGroup
+                                            ? currentValue > 0
+                                            : ((asset?.quantity || 0) > 0 || currentValue > 0);
                                         const hasTarget = target > 0;
 
                                         if (!hasPosition && !hasTarget) {
@@ -389,7 +423,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                                         {diff > 0 ? '+' : ''}{diff.toFixed(1)}%
                                                     </div>
                                                 )}
-                                                {!isCash && hasTarget && (
+                                                {!isCash && !isGroup && hasTarget && (
                                                     <div className={`ct-cell-action ${rebalShares > 0 ? 'ct-action-buy' : rebalShares < 0 ? 'ct-action-sell' : 'ct-action-ok'}`}>
                                                         {rebalShares === 0
                                                             ? <span className="ct-ok-badge">✓</span>
@@ -397,7 +431,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                                         }
                                                     </div>
                                                 )}
-                                                {!isCash && buyOnlyShares > 0 && (
+                                                {!isCash && !isGroup && buyOnlyShares > 0 && (
                                                     <div className="ct-cell-buyonly">
                                                         <span className="ct-buyonly-label">buy only</span>
                                                         ▲ {buyOnlyShares} · {fmt(buyOnlyAmount)}
