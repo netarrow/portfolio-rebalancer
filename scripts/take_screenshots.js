@@ -186,12 +186,19 @@ async function scrollAndShoot(page, base) {
   if (importClicked) {
     await sleep(600);
     await shot(page, 'transactions_import_modal');
-    await page.keyboard.press('Escape');
-    await sleep(300);
-    // Close any lingering modal
+    // Close the import modal via its close button (Escape alone does not dismiss it)
     await page.evaluate(() => {
-      const x = document.querySelector('.modal-close, .close-btn, button[aria-label="Close"]');
+      const x = document.querySelector('.modal-close-btn, .modal-close, .close-btn, button[aria-label="Close"]');
       if (x) x.click();
+    });
+    await sleep(400);
+    // Safety net: if any modal overlay is still mounted, click its close button
+    await page.evaluate(() => {
+      const overlay = document.querySelector('.modal-overlay');
+      if (overlay) {
+        const x = overlay.querySelector('.modal-close-btn, .modal-close, .close-btn');
+        if (x) x.click();
+      }
     });
     await sleep(300);
   }
