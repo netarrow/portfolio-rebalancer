@@ -2,7 +2,8 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, calculateRealizedGains, calculateCommission, calculateCashFlows } from '../../utils/portfolioCalculations';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, calculateRealizedGains, calculateCommission, calculateCashFlows, estimateTradeCost } from '../../utils/portfolioCalculations';
+import type { Broker } from '../../types';
 import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipientOf, memberInfoFromAssets, type BuyOnlyCandidate, type MemberAction } from '../../utils/allocationGroups';
 import { CASH_TICKER_PREFIX } from '../../types';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
@@ -16,6 +17,188 @@ import './Dashboard.css';
 
 // Palette used to assign colors to user-defined goals by order
 const GOAL_COLOR_PALETTE = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899', '#6366F1'];
+
+const fmtEur = (n: number, dp = 2) =>
+    `€${n.toLocaleString('en-IE', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+
+const FREE_BROKER_ID = '__free__';
+
+/**
+ * Wraps an Action / Buy-Only cell and, on hover/tap, shows a popover estimating
+ * what trading this asset would actually cost: the implicit spread cost ("danno")
+ * plus the simulated broker commission. The popover compares EVERY broker (plus a
+ * commission-free scenario) and lets the user pick which broker drives the headline
+ * total drag — so two interchangeable instruments (e.g. commission-bearing VWCE vs
+ * commission-free, wider-spread ALLW) can be compared broker by broker.
+ *
+ * It renders even when there is no pending action (Action "OK" / Buy Only "−"):
+ * in that case it estimates the cost of buying a single share so the trading
+ * cost is always visible.
+ */
+const TradeCostInfo: React.FC<{
+    shares: number;            // signed pending action: + buy, − sell, 0 = none
+    price: number;
+    spreadPercent?: number | null;
+    brokers: Broker[];
+    defaultBrokerId?: string;  // broker resolved for this ticker (default selection)
+    children: React.ReactNode;
+}> = ({ shares, price, spreadPercent, brokers, defaultBrokerId, children }) => {
+    const [open, setOpen] = useState(false);
+    const [coords, setCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    // For rows with a suggested trade, let the user re-base the estimate on a
+    // single share instead of the suggested amount.
+    const [qtyMode, setQtyMode] = useState<'suggested' | 'single'>('suggested');
+    const ref = useRef<HTMLSpanElement>(null);
+
+    if (price <= 0) return <>{children}</>;
+
+    const isAction = shares !== 0;
+    const suggestedQty = Math.abs(shares);
+    // No pending action → always 1 share. Otherwise honour the toggle.
+    const qty = !isAction ? 1 : (qtyMode === 'single' ? 1 : suggestedQty);
+    const isEstimate = !isAction || qtyMode === 'single';
+
+    const value = qty * price;
+    const sp = spreadPercent ?? null;
+    const spreadCost = sp != null ? (value * (sp / 100)) / 2 : 0;
+    const actionLabel = isAction ? (shares > 0 ? 'Buy' : 'Sell') : 'Buy';
+
+    // One row per broker (commission simulated from its plan) + a free scenario.
+    const brokerRows = brokers.map(b => {
+        const est = estimateTradeCost({ shares: qty, price, spreadPercent, broker: b });
+        return {
+            id: b.id, name: b.name,
+            commission: est.commission ?? 0, hasPlan: est.hasCommissionPlan,
+            totalCost: est.totalCost, totalCostPercent: est.totalCostPercent,
+        };
+    });
+    const freeRow = {
+        id: FREE_BROKER_ID, name: 'Free commission', commission: 0, hasPlan: false,
+        totalCost: spreadCost, totalCostPercent: value > 0 ? (spreadCost / value) * 100 : 0,
+    };
+    const allRows = [...brokerRows, freeRow];
+    const effectiveId = selectedId ?? defaultBrokerId ?? brokerRows[0]?.id ?? FREE_BROKER_ID;
+    const selected = allRows.find(r => r.id === effectiveId) ?? freeRow;
+
+    const place = () => {
+        const r = ref.current?.getBoundingClientRect();
+        if (r) setCoords({ x: r.left + r.width / 2, y: r.bottom });
+    };
+
+    return (
+        <span
+            ref={ref}
+            onMouseEnter={() => { place(); setOpen(true); }}
+            onMouseLeave={() => setOpen(false)}
+            onClick={e => { e.stopPropagation(); place(); setOpen(o => !o); }}
+            style={{ cursor: 'help', borderBottom: '1px dotted var(--text-muted)', display: 'inline-block' }}
+        >
+            {children}
+            {open && createPortal(
+                <div
+                    style={{
+                        position: 'fixed', left: coords.x, top: coords.y + 6,
+                        transform: 'translateX(-50%)', zIndex: 9999,
+                        background: 'var(--bg-card)', color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.25)', padding: 'var(--space-3)',
+                        width: 290, fontSize: '0.8rem', textAlign: 'left', cursor: 'default',
+                    }}
+                    onMouseEnter={() => setOpen(true)}
+                    onClick={e => e.stopPropagation()}
+                >
+                    <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: '0.68rem' }}>
+                        Estimated trade cost
+                    </div>
+                    {isAction && (
+                        <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+                            {([
+                                { mode: 'suggested' as const, label: `Suggested (${suggestedQty})` },
+                                { mode: 'single' as const, label: '1 share' },
+                            ]).map(opt => {
+                                const active = qtyMode === opt.mode;
+                                return (
+                                    <button
+                                        key={opt.mode}
+                                        onClick={e => { e.stopPropagation(); setQtyMode(opt.mode); }}
+                                        style={{
+                                            flex: 1, padding: '3px 6px', fontSize: '0.72rem', cursor: 'pointer',
+                                            borderRadius: 'var(--radius-sm)',
+                                            border: active ? '1px solid #3B82F6' : '1px solid var(--border-color)',
+                                            background: active ? 'rgba(59,130,246,0.12)' : 'transparent',
+                                            color: active ? '#3B82F6' : 'var(--text-muted)',
+                                            fontWeight: active ? 600 : 400,
+                                        }}
+                                    >{opt.label}</button>
+                                );
+                            })}
+                        </div>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <span style={{ color: 'var(--text-muted)' }}>
+                            {actionLabel} {qty} @ {fmtEur(price)}{isEstimate ? ' (est.)' : ''}
+                        </span>
+                        <strong>{fmtEur(value, 0)}</strong>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                        <span>Spread{sp != null ? ` (${sp.toFixed(2)}%)` : ''}</span>
+                        <span style={{ color: sp != null ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                            {sp != null ? `−${fmtEur(spreadCost)}` : 'n/a'}
+                        </span>
+                    </div>
+
+                    <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '6px 0' }} />
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 4 }}>
+                        Commission &amp; total drag by broker
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {allRows.map(row => {
+                            const isSel = row.id === effectiveId;
+                            const isFree = row.id === FREE_BROKER_ID;
+                            return (
+                                <div
+                                    key={row.id}
+                                    onClick={e => { e.stopPropagation(); setSelectedId(row.id); }}
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: 6, padding: '3px 4px',
+                                        borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+                                        background: isSel ? 'rgba(59,130,246,0.12)' : 'transparent',
+                                    }}
+                                >
+                                    <span style={{ color: isSel ? '#3B82F6' : 'var(--text-muted)', fontSize: '0.7rem', width: 12 }}>
+                                        {isSel ? '●' : '○'}
+                                    </span>
+                                    <span style={{ flex: 1, fontStyle: isFree ? 'italic' : 'normal', color: isFree ? 'var(--text-muted)' : undefined }}>
+                                        {row.name}
+                                    </span>
+                                    <span style={{ width: 64, textAlign: 'right', color: row.commission > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                        {row.commission > 0 ? `−${fmtEur(row.commission)}` : 'free'}
+                                    </span>
+                                    <span style={{ width: 78, textAlign: 'right', fontWeight: 600, color: row.totalCost > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                        −{fmtEur(row.totalCost)}
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+
+                    <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '6px 0' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
+                        <span>Total drag <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>({selected.name})</span></span>
+                        <span style={{ color: selected.totalCost > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                            −{fmtEur(selected.totalCost)} ({selected.totalCostPercent.toFixed(2)}%)
+                        </span>
+                    </div>
+                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.35 }}>
+                        Spread cost = half the bid/ask spread (one market fill). Commission simulated from each broker's plan. Click a broker to use it for the headline.
+                    </div>
+                </div>,
+                document.body
+            )}
+        </span>
+    );
+};
 
 
 const AllocationOverview: React.FC = () => {
@@ -268,6 +451,20 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
     const aggregateTotalReturnPerc = includedCost > 0 ? (aggregateTotalReturn / includedCost) * 100 : 0;
 
     const getLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+
+    // ticker → broker to simulate trade commission against: the broker of the most
+    // recent transaction for that ticker; falls back to the only broker if there's one.
+    const tickerToBroker = useMemo<Record<string, import('../../types').Broker | undefined>>(() => {
+        const lastBrokerId: Record<string, string | undefined> = {};
+        [...transactions]
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+            .forEach(t => { if (t.brokerId) lastBrokerId[t.ticker.toUpperCase()] = t.brokerId; });
+        const map: Record<string, import('../../types').Broker | undefined> = {};
+        Object.entries(lastBrokerId).forEach(([ticker, bid]) => {
+            map[ticker] = brokers.find(b => b.id === bid) ?? (brokers.length === 1 ? brokers[0] : undefined);
+        });
+        return map;
+    }, [transactions, brokers]);
 
     const toggleExcluded = (ticker: string) => {
         setExcludedTickers(prev =>
@@ -806,6 +1003,9 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                                 goalModeEur={goalModeEur}
                                 goalModeShares={goalModeShares}
                                 postGoalPerc={postGoalPerc}
+                                spreadPercent={marketData[asset.ticker.toUpperCase()]?.spreadPercent ?? marketData[asset.ticker]?.spreadPercent ?? null}
+                                brokers={brokers}
+                                tradeBroker={tickerToBroker[asset.ticker.toUpperCase()]}
                                 isEditing={isEditing}
                                 isExcluded={isExcluded}
                                 onToggleExclude={() => toggleExcluded(asset.ticker)}
@@ -840,6 +1040,9 @@ interface AggregateRowProps {
     goalModeEur: number;
     goalModeShares: number;
     postGoalPerc: number;
+    spreadPercent?: number | null;
+    brokers: Broker[];
+    tradeBroker?: Broker;
     isEditing: boolean;
     isExcluded: boolean;
     onToggleExclude: () => void;
@@ -850,6 +1053,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
     gain, gainPerc, currentPerc, targetPerc,
     rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, postRebalancePerc, projectedPerc,
     goalModeEur, goalModeShares, postGoalPerc,
+    spreadPercent, brokers, tradeBroker,
     isEditing, isExcluded, onToggleExclude,
 }) => {
     const diff = currentPerc - targetPerc;
@@ -928,14 +1132,18 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                     ) : (
                         <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                             {rebalanceShares === 0 ? (
-                                <span className="trend-neutral">OK</span>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <span className="trend-neutral">OK</span>
+                                </TradeCostInfo>
                             ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
+                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                </TradeCostInfo>
                             )}
                         </div>
                     )}
@@ -950,14 +1158,18 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                     ) : (
                         <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
                             {buyOnlyShares === 0 ? (
-                                <span className="trend-neutral">-</span>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <span className="trend-neutral">-</span>
+                                </TradeCostInfo>
                             ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
+                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                </TradeCostInfo>
                             )}
                         </div>
                     )}
@@ -1061,12 +1273,14 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                             <div className="mobile-action-box">
                                 <div className="mobile-action-title">Rebalance</div>
                                 <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                        </span>
-                                    </div>
+                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                            <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                            </span>
+                                        </div>
+                                    </TradeCostInfo>
                                 </div>
                             </div>
                         )}
@@ -1074,12 +1288,14 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                             <div className="mobile-action-box">
                                 <div className="mobile-action-title">Buy Only</div>
                                 <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                        </span>
-                                    </div>
+                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                            <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                            </span>
+                                        </div>
+                                    </TradeCostInfo>
                                 </div>
                             </div>
                         )}
@@ -1111,7 +1327,7 @@ interface AllocationTableProps {
     portfolio: import('../../types').Portfolio;
     allTransactions: import('../../types').Transaction[];
     assetSettings: import('../../types').AssetDefinition[];
-    marketData: Record<string, { price: number, lastUpdated: string }>;
+    marketData: Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null }>;
     brokers: import('../../types').Broker[];
     onUpdatePortfolio: (portfolio: import('../../types').Portfolio) => void;
     onAddTransactions: (transactions: import('../../types').Transaction[]) => void;
@@ -1399,6 +1615,14 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             return sum + (calculateCommission(t, broker) || 0);
         }, 0);
 
+        // Broker to simulate the trade against: the most recent transaction's broker
+        // for this ticker; fall back to the only broker if there's a single one.
+        const lastBrokerId = tickerTxs[tickerTxs.length - 1]?.brokerId;
+        const tradeBroker = brokers.find(b => b.id === lastBrokerId)
+            ?? (brokers.length === 1 ? brokers[0] : undefined);
+        const spreadPercent = marketData[ticker.toUpperCase()]?.spreadPercent
+            ?? marketData[ticker]?.spreadPercent ?? null;
+
         const assetCashFlow = portfolioCashFlowDetails.find(d => d.ticker === ticker.toUpperCase());
         const assetDistributions = assetCashFlow?.totalIncome ?? 0;
         const assetDistributionEvents = assetCashFlow?.events.length ?? 0;
@@ -1429,6 +1653,9 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 totalFees={totalFees}
                 assetDistributions={assetDistributions}
                 assetDistributionEvents={assetDistributionEvents}
+                spreadPercent={spreadPercent}
+                brokers={brokers}
+                tradeBroker={tradeBroker}
             />
         );
     };
@@ -1688,13 +1915,19 @@ interface RowProps {
     totalFees: number;
     assetDistributions: number;
     assetDistributionEvents: number;
+    /** Spread % loaded for this asset (for the trade-cost popover). */
+    spreadPercent?: number | null;
+    /** All brokers (the popover compares commission across every one). */
+    brokers: Broker[];
+    /** Broker resolved for this ticker — the popover's default selection. */
+    tradeBroker?: Broker;
     /** Hide the Target column + drift (used for group members, whose target lives on the group). */
     hideTarget?: boolean;
     /** Visually nest this row under a group summary row. */
     indent?: boolean;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, hideTarget, indent }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, brokers, tradeBroker, hideTarget, indent }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
@@ -1876,14 +2109,18 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     ) : (
                         <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                             {rebalanceShares === 0 ? (
-                                <span className="trend-neutral">OK</span>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <span className="trend-neutral">OK</span>
+                                </TradeCostInfo>
                             ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
+                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                </TradeCostInfo>
                             )}
                         </div>
                     )}
@@ -1899,14 +2136,18 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     ) : (
                         <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
                             {buyOnlyShares === 0 ? (
-                                <span className="trend-neutral">-</span>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <span className="trend-neutral">-</span>
+                                </TradeCostInfo>
                             ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
+                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
+                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                        </span>
+                                    </div>
+                                </TradeCostInfo>
                             )}
                         </div>
                     )}
@@ -1985,14 +2226,18 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                             <div className="mobile-action-title">Standard Rebal</div>
                             <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                                 {rebalanceShares === 0 ? (
-                                    <span>OK</span>
+                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                        <span>OK</span>
+                                    </TradeCostInfo>
                                 ) : (
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                        </span>
-                                    </div>
+                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                            <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                            </span>
+                                        </div>
+                                    </TradeCostInfo>
                                 )}
                             </div>
                         </div>
@@ -2000,14 +2245,18 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                             <div className="mobile-action-title">Buy Only</div>
                             <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
                                 {buyOnlyShares === 0 ? (
-                                    <span>-</span>
+                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                        <span>-</span>
+                                    </TradeCostInfo>
                                 ) : (
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                        </span>
-                                    </div>
+                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                            <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                            </span>
+                                        </div>
+                                    </TradeCostInfo>
                                 )}
                             </div>
                         </div>
