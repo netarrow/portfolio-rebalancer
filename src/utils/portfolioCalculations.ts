@@ -386,6 +386,67 @@ export const calculateCommission = (transaction: Transaction, broker: Broker | u
     return undefined;
 };
 
+export interface TradeCostEstimate {
+    /** Absolute traded value (|shares| × price). */
+    value: number;
+    /** Spread % loaded for the asset, or null when not available. */
+    spreadPercent: number | null;
+    /** Implicit cost of crossing half the bid/ask spread on a single market order. */
+    spreadCost: number;
+    /** Estimated broker commission, or null when the broker is unknown. */
+    commission: number | null;
+    /** True when the resolved broker has an actual commission plan configured. */
+    hasCommissionPlan: boolean;
+    /** Name of the broker the commission was simulated against, if any. */
+    brokerName: string | null;
+    /** spreadCost + commission (commission counted as 0 when unknown). */
+    totalCost: number;
+    /** totalCost as a % of the traded value. */
+    totalCostPercent: number;
+}
+
+/**
+ * Estimates what a single buy/sell action would actually cost, combining:
+ *  - the implicit spread cost (half the bid/ask spread loaded for the asset), and
+ *  - the explicit broker commission, simulated from the broker's commission plan.
+ *
+ * This lets two interchangeable instruments be compared — e.g. a commission-bearing
+ * VWCE vs a commission-free ALLW with a wider spread — to see which is cheaper to trade.
+ */
+export const estimateTradeCost = (params: {
+    shares: number;
+    price: number;
+    spreadPercent?: number | null;
+    broker?: Broker;
+}): TradeCostEstimate => {
+    const { shares, price, spreadPercent, broker } = params;
+    const qty = Math.abs(shares);
+    const value = qty * price;
+    const sp = spreadPercent ?? null;
+    // Half the spread is the slippage from mid-price on one market fill.
+    const spreadCost = sp != null ? (value * (sp / 100)) / 2 : 0;
+
+    let commission: number | null = null;
+    if (broker) {
+        // Broker known → simulate its plan. No plan configured ⇒ commission-free (0).
+        commission = calculateCommission({ amount: qty, price } as Transaction, broker) ?? 0;
+    }
+    const hasCommissionPlan = !!broker?.commissionType;
+    const totalCost = spreadCost + (commission ?? 0);
+    const totalCostPercent = value > 0 ? (totalCost / value) * 100 : 0;
+
+    return {
+        value,
+        spreadPercent: sp,
+        spreadCost,
+        commission,
+        hasCommissionPlan,
+        brokerName: broker?.name ?? null,
+        totalCost,
+        totalCostPercent,
+    };
+};
+
 export interface RealizedTickerDetail {
     ticker: string;
     realized: number;
