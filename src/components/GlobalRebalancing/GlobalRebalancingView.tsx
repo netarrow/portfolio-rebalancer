@@ -126,7 +126,10 @@ const GlobalRebalancingView: React.FC = () => {
         deleteRatioGroup
     } = usePortfolio();
 
-    // Compute each portfolio's current state
+    // Compute each portfolio's current state.
+    // Asset Allocation only counts the value of invested assets — non-invested
+    // portfolio cash (p.liquidity) is deliberately excluded, so e.g. a portfolio
+    // holding only parked cash contributes €0 to the allocation.
     const portfolioInputs = useMemo<AssetAllocationPortfolioInput[]>(() => {
         return portfolios.map((p) => {
             const txs = transactions.filter((t) => t.portfolioId === p.id);
@@ -137,7 +140,8 @@ const GlobalRebalancingView: React.FC = () => {
                 name: p.name,
                 currentInvestedValue: summary.totalValue,
                 currentPortfolioLiquidity: liquidity,
-                currentTotalValue: summary.totalValue + liquidity
+                // Invested assets only — portfolio cash is not part of the allocation.
+                currentTotalValue: summary.totalValue
             };
         });
     }, [assetSettings, marketData, portfolios, transactions]);
@@ -177,10 +181,8 @@ const GlobalRebalancingView: React.FC = () => {
                 classValues[cls] = (classValues[cls] || 0) + asset.currentValue;
             }
 
-            const liquidity = Number.isFinite(portfolio.liquidity) ? (portfolio.liquidity || 0) : 0;
-            if (liquidity > 0) {
-                classValues['Cash'] = (classValues['Cash'] || 0) + liquidity;
-            }
+            // Non-invested portfolio cash is excluded from the allocation, so it is
+            // intentionally NOT added to the projected Cash slice here.
 
             const scale = pResult.currentValue > 0 ? pResult.targetValue / pResult.currentValue : 1;
             for (const [cls, val] of Object.entries(classValues)) {
