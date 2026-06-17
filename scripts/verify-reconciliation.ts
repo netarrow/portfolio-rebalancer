@@ -33,9 +33,11 @@ const marketData = {
     CCC: { price: 99.5, lastUpdated: '2026-06-11T10:00:00Z' },
 };
 
+// Broker cash is the single source of truth for liquidity. Per-portfolio
+// liquidity (portfolio.liquidity) is a rebalancing-only figure and is NOT
+// summed into net worth on either the Dashboard or the Performance view.
 const brokerLiquidity = 5000; // includes 2000 allocated to p1 — counted once
-const portfolioLiquidity = 1500;
-const totalLiquidity = brokerLiquidity + portfolioLiquidity;
+const totalLiquidity = brokerLiquidity;
 
 // ── Dashboard ──
 const effective = mergeLatestCloses(marketData, priceHistory);

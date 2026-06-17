@@ -213,9 +213,9 @@ const AllocationOverview: React.FC = () => {
 
     /**
      * Current goal values — portfolio-based, fully consistent with aggregateTotalValue.
-     * Each portfolio contributes: invested assets + broker cash allocations (liquidityAllocations)
-     * + portfolio-level liquidity. This matches exactly what the Aggregate table counts,
-     * so goal gaps are accurate and broker cash shows as a real sell action.
+     * Each portfolio contributes: invested assets + broker cash allocations (liquidityAllocations).
+     * Per-portfolio liquidity (portfolio.liquidity) is rebalancing-only and is NOT
+     * summed here, so these totals match exactly what the Aggregate table counts.
      */
     const currentGoalValues = useMemo<Record<string, number>>(() => {
         const vals: Record<string, number> = {};
@@ -228,7 +228,7 @@ const AllocationOverview: React.FC = () => {
             const pCash = injectCashAssets(pRawAssets, brokers, p.id)
                 .filter(a => isCashTicker(a.ticker))
                 .reduce((s, a) => s + a.currentValue, 0);
-            vals[p.goalId] = (vals[p.goalId] ?? 0) + summary.totalValue + pCash + (p.liquidity || 0);
+            vals[p.goalId] = (vals[p.goalId] ?? 0) + summary.totalValue + pCash;
         });
 
         return vals;
@@ -357,7 +357,10 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
             const cashAssetsValue = pAssets
                 .filter(a => isCashTicker(a.ticker))
                 .reduce((s, a) => s + a.currentValue, 0);
-            const totalValue = pSummary.totalValue + (portfolio.liquidity || 0) + cashAssetsValue;
+            // Total = invested assets + broker cash allocated to this portfolio.
+            // Per-portfolio liquidity is rebalancing-only (info row + Buy-Only
+            // what-if) and is deliberately NOT summed into the total.
+            const totalValue = pSummary.totalValue + cashAssetsValue;
             return { portfolio, assets: pAssets, totalValue, investedValue: pSummary.totalValue, portfolioLiquidity: portfolio.liquidity || 0 };
         });
     }, [portfolios, transactions, assetSettings, marketData, brokers]);
@@ -417,15 +420,11 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
         [allVisibleAssets, excludedTickers]
     );
 
-    const totalLiquidity = useMemo(
-        () => portfolios.reduce((s, p) => s + (p.liquidity || 0), 0),
-        [portfolios]
-    );
-
-    // Aggregate total value counts only included assets
+    // Aggregate total value counts only included assets (which already include
+    // broker cash). Per-portfolio liquidity is rebalancing-only and not summed.
     const aggregateTotalValue = useMemo(
-        () => includedAssets.reduce((s, a) => s + a.currentValue, 0) + totalLiquidity,
-        [includedAssets, totalLiquidity]
+        () => includedAssets.reduce((s, a) => s + a.currentValue, 0),
+        [includedAssets]
     );
 
     // Total value including the additional liquidity input
@@ -537,8 +536,8 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
     // Current goal values for goal-rebalance calculation — portfolio-based (robust against any goal title)
     const currentGoalValuesInAggregate = useMemo<Record<string, number>>(() => {
         const vals: Record<string, number> = {};
-        // Use totalValue (invested + broker cash allocations + portfolio liquidity)
-        // so that sum(vals) ≈ aggregateTotalValue and gaps are accurate.
+        // Use totalValue (invested + broker cash allocations) so that
+        // sum(vals) ≈ aggregateTotalValue and gaps are accurate.
         portfolioCalcs.forEach(pc => {
             const gid = pc.portfolio.goalId;
             if (!gid) return;
@@ -1373,7 +1372,6 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
     const portfolioTotalReturnPerc = summary.totalCost > 0 ? (portfolioTotalReturn / summary.totalCost) * 100 : 0;
 
     const allocations = portfolio.allocations || {};
-    const liquidity = portfolio.liquidity || 0;
 
     // Total value of injected cash assets (broker liquidity allocated to this portfolio)
     const cashAssetsValue = useMemo(() => {
@@ -1384,7 +1382,10 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
     const targetTickers = Object.keys(allocations);
     const allTickers = Array.from(new Set([...assetTickers, ...targetTickers])).sort();
 
-    const totalPortfolioValue = summary.totalValue + liquidity + cashAssetsValue;
+    // Portfolio total = invested assets + broker cash allocated here. Per-portfolio
+    // liquidity is shown in the Liquidity field and only deployed by Buy-Only, so it
+    // is not summed into the total (nor the rebalancing target base).
+    const totalPortfolioValue = summary.totalValue + cashAssetsValue;
 
     // --- Multi-asset market groups (per-portfolio) ---
     const groupList = useMemo(() => portfolio.allocationGroups || [], [portfolio.allocationGroups]);
