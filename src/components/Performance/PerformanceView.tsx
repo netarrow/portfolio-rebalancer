@@ -26,11 +26,12 @@ const PerformanceView: React.FC = () => {
 
     const hasHistory = Object.keys(priceHistory).length > 0;
 
+    // Broker cash only — single source of truth for liquidity, matching the
+    // Dashboard Net Worth card. Per-portfolio liquidity is rebalancing-only and
+    // is not overlaid on the net-worth series.
     const currentLiquidity = useMemo(() => {
-        const brokerLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
-        const portfolioLiquidity = portfolios.reduce((sum, p) => sum + (p.liquidity || 0), 0);
-        return brokerLiquidity + portfolioLiquidity;
-    }, [brokers, portfolios]);
+        return brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+    }, [brokers]);
 
     const tickersWithHistory = useMemo(
         () => new Set(Object.keys(priceHistory)),
