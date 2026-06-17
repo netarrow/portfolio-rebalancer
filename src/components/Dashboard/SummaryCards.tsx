@@ -6,7 +6,7 @@ import { CashFlowModal } from './CashFlowModal';
 import './Dashboard.css';
 
 const SummaryCards: React.FC = () => {
-    const { summary, brokers, portfolios, transactions, assetSettings } = usePortfolio();
+    const { summary, brokers, transactions, assetSettings } = usePortfolio();
     const [showRealizedModal, setShowRealizedModal] = React.useState(false);
     const [showCashFlowModal, setShowCashFlowModal] = React.useState(false);
 
@@ -20,10 +20,10 @@ const SummaryCards: React.FC = () => {
         [transactions]
     );
 
-    // Liquidity = broker cash + per-portfolio cash (same composition the
-    // Performance view uses for its net-worth liquidity overlay).
-    const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0)
-        + portfolios.reduce((sum, p) => sum + (p.liquidity || 0), 0);
+    // Liquidity = broker cash only. Broker currentLiquidity is the single source
+    // of truth for cash; per-portfolio liquidity (portfolio.liquidity) is a
+    // rebalancing-only figure and is deliberately NOT summed into net worth.
+    const totalLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
     const netWorth = summary.totalValue + totalLiquidity;
 
     const returnValue = summary.totalValue - summary.totalCost;

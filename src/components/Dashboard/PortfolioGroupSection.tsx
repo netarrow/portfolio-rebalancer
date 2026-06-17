@@ -62,7 +62,9 @@ function computeBuyOnly(
             const currentValue = asset?.currentValue || 0;
             const price = asset?.currentPrice || 0;
             const targetPerc = allocations[ticker] || 0;
-            const gap = pc.totalValue * (targetPerc / 100) - currentValue;
+            // Buy-Only deploys portfolio.liquidity, so its target base is the
+            // portfolio total plus that cash (the total itself excludes it).
+            const gap = (pc.totalValue + liq) * (targetPerc / 100) - currentValue;
             return { ticker, gap, price };
         })
         .filter(c => c.gap > 0 && c.price > 0);
@@ -113,7 +115,11 @@ const PortfolioGroupSection: React.FC<Props> = ({
             const cashAssetsValue = assets
                 .filter(a => isCashTicker(a.ticker))
                 .reduce((s, a) => s + a.currentValue, 0);
-            const totalValue = summary.totalValue + (portfolio.liquidity || 0) + cashAssetsValue;
+            // Portfolio total = invested assets + broker cash allocated to this
+            // portfolio. Per-portfolio liquidity (portfolio.liquidity) is shown as
+            // an info row and is only deployed by the Buy-Only what-if, so it is
+            // deliberately NOT summed into the total here.
+            const totalValue = summary.totalValue + cashAssetsValue;
             return { portfolio, assets, summary, totalValue, cashAssetsValue, transactions };
         });
     }, [allPortfolios, allTransactions, assetSettings, marketData, brokers]);
