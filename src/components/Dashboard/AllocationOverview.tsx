@@ -113,9 +113,22 @@ const TradeCostInfo: React.FC<{
     const tr = taxRate ?? 0;
     // Gross appreciation needed so that, after tax on the gain, it still covers the friction.
     const requiredGainPct = tr < 1 ? roundTripFrictionPct / (1 - tr) : roundTripFrictionPct;
-    const holdMonths = (monthlyReturnPct != null && monthlyReturnPct > 0 && requiredGainPct > 0)
-        ? Math.ceil(requiredGainPct / monthlyReturnPct)
-        : null;
+
+    // The broker only affects the cost to recover, never the return estimate, so
+    // resolve the cost case first: no modelled cost (e.g. free commission + no/zero
+    // spread) ⇒ nothing to recover ⇒ 0 months, regardless of history. Only when there
+    // IS a cost do we need a positive historical return to project a recovery time.
+    let holdMonths: number | null = null;
+    let holdNote: string | null = null;
+    if (requiredGainPct <= 0) {
+        holdMonths = 0;
+    } else if (monthlyReturnPct == null) {
+        holdNote = 'Not enough history to estimate a hold time.';
+    } else if (monthlyReturnPct <= 0) {
+        holdNote = "Asset hasn't appreciated — hold time can't be estimated.";
+    } else {
+        holdMonths = Math.ceil(requiredGainPct / monthlyReturnPct);
+    }
     const showHoldSection = gainPercent != null;
 
     const place = () => {
@@ -241,15 +254,19 @@ const TradeCostInfo: React.FC<{
                                 </span>
                             </div>
                             {holdMonths != null ? (
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 2 }}>
-                                    <strong>Hold for at least</strong>
-                                    <strong style={{ color: '#3B82F6' }}>{holdMonths} month{holdMonths !== 1 ? 's' : ''}</strong>
-                                </div>
+                                holdMonths === 0 ? (
+                                    <div style={{ color: 'var(--color-success)', marginTop: 2 }}>
+                                        No round-trip cost — no minimum hold.
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 2 }}>
+                                        <strong>Hold for at least</strong>
+                                        <strong style={{ color: '#3B82F6' }}>{holdMonths} month{holdMonths !== 1 ? 's' : ''}</strong>
+                                    </div>
+                                )
                             ) : (
                                 <div style={{ color: 'var(--color-warning)', marginTop: 2 }}>
-                                    {(gainPercent ?? 0) <= 0
-                                        ? "Asset hasn't appreciated — hold time can't be estimated."
-                                        : 'Not enough history to estimate a hold time.'}
+                                    {holdNote}
                                 </div>
                             )}
                         </>
@@ -257,7 +274,7 @@ const TradeCostInfo: React.FC<{
 
                     <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.35 }}>
                         Spread = half the bid/ask (one fill). Commission per broker's plan.
-                        {showHoldSection && holdMonths != null
+                        {showHoldSection && holdMonths != null && holdMonths > 0
                             ? ` Hold time = months for this asset's past return to offset a buy→sell round trip (spread ×2, commission ×2, ${(tr * 100).toFixed(1)}% tax).`
                             : ''}
                     </div>
