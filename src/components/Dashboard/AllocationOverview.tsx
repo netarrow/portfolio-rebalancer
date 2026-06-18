@@ -21,6 +21,23 @@ const GOAL_COLOR_PALETTE = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899
 const fmtEur = (n: number, dp = 2) =>
     `€${n.toLocaleString('en-IE', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
 
+const MS_PER_MONTH = 1000 * 60 * 60 * 24 * 30.4375;
+
+/** Whole-ish months elapsed since an ISO date (0 if future/invalid). */
+const monthsSince = (iso?: string): number => {
+    if (!iso) return 0;
+    const from = new Date(iso).getTime();
+    if (!Number.isFinite(from)) return 0;
+    const diff = Date.now() - from;
+    return diff > 0 ? diff / MS_PER_MONTH : 0;
+};
+
+/** Earliest Buy date across a ticker's transactions (used to date the position). */
+const firstBuyDate = (txs: { date: string; direction?: string }[]): string | undefined => {
+    const buys = txs.filter(t => (t.direction ?? 'Buy') === 'Buy').map(t => t.date).filter(Boolean);
+    return buys.length ? buys.reduce((a, b) => (a < b ? a : b)) : undefined;
+};
+
 const FREE_BROKER_ID = '__free__';
 
 /**
@@ -41,8 +58,11 @@ const TradeCostInfo: React.FC<{
     spreadPercent?: number | null;
     brokers: Broker[];
     defaultBrokerId?: string;  // broker resolved for this ticker (default selection)
+    gainPercent?: number | null;  // asset's total return % so far
+    monthsHeld?: number;          // months since first buy (to annualise the return)
+    taxRate?: number;             // decimal capital-gains rate for this asset class
     children: React.ReactNode;
-}> = ({ shares, price, spreadPercent, brokers, defaultBrokerId, children }) => {
+}> = ({ shares, price, spreadPercent, brokers, defaultBrokerId, gainPercent, monthsHeld, taxRate, children }) => {
     const [open, setOpen] = useState(false);
     const [coords, setCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -80,6 +100,23 @@ const TradeCostInfo: React.FC<{
     const allRows = [...brokerRows, freeRow];
     const effectiveId = selectedId ?? defaultBrokerId ?? brokerRows[0]?.id ?? FREE_BROKER_ID;
     const selected = allRows.find(r => r.id === effectiveId) ?? freeRow;
+
+    // Break-even holding period: how long the asset's own historical return needs
+    // to offset a full buy→sell round trip (spread both sides + commission both
+    // sides + tax on the gain), so you end up back at capital + expected return.
+    const monthlyReturnPct = (gainPercent != null && monthsHeld && monthsHeld > 0)
+        ? gainPercent / monthsHeld
+        : null;
+    // Round trip = spread on entry + exit (= full spread) + commission twice.
+    const roundTripFriction = spreadCost * 2 + (selected.commission ?? 0) * 2;
+    const roundTripFrictionPct = value > 0 ? (roundTripFriction / value) * 100 : 0;
+    const tr = taxRate ?? 0;
+    // Gross appreciation needed so that, after tax on the gain, it still covers the friction.
+    const requiredGainPct = tr < 1 ? roundTripFrictionPct / (1 - tr) : roundTripFrictionPct;
+    const holdMonths = (monthlyReturnPct != null && monthlyReturnPct > 0 && requiredGainPct > 0)
+        ? Math.ceil(requiredGainPct / monthlyReturnPct)
+        : null;
+    const showHoldSection = gainPercent != null;
 
     const place = () => {
         const r = ref.current?.getBoundingClientRect();
@@ -190,8 +227,39 @@ const TradeCostInfo: React.FC<{
                             −{fmtEur(selected.totalCost)} ({selected.totalCostPercent.toFixed(2)}%)
                         </span>
                     </div>
+
+                    {showHoldSection && (
+                        <>
+                            <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '6px 0' }} />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                                <span style={{ color: 'var(--text-muted)' }}>
+                                    Return so far{monthsHeld && monthsHeld >= 1 ? ` (${Math.round(monthsHeld)} mo)` : ''}
+                                </span>
+                                <span style={{ color: (gainPercent ?? 0) >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                    {(gainPercent ?? 0) >= 0 ? '+' : ''}{(gainPercent ?? 0).toFixed(1)}%
+                                    {monthlyReturnPct != null ? ` · ${monthlyReturnPct >= 0 ? '+' : ''}${monthlyReturnPct.toFixed(2)}%/mo` : ''}
+                                </span>
+                            </div>
+                            {holdMonths != null ? (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 2 }}>
+                                    <strong>Hold for at least</strong>
+                                    <strong style={{ color: '#3B82F6' }}>{holdMonths} month{holdMonths !== 1 ? 's' : ''}</strong>
+                                </div>
+                            ) : (
+                                <div style={{ color: 'var(--color-warning)', marginTop: 2 }}>
+                                    {(gainPercent ?? 0) <= 0
+                                        ? "Asset hasn't appreciated — hold time can't be estimated."
+                                        : 'Not enough history to estimate a hold time.'}
+                                </div>
+                            )}
+                        </>
+                    )}
+
                     <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.35 }}>
-                        Spread cost = half the bid/ask spread (one market fill). Commission simulated from each broker's plan. Click a broker to use it for the headline.
+                        Spread = half the bid/ask (one fill). Commission per broker's plan.
+                        {showHoldSection && holdMonths != null
+                            ? ` Hold time = months for this asset's past return to offset a buy→sell round trip (spread ×2, commission ×2, ${(tr * 100).toFixed(1)}% tax).`
+                            : ''}
                     </div>
                 </div>,
                 document.body
@@ -464,6 +532,19 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
         });
         return map;
     }, [transactions, brokers]);
+
+    // ticker → months since first buy (for the break-even hold estimate in the popover)
+    const tickerToMonthsHeld = useMemo<Record<string, number>>(() => {
+        const firstBuy: Record<string, string> = {};
+        transactions.forEach(t => {
+            if ((t.direction ?? 'Buy') !== 'Buy') return;
+            const k = t.ticker.toUpperCase();
+            if (!firstBuy[k] || t.date < firstBuy[k]) firstBuy[k] = t.date;
+        });
+        const map: Record<string, number> = {};
+        Object.entries(firstBuy).forEach(([k, d]) => { map[k] = monthsSince(d); });
+        return map;
+    }, [transactions]);
 
     const toggleExcluded = (ticker: string) => {
         setExcludedTickers(prev =>
@@ -1005,6 +1086,7 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                                 spreadPercent={marketData[asset.ticker.toUpperCase()]?.spreadPercent ?? marketData[asset.ticker]?.spreadPercent ?? null}
                                 brokers={brokers}
                                 tradeBroker={tickerToBroker[asset.ticker.toUpperCase()]}
+                                monthsHeld={tickerToMonthsHeld[asset.ticker.toUpperCase()]}
                                 isEditing={isEditing}
                                 isExcluded={isExcluded}
                                 onToggleExclude={() => toggleExcluded(asset.ticker)}
@@ -1042,6 +1124,7 @@ interface AggregateRowProps {
     spreadPercent?: number | null;
     brokers: Broker[];
     tradeBroker?: Broker;
+    monthsHeld?: number;
     isEditing: boolean;
     isExcluded: boolean;
     onToggleExclude: () => void;
@@ -1052,9 +1135,10 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
     gain, gainPerc, currentPerc, targetPerc,
     rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, postRebalancePerc, projectedPerc,
     goalModeEur, goalModeShares, postGoalPerc,
-    spreadPercent, brokers, tradeBroker,
+    spreadPercent, brokers, tradeBroker, monthsHeld,
     isEditing, isExcluded, onToggleExclude,
 }) => {
+    const taxRate = assetClass === 'Bond' ? 0.125 : 0.26;
     const diff = currentPerc - targetPerc;
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf',
@@ -1131,11 +1215,11 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                     ) : (
                         <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                             {rebalanceShares === 0 ? (
-                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <span className="trend-neutral">OK</span>
                                 </TradeCostInfo>
                             ) : (
-                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
                                         <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
                                         <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
@@ -1157,11 +1241,11 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                     ) : (
                         <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
                             {buyOnlyShares === 0 ? (
-                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <span className="trend-neutral">-</span>
                                 </TradeCostInfo>
                             ) : (
-                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
                                         <span>Buy {Math.abs(buyOnlyShares)}</span>
                                         <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
@@ -1272,7 +1356,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                             <div className="mobile-action-box">
                                 <div className="mobile-action-title">Rebalance</div>
                                 <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                             <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
                                             <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
@@ -1287,7 +1371,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                             <div className="mobile-action-box">
                                 <div className="mobile-action-title">Buy Only</div>
                                 <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
-                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                             <span>Buy {Math.abs(buyOnlyShares)}</span>
                                             <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
@@ -1623,6 +1707,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             ?? (brokers.length === 1 ? brokers[0] : undefined);
         const spreadPercent = marketData[ticker.toUpperCase()]?.spreadPercent
             ?? marketData[ticker]?.spreadPercent ?? null;
+        const monthsHeld = monthsSince(firstBuyDate(tickerTxs));
 
         const assetCashFlow = portfolioCashFlowDetails.find(d => d.ticker === ticker.toUpperCase());
         const assetDistributions = assetCashFlow?.totalIncome ?? 0;
@@ -1657,6 +1742,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 spreadPercent={spreadPercent}
                 brokers={brokers}
                 tradeBroker={tradeBroker}
+                monthsHeld={monthsHeld}
             />
         );
     };
@@ -1922,13 +2008,15 @@ interface RowProps {
     brokers: Broker[];
     /** Broker resolved for this ticker — the popover's default selection. */
     tradeBroker?: Broker;
+    /** Months since the first buy of this ticker (for the break-even hold estimate). */
+    monthsHeld?: number;
     /** Hide the Target column + drift (used for group members, whose target lives on the group). */
     hideTarget?: boolean;
     /** Visually nest this row under a group summary row. */
     indent?: boolean;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, brokers, tradeBroker, hideTarget, indent }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, brokers, tradeBroker, monthsHeld, hideTarget, indent }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
@@ -2110,11 +2198,11 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     ) : (
                         <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                             {rebalanceShares === 0 ? (
-                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <span className="trend-neutral">OK</span>
                                 </TradeCostInfo>
                             ) : (
-                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
                                         <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
                                         <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
@@ -2137,11 +2225,11 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     ) : (
                         <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
                             {buyOnlyShares === 0 ? (
-                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <span className="trend-neutral">-</span>
                                 </TradeCostInfo>
                             ) : (
-                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
                                         <span>Buy {Math.abs(buyOnlyShares)}</span>
                                         <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
@@ -2227,11 +2315,11 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                             <div className="mobile-action-title">Standard Rebal</div>
                             <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                                 {rebalanceShares === 0 ? (
-                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                         <span>OK</span>
                                     </TradeCostInfo>
                                 ) : (
-                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                             <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
                                             <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
@@ -2246,11 +2334,11 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                             <div className="mobile-action-title">Buy Only</div>
                             <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
                                 {buyOnlyShares === 0 ? (
-                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                         <span>-</span>
                                     </TradeCostInfo>
                                 ) : (
-                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id}>
+                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate}>
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                             <span>Buy {Math.abs(buyOnlyShares)}</span>
                                             <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
