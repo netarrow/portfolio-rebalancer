@@ -38,8 +38,6 @@ const firstBuyDate = (txs: { date: string; direction?: string }[]): string | und
     return buys.length ? buys.reduce((a, b) => (a < b ? a : b)) : undefined;
 };
 
-const FREE_BROKER_ID = '__free__';
-
 /**
  * Wraps an Action / Buy-Only cell and, on hover/tap, shows a popover estimating
  * what trading this asset would actually cost: the implicit spread cost ("danno")
@@ -69,6 +67,8 @@ const TradeCostInfo: React.FC<{
     // For rows with a suggested trade, let the user re-base the estimate on a
     // single share instead of the suggested amount.
     const [qtyMode, setQtyMode] = useState<'suggested' | 'single'>('suggested');
+    // Free-buy promo applied on top of the selected broker (waives the buy fee only).
+    const [freeBuy, setFreeBuy] = useState(false);
     const ref = useRef<HTMLSpanElement>(null);
 
     if (price <= 0) return <>{children}</>;
@@ -84,7 +84,8 @@ const TradeCostInfo: React.FC<{
     const spreadCost = sp != null ? (value * (sp / 100)) / 2 : 0;
     const actionLabel = isAction ? (shares > 0 ? 'Buy' : 'Sell') : 'Buy';
 
-    // One row per broker (commission simulated from its plan) + a free scenario.
+    // One row per broker (commission simulated from its plan). The broker is the
+    // commission plan; the free-buy toggle is applied on top, not a pseudo-broker.
     const brokerRows = brokers.map(b => {
         const est = estimateTradeCost({ shares: qty, price, spreadPercent, broker: b });
         return {
@@ -93,22 +94,29 @@ const TradeCostInfo: React.FC<{
             totalCost: est.totalCost, totalCostPercent: est.totalCostPercent,
         };
     });
-    const freeRow = {
-        id: FREE_BROKER_ID, name: 'Free commission', commission: 0, hasPlan: false,
-        totalCost: spreadCost, totalCostPercent: value > 0 ? (spreadCost / value) * 100 : 0,
-    };
-    const allRows = [...brokerRows, freeRow];
-    const effectiveId = selectedId ?? defaultBrokerId ?? brokerRows[0]?.id ?? FREE_BROKER_ID;
-    const selected = allRows.find(r => r.id === effectiveId) ?? freeRow;
+    const effectiveId = selectedId ?? defaultBrokerId ?? brokerRows[0]?.id;
+    const selectedRow = brokerRows.find(r => r.id === effectiveId) ?? brokerRows[0];
+    const selectedCommission = selectedRow?.commission ?? 0;
+    const selectedName = selectedRow?.name ?? 'No broker';
+
+    // Free-buy promo: waives the commission on the BUY leg only — the eventual sell
+    // still pays the broker's commission.
+    const isBuyTrade = isAction ? shares > 0 : true;
+    const buyCommission = freeBuy ? 0 : selectedCommission;
+    const sellCommission = selectedCommission;
+    // Headline = cost of the displayed single trade (free-buy waives a buy's fee).
+    const headlineCommission = (isBuyTrade && freeBuy) ? 0 : selectedCommission;
+    const headlineDrag = spreadCost + headlineCommission;
+    const headlineDragPct = value > 0 ? (headlineDrag / value) * 100 : 0;
 
     // Break-even holding period: how long the asset's own historical return needs
-    // to offset a full buy→sell round trip (spread both sides + commission both
-    // sides + tax on the gain), so you end up back at capital + expected return.
+    // to offset a full buy→sell round trip (spread both sides + buy & sell
+    // commission + tax on the gain), so you end up back at capital + expected return.
     const monthlyReturnPct = (gainPercent != null && monthsHeld && monthsHeld > 0)
         ? gainPercent / monthsHeld
         : null;
-    // Round trip = spread on entry + exit (= full spread) + commission twice.
-    const roundTripFriction = spreadCost * 2 + (selected.commission ?? 0) * 2;
+    // Round trip = spread on entry + exit (= full spread) + buy fee (waivable) + sell fee.
+    const roundTripFriction = spreadCost * 2 + buyCommission + sellCommission;
     const roundTripFrictionPct = value > 0 ? (roundTripFriction / value) * 100 : 0;
     const tr = taxRate ?? 0;
     // Gross appreciation needed so that, after tax on the gain, it still covers the friction.
@@ -203,9 +211,11 @@ const TradeCostInfo: React.FC<{
                         Commission &amp; total drag by broker
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {allRows.map(row => {
+                        {brokerRows.length === 0 && (
+                            <div style={{ color: 'var(--text-muted)', padding: '3px 4px' }}>No broker configured.</div>
+                        )}
+                        {brokerRows.map(row => {
                             const isSel = row.id === effectiveId;
-                            const isFree = row.id === FREE_BROKER_ID;
                             return (
                                 <div
                                     key={row.id}
@@ -219,9 +229,7 @@ const TradeCostInfo: React.FC<{
                                     <span style={{ color: isSel ? '#3B82F6' : 'var(--text-muted)', fontSize: '0.7rem', width: 12 }}>
                                         {isSel ? '●' : '○'}
                                     </span>
-                                    <span style={{ flex: 1, fontStyle: isFree ? 'italic' : 'normal', color: isFree ? 'var(--text-muted)' : undefined }}>
-                                        {row.name}
-                                    </span>
+                                    <span style={{ flex: 1 }}>{row.name}</span>
                                     <span style={{ width: 64, textAlign: 'right', color: row.commission > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                                         {row.commission > 0 ? `−${fmtEur(row.commission)}` : 'free'}
                                     </span>
@@ -233,11 +241,24 @@ const TradeCostInfo: React.FC<{
                         })}
                     </div>
 
+                    <label
+                        onClick={e => e.stopPropagation()}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, cursor: 'pointer', userSelect: 'none' }}
+                    >
+                        <input
+                            type="checkbox"
+                            checked={freeBuy}
+                            onChange={e => { e.stopPropagation(); setFreeBuy(e.target.checked); }}
+                            style={{ cursor: 'pointer' }}
+                        />
+                        <span>Free buy commission <span style={{ color: 'var(--text-muted)' }}>(promo — sell still pays)</span></span>
+                    </label>
+
                     <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '6px 0' }} />
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                        <span>Total drag <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>({selected.name})</span></span>
-                        <span style={{ color: selected.totalCost > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                            −{fmtEur(selected.totalCost)} ({selected.totalCostPercent.toFixed(2)}%)
+                        <span>Total drag <span style={{ fontWeight: 'normal', color: 'var(--text-muted)' }}>({selectedName}{isBuyTrade && freeBuy ? ', free buy' : ''})</span></span>
+                        <span style={{ color: headlineDrag > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                            −{fmtEur(headlineDrag)} ({headlineDragPct.toFixed(2)}%)
                         </span>
                     </div>
 
@@ -273,9 +294,9 @@ const TradeCostInfo: React.FC<{
                     )}
 
                     <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.35 }}>
-                        Spread = half the bid/ask (one fill). Commission per broker's plan.
+                        Spread = half the bid/ask (one fill). Commission per broker's plan; free-buy waives the buy fee only.
                         {showHoldSection && holdMonths != null && holdMonths > 0
-                            ? ` Hold time = months for this asset's past return to offset a buy→sell round trip (spread ×2, commission ×2, ${(tr * 100).toFixed(1)}% tax).`
+                            ? ` Hold time = months for this asset's past return to offset a buy→sell round trip (spread ×2, buy fee${freeBuy ? ' waived' : ''} + sell fee, ${(tr * 100).toFixed(1)}% tax).`
                             : ''}
                     </div>
                 </div>,
