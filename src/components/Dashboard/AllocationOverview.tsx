@@ -310,7 +310,7 @@ const TradeCostInfo: React.FC<{
 
 
 const AllocationOverview: React.FC = () => {
-    const { portfolios, brokers, transactions, assetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals, goalModeTargets: storedGoalModeTargets, setGoalModeTargets } = usePortfolio();
+    const { portfolios, brokers, transactions, assetSettings, effectiveAssetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals, goalModeTargets: storedGoalModeTargets, setGoalModeTargets } = usePortfolio();
 
     // Goals sorted by order, with assigned colors
     const goalItems = useMemo<GoalItem[]>(() => {
@@ -405,7 +405,7 @@ const AllocationOverview: React.FC = () => {
                             parent={parent}
                             children={children}
                             allTransactions={transactions}
-                            assetSettings={assetSettings}
+                            assetSettings={effectiveAssetSettings}
                             marketData={marketData}
                             brokers={brokers}
                             onUpdatePortfolio={updatePortfolio}
@@ -417,7 +417,7 @@ const AllocationOverview: React.FC = () => {
                             key={portfolio.id}
                             portfolio={portfolio}
                             allTransactions={transactions}
-                            assetSettings={assetSettings}
+                            assetSettings={effectiveAssetSettings}
                             marketData={marketData}
                             brokers={brokers}
                             onUpdatePortfolio={updatePortfolio}
@@ -447,21 +447,21 @@ interface AggregateAllocationSectionProps {
 }
 
 const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({ goalModeTargets }) => {
-    const { portfolios, brokers, transactions, assetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers, virtualBonds, concretizeVirtualBond, parkVirtualBond } = usePortfolio();
+    const { portfolios, brokers, transactions, assetSettings, effectiveAssetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers, virtualBonds, concretizeVirtualBond, parkVirtualBond } = usePortfolio();
     const [concretizingVBond, setConcretizingVBond] = useState<VirtualBond | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [additionalLiquidity, setAdditionalLiquidity] = useState<number | undefined>(undefined);
 
     const { assets: rawAggregateAssets, summary } = useMemo(
-        () => calculateAssets(transactions, assetSettings, marketData),
-        [transactions, assetSettings, marketData]
+        () => calculateAssets(transactions, effectiveAssetSettings, marketData),
+        [transactions, effectiveAssetSettings, marketData]
     );
 
     // Per-portfolio total values (needed for aggregated cash and as input to asset allocation engine)
     const portfolioCalcs = useMemo(() => {
         return portfolios.map(portfolio => {
             const pTxs = transactions.filter(t => t.portfolioId === portfolio.id);
-            const { assets: pRawAssets, summary: pSummary } = calculateAssets(pTxs, assetSettings, marketData);
+            const { assets: pRawAssets, summary: pSummary } = calculateAssets(pTxs, effectiveAssetSettings, marketData);
             const pAssets = injectCashAssets(pRawAssets, brokers, portfolio.id);
             const cashAssetsValue = pAssets
                 .filter(a => isCashTicker(a.ticker))
@@ -472,7 +472,7 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
             const totalValue = pSummary.totalValue + cashAssetsValue;
             return { portfolio, assets: pAssets, totalValue, investedValue: pSummary.totalValue, portfolioLiquidity: portfolio.liquidity || 0 };
         });
-    }, [portfolios, transactions, assetSettings, marketData, brokers]);
+    }, [portfolios, transactions, effectiveAssetSettings, marketData, brokers]);
 
     // Run the Asset Allocation engine to get configured target weights per portfolio
     const allocationResult = useMemo(() => {
@@ -519,7 +519,9 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
 
     // All assets (quantity > 0) — used to render rows (including excluded in edit mode)
     const allVisibleAssets = useMemo(() => {
-        const real = rawAggregateAssets.filter(a => a.quantity > 0 && !isCashTicker(a.ticker));
+        // Unresolved virtual bonds appear even at quantity 0 (ghost rows) so the
+        // user can see the rebalance € target and reach the "Concretizza" button.
+        const real = rawAggregateAssets.filter(a => !isCashTicker(a.ticker) && (a.quantity > 0 || isVirtualBondTicker(a.ticker)));
         return [...real, ...aggregateCashAssets].sort((a, b) => a.ticker.localeCompare(b.ticker));
     }, [rawAggregateAssets, aggregateCashAssets]);
 
@@ -1765,8 +1767,9 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
         const projectedPerc = totalPortfolioValue > 0 ? ((currentValue + buyOnlyAmount) / totalPortfolioValue) * 100 : 0;
 
         const isCash = isCashTicker(ticker);
+        const isVBond = isVirtualBondTicker(ticker);
         const setting = assetSettings.find(s => s.ticker === ticker);
-        const assetClass = isCash ? 'Cash' : (setting?.assetClass || asset?.assetClass || 'Stock');
+        const assetClass = isCash ? 'Cash' : isVBond ? 'Bond' : (setting?.assetClass || asset?.assetClass || 'Stock');
         const label = isCash ? asset?.label : (setting?.label || asset?.label);
 
         const tickerTxs = portfolioTxs.filter(t => t.ticker === ticker);
@@ -1796,6 +1799,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 label={label}
                 assetClass={assetClass}
                 isCash={isCash}
+                isVBond={isVBond}
                 currentPerc={currentPerc}
                 targetPerc={targetPerc}
                 hideTarget={opts?.hideTarget}
@@ -2060,6 +2064,7 @@ interface RowProps {
     label?: string;
     assetClass: string;
     isCash?: boolean;
+    isVBond?: boolean;
 
     currentPerc: number;
     targetPerc: number;
@@ -2092,7 +2097,7 @@ interface RowProps {
     indent?: boolean;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, brokers, tradeBroker, monthsHeld, hideTarget, indent }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, isVBond, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, brokers, tradeBroker, monthsHeld, hideTarget, indent }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
@@ -2122,6 +2127,7 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     {indent && <span style={{ color: 'var(--text-muted)', marginRight: 'var(--space-1)' }}>↳</span>}
                     <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
                     <div>
+                        {isVBond && <span style={{ fontSize: '0.65rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', marginRight: '6px', verticalAlign: 'middle' }}>VBOND</span>}
                         <strong style={{ fontWeight: indent ? 400 : undefined }}>{label || ticker}</strong>
                     </div>
                 </div>
@@ -2328,6 +2334,7 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                 <div className="mobile-card-header">
                     <div className="mobile-card-title">
                         <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
+                        {isVBond && <span style={{ fontSize: '0.6rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', marginRight: '4px' }}>VBOND</span>}
                         <strong>{label || ticker}</strong>
                     </div>
                     <div style={{ textAlign: 'right' }}>
