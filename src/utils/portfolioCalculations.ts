@@ -20,8 +20,9 @@ export const calculateAssets = (
 
     // Process transactions to build assets
     sortedTransactions.forEach(tx => {
-        // normalize ticker
-        const ticker = tx.ticker.toUpperCase();
+        // normalize ticker — but preserve case for virtual-bond placeholders,
+        // whose id is a lowercase UUID that must match vb.id and allocation keys.
+        const ticker = isVirtualBondTicker(tx.ticker) ? tx.ticker : tx.ticker.toUpperCase();
         const existing = assetMap.get(ticker);
 
         // Default to Buy if undefined (migration safety)
@@ -86,7 +87,7 @@ export const calculateAssets = (
 
     // 2. Add "Ghost Assets" from targets that haven't been touched by transactions yet
     targets.forEach(target => {
-        const ticker = target.ticker.toUpperCase();
+        const ticker = isVirtualBondTicker(target.ticker) ? target.ticker : target.ticker.toUpperCase();
         if (!assetMap.has(ticker)) {
             // Found a defined asset with no transactions
             assetMap.set(ticker, {

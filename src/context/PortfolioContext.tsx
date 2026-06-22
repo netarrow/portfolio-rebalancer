@@ -20,6 +20,7 @@ type Target = AssetDefinition & { targetPercentage?: number };
 interface PortfolioContextType {
     transactions: Transaction[];
     assetSettings: AssetDefinition[];
+    effectiveAssetSettings: AssetDefinition[];
     assets: Asset[];
     portfolios: Portfolio[];
     brokers: Broker[];
@@ -1132,10 +1133,20 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     // Market data enriched with the freshest local-history close, so the
     // Dashboard values assets with the same price the Performance view uses.
-    const effectiveMarketData = useMemo(
-        () => mergeLatestCloses(marketData, priceHistory),
-        [marketData, priceHistory]
-    );
+    // Unresolved virtual bonds get a synthetic €1/unit price (matching the
+    // parking convention) so they carry a price > 0 and participate in
+    // rebalancing — the Action column then reads as euros to allocate.
+    const effectiveMarketData = useMemo(() => {
+        const base = mergeLatestCloses(marketData, priceHistory);
+        const now = new Date().toISOString();
+        const withVBonds = { ...base };
+        virtualBonds
+            .filter(vb => !vb.resolvedIsin)
+            .forEach(vb => {
+                withVBonds[getVirtualBondTicker(vb.id)] = { price: 1, lastUpdated: now };
+            });
+        return withVBonds;
+    }, [marketData, priceHistory, virtualBonds]);
 
     const effectiveAssetSettings = useMemo(() => {
         const vbondDefs: AssetDefinition[] = virtualBonds
@@ -2094,6 +2105,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         transactions,
         targets: assetSettings, // Expose as targets for compatibility
         assetSettings,
+        effectiveAssetSettings, // assetSettings + synthetic defs for unresolved virtual bonds
         assets,
         summary,
         macroAllocations,
