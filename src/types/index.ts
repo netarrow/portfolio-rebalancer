@@ -29,6 +29,11 @@ export const getCashTicker = (brokerId: string) => `${CASH_TICKER_PREFIX}${broke
 // Portfolio.allocations just like a ticker, so the "sum to 100%" math is unchanged.
 export const GROUP_TICKER_PREFIX = '_GRP_';
 
+export const VBOND_TICKER_PREFIX = '_VBOND_';
+export const getVirtualBondTicker = (id: string) => `${VBOND_TICKER_PREFIX}${id}`;
+export const isVirtualBondTicker = (t: string) => t.startsWith(VBOND_TICKER_PREFIX);
+export const getVirtualBondId = (ticker: string) => ticker.replace(VBOND_TICKER_PREFIX, '');
+
 export type AssetClass = 'Stock' | 'Bond' | 'Commodity' | 'Crypto' | 'Cash' | 'PensionFund';
 export type AssetSubClass =
   | 'International' | 'Local'     // Stock
@@ -165,6 +170,29 @@ export interface AssetDefinition {
   source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA';
   assetClass?: AssetClass;
   assetSubClass?: AssetSubClass;
+}
+
+export type BondUniverse = 'IT' | 'EU';
+
+export interface VirtualBond {
+  id: string;
+  label: string;
+  targetMaturityDate: string;
+  universe: BondUniverse;
+  minMonthsBefore: number;
+  maxMonthsBefore: number;
+  resolvedIsin?: string;
+  resolvedAt?: string;
+  createdAt: string;
+}
+
+export interface BondProposal {
+  isin: string;
+  name: string;
+  maturityDate: string;
+  yield?: number;
+  currency?: string;
+  universe: BondUniverse;
 }
 
 // YNAB integration

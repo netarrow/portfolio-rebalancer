@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
-import { calculateAssets, isGroupKey, isCashTicker } from '../utils/portfolioCalculations';
+import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint, VirtualBond } from '../types';
+import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
@@ -103,6 +104,13 @@ interface PortfolioContextType {
     getPortfolioAllocationSummary: (portfolioId: string) => { allocated: number; available: number; drift: number; currentValue: number };
     getYnabGoalAllocations: (ynabGoalId: string) => YnabGoalAllocation[];
     ynabGoalsSyncing: boolean;
+    // Virtual bonds
+    virtualBonds: VirtualBond[];
+    addVirtualBond: (bond: VirtualBond) => void;
+    updateVirtualBond: (bond: VirtualBond) => void;
+    deleteVirtualBond: (id: string) => void;
+    parkVirtualBond: (id: string, amount: number, brokerId?: string, portfolioId?: string) => void;
+    concretizeVirtualBond: (id: string, fill: { isin: string; quantity: number; price: number; brokerId?: string; portfolioId?: string; source?: 'ETF' | 'MOT'; label?: string }) => void;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -165,6 +173,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabGoals, setYnabGoals] = useLocalStorage<YnabGoal[]>('portfolio_ynab_goals', []);
     const [ynabGoalAllocations, setYnabGoalAllocations] = useLocalStorage<YnabGoalAllocation[]>('portfolio_ynab_goal_allocations', []);
     const [ynabGoalsSyncing, setYnabGoalsSyncing] = useState(false);
+    const [virtualBonds, setVirtualBonds] = useLocalStorage<VirtualBond[]>('portfolio_virtual_bonds', []);
     // Ref so sync effect can read latest config without adding azureConfig to deps (avoids loop on lastSync)
     const azureConfigRef = useRef(azureConfig);
     // Timestamp of last restore to suppress the debounced post-restore upload
@@ -619,6 +628,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
+                virtualBonds,
             };
             try {
                 setAzureSyncing(true);
@@ -640,7 +650,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
-        ynabGoals, ynabGoalAllocations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt]);
+        ynabGoals, ynabGoalAllocations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -665,6 +675,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                         ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                         ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
+                        virtualBonds,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -958,6 +969,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setGoalAllocations({});
         setGoals([]);
         setPriceHistory({});
+        setVirtualBonds([]);
     };
 
     const refreshPrices = async () => {
@@ -976,7 +988,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const allocatedUnheld = new Set<string>();
         const addUnheld = (ticker: string) => {
             const t = ticker.toUpperCase();
-            if (!t || isCashTicker(t) || isGroupKey(t) || heldTickers.has(t)) return;
+            if (!t || isCashTicker(t) || isGroupKey(t) || isVirtualBondTicker(t) || heldTickers.has(t)) return;
             allocatedUnheld.add(ticker);
         };
         portfolios.forEach(p => {
@@ -1019,7 +1031,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Prepare tokens from active assets + allocated-but-unheld tickers
         const tokenTickers = [
-            ...activeAssets.map(a => a.ticker),
+            ...activeAssets.filter(a => !isVirtualBondTicker(a.ticker)).map(a => a.ticker),
             ...Array.from(allocatedUnheld),
         ];
         const tokens = tokenTickers.map(ticker => {
@@ -1075,7 +1087,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Backfill each asset from its first purchase date (server falls back
         // to one year ago when a ticker has no Buy transaction).
-        const tokens = activeAssets.map(asset => {
+        const tokens = activeAssets.filter(a => !isVirtualBondTicker(a.ticker)).map(asset => {
             const setting = assetSettings.find(t => t.ticker === asset.ticker);
             const buyDates = transactions
                 .filter(t => t.ticker === asset.ticker && t.direction === 'Buy' && t.date)
@@ -1125,10 +1137,28 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         [marketData, priceHistory]
     );
 
+    const effectiveAssetSettings = useMemo(() => {
+        const vbondDefs: AssetDefinition[] = virtualBonds
+            .filter(vb => !vb.resolvedIsin)
+            .map(vb => {
+                const monthsToMaturity = Math.max(0,
+                    (new Date(vb.targetMaturityDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30)
+                );
+                const subClass: AssetSubClass = monthsToMaturity <= 24 ? 'Short' : monthsToMaturity <= 84 ? 'Medium' : 'Long';
+                return {
+                    ticker: getVirtualBondTicker(vb.id),
+                    label: vb.label,
+                    assetClass: 'Bond' as const,
+                    assetSubClass: subClass,
+                };
+            });
+        return [...assetSettings, ...vbondDefs];
+    }, [assetSettings, virtualBonds]);
+
     // Derive Assets and Summary
     const { assets, summary } = useMemo(() => {
-        return calculateAssets(transactions, assetSettings, effectiveMarketData);
-    }, [transactions, assetSettings, effectiveMarketData]);
+        return calculateAssets(transactions, effectiveAssetSettings, effectiveMarketData);
+    }, [transactions, effectiveAssetSettings, effectiveMarketData]);
 
     const updateTransaction = (updatedTransaction: Transaction) => {
         setTransactions((prev) => prev.map((t) => (t.id === updatedTransaction.id ? updatedTransaction : t)));
@@ -1527,6 +1557,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const importedYnabMappings: YnabCategoryMapping[] = Array.isArray(data.ynabMappings) ? data.ynabMappings : [];
             const importedYnabGoals: YnabGoal[] = Array.isArray(data.ynabGoals) ? data.ynabGoals : [];
             const importedYnabGoalAllocations: YnabGoalAllocation[] = Array.isArray(data.ynabGoalAllocations) ? data.ynabGoalAllocations : [];
+            const importedVirtualBonds: VirtualBond[] = Array.isArray(data.virtualBonds) ? data.virtualBonds : [];
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
             const importedYnabGoalsGroupName: string | undefined = typeof data.ynabGoalsGroupName === 'string' ? data.ynabGoalsGroupName : undefined;
             const importedYnabLastGoalsSyncAt: string | undefined = typeof data.ynabLastGoalsSyncAt === 'string' ? data.ynabLastGoalsSyncAt : undefined;
@@ -1549,6 +1580,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_ynab_mappings', JSON.stringify(importedYnabMappings));
             localStorage.setItem('portfolio_ynab_goals', JSON.stringify(importedYnabGoals));
             localStorage.setItem('portfolio_ynab_goal_allocations', JSON.stringify(importedYnabGoalAllocations));
+            localStorage.setItem('portfolio_virtual_bonds', JSON.stringify(importedVirtualBonds));
 
             // Then update React state
             setTransactions(transactions);
@@ -1566,6 +1598,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setYnabMappings(importedYnabMappings);
             setYnabGoals(importedYnabGoals);
             setYnabGoalAllocations(importedYnabGoalAllocations);
+            setVirtualBonds(importedVirtualBonds);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
                 setYnabConfigState(prev => prev ? {
                     ...prev,
@@ -1603,6 +1636,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
+                virtualBonds,
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -1971,6 +2005,91 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabGoalAllocations(prev => prev.filter(a => a.id !== allocationId));
     };
 
+    // --- Virtual Bond CRUD + lifecycle ---
+
+    const addVirtualBond = (bond: VirtualBond) => {
+        setVirtualBonds(prev => [...prev, bond]);
+    };
+
+    const updateVirtualBond = (bond: VirtualBond) => {
+        setVirtualBonds(prev => prev.map(vb => vb.id === bond.id ? bond : vb));
+    };
+
+    const deleteVirtualBond = (id: string) => {
+        const vbTicker = getVirtualBondTicker(id);
+        setTransactions(prev => prev.filter(t => t.ticker !== vbTicker));
+        setPortfolios(prev => prev.map(p => {
+            const allocs = p.allocations ? { ...p.allocations } : {};
+            delete allocs[vbTicker];
+            return { ...p, allocations: allocs };
+        }));
+        setVirtualBonds(prev => prev.filter(vb => vb.id !== id));
+    };
+
+    const parkVirtualBond = (id: string, amount: number, brokerId?: string, portfolioId?: string) => {
+        const vbTicker = getVirtualBondTicker(id);
+        addTransaction({
+            id: crypto.randomUUID(),
+            ticker: vbTicker,
+            amount,
+            price: 1,
+            date: new Date().toISOString().split('T')[0],
+            direction: 'Buy',
+            portfolioId,
+            brokerId,
+        });
+    };
+
+    const concretizeVirtualBond = (id: string, fill: {
+        isin: string; quantity: number; price: number;
+        brokerId?: string; portfolioId?: string;
+        source?: 'ETF' | 'MOT'; label?: string;
+    }) => {
+        const vbTicker = getVirtualBondTicker(id);
+        const vb = virtualBonds.find(b => b.id === id);
+        if (!vb) return;
+
+        const monthsToMaturity = Math.max(0,
+            (new Date(vb.targetMaturityDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30)
+        );
+        const subClass: AssetSubClass = monthsToMaturity <= 24 ? 'Short' : monthsToMaturity <= 84 ? 'Medium' : 'Long';
+
+        updateAssetSettings(
+            fill.isin.toUpperCase(),
+            fill.source || 'MOT',
+            fill.label || vb.label,
+            'Bond',
+            subClass
+        );
+
+        addTransaction({
+            id: crypto.randomUUID(),
+            ticker: fill.isin.toUpperCase(),
+            amount: fill.quantity,
+            price: fill.price,
+            date: new Date().toISOString().split('T')[0],
+            direction: 'Buy',
+            portfolioId: fill.portfolioId,
+            brokerId: fill.brokerId,
+        });
+
+        setTransactions(prev => prev.filter(t => t.ticker !== vbTicker));
+
+        setPortfolios(prev => prev.map(p => {
+            const allocs = p.allocations ? { ...p.allocations } : {};
+            if (vbTicker in allocs) {
+                const pct = allocs[vbTicker];
+                delete allocs[vbTicker];
+                allocs[fill.isin.toUpperCase()] = pct;
+            }
+            return { ...p, allocations: allocs };
+        }));
+
+        setVirtualBonds(prev => prev.map(vb2 =>
+            vb2.id === id ? { ...vb2, resolvedIsin: fill.isin.toUpperCase(), resolvedAt: new Date().toISOString() } : vb2
+        ));
+    };
+
     const value = {
         transactions,
         targets: assetSettings, // Expose as targets for compatibility
@@ -2051,6 +2170,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         getPortfolioAllocationSummary,
         getYnabGoalAllocations,
         ynabGoalsSyncing,
+        virtualBonds,
+        addVirtualBond,
+        updateVirtualBond,
+        deleteVirtualBond,
+        parkVirtualBond,
+        concretizeVirtualBond,
     };
 
     return (
