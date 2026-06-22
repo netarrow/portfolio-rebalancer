@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
-import type { AssetClass, AssetSubClass, AllocationGroup } from '../../types';
+import type { AssetClass, AssetSubClass, AllocationGroup, BondUniverse } from '../../types';
+import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { getCashTicker, isCashTicker, makeGroupId } from '../../utils/portfolioCalculations';
 
 interface PortfolioAllocationsProps {
@@ -10,7 +11,7 @@ interface PortfolioAllocationsProps {
 }
 
 const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId, onClose }) => {
-    const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup } = usePortfolio();
+    const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup, virtualBonds, addVirtualBond, deleteVirtualBond } = usePortfolio();
 
     // UI State for "Add Asset" mode
     const [isAddingAsset, setIsAddingAsset] = useState(false);
@@ -24,6 +25,12 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
     const [isCreatingGroup, setIsCreatingGroup] = useState(false);
     const [newGroupLabel, setNewGroupLabel] = useState('');
     const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
+
+    // Virtual bond form
+    const [isAddingVBond, setIsAddingVBond] = useState(false);
+    const [vbondLabel, setVbondLabel] = useState('');
+    const [vbondMaturity, setVbondMaturity] = useState('');
+    const [vbondUniverse, setVbondUniverse] = useState<BondUniverse>('IT');
 
     const portfolio = portfolios.find(p => p.id === portfolioId);
     const allocations = portfolio?.allocations || {};
@@ -45,12 +52,18 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
             }));
     }, [brokers, portfolioId]);
 
-    // Get all assets defined in settings + virtual cash tickers, excluding tickers
-    // that belong to a group (those are edited inside the group, not standalone).
+    // Get all assets defined in settings + virtual cash/bond tickers, excluding
+    // tickers that belong to a group (those are edited inside the group, not standalone).
+    const vbondTickers = useMemo(() => {
+        return virtualBonds
+            .filter(vb => !vb.resolvedIsin)
+            .map(vb => `_VBOND_${vb.id}`);
+    }, [virtualBonds]);
+
     const tickers = useMemo(() => {
         const settingTickers = assetSettings.map(s => s.ticker);
         const cashTickerIds = cashTickers.map(c => c.ticker);
-        const allTickers = [...settingTickers, ...cashTickerIds]
+        const allTickers = [...settingTickers, ...cashTickerIds, ...vbondTickers]
             .filter(t => !groupedTickers.has(t.toUpperCase()));
 
         return allTickers.sort((a, b) => {
@@ -60,7 +73,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                 return a.localeCompare(b);
             });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [assetSettings, cashTickers, groupedTickers]);
+    }, [assetSettings, cashTickers, groupedTickers, vbondTickers]);
 
     // Tickers available to add to a group: defined assets, non-cash, not already grouped.
     const availableForGroup = useMemo(() => {
@@ -97,7 +110,44 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
         setIsAddingAsset(false);
     };
 
-    const labelFor = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+    const labelFor = (ticker: string) => {
+        if (isVirtualBondTicker(ticker)) {
+            const vb = virtualBonds.find(b => `_VBOND_${b.id}` === ticker);
+            return vb?.label || ticker;
+        }
+        return assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+    };
+
+    const vbondFor = (ticker: string) => {
+        if (!isVirtualBondTicker(ticker)) return null;
+        return virtualBonds.find(b => b.id === getVirtualBondId(ticker)) || null;
+    };
+
+    const handleAddVBond = () => {
+        if (!vbondLabel.trim() || !vbondMaturity) return;
+        const id = crypto.randomUUID();
+        const bond = {
+            id,
+            label: vbondLabel.trim(),
+            targetMaturityDate: vbondMaturity,
+            universe: vbondUniverse,
+            minMonthsBefore: 1,
+            maxMonthsBefore: 6,
+            createdAt: new Date().toISOString(),
+        };
+        addVirtualBond(bond);
+        const ticker = `_VBOND_${id}`;
+        updatePortfolioAllocation(portfolioId, ticker, 0);
+        setVbondLabel('');
+        setVbondMaturity('');
+        setVbondUniverse('IT');
+        setIsAddingVBond(false);
+    };
+
+    const handleDeleteVBond = (ticker: string) => {
+        const vbId = getVirtualBondId(ticker);
+        deleteVirtualBond(vbId);
+    };
 
     const handleCreateGroup = () => {
         if (!newGroupLabel.trim() || newGroupMembers.length < 2) return;
@@ -280,20 +330,31 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
 
                             {tickers.map(ticker => {
                                 const isCash = isCashTicker(ticker);
+                                const isVBond = isVirtualBondTicker(ticker);
+                                const vb = isVBond ? vbondFor(ticker) : null;
                                 const setting = assetSettings.find(s => s.ticker === ticker);
                                 const cashInfo = cashTickers.find(c => c.ticker === ticker);
                                 const currentPerc = allocations[ticker] || 0;
 
                                 return (
-                                    <div key={ticker} className="alloc-modal-row" data-ticker={isCash ? 'CASH' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
-                                        <div style={{ fontWeight: 500, color: isCash ? 'var(--text-secondary)' : undefined }}>
-                                            {isCash ? 'CASH' : ticker}
+                                    <div key={ticker} className="alloc-modal-row" data-ticker={isCash ? 'CASH' : isVBond ? 'VBOND' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+                                        <div style={{ fontWeight: 500, color: isCash ? 'var(--text-secondary)' : isVBond ? '#8B5CF6' : undefined }}>
+                                            {isCash ? 'CASH' : isVBond ? (
+                                                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                    <span style={{ fontSize: '0.7rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px' }}>VBOND</span>
+                                                    <button onClick={() => handleDeleteVBond(ticker)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.9rem', padding: 0 }} title="Remove virtual bond">&times;</button>
+                                                </span>
+                                            ) : ticker}
                                         </div>
                                         <div>
-                                            {isCash ? cashInfo?.label : (setting?.label || '-')}
+                                            {isCash ? cashInfo?.label : isVBond ? (
+                                                <span>{vb?.label || ticker} <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>mat. {vb?.targetMaturityDate}</span></span>
+                                            ) : (setting?.label || '-')}
                                         </div>
                                         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                            {isCash ? 'Cash' : (
+                                            {isCash ? 'Cash' : isVBond ? (
+                                                <span style={{ color: '#8B5CF6' }}>Bond <span style={{ opacity: 0.7 }}>• {vb?.universe}</span></span>
+                                            ) : (
                                                 <>
                                                     {setting?.assetClass}
                                                     {setting?.assetSubClass && <span style={{ opacity: 0.7 }}> • {setting.assetSubClass}</span>}
@@ -450,6 +511,69 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                             <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
                                 <button className="btn" onClick={() => { setIsCreatingGroup(false); setNewGroupLabel(''); setNewGroupMembers([]); }}>Cancel</button>
                                 <button className="btn btn-primary" onClick={handleCreateGroup} disabled={!newGroupLabel.trim() || newGroupMembers.length < 2}>Create Group</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                {/* Add Virtual Bond Section */}
+                <div style={{ marginTop: 'var(--space-3)' }}>
+                    {!isAddingVBond ? (
+                        <button
+                            className="btn"
+                            style={{
+                                width: '100%',
+                                border: '1px dashed #8B5CF6',
+                                color: '#8B5CF6',
+                                backgroundColor: 'transparent'
+                            }}
+                            onClick={() => setIsAddingVBond(true)}
+                        >
+                            + Add Virtual Bond (placeholder for future bond purchase)
+                        </button>
+                    ) : (
+                        <div style={{
+                            padding: 'var(--space-4)',
+                            backgroundColor: 'var(--bg-app)',
+                            borderRadius: 'var(--radius-md)',
+                            border: '1px solid #8B5CF6'
+                        }}>
+                            <h4 style={{ marginTop: 0, marginBottom: 'var(--space-3)', color: '#8B5CF6' }}>New Virtual Bond</h4>
+                            <div className="alloc-modal-add-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: 'var(--space-1)' }}>Label</label>
+                                    <input
+                                        type="text"
+                                        className="form-input"
+                                        placeholder="e.g. BTP 2030"
+                                        value={vbondLabel}
+                                        onChange={e => setVbondLabel(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: 'var(--space-1)' }}>Target Maturity Date</label>
+                                    <input
+                                        type="date"
+                                        className="form-input"
+                                        value={vbondMaturity}
+                                        onChange={e => setVbondMaturity(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: 'var(--space-1)' }}>Universe</label>
+                                    <select
+                                        className="form-input"
+                                        value={vbondUniverse}
+                                        onChange={e => setVbondUniverse(e.target.value as BondUniverse)}
+                                    >
+                                        <option value="IT">Italy only (BTP, CCT...)</option>
+                                        <option value="EU">All European</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 'var(--space-2)', justifyContent: 'flex-end' }}>
+                                <button className="btn" onClick={() => setIsAddingVBond(false)}>Cancel</button>
+                                <button className="btn btn-primary" onClick={handleAddVBond} disabled={!vbondLabel.trim() || !vbondMaturity}>Add Virtual Bond</button>
                             </div>
                         </div>
                     )}

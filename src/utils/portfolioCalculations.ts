@@ -1,7 +1,7 @@
 import type { Transaction, Asset, PortfolioSummary, AssetClass, AssetDefinition, Broker, CommissionType } from '../types';
 export type { CommissionType };
-import { CASH_TICKER_PREFIX, GROUP_TICKER_PREFIX, getCashTicker, isIncomeDirection } from '../types';
-export { CASH_TICKER_PREFIX, GROUP_TICKER_PREFIX, getCashTicker };
+import { CASH_TICKER_PREFIX, GROUP_TICKER_PREFIX, VBOND_TICKER_PREFIX, getCashTicker, isIncomeDirection, isVirtualBondTicker } from '../types';
+export { CASH_TICKER_PREFIX, GROUP_TICKER_PREFIX, VBOND_TICKER_PREFIX, getCashTicker, isVirtualBondTicker };
 
 export const calculateAssets = (
     transactions: Transaction[],

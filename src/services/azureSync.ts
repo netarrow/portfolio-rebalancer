@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, VirtualBond } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -27,6 +27,7 @@ export interface SyncPayload {
     ynabGoalsGroupId?: string;
     ynabGoalsGroupName?: string;
     ynabLastGoalsSyncAt?: string;
+    virtualBonds?: VirtualBond[];
 }
 
 const PBKDF2_ITERATIONS = 100000;

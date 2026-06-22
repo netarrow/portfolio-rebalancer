@@ -2,10 +2,12 @@ import React, { useMemo, useState, useCallback, useRef, useEffect } from 'react'
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { createPortal } from 'react-dom';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, calculateRealizedGains, calculateCommission, calculateCashFlows, estimateTradeCost } from '../../utils/portfolioCalculations';
-import type { Broker } from '../../types';
+import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, isVirtualBondTicker, calculateRealizedGains, calculateCommission, calculateCashFlows, estimateTradeCost } from '../../utils/portfolioCalculations';
+import type { Broker, VirtualBond } from '../../types';
+import { getVirtualBondId } from '../../types';
 import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipientOf, memberInfoFromAssets, type BuyOnlyCandidate, type MemberAction } from '../../utils/allocationGroups';
 import { CASH_TICKER_PREFIX } from '../../types';
+import ConcretizeModal from '../modals/ConcretizeModal';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
@@ -445,7 +447,8 @@ interface AggregateAllocationSectionProps {
 }
 
 const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({ goalModeTargets }) => {
-    const { portfolios, brokers, transactions, assetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers } = usePortfolio();
+    const { portfolios, brokers, transactions, assetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers, virtualBonds, concretizeVirtualBond, parkVirtualBond } = usePortfolio();
+    const [concretizingVBond, setConcretizingVBond] = useState<VirtualBond | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [additionalLiquidity, setAdditionalLiquidity] = useState<number | undefined>(undefined);
 
@@ -555,7 +558,13 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
     const aggregateTotalReturn = includedGain + totalRealized + totalIncome;
     const aggregateTotalReturnPerc = includedCost > 0 ? (aggregateTotalReturn / includedCost) * 100 : 0;
 
-    const getLabel = (ticker: string) => assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+    const getLabel = (ticker: string) => {
+        if (isVirtualBondTicker(ticker)) {
+            const vb = virtualBonds.find(b => b.id === getVirtualBondId(ticker));
+            return vb?.label || ticker;
+        }
+        return assetSettings.find(s => s.ticker === ticker)?.label || ticker;
+    };
 
     // ticker → broker to simulate trade commission against: the broker of the most
     // recent transaction for that ticker; falls back to the only broker if there's one.
@@ -1035,9 +1044,11 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                     allVisibleAssets.map(asset => {
                         const isExcluded = excludedTickers.includes(asset.ticker);
                         const isCash = isCashTicker(asset.ticker);
+                        const isVBond = isVirtualBondTicker(asset.ticker);
+                        const vb = isVBond ? virtualBonds.find(b => b.id === getVirtualBondId(asset.ticker)) : undefined;
                         const setting = assetSettings.find(s => s.ticker === asset.ticker);
-                        const assetClass = isCash ? 'Cash' : (setting?.assetClass || asset.assetClass || 'Stock');
-                        const label = isCash ? (asset.label || asset.ticker) : (setting?.label || asset.label || asset.ticker);
+                        const assetClass = isCash ? 'Cash' : isVBond ? 'Bond' : (setting?.assetClass || asset.assetClass || 'Stock');
+                        const label = isCash ? (asset.label || asset.ticker) : isVBond ? (vb?.label || asset.ticker) : (setting?.label || asset.label || asset.ticker);
 
                         // Use calcTotalValue (includes additional liquidity) for % calcs
                         const currentPerc = calcTotalValue > 0 ? (asset.currentValue / calcTotalValue) * 100 : 0;
@@ -1104,6 +1115,8 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                                 label={label}
                                 assetClass={assetClass}
                                 isCash={isCash}
+                                isVBond={isVBond}
+                                vbondMaturity={vb?.targetMaturityDate}
                                 quantity={asset.quantity}
                                 averagePrice={asset.averagePrice}
                                 currentPrice={asset.currentPrice || 0}
@@ -1128,11 +1141,25 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                                 isEditing={isEditing}
                                 isExcluded={isExcluded}
                                 onToggleExclude={() => toggleExcluded(asset.ticker)}
+                                onConcretize={isVBond && vb ? () => setConcretizingVBond(vb) : undefined}
                             />
                         );
                     })
                 )}
             </div>
+
+            {concretizingVBond && (
+                <ConcretizeModal
+                    bond={concretizingVBond}
+                    brokers={brokers}
+                    portfolios={portfolios}
+                    onConfirm={(fill) => {
+                        concretizeVirtualBond(concretizingVBond.id, fill);
+                        setConcretizingVBond(null);
+                    }}
+                    onClose={() => setConcretizingVBond(null)}
+                />
+            )}
         </div>
     );
 };
@@ -1142,6 +1169,8 @@ interface AggregateRowProps {
     label: string;
     assetClass: string;
     isCash: boolean;
+    isVBond?: boolean;
+    vbondMaturity?: string;
     quantity: number;
     averagePrice: number;
     currentPrice: number;
@@ -1166,15 +1195,16 @@ interface AggregateRowProps {
     isEditing: boolean;
     isExcluded: boolean;
     onToggleExclude: () => void;
+    onConcretize?: () => void;
 }
 
 const AggregateRow: React.FC<AggregateRowProps> = ({
-    ticker, label, assetClass, isCash, quantity, averagePrice, currentPrice, currentValue,
+    ticker, label, assetClass, isCash, isVBond, vbondMaturity, quantity, averagePrice, currentPrice, currentValue,
     gain, gainPerc, currentPerc, targetPerc,
     rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, postRebalancePerc, projectedPerc,
     goalModeEur, goalModeShares, postGoalPerc,
     spreadPercent, brokers, tradeBroker, monthsHeld,
-    isEditing, isExcluded, onToggleExclude,
+    isEditing, isExcluded, onToggleExclude, onConcretize,
 }) => {
     const taxRate = assetClass === 'Bond' ? 0.125 : 0.26;
     const diff = currentPerc - targetPerc;
@@ -1207,7 +1237,12 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                 )}
                 <div className="allocation-type" style={{ flex: 1 }}>
                     <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
-                    <div><strong>{label || ticker}</strong></div>
+                    <div>
+                        {isVBond && <span style={{ fontSize: '0.65rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', marginRight: '6px', verticalAlign: 'middle' }}>VBOND</span>}
+                        <strong>{label || ticker}</strong>
+                        {isVBond && vbondMaturity && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '6px' }}>mat. {vbondMaturity}</span>}
+                        {isVBond && onConcretize && <button onClick={onConcretize} style={{ marginLeft: '8px', fontSize: '0.7rem', background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 8px', cursor: 'pointer' }}>Concretizza</button>}
+                    </div>
                 </div>
                 <div style={{ width: '100px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
                     {isCash ? '-' : parseFloat(quantity.toFixed(4))}
@@ -1348,10 +1383,13 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                             >{isExcluded ? '✕' : '✓'}</button>
                         )}
                         <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
+                        {isVBond && <span style={{ fontSize: '0.6rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', marginRight: '4px' }}>VBOND</span>}
                         <strong>{label || ticker}</strong>
+                        {isVBond && vbondMaturity && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: '4px' }}>mat. {vbondMaturity}</span>}
                     </div>
                     <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        {isVBond && onConcretize && <button onClick={onConcretize} style={{ fontSize: '0.65rem', background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', marginBottom: '2px' }}>Concretizza</button>}
                         {!isCash && (
                             <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                 {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
