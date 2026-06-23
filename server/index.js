@@ -867,21 +867,10 @@ app.post('/api/bond-proposals', priceLimiter, async (req, res) => {
         return res.status(400).json({ error: 'universe must be IT or EU' });
     }
 
-    let browser;
     try {
-        browser = await puppeteer.launch({
-            headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-        });
-        const page = await browser.newPage();
-        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-
-        let allBonds = await scrapeBondMonitor(page, 'IT');
-
-        if (universe === 'EU') {
-            const euBonds = await scrapeBondMonitor(page, 'EU');
-            allBonds = [...allBonds, ...euBonds];
-        }
+        // Scrape the universe the user asked for (IT = Italian govies,
+        // EU = European govies). The pages are server-rendered, so no browser.
+        const allBonds = await scrapeBondMonitor(universe);
 
         const filtered = filterByMaturityWindow(allBonds, targetDate, minMonthsBefore, maxMonthsBefore);
 
@@ -889,8 +878,6 @@ app.post('/api/bond-proposals', priceLimiter, async (req, res) => {
     } catch (err) {
         console.error('[BondProposals] Error:', err.message);
         res.status(500).json({ error: 'Failed to fetch bond proposals', proposals: [] });
-    } finally {
-        if (browser) await browser.close().catch(() => {});
     }
 });
 
