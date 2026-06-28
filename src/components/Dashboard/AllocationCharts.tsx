@@ -696,12 +696,21 @@ const AllocationCharts: React.FC = () => {
 
     const GOAL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6', '#F97316'];
 
-    const goalChartData = useMemo(() => {
-        if (goals.length === 0) return [];
+    // Liquidità non assegnata ad alcun portafoglio (livello 0 della Goal Distribution):
+    // totale cash dei broker meno la somma di tutte le liquidityAllocations.
+    const unassignedLiquidity = useMemo(() => {
+        const total = brokers.reduce((s, b) => s + (b.currentLiquidity || 0), 0);
+        const assigned = brokers.reduce(
+            (s, b) => s + Object.values(b.liquidityAllocations || {}).reduce((a, v) => a + v, 0),
+            0
+        );
+        return Math.max(0, total - assigned);
+    }, [brokers]);
 
+    const goalChartData = useMemo(() => {
         const sortedGoals = [...goals].sort((a, b) => a.order - b.order);
 
-        return sortedGoals.map((goal, idx) => {
+        const goalSegments = sortedGoals.map((goal, idx) => {
             const linkedPortfolios = portfolios.filter(p => p.goalId === goal.id);
 
             const classBreakdown: Record<string, number> = {};
@@ -727,7 +736,21 @@ const AllocationCharts: React.FC = () => {
                     .sort((a, b) => b.value - a.value)
             };
         });
-    }, [goals, portfolios, transactions, assetSettings, marketData, brokers]);
+
+        // Livello 0 di default: liquidità non assegnata a portafogli.
+        const liquiditySegment = {
+            id: '__liquidity__',
+            name: 'Liquidità',
+            value: unassignedLiquidity,
+            color: '#6B7280',
+            breakdown: unassignedLiquidity > 0
+                ? [{ label: 'Non assegnata a portafogli', value: unassignedLiquidity }]
+                : []
+        };
+
+        if (goalSegments.length === 0 && unassignedLiquidity <= 0) return [];
+        return [liquiditySegment, ...goalSegments];
+    }, [goals, portfolios, transactions, assetSettings, marketData, brokers, unassignedLiquidity]);
 
     const goalChartTotal = useMemo(() =>
         goalChartData.reduce((sum, g) => sum + g.value, 0),
