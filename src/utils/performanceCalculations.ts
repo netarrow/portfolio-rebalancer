@@ -178,6 +178,76 @@ export function computeTWR(series: ValuePoint[], cashFlows: Map<string, number>)
     return (factor - 1) * 100;
 }
 
+export interface RiskMetrics {
+    volatility: number;      // annualized standard deviation of returns, in %
+    sharpe: number;          // annualized Sharpe ratio (excess return / volatility)
+    maxDrawdown: number;     // worst peak-to-trough decline, magnitude in % (>= 0)
+    samples: number;         // number of period returns the metrics are based on
+    periodsPerYear: number;  // annualization factor derived from the actual date span
+}
+
+/**
+ * Risk metrics (annualized volatility, Sharpe ratio, max drawdown) for a value
+ * series. Returns are computed per step with same-day external cash flows removed
+ * from the numerator (same convention as computeTWR), so deposits/withdrawals
+ * don't distort them. Max drawdown is measured on the compounded return index
+ * (not raw value), so contributions can't masquerade as recoveries.
+ *
+ * The annualization factor is derived from the actual span of the series
+ * (returns per year), which handles both daily and monthly axes as well as the
+ * irregular date axis of portfolio value series. Returns null when there aren't
+ * enough points. `riskFreeRate` is annual and expressed as a decimal (0.02 = 2%).
+ */
+export function computeRiskMetrics(
+    series: ValuePoint[],
+    cashFlows: Map<string, number>,
+    opts: { riskFreeRate?: number } = {}
+): RiskMetrics | null {
+    if (series.length < 3) return null;
+    const riskFreeRate = opts.riskFreeRate ?? 0;
+
+    const returns: number[] = [];
+    for (let i = 1; i < series.length; i++) {
+        const prev = series[i - 1].value;
+        if (prev <= 0) continue;
+        const cf = cashFlows.get(series[i].date) || 0;
+        returns.push((series[i].value - cf) / prev - 1);
+    }
+    if (returns.length < 2) return null;
+
+    // Annualization factor from the real time span (returns per year), robust to
+    // the irregular / mixed-granularity date axes these series can have.
+    const firstMs = new Date(series[0].date).getTime();
+    const lastMs = new Date(series[series.length - 1].date).getTime();
+    const years = Math.max((lastMs - firstMs) / (365.25 * 24 * 3600 * 1000), 1 / 365.25);
+    const periodsPerYear = returns.length / years;
+
+    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
+    const variance = returns.reduce((a, r) => a + (r - mean) * (r - mean), 0) / (returns.length - 1);
+    const stdDev = Math.sqrt(variance);
+
+    const annualizedVol = stdDev * Math.sqrt(periodsPerYear);
+    const annualizedReturn = mean * periodsPerYear;
+    const sharpe = annualizedVol > 0 ? (annualizedReturn - riskFreeRate) / annualizedVol : 0;
+
+    // Max drawdown on the compounded return index (starting at 1).
+    let index = 1, peak = 1, maxDrawdown = 0;
+    for (const r of returns) {
+        index *= 1 + r;
+        if (index > peak) peak = index;
+        const drawdown = (index - peak) / peak;
+        if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+    }
+
+    return {
+        volatility: annualizedVol * 100,
+        sharpe,
+        maxDrawdown: Math.abs(maxDrawdown) * 100,
+        samples: returns.length,
+        periodsPerYear,
+    };
+}
+
 /** Close-price series for a single ticker within an optional range. */
 export function getAssetPriceSeries(
     ticker: string,
