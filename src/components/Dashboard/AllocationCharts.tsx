@@ -6,6 +6,8 @@ import { getAssetGoal } from '../../utils/goalCalculations';
 import type { Asset } from '../../types';
 import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
+import RiskMetricsRow from '../Performance/RiskMetrics';
+import { getPortfolioValueSeries, getCashFlowsByDate, computeRiskMetrics } from '../../utils/performanceCalculations';
 import './Dashboard.css';
 
 const RADIAN = Math.PI / 180;
@@ -356,8 +358,17 @@ const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number }> = 
 type StatsTab = 'global' | 'portfolio' | 'broker';
 
 const AllocationCharts: React.FC = () => {
-    const { transactions, assetSettings, marketData, portfolios, brokers, goals } = usePortfolio();
+    const { transactions, assetSettings, marketData, portfolios, brokers, goals, priceHistory } = usePortfolio();
     const [activeTab, setActiveTab] = useState<StatsTab>('global');
+
+    // Whole-account risk metrics (volatility, Sharpe, max drawdown) over the full
+    // available history, derived from the same net-worth value series as the
+    // Performance view. Null when there isn't enough price history yet.
+    const netWorthRiskMetrics = useMemo(() => {
+        const series = getPortfolioValueSeries(transactions, priceHistory);
+        const cashFlows = getCashFlowsByDate(transactions);
+        return computeRiskMetrics(series, cashFlows);
+    }, [transactions, priceHistory]);
 
     // 1. Total / All (including virtual cash assets from all portfolios)
     const totalAssets = useMemo(() => {
@@ -792,6 +803,24 @@ const AllocationCharts: React.FC = () => {
             {/* Overview Tab */}
             {activeTab === 'global' && (
                 <>
+                    {netWorthRiskMetrics && (
+                        <div style={{ marginBottom: '2rem' }}>
+                            <h3 className="section-title" style={{
+                                fontSize: '1.2rem',
+                                color: 'var(--color-primary)',
+                                borderBottom: '1px solid var(--border-color)',
+                                paddingBottom: '0.5rem',
+                                marginBottom: '1rem'
+                            }}>
+                                Risk Metrics
+                            </h3>
+                            <RiskMetricsRow
+                                metrics={netWorthRiskMetrics}
+                                title="Net Worth — intera storia disponibile"
+                            />
+                        </div>
+                    )}
+
                     <MacroStats />
                     <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }} />
 
