@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, computeTWR } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, computeTWR, computeRiskMetrics } from '../../utils/performanceCalculations';
+import RiskMetricsRow from './RiskMetrics';
 import '../Dashboard/Dashboard.css';
 
 type RangeKey = '1M' | '6M' | '1Y' | 'MAX';
@@ -165,6 +166,16 @@ const PerformanceView: React.FC = () => {
         const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const cashFlows = getCashFlowsByDate(transactions, portfolioId);
         return computeTWR(baseSeries, cashFlows);
+    }, [baseSeries, scope, isAssetScope, transactions]);
+
+    // Risk metrics (volatility, Sharpe, max drawdown) over the selected range.
+    // Assets have no external cash flows; portfolio/net-worth series strip them
+    // out (same convention as TWR) so contributions don't distort the numbers.
+    const riskMetrics = useMemo(() => {
+        const cashFlows = isAssetScope
+            ? new Map<string, number>()
+            : getCashFlowsByDate(transactions, scope.startsWith('p:') ? scope.slice(2) : undefined);
+        return computeRiskMetrics(baseSeries, cashFlows);
     }, [baseSeries, scope, isAssetScope, transactions]);
 
     // Money-Weighted Return: net gain (value change minus net contributions)
@@ -349,6 +360,13 @@ const PerformanceView: React.FC = () => {
                             )}
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* Risk metrics */}
+            {riskMetrics && (
+                <div style={{ marginBottom: '0.75rem' }}>
+                    <RiskMetricsRow metrics={riskMetrics} />
                 </div>
             )}
 
