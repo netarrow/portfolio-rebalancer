@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, computeTWR, computeRiskMetrics } from '../../utils/performanceCalculations';
-import RiskMetricsRow from './RiskMetrics';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, computeTWR, computeReturnStats } from '../../utils/performanceCalculations';
 import '../Dashboard/Dashboard.css';
 
 type RangeKey = '1M' | '6M' | '1Y' | 'MAX';
@@ -24,6 +24,8 @@ const PerformanceView: React.FC = () => {
     const [range, setRange] = useState<RangeKey>('1Y');
     const [includeLiquidity, setIncludeLiquidity] = useState(true);
     const [returnMode, setReturnMode] = useState<'mwr' | 'twr'>('twr');
+    // Annual risk-free rate (%) used for Sharpe; persisted locally.
+    const [riskFreeRate, setRiskFreeRate] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
 
     const hasHistory = Object.keys(priceHistory).length > 0;
 
@@ -168,15 +170,16 @@ const PerformanceView: React.FC = () => {
         return computeTWR(baseSeries, cashFlows);
     }, [baseSeries, scope, isAssetScope, transactions]);
 
-    // Risk metrics (volatility, Sharpe, max drawdown) over the selected range.
-    // Assets have no external cash flows; portfolio/net-worth series strip them
-    // out (same convention as TWR) so contributions don't distort the numbers.
-    const riskMetrics = useMemo(() => {
+    // Risk metrics on the flow-adjusted return stream: deposits/withdrawals
+    // are stripped from daily returns, so a disinvestment doesn't read as a
+    // drawdown. Asset scope has no flows (pure price series).
+    const returnStats = useMemo(() => {
+        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const cashFlows = isAssetScope
             ? new Map<string, number>()
-            : getCashFlowsByDate(transactions, scope.startsWith('p:') ? scope.slice(2) : undefined);
-        return computeRiskMetrics(baseSeries, cashFlows);
-    }, [baseSeries, scope, isAssetScope, transactions]);
+            : getCashFlowsByDate(transactions, portfolioId);
+        return computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate });
+    }, [baseSeries, scope, isAssetScope, transactions, riskFreeRate]);
 
     // Money-Weighted Return: net gain (value change minus net contributions)
     // over capital deployed (initial value + buys in range). On MAX this matches
@@ -297,7 +300,30 @@ const PerformanceView: React.FC = () => {
                             checked={includeLiquidity}
                             onChange={e => setIncludeLiquidity(e.target.checked)}
                         />
-                        Include liquidity (current value, no history)
+                        <span title="Anchored to today's broker cash; moves back in time with uninvested sale proceeds, so a sell followed by a re-buy doesn't show as a crash">
+                            Include liquidity (anchored to today)
+                        </span>
+                    </label>
+                )}
+
+                {!isAssetScope && (
+                    <label
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
+                        title="Annual risk-free rate subtracted from the return in the Sharpe ratio (e.g. the yield of a short-term govt bond or overnight deposit). Saved locally."
+                    >
+                        Risk-free rate
+                        <input
+                            type="number"
+                            step="0.1"
+                            value={Number.isFinite(riskFreeRate) ? riskFreeRate : 0}
+                            onChange={e => setRiskFreeRate(e.target.value === '' ? 0 : Number(e.target.value))}
+                            style={{
+                                width: '4.5rem', padding: '0.35rem 0.5rem', background: 'var(--bg-card)',
+                                color: 'var(--text-primary)', border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)', textAlign: 'right'
+                            }}
+                        />
+                        %
                     </label>
                 )}
             </div>
@@ -360,13 +386,38 @@ const PerformanceView: React.FC = () => {
                             )}
                         </div>
                     </div>
-                </div>
-            )}
-
-            {/* Risk metrics */}
-            {riskMetrics && (
-                <div style={{ marginBottom: '0.75rem' }}>
-                    <RiskMetricsRow metrics={riskMetrics} />
+                    {returnStats && (
+                        <>
+                            <div title="Compound annual growth rate of the flow-adjusted (TWR) return stream — deposits and withdrawals excluded">
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Return (ann.)</div>
+                                <div style={{ color: returnStats.annualizedReturnPct >= 0 ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 700, fontSize: '1.3rem' }}>
+                                    {returnStats.annualizedReturnPct >= 0 ? '+' : ''}{returnStats.annualizedReturnPct.toFixed(2)}%
+                                </div>
+                            </div>
+                            {returnStats.annualizedVolatilityPct !== null && (
+                                <div title="Annualized standard deviation of flow-adjusted returns">
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Volatility (ann.)</div>
+                                    <div style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: '1.3rem' }}>
+                                        {returnStats.annualizedVolatilityPct.toFixed(2)}%
+                                    </div>
+                                </div>
+                            )}
+                            <div title={`Largest peak-to-trough loss of the flow-adjusted return index${returnStats.maxDrawdownDate ? ` (trough on ${returnStats.maxDrawdownDate})` : ''} — withdrawals don't count as losses`}>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Max drawdown</div>
+                                <div style={{ color: returnStats.maxDrawdownPct < 0 ? 'var(--color-danger)' : 'var(--text-primary)', fontWeight: 700, fontSize: '1.3rem' }}>
+                                    {returnStats.maxDrawdownPct.toFixed(2)}%
+                                </div>
+                            </div>
+                            {returnStats.sharpe !== null && (
+                                <div title={`Annualized excess return (over the ${riskFreeRate}% risk-free rate) divided by annualized volatility`}>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Sharpe (rf {riskFreeRate}%)</div>
+                                    <div style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: '1.3rem' }}>
+                                        {returnStats.sharpe.toFixed(2)}
+                                    </div>
+                                </div>
+                            )}
+                        </>
+                    )}
                 </div>
             )}
 

@@ -7,7 +7,7 @@ import type { Asset } from '../../types';
 import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
 import RiskMetricsRow from '../Performance/RiskMetrics';
-import { getPortfolioValueSeries, getCashFlowsByDate, computeRiskMetrics } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getCashFlowsByDate, computeReturnStats } from '../../utils/performanceCalculations';
 import './Dashboard.css';
 
 const RADIAN = Math.PI / 180;
@@ -367,7 +367,7 @@ const AllocationCharts: React.FC = () => {
     const netWorthRiskMetrics = useMemo(() => {
         const series = getPortfolioValueSeries(transactions, priceHistory);
         const cashFlows = getCashFlowsByDate(transactions);
-        return computeRiskMetrics(series, cashFlows);
+        return computeReturnStats(series, cashFlows);
     }, [transactions, priceHistory]);
 
     // 1. Total / All (including virtual cash assets from all portfolios)
@@ -815,7 +815,7 @@ const AllocationCharts: React.FC = () => {
                                 Risk Metrics
                             </h3>
                             <RiskMetricsRow
-                                metrics={netWorthRiskMetrics}
+                                stats={netWorthRiskMetrics}
                                 title="Net Worth — intera storia disponibile"
                             />
                         </div>
