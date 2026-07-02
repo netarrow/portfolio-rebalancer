@@ -24,6 +24,8 @@ const PerformanceView: React.FC = () => {
     const [range, setRange] = useState<RangeKey>('1Y');
     const [includeLiquidity, setIncludeLiquidity] = useState(true);
     const [returnMode, setReturnMode] = useState<'mwr' | 'twr'>('twr');
+    // Total return (coupons/dividends credited on pay date) vs price-only.
+    const [includeDistributions, setIncludeDistributions] = useState(true);
     // Annual risk-free rate (%) used for Sharpe; persisted locally.
     const [riskFreeRate, setRiskFreeRate] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
 
@@ -166,21 +168,24 @@ const PerformanceView: React.FC = () => {
     const twrPct = useMemo(() => {
         if (isAssetScope) return null;
         const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
-        const cashFlows = getCashFlowsByDate(transactions, portfolioId);
+        const cashFlows = getCashFlowsByDate(transactions, portfolioId, { includeDistributions });
         return computeTWR(baseSeries, cashFlows);
-    }, [baseSeries, scope, isAssetScope, transactions]);
+    }, [baseSeries, scope, isAssetScope, transactions, includeDistributions]);
 
     // Risk metrics on the flow-adjusted return stream: deposits/withdrawals
     // are stripped from daily returns, so a disinvestment doesn't read as a
-    // drawdown, while coupons/dividends are credited as return. Asset scope
-    // uses per-unit distribution flows on top of the close-price series.
+    // drawdown, while coupons/dividends are credited as return (unless the
+    // total-return toggle is off → price-only). Asset scope uses per-unit
+    // distribution flows on top of the close-price series.
     const returnStats = useMemo(() => {
         const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const cashFlows = isAssetScope
-            ? getAssetDistributionFlows(transactions, scope.slice(2))
-            : getCashFlowsByDate(transactions, portfolioId);
+            ? (includeDistributions
+                ? getAssetDistributionFlows(transactions, scope.slice(2))
+                : new Map<string, number>())
+            : getCashFlowsByDate(transactions, portfolioId, { includeDistributions });
         return computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate });
-    }, [baseSeries, scope, isAssetScope, transactions, riskFreeRate]);
+    }, [baseSeries, scope, isAssetScope, transactions, riskFreeRate, includeDistributions]);
 
     // Money-Weighted Return: net gain (value change minus net contributions)
     // over capital deployed (initial value + buys in range). On MAX this matches
@@ -306,6 +311,17 @@ const PerformanceView: React.FC = () => {
                         </span>
                     </label>
                 )}
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem', cursor: 'pointer' }}>
+                    <input
+                        type="checkbox"
+                        checked={includeDistributions}
+                        onChange={e => setIncludeDistributions(e.target.checked)}
+                    />
+                    <span title="When on, coupons/dividends are credited as return on their pay date (total return). When off, only price movements count (price return).">
+                        Total return (incl. coupons/dividends)
+                    </span>
+                </label>
 
                 {!isAssetScope && (
                     <label
