@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
-import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, computeTWR, computeReturnStats } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeReturnStats } from '../../utils/performanceCalculations';
 import '../Dashboard/Dashboard.css';
 
 type RangeKey = '1M' | '6M' | '1Y' | 'MAX';
@@ -172,11 +172,12 @@ const PerformanceView: React.FC = () => {
 
     // Risk metrics on the flow-adjusted return stream: deposits/withdrawals
     // are stripped from daily returns, so a disinvestment doesn't read as a
-    // drawdown. Asset scope has no flows (pure price series).
+    // drawdown, while coupons/dividends are credited as return. Asset scope
+    // uses per-unit distribution flows on top of the close-price series.
     const returnStats = useMemo(() => {
         const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const cashFlows = isAssetScope
-            ? new Map<string, number>()
+            ? getAssetDistributionFlows(transactions, scope.slice(2))
             : getCashFlowsByDate(transactions, portfolioId);
         return computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate });
     }, [baseSeries, scope, isAssetScope, transactions, riskFreeRate]);
@@ -348,7 +349,7 @@ const PerformanceView: React.FC = () => {
                                             onClick={() => setReturnMode(m)}
                                             title={m === 'mwr'
                                                 ? 'Money-Weighted Return: net gain (deposits/withdrawals stripped out) over capital deployed — on MAX it matches the Dashboard\'s Total Appreciation'
-                                                : 'Time-Weighted Return: excludes the effect of cash deposits/withdrawals'}
+                                                : 'Time-Weighted Return: excludes the effect of cash deposits/withdrawals; coupons/dividends are counted as return'}
                                             style={{
                                                 padding: '0.05rem 0.4rem',
                                                 background: returnMode === m ? 'var(--color-primary)' : 'var(--bg-card)',
