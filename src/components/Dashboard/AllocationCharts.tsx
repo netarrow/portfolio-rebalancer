@@ -3,7 +3,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
-import type { Asset } from '../../types';
+import type { Asset, Transaction, PriceHistoryMap } from '../../types';
 import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
 import RiskMetricsRow from '../Performance/RiskMetrics';
@@ -23,6 +23,58 @@ function riskRangeFrom(range: RiskRangeKey): string | undefined {
 }
 const RISK_RANGE_LABEL: Record<RiskRangeKey, string> = {
     '1M': 'ultimo mese', '6M': 'ultimi 6 mesi', '1Y': 'ultimo anno', 'MAX': 'intera storia disponibile',
+};
+
+/** Shared 1M/6M/1Y/MAX toggle for the Risk Metrics sections. */
+const RiskRangeButtons: React.FC<{ value: RiskRangeKey; onChange: (r: RiskRangeKey) => void }> = ({ value, onChange }) => (
+    <div style={{ display: 'flex', gap: '0.25rem' }}>
+        {(['1M', '6M', '1Y', 'MAX'] as RiskRangeKey[]).map(r => (
+            <button
+                key={r}
+                onClick={() => onChange(r)}
+                style={{
+                    padding: '0.3rem 0.7rem',
+                    background: value === r ? 'var(--color-primary)' : 'var(--bg-card)',
+                    color: value === r ? 'white' : 'var(--text-secondary)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem'
+                }}
+            >
+                {r}
+            </button>
+        ))}
+    </div>
+);
+
+/**
+ * Risk metrics for one scope (a single portfolio or a single broker), computed
+ * on the same flow-adjusted net-worth series as the Overview/Performance views.
+ * A broker scope is the aggregate of all transactions booked at that broker;
+ * a portfolio scope is filtered by portfolioId. Renders nothing when there
+ * isn't enough price history to compute stats.
+ */
+const ScopeRiskMetrics: React.FC<{
+    transactions: Transaction[];
+    priceHistory: PriceHistoryMap;
+    range: RiskRangeKey;
+    riskFreePct: number;
+    portfolioId?: string;
+    brokerId?: string;
+}> = ({ transactions, priceHistory, range, riskFreePct, portfolioId, brokerId }) => {
+    const stats = useMemo(() => {
+        const from = riskRangeFrom(range);
+        const scoped = brokerId ? transactions.filter(t => t.brokerId === brokerId) : transactions;
+        const series = getPortfolioValueSeries(scoped, priceHistory, { portfolioId, from });
+        const cashFlows = getCashFlowsByDate(scoped, portfolioId);
+        return computeReturnStats(series, cashFlows, { riskFreePct });
+    }, [transactions, priceHistory, range, riskFreePct, portfolioId, brokerId]);
+
+    if (!stats) return null;
+    return (
+        <div style={{ marginBottom: '1.25rem' }}>
+            <RiskMetricsRow stats={stats} title={`Rischio — ${RISK_RANGE_LABEL[range]}`} riskFreePct={riskFreePct} />
+        </div>
+    );
 };
 
 const RADIAN = Math.PI / 180;
@@ -60,9 +112,11 @@ interface DistributionRowProps {
     portfolio?: import('../../types').Portfolio;
     assetSettings?: import('../../types').AssetDefinition[];
     showCashToggle?: boolean;
+    /** Optional risk-metrics strip rendered under the title (per-scope). */
+    riskMetrics?: React.ReactNode;
 }
 
-const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfolio, assetSettings, showCashToggle }) => {
+const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfolio, assetSettings, showCashToggle, riskMetrics }) => {
     // Colors (consistent palette)
     const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
     const [includeCash, setIncludeCash] = useState(true);
@@ -158,6 +212,7 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                     </button>
                 )}
             </div>
+            {riskMetrics}
             <div className="charts-grid">
                 {/* Target By Class (Only if portfolio exists) */}
                 {targetClassData && targetClassData.length > 0 && (
@@ -830,23 +885,7 @@ const AllocationCharts: React.FC = () => {
                                 <h3 className="section-title" style={{ fontSize: '1.2rem', color: 'var(--color-primary)', margin: 0, border: 'none', padding: 0 }}>
                                     Risk Metrics
                                 </h3>
-                                <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                    {(['1M', '6M', '1Y', 'MAX'] as RiskRangeKey[]).map(r => (
-                                        <button
-                                            key={r}
-                                            onClick={() => setRiskRange(r)}
-                                            style={{
-                                                padding: '0.3rem 0.7rem',
-                                                background: riskRange === r ? 'var(--color-primary)' : 'var(--bg-card)',
-                                                color: riskRange === r ? 'white' : 'var(--text-secondary)',
-                                                border: '1px solid var(--border-color)',
-                                                borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem'
-                                            }}
-                                        >
-                                            {r}
-                                        </button>
-                                    ))}
-                                </div>
+                                <RiskRangeButtons value={riskRange} onChange={setRiskRange} />
                             </div>
                             <RiskMetricsRow
                                 stats={netWorthRiskMetrics}
@@ -975,6 +1014,10 @@ const AllocationCharts: React.FC = () => {
             {/* By Portfolio Tab */}
             {activeTab === 'portfolio' && (
                 <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics per portafoglio — {RISK_RANGE_LABEL[riskRange]}</span>
+                        <RiskRangeButtons value={riskRange} onChange={setRiskRange} />
+                    </div>
                     {[...portfolios].sort((a, b) => a.order - b.order).map(p => {
                         const pAssets = getPortfolioAssets(p.id);
                         const hasAssets = pAssets.some(a => a.currentValue > 0);
@@ -989,6 +1032,15 @@ const AllocationCharts: React.FC = () => {
                                 assets={pAssets}
                                 portfolio={p}
                                 assetSettings={assetSettings}
+                                riskMetrics={
+                                    <ScopeRiskMetrics
+                                        transactions={transactions}
+                                        priceHistory={priceHistory}
+                                        range={riskRange}
+                                        riskFreePct={riskFreeRate}
+                                        portfolioId={p.id}
+                                    />
+                                }
                             />
                         );
                     })}
@@ -998,6 +1050,10 @@ const AllocationCharts: React.FC = () => {
             {/* By Broker Tab */}
             {activeTab === 'broker' && (
                 <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics per broker — {RISK_RANGE_LABEL[riskRange]}</span>
+                        <RiskRangeButtons value={riskRange} onChange={setRiskRange} />
+                    </div>
                     {brokers.map(broker => {
                         const bAssets = getBrokerAssets(broker.id);
                         const hasAssets = bAssets.some(a => a.currentValue > 0);
@@ -1009,6 +1065,15 @@ const AllocationCharts: React.FC = () => {
                                 title={`Broker: ${broker.name}`}
                                 assets={bAssets}
                                 showCashToggle
+                                riskMetrics={
+                                    <ScopeRiskMetrics
+                                        transactions={transactions}
+                                        priceHistory={priceHistory}
+                                        range={riskRange}
+                                        riskFreePct={riskFreeRate}
+                                        brokerId={broker.id}
+                                    />
+                                }
                             />
                         );
                     })}
