@@ -149,11 +149,14 @@ export function getPortfolioValueSeries(
  */
 export function getCashFlowsByDate(
     transactions: Transaction[],
-    portfolioId?: string
+    portfolioId?: string,
+    opts: { includeDistributions?: boolean } = {}
 ): Map<string, number> {
+    const includeDistributions = opts.includeDistributions ?? true;
     const flows = new Map<string, number>();
     for (const tx of transactions) {
         if (portfolioId && tx.portfolioId !== portfolioId) continue;
+        if (!includeDistributions && isIncomeDirection(tx.direction || 'Buy')) continue;
         const date = (tx.date || '').slice(0, 10);
         const cost = (Number(tx.amount) || 0) * (Number(tx.price) || 0);
         const sign = (tx.direction || 'Buy') === 'Buy' ? 1 : -1;
