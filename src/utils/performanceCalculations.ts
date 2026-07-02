@@ -178,73 +178,88 @@ export function computeTWR(series: ValuePoint[], cashFlows: Map<string, number>)
     return (factor - 1) * 100;
 }
 
-export interface RiskMetrics {
-    volatility: number;      // annualized standard deviation of returns, in %
-    sharpe: number;          // annualized Sharpe ratio (excess return / volatility)
-    maxDrawdown: number;     // worst peak-to-trough decline, magnitude in % (>= 0)
-    samples: number;         // number of period returns the metrics are based on
-    periodsPerYear: number;  // annualization factor derived from the actual date span
+export interface ReturnStats {
+    twrPct: number;
+    annualizedReturnPct: number;
+    annualizedVolatilityPct: number | null; // null with too few points
+    sharpe: number | null;                  // null when volatility is 0/unknown
+    maxDrawdownPct: number;                 // ≤ 0
+    maxDrawdownDate: string | null;
+    years: number;
 }
 
 /**
- * Risk metrics (annualized volatility, Sharpe ratio, max drawdown) for a value
- * series. Returns are computed per step with same-day external cash flows removed
- * from the numerator (same convention as computeTWR), so deposits/withdrawals
- * don't distort them. Max drawdown is measured on the compounded return index
- * (not raw value), so contributions can't masquerade as recoveries.
- *
- * The annualization factor is derived from the actual span of the series
- * (returns per year), which handles both daily and monthly axes as well as the
- * irregular date axis of portfolio value series. Returns null when there aren't
- * enough points. `riskFreeRate` is annual and expressed as a decimal (0.02 = 2%).
+ * Return/risk metrics on the flow-adjusted return stream (same daily factors
+ * TWR links, so deposits/withdrawals don't show up as gains or losses):
+ * annualized return and volatility, Sharpe (vs `riskFreePct`, default 0) and
+ * max drawdown measured on the TWR index — NOT on the raw value series, where
+ * a withdrawal would read as a crash.
  */
-export function computeRiskMetrics(
+export function computeReturnStats(
     series: ValuePoint[],
     cashFlows: Map<string, number>,
-    opts: { riskFreeRate?: number } = {}
-): RiskMetrics | null {
-    if (series.length < 3) return null;
-    const riskFreeRate = opts.riskFreeRate ?? 0;
-
-    const returns: number[] = [];
+    opts: { riskFreePct?: number; minReturns?: number } = {}
+): ReturnStats | null {
+    if (series.length < 2) return null;
+    const factors: number[] = [];
+    const dates: string[] = [];
     for (let i = 1; i < series.length; i++) {
         const prev = series[i - 1].value;
         if (prev <= 0) continue;
         const cf = cashFlows.get(series[i].date) || 0;
-        returns.push((series[i].value - cf) / prev - 1);
+        factors.push((series[i].value - cf) / prev);
+        dates.push(series[i].date);
     }
-    if (returns.length < 2) return null;
+    if (factors.length === 0) return null;
 
-    // Annualization factor from the real time span (returns per year), robust to
-    // the irregular / mixed-granularity date axes these series can have.
-    const firstMs = new Date(series[0].date).getTime();
-    const lastMs = new Date(series[series.length - 1].date).getTime();
-    const years = Math.max((lastMs - firstMs) / (365.25 * 24 * 3600 * 1000), 1 / 365.25);
-    const periodsPerYear = returns.length / years;
+    const msPerYear = 365.25 * 86400000;
+    const years = Math.max(
+        (Date.parse(series[series.length - 1].date) - Date.parse(series[0].date)) / msPerYear,
+        1 / 365.25
+    );
 
-    const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
-    const variance = returns.reduce((a, r) => a + (r - mean) * (r - mean), 0) / (returns.length - 1);
-    const stdDev = Math.sqrt(variance);
-
-    const annualizedVol = stdDev * Math.sqrt(periodsPerYear);
-    const annualizedReturn = mean * periodsPerYear;
-    const sharpe = annualizedVol > 0 ? (annualizedReturn - riskFreeRate) / annualizedVol : 0;
-
-    // Max drawdown on the compounded return index (starting at 1).
-    let index = 1, peak = 1, maxDrawdown = 0;
-    for (const r of returns) {
-        index *= 1 + r;
+    let index = 1, peak = 1, maxDD = 0;
+    let maxDDDate: string | null = null;
+    for (let i = 0; i < factors.length; i++) {
+        index *= factors[i];
         if (index > peak) peak = index;
-        const drawdown = (index - peak) / peak;
-        if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+        const dd = index / peak - 1;
+        if (dd < maxDD) { maxDD = dd; maxDDDate = dates[i]; }
     }
+
+    const totalFactor = factors.reduce((a, b) => a * b, 1);
+    const twrPct = (totalFactor - 1) * 100;
+    const annualizedReturnPct = totalFactor > 0
+        ? (Math.pow(totalFactor, 1 / years) - 1) * 100
+        : -100;
+
+    // Annualized volatility from log-returns; the axis is irregular (business
+    // days, monthly NAVs, gaps), so periods-per-year is estimated from the
+    // actual observation density instead of assuming 252.
+    const minReturns = opts.minReturns ?? 5;
+    const logrets = factors.filter(f => f > 0).map(f => Math.log(f));
+    let annualizedVolatilityPct: number | null = null;
+    if (logrets.length >= minReturns) {
+        const mean = logrets.reduce((a, b) => a + b, 0) / logrets.length;
+        const variance = logrets.reduce((a, r) => a + (r - mean) * (r - mean), 0) / (logrets.length - 1);
+        const periodsPerYear = logrets.length / years;
+        annualizedVolatilityPct = Math.sqrt(variance) * Math.sqrt(periodsPerYear) * 100;
+    }
+
+    const riskFree = opts.riskFreePct ?? 0;
+    // 1e-6 %: below floating-point noise a Sharpe ratio is meaningless
+    const sharpe = annualizedVolatilityPct !== null && annualizedVolatilityPct > 1e-6
+        ? (annualizedReturnPct - riskFree) / annualizedVolatilityPct
+        : null;
 
     return {
-        volatility: annualizedVol * 100,
+        twrPct,
+        annualizedReturnPct,
+        annualizedVolatilityPct,
         sharpe,
-        maxDrawdown: Math.abs(maxDrawdown) * 100,
-        samples: returns.length,
-        periodsPerYear,
+        maxDrawdownPct: maxDD * 100,
+        maxDrawdownDate: maxDDDate,
+        years,
     };
 }
 
@@ -306,9 +321,39 @@ export function computeRealizedVolatility(
 }
 
 /**
- * Net worth = all portfolios/transactions combined, plus an optional constant
- * liquidity overlay (broker + portfolio liquidity has no history, so it is
- * applied as today's value across the whole series).
+ * Uninvested-proceeds timeline: cash received from sells/coupons that has not
+ * yet been consumed by later buys, per date (floored at 0 — buys beyond the
+ * bucket are funded by external deposits, which are not tracked). Used to make
+ * the liquidity overlay time-varying, so a sell followed by a re-buy days
+ * later doesn't paint a fake crash in the value chart.
+ */
+export function getUninvestedProceedsTimeline(
+    transactions: Transaction[],
+    portfolioId?: string
+): Timeline {
+    const byDate = new Map<string, number>(); // +proceeds/income, -buy cost
+    for (const tx of transactions) {
+        if (portfolioId && tx.portfolioId !== portfolioId) continue;
+        const date = (tx.date || '').slice(0, 10);
+        const cost = (Number(tx.amount) || 0) * (Number(tx.price) || 0);
+        const sign = (tx.direction || 'Buy') === 'Buy' ? -1 : 1; // Sell/Dividend/Coupon add cash
+        byDate.set(date, (byDate.get(date) || 0) + sign * cost);
+    }
+    const timeline: Timeline = [];
+    let bucket = 0;
+    for (const [date, delta] of Array.from(byDate.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
+        bucket = Math.max(0, bucket + delta);
+        timeline.push([date, bucket]);
+    }
+    return timeline;
+}
+
+/**
+ * Net worth = all portfolios/transactions combined, plus an optional liquidity
+ * overlay. Liquidity has no history of its own, so it is anchored to today's
+ * broker cash and varied backwards using the uninvested-proceeds timeline:
+ * right after a sell the proceeds stay in the series as cash instead of
+ * vanishing until the next buy.
  */
 export function getNetWorthSeries(
     transactions: Transaction[],
@@ -318,5 +363,13 @@ export function getNetWorthSeries(
     const base = getPortfolioValueSeries(transactions, priceHistory, { from: opts.from, to: opts.to });
     const liquidity = opts.liquidity ?? 0;
     if (liquidity === 0) return base;
-    return base.map(p => ({ date: p.date, value: p.value + liquidity }));
+    const proceeds = getUninvestedProceedsTimeline(transactions);
+    const bucketEnd = proceeds.length > 0 ? proceeds[proceeds.length - 1][1] : 0;
+    return base.map(p => {
+        const bucketAt = valueAtOrBefore(proceeds, p.date);
+        // Today's liquidity already contains today's uninvested proceeds:
+        // shift the anchor so the overlay ends exactly at `liquidity`.
+        const overlay = Math.max(0, liquidity - bucketEnd + bucketAt);
+        return { date: p.date, value: p.value + overlay };
+    });
 }

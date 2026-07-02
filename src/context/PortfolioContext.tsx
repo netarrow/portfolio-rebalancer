@@ -873,8 +873,36 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setStoredAssetAllocationSettings({ portfolioTargets: {}, ratioGroups: [] });
     };
 
+    /**
+     * Mirror new trades on broker cash: a Sell deposits its proceeds on the
+     * broker's account, a Buy consumes them. The user only adjusts liquidity
+     * manually for external movements (deposits raise it, expenses lower it).
+     * Applied on insertion only — deleting/editing an old transaction is data
+     * cleanup and must not move today's cash. Virtual tickers (_CASH_/_VBOND_
+     * placeholders) and income directions (Coupon/Dividend) are excluded.
+     */
+    const applyTradeCashToBrokers = (txs: Transaction[]) => {
+        const deltaByBroker = new Map<string, number>();
+        for (const tx of txs) {
+            const direction = tx.direction || 'Buy';
+            if (direction !== 'Buy' && direction !== 'Sell') continue;
+            if (!tx.brokerId || tx.ticker.startsWith('_')) continue;
+            const cost = (Number(tx.amount) || 0) * (Number(tx.price) || 0);
+            if (cost <= 0) continue;
+            const delta = direction === 'Sell' ? cost : -cost;
+            deltaByBroker.set(tx.brokerId, (deltaByBroker.get(tx.brokerId) || 0) + delta);
+        }
+        if (deltaByBroker.size === 0) return;
+        setBrokers(prev => prev.map(b => {
+            const delta = deltaByBroker.get(b.id);
+            if (!delta) return b;
+            return { ...b, currentLiquidity: Math.round(((b.currentLiquidity || 0) + delta) * 100) / 100 };
+        }));
+    };
+
     const addTransaction = (transaction: Transaction) => {
         setTransactions((prev) => [...prev, transaction]);
+        applyTradeCashToBrokers([transaction]);
     };
 
     const deleteTransaction = (id: string) => {
@@ -883,6 +911,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const addTransactionsBulk = (newTransactions: Transaction[]) => {
         setTransactions((prev) => [...prev, ...newTransactions]);
+        applyTradeCashToBrokers(newTransactions);
     };
 
     const updateAssetSettings = (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {

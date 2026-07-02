@@ -1,10 +1,12 @@
 import React from 'react';
-import type { RiskMetrics } from '../../utils/performanceCalculations';
+import type { ReturnStats } from '../../utils/performanceCalculations';
 
 interface RiskMetricsRowProps {
-    metrics: RiskMetrics | null;
+    stats: ReturnStats | null;
     /** Optional heading rendered above the metric cards. */
     title?: string;
+    /** Risk-free rate (%) used for Sharpe, shown in the tooltip. */
+    riskFreePct?: number;
 }
 
 const cardStyle: React.CSSProperties = {
@@ -28,14 +30,13 @@ const valueStyle: React.CSSProperties = {
 };
 
 /**
- * Compact row of risk metric cards: annualized volatility, Sharpe ratio and
- * max drawdown. Renders nothing when metrics couldn't be computed (too little
- * history). Shared by the Performance view and the stats Overview tab.
+ * Compact row of risk metric cards: annualized return, volatility, Sharpe and
+ * max drawdown, read from the shared flow-adjusted ReturnStats. Renders nothing
+ * when stats couldn't be computed (too little history). Shared by the
+ * Performance view and the stats Overview tab, so both show identical numbers.
  */
-const RiskMetricsRow: React.FC<RiskMetricsRowProps> = ({ metrics, title }) => {
-    if (!metrics) return null;
-
-    const sharpeColor = metrics.sharpe >= 0 ? 'var(--color-success)' : 'var(--color-danger)';
+const RiskMetricsRow: React.FC<RiskMetricsRowProps> = ({ stats, title, riskFreePct = 0 }) => {
+    if (!stats) return null;
 
     return (
         <div>
@@ -45,22 +46,32 @@ const RiskMetricsRow: React.FC<RiskMetricsRowProps> = ({ metrics, title }) => {
                 </div>
             )}
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <div style={cardStyle} title="Deviazione standard annualizzata dei rendimenti (i flussi di cassa esterni sono esclusi). Misura quanto oscilla il valore.">
-                    <div style={labelStyle}>Volatilità (ann.)</div>
-                    <div style={{ ...valueStyle, color: 'var(--text-primary)' }}>
-                        {metrics.volatility.toFixed(1)}%
+                <div style={cardStyle} title="Rendimento annualizzato composto (CAGR) del flusso di rendimenti al netto dei versamenti/prelievi.">
+                    <div style={labelStyle}>Rendimento (ann.)</div>
+                    <div style={{ ...valueStyle, color: stats.annualizedReturnPct >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        {stats.annualizedReturnPct >= 0 ? '+' : ''}{stats.annualizedReturnPct.toFixed(1)}%
                     </div>
                 </div>
-                <div style={cardStyle} title="Rendimento annualizzato in eccesso diviso per la volatilità (tasso privo di rischio = 0%). Più alto è, migliore è il rendimento corretto per il rischio.">
-                    <div style={labelStyle}>Sharpe Ratio</div>
-                    <div style={{ ...valueStyle, color: sharpeColor }}>
-                        {metrics.sharpe.toFixed(2)}
+                {stats.annualizedVolatilityPct !== null && (
+                    <div style={cardStyle} title="Deviazione standard annualizzata dei rendimenti (i flussi di cassa esterni sono esclusi). Misura quanto oscilla il valore.">
+                        <div style={labelStyle}>Volatilità (ann.)</div>
+                        <div style={{ ...valueStyle, color: 'var(--text-primary)' }}>
+                            {stats.annualizedVolatilityPct.toFixed(1)}%
+                        </div>
                     </div>
-                </div>
-                <div style={cardStyle} title="Massima perdita dal picco al minimo successivo, calcolata sull'indice dei rendimenti composti.">
+                )}
+                {stats.sharpe !== null && (
+                    <div style={cardStyle} title={`Rendimento annualizzato in eccesso (oltre il tasso privo di rischio ${riskFreePct}%) diviso per la volatilità. Più alto è, migliore è il rendimento corretto per il rischio.`}>
+                        <div style={labelStyle}>Sharpe Ratio</div>
+                        <div style={{ ...valueStyle, color: stats.sharpe >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                            {stats.sharpe.toFixed(2)}
+                        </div>
+                    </div>
+                )}
+                <div style={cardStyle} title="Massima perdita dal picco al minimo successivo, calcolata sull'indice dei rendimenti al netto dei flussi (un prelievo non conta come perdita).">
                     <div style={labelStyle}>Max Drawdown</div>
-                    <div style={{ ...valueStyle, color: 'var(--color-danger)' }}>
-                        -{metrics.maxDrawdown.toFixed(1)}%
+                    <div style={{ ...valueStyle, color: stats.maxDrawdownPct < 0 ? 'var(--color-danger)' : 'var(--text-primary)' }}>
+                        {stats.maxDrawdownPct.toFixed(1)}%
                     </div>
                 </div>
             </div>
