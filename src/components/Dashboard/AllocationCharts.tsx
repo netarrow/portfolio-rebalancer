@@ -8,7 +8,22 @@ import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
 import RiskMetricsRow from '../Performance/RiskMetrics';
 import { getPortfolioValueSeries, getCashFlowsByDate, computeReturnStats } from '../../utils/performanceCalculations';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
 import './Dashboard.css';
+
+// Shared with the Performance view so the two risk-metric readouts can be
+// compared on the same window (and reconcile on MAX / full history).
+type RiskRangeKey = '1M' | '6M' | '1Y' | 'MAX';
+const RISK_RANGE_MONTHS: Record<Exclude<RiskRangeKey, 'MAX'>, number> = { '1M': 1, '6M': 6, '1Y': 12 };
+function riskRangeFrom(range: RiskRangeKey): string | undefined {
+    if (range === 'MAX') return undefined;
+    const d = new Date();
+    d.setMonth(d.getMonth() - RISK_RANGE_MONTHS[range]);
+    return d.toISOString().slice(0, 10);
+}
+const RISK_RANGE_LABEL: Record<RiskRangeKey, string> = {
+    '1M': 'ultimo mese', '6M': 'ultimi 6 mesi', '1Y': 'ultimo anno', 'MAX': 'intera storia disponibile',
+};
 
 const RADIAN = Math.PI / 180;
 const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
@@ -361,14 +376,20 @@ const AllocationCharts: React.FC = () => {
     const { transactions, assetSettings, marketData, portfolios, brokers, goals, priceHistory } = usePortfolio();
     const [activeTab, setActiveTab] = useState<StatsTab>('global');
 
-    // Whole-account risk metrics (volatility, Sharpe, max drawdown) over the full
-    // available history, derived from the same net-worth value series as the
-    // Performance view. Null when there isn't enough price history yet.
+    // Risk metrics window + risk-free rate are shared with the Performance view
+    // (same localStorage keys), so both readouts reconcile on the same range.
+    const [riskRange, setRiskRange] = useState<RiskRangeKey>('MAX');
+    const [riskFreeRate] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
+
+    // Whole-account risk metrics (annualized return, volatility, Sharpe, max
+    // drawdown) over the selected window, derived from the same net-worth value
+    // series as the Performance view. Null when there isn't enough history yet.
     const netWorthRiskMetrics = useMemo(() => {
-        const series = getPortfolioValueSeries(transactions, priceHistory);
+        const from = riskRangeFrom(riskRange);
+        const series = getPortfolioValueSeries(transactions, priceHistory, { from });
         const cashFlows = getCashFlowsByDate(transactions);
-        return computeReturnStats(series, cashFlows);
-    }, [transactions, priceHistory]);
+        return computeReturnStats(series, cashFlows, { riskFreePct: riskFreeRate });
+    }, [transactions, priceHistory, riskRange, riskFreeRate]);
 
     // 1. Total / All (including virtual cash assets from all portfolios)
     const totalAssets = useMemo(() => {
@@ -805,18 +826,32 @@ const AllocationCharts: React.FC = () => {
                 <>
                     {netWorthRiskMetrics && (
                         <div style={{ marginBottom: '2rem' }}>
-                            <h3 className="section-title" style={{
-                                fontSize: '1.2rem',
-                                color: 'var(--color-primary)',
-                                borderBottom: '1px solid var(--border-color)',
-                                paddingBottom: '0.5rem',
-                                marginBottom: '1rem'
-                            }}>
-                                Risk Metrics
-                            </h3>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>
+                                <h3 className="section-title" style={{ fontSize: '1.2rem', color: 'var(--color-primary)', margin: 0, border: 'none', padding: 0 }}>
+                                    Risk Metrics
+                                </h3>
+                                <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                    {(['1M', '6M', '1Y', 'MAX'] as RiskRangeKey[]).map(r => (
+                                        <button
+                                            key={r}
+                                            onClick={() => setRiskRange(r)}
+                                            style={{
+                                                padding: '0.3rem 0.7rem',
+                                                background: riskRange === r ? 'var(--color-primary)' : 'var(--bg-card)',
+                                                color: riskRange === r ? 'white' : 'var(--text-secondary)',
+                                                border: '1px solid var(--border-color)',
+                                                borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, fontSize: '0.8rem'
+                                            }}
+                                        >
+                                            {r}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                             <RiskMetricsRow
                                 stats={netWorthRiskMetrics}
-                                title="Net Worth — intera storia disponibile"
+                                title={`Net Worth — ${RISK_RANGE_LABEL[riskRange]}`}
+                                riskFreePct={riskFreeRate}
                             />
                         </div>
                     )}
