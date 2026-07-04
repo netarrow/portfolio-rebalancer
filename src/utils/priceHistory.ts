@@ -88,7 +88,7 @@ export function priceAt(history: TickerPriceHistory | undefined, date: string): 
     return ans >= 0 ? points[ans][1] : null;
 }
 
-export type MarketDataMap = Record<string, { price: number; lastUpdated: string; spreadPercent?: number | null; volatility?: number | null }>;
+export type MarketDataMap = Record<string, { price: number; lastUpdated: string; spreadPercent?: number | null; volatility?: number | null; indexationCoefficient?: number | null }>;
 
 /**
  * Market data enriched with the freshest local-history close: tickers whose
