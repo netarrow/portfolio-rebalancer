@@ -49,7 +49,7 @@ interface PortfolioContextType {
     setPremiumPriceKey: (key: string) => void;
     resetPortfolio: () => void;
     loadMockData: () => void;
-    marketData: Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null }>;
+    marketData: Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null, indexationCoefficient?: number | null }>;
     addPortfolio: (portfolio: Portfolio) => void;
     updatePortfolio: (portfolio: Portfolio) => void;
     deletePortfolio: (id: string) => void;
@@ -67,7 +67,7 @@ interface PortfolioContextType {
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
     importData: (data: any) => Promise<boolean>;
-    updateMarketData: (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null }) => void;
+    updateMarketData: (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null; indexationCoefficient?: number | null }) => void;
     addTransactionsBulk: (newTransactions: Transaction[]) => void;
     // Aggregate section UI preferences (synced)
     aggregateExcludedTickers: string[];
@@ -135,7 +135,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [portfolios, setPortfolios] = useLocalStorage<Portfolio[]>('portfolio_list', []);
     const [brokers, setBrokers] = useLocalStorage<Broker[]>('portfolio_brokers', []);
     const [goals, setGoals] = useLocalStorage<Goal[]>('portfolio_goals', []);
-    const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null }>>('portfolio_market_data', {});
+    const [marketData, setMarketData] = useLocalStorage<Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null, indexationCoefficient?: number | null }>>('portfolio_market_data', {});
     // Day-by-day close-price history per ticker. Local-only by design: NOT part
     // of the Azure SyncPayload (it would re-upload megabytes on every debounced
     // sync) and NOT part of the v4 backup — it has its own export/import JSON.
@@ -287,6 +287,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         currency: data?.currency,
                         spreadPercent: data?.spreadPercent,
                         volatility: data?.volatility,
+                        indexationCoefficient: data?.indexationCoefficient,
                         error: error,
                         cached: !!cached
                     };
@@ -295,7 +296,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }));
 
             if (success && data && data.currentPrice) {
-                updateMarketData(isin, data.currentPrice, data.lastUpdated, { spreadPercent: data.spreadPercent, volatility: data.volatility });
+                updateMarketData(isin, data.currentPrice, data.lastUpdated, { spreadPercent: data.spreadPercent, volatility: data.volatility, indexationCoefficient: data.indexationCoefficient });
                 // Accumulate today's point so every regular price update also
                 // grows the local history (CPRAM only ever grows this way).
                 snapshotBufferRef.current.push({
@@ -716,14 +717,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const updateMarketData = (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null }) => {
+    const updateMarketData = (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null; indexationCoefficient?: number | null }) => {
         setMarketData(prev => ({
             ...prev,
             [ticker.toUpperCase()]: {
                 price,
                 lastUpdated,
                 spreadPercent: extra?.spreadPercent ?? undefined,
-                volatility: extra?.volatility ?? undefined
+                volatility: extra?.volatility ?? undefined,
+                indexationCoefficient: extra?.indexationCoefficient ?? undefined
             }
         }));
     };
