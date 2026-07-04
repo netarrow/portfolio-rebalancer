@@ -277,6 +277,7 @@ async function scrapeToken(page, isin, source = 'ETF') {
         let url, priceText;
         let currency = 'EUR'; // Default
         let fetchedFromMIL = false;
+        let indexationCoefficient = null;
 
         if (source === 'MOT') {
             url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;
@@ -300,22 +301,56 @@ async function scrapeToken(page, isin, source = 'ETF') {
                 await page.waitForSelector(priceSelector, { timeout: 10000 });
                 const cleanPriceText = await page.$eval(priceSelector, el => el.textContent.trim());
 
-                // Extract Rateo Lordo (gross accrued interest) to compute tel quel (dirty price)
-                const rateoText = await page.evaluate(() => {
+                // Extract Rateo Lordo (gross accrued interest) and, for inflation-linked
+                // bonds (BTP Italia / BTP€i), the Coefficiente di Indicizzazione that
+                // revalues the principal with inflation.
+                const extractBondFields = () => page.evaluate(() => {
+                    const result = { rateo: null, coefficiente: null };
                     const rows = document.querySelectorAll('table.m-table tr');
                     for (const row of rows) {
-                        if (row.textContent.includes('Rateo Lordo')) {
-                            const valueCell = row.querySelector('td:last-child span.t-text');
-                            if (valueCell) return valueCell.textContent.trim();
+                        const valueCell = row.querySelector('td:last-child span.t-text');
+                        if (!valueCell) continue;
+                        if (result.rateo === null && row.textContent.includes('Rateo Lordo')) {
+                            result.rateo = valueCell.textContent.trim();
+                        } else if (result.coefficiente === null && /indicizzazione/i.test(row.textContent)) {
+                            result.coefficiente = valueCell.textContent.trim();
                         }
                     }
-                    return null;
+                    return result;
                 });
 
-                const cleanPrice = parseFloat(cleanPriceText.replace(/\./g, '').replace(',', '.'));
-                const rateo = rateoText ? parseFloat(rateoText.replace(/\./g, '').replace(',', '.')) : 0;
-                // Tel quel = corso secco + rateo lordo
-                priceText = String(cleanPrice + rateo);
+                let { rateo: rateoText, coefficiente: coeffText } = await extractBondFields();
+
+                if (coeffText === null) {
+                    // The summary page may omit the coefficient. Only for bonds whose
+                    // name suggests inflation indexation, look it up on the full-data
+                    // page, so plain bonds don't pay a second navigation.
+                    const bondName = await page.evaluate(() =>
+                        (document.querySelector('h1')?.textContent || document.title || '').trim()
+                    );
+                    if (/italia|€i|\bei\b|indicizz/i.test(bondName)) {
+                        try {
+                            await page.goto(`https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}/dati-completi.html?lang=it`, { waitUntil: 'domcontentloaded' });
+                            const full = await extractBondFields();
+                            coeffText = full.coefficiente;
+                        } catch (e) {}
+                        // Back to the summary page: spread/volatility are extracted
+                        // from the current page after this block.
+                        try { await page.goto(url, { waitUntil: 'domcontentloaded' }); } catch (e) {}
+                    }
+                }
+
+                const parseItNumber = (text) => parseFloat(text.replace(/\./g, '').replace(',', '.'));
+                const cleanPrice = parseItNumber(cleanPriceText);
+                const rateo = rateoText ? parseItNumber(rateoText) : 0;
+                const coeff = coeffText ? parseItNumber(coeffText) : NaN;
+                // Sanity bound: a real indexation coefficient sits near 1; anything
+                // outside means the wrong table row or a misparsed number.
+                if (!isNaN(coeff) && coeff > 0.5 && coeff < 3) indexationCoefficient = coeff;
+                // Tel quel = (corso secco + rateo lordo) × coefficiente di indicizzazione.
+                // MOT convention for indexed bonds: both the clean price and the real
+                // accrued interest are scaled by the indexation coefficient.
+                priceText = String((cleanPrice + rateo) * (indexationCoefficient ?? 1));
             } catch (e) {}
 
         } else if (source === 'CPRAM') {
@@ -497,6 +532,7 @@ async function scrapeToken(page, isin, source = 'ETF') {
                 lastUpdated: new Date().toISOString(),
                 spreadPercent,
                 volatility,
+                indexationCoefficient,
             },
         };
     } catch (err) {

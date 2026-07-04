@@ -1488,7 +1488,7 @@ interface AllocationTableProps {
     portfolio: import('../../types').Portfolio;
     allTransactions: import('../../types').Transaction[];
     assetSettings: import('../../types').AssetDefinition[];
-    marketData: Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null }>;
+    marketData: Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null, indexationCoefficient?: number | null }>;
     brokers: import('../../types').Broker[];
     onUpdatePortfolio: (portfolio: import('../../types').Portfolio) => void;
     onAddTransactions: (transactions: import('../../types').Transaction[]) => void;
@@ -1786,6 +1786,8 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             ?? (brokers.length === 1 ? brokers[0] : undefined);
         const spreadPercent = marketData[ticker.toUpperCase()]?.spreadPercent
             ?? marketData[ticker]?.spreadPercent ?? null;
+        const indexationCoefficient = marketData[ticker.toUpperCase()]?.indexationCoefficient
+            ?? marketData[ticker]?.indexationCoefficient ?? null;
         const monthsHeld = monthsSince(firstBuyDate(tickerTxs));
 
         const assetCashFlow = portfolioCashFlowDetails.find(d => d.ticker === ticker.toUpperCase());
@@ -1820,6 +1822,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 assetDistributions={assetDistributions}
                 assetDistributionEvents={assetDistributionEvents}
                 spreadPercent={spreadPercent}
+                indexationCoefficient={indexationCoefficient}
                 brokers={brokers}
                 tradeBroker={tradeBroker}
                 monthsHeld={monthsHeld}
@@ -2085,6 +2088,8 @@ interface RowProps {
     assetDistributionEvents: number;
     /** Spread % loaded for this asset (for the trade-cost popover). */
     spreadPercent?: number | null;
+    /** Inflation-linked bonds only: indexation coefficient already folded into the price. */
+    indexationCoefficient?: number | null;
     /** All brokers (the popover compares commission across every one). */
     brokers: Broker[];
     /** Broker resolved for this ticker — the popover's default selection. */
@@ -2097,7 +2102,7 @@ interface RowProps {
     indent?: boolean;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, isVBond, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, brokers, tradeBroker, monthsHeld, hideTarget, indent }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, isVBond, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, indexationCoefficient, brokers, tradeBroker, monthsHeld, hideTarget, indent }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
@@ -2142,6 +2147,12 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
 
                 <div style={{ width: '110px', textAlign: 'center', color: isCash ? 'var(--text-muted)' : undefined }}>
                     {isCash ? '-' : `€${currentPrice.toFixed(2)}`}
+                    {!isCash && indexationCoefficient != null && (
+                        <span
+                            title={`Inflation-linked: price includes indexation coefficient ${indexationCoefficient.toFixed(5)}`}
+                            style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginLeft: 3, cursor: 'help' }}
+                        >CI</span>
+                    )}
                 </div>
 
                 <div style={{ width: '110px', textAlign: 'center' }}>
@@ -2184,6 +2195,17 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                                     <span className="realized-tooltip-label">Current price</span>
                                     <span className="realized-tooltip-amount">€{currentPrice.toFixed(2)}</span>
                                 </div>
+                                {indexationCoefficient != null && (
+                                    <div className="realized-tooltip-row">
+                                        <span className="realized-tooltip-label">
+                                            Indexation coeff.
+                                            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: 4 }}>
+                                                (inflation-revalued principal, included in price)
+                                            </span>
+                                        </span>
+                                        <span className="realized-tooltip-amount">{indexationCoefficient.toFixed(5)}</span>
+                                    </div>
+                                )}
                                 <div className="realized-tooltip-row">
                                     <span className="realized-tooltip-label">Quantity</span>
                                     <span className="realized-tooltip-amount">{parseFloat(quantity.toFixed(4))}</span>

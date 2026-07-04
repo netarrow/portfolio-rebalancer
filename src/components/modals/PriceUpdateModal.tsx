@@ -8,6 +8,9 @@ export interface PriceUpdateItem {
     currency?: string;
     spreadPercent?: number | null;
     volatility?: number | null;
+    // Inflation-linked bonds only: principal revaluation coefficient already
+    // folded into `price`.
+    indexationCoefficient?: number | null;
     error?: string;
     cached?: boolean;
     // Number of historical points received (history updates only)
@@ -67,11 +70,13 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete,
                                             {item.pointsCount} points
                                         </span>
                                     )}
-                                    {item.status === 'success' && (item.spreadPercent != null || item.volatility != null) && (
+                                    {item.status === 'success' && (item.spreadPercent != null || item.volatility != null || item.indexationCoefficient != null) && (
                                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                            {item.spreadPercent != null && `Spread: ${item.spreadPercent.toFixed(2)}%`}
-                                            {item.spreadPercent != null && item.volatility != null && ' · '}
-                                            {item.volatility != null && `Vol: ${item.volatility.toFixed(2)}%`}
+                                            {[
+                                                item.spreadPercent != null ? `Spread: ${item.spreadPercent.toFixed(2)}%` : null,
+                                                item.volatility != null ? `Vol: ${item.volatility.toFixed(2)}%` : null,
+                                                item.indexationCoefficient != null ? `CI: ${item.indexationCoefficient.toFixed(5)}` : null,
+                                            ].filter(Boolean).join(' · ')}
                                         </span>
                                     )}
                                 </div>
