@@ -17,6 +17,7 @@ import {
 } from './concurrency.js';
 import { fetchHistoryForToken } from './history.js';
 import { scrapeBondMonitor, filterByMaturityWindow } from './bondMonitor.js';
+import { getIndexationCoefficient, computeTelQuel } from './btpItalia.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -351,6 +352,23 @@ async function scrapeToken(page, isin, source = 'ETF') {
                 // MOT convention for indexed bonds: both the clean price and the real
                 // accrued interest are scaled by the indexation coefficient.
                 priceText = String((cleanPrice + rateo) * (indexationCoefficient ?? 1));
+
+                // BTP Italia (inflation-linked): the page's own coefficient/rateo can be
+                // missing or delayed, so prefer the coefficient computed deterministically
+                // from ISTAT FOI data (rivaluta.it) — validated against real portfolio
+                // values to the cent. The page-scraped values above remain the fallback
+                // when this computation isn't available (not a BTP Italia, or rivaluta
+                // unreachable), so behavior for every other MOT bond is unchanged.
+                try {
+                    const computed = await getIndexationCoefficient(isin);
+                    indexationCoefficient = computed.ciFloored;
+                    priceText = String((cleanPrice + computed.rateoPer100) * computed.ciFloored);
+                    console.log(`[BtpItalia] ${isin} tel quel via computed CI=${computed.ci} rateo=${computed.rateoPer100.toFixed(5)} (rivaluta-foi)`);
+                } catch (e) {
+                    if (!/does not look like a BTP Italia/.test(e.message)) {
+                        console.warn(`[BtpItalia] CI computation unavailable for ${isin}, using page-scraped tel quel: ${e.message}`);
+                    }
+                }
             } catch (e) {}
 
         } else if (source === 'CPRAM') {
@@ -914,6 +932,34 @@ app.post('/api/bond-proposals', priceLimiter, async (req, res) => {
     } catch (err) {
         console.error('[BondProposals] Error:', err.message);
         res.status(500).json({ error: 'Failed to fetch bond proposals', proposals: [] });
+    }
+});
+
+// --- BTP ITALIA INDEXATION COEFFICIENT ---
+app.get('/api/btp-italia/:isin/coefficient', priceLimiter, async (req, res) => {
+    const { isin } = req.params;
+    const { date, nominal, price } = req.query;
+
+    if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) {
+        return res.status(400).json({ error: 'Invalid ISIN format' });
+    }
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+
+    try {
+        const result = await computeTelQuel(isin, {
+            date: date || undefined,
+            nominal: nominal != null ? Number(nominal) : undefined,
+            price: price != null ? Number(price) : undefined,
+        });
+        res.json(result);
+    } catch (err) {
+        if (/does not look like a BTP Italia|could not read maturity/i.test(err.message)) {
+            return res.status(404).json({ error: err.message });
+        }
+        console.error('[BtpItalia] endpoint error:', err.message);
+        res.status(502).json({ error: err.message });
     }
 });
 
