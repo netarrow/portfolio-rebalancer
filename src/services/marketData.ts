@@ -7,6 +7,9 @@ interface MarketData {
     // Optional supplemental data — present only when the scraped page exposes it.
     spreadPercent?: number | null;
     volatility?: number | null;
+    // Inflation-linked bonds only: principal revaluation coefficient already
+    // folded into currentPrice.
+    indexationCoefficient?: number | null;
 }
 
 export interface PriceRequestToken {
