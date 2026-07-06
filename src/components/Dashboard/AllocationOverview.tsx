@@ -13,6 +13,7 @@ import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
 import { CashFlowModal } from './CashFlowModal';
 import PortfolioGroupSection from './PortfolioGroupSection';
+import BrokerAllocationSection from './BrokerAllocationSection';
 import GoalRebalanceWidget from './GoalRebalanceWidget';
 import type { GoalItem } from './GoalRebalanceWidget';
 import './Dashboard.css';
@@ -309,8 +310,20 @@ const TradeCostInfo: React.FC<{
 };
 
 
+// Dashboard rebalance mode: plain localStorage (UI preference, not synced/encrypted)
+const REBAL_MODE_KEY = 'dashboard_rebalance_mode_v1';
+type RebalanceMode = 'portfolio' | 'broker';
+
 const AllocationOverview: React.FC = () => {
     const { portfolios, brokers, transactions, assetSettings, effectiveAssetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals, goalModeTargets: storedGoalModeTargets, setGoalModeTargets } = usePortfolio();
+
+    const [rebalanceMode, setRebalanceMode] = useState<RebalanceMode>(
+        () => localStorage.getItem(REBAL_MODE_KEY) === 'broker' ? 'broker' : 'portfolio'
+    );
+    const switchMode = (m: RebalanceMode) => {
+        setRebalanceMode(m);
+        localStorage.setItem(REBAL_MODE_KEY, m);
+    };
 
     // Goals sorted by order, with assigned colors
     const goalItems = useMemo<GoalItem[]>(() => {
@@ -399,6 +412,38 @@ const AllocationOverview: React.FC = () => {
                 </div>
             ) : (
                 <>
+                    <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+                        {(['portfolio', 'broker'] as const).map(m => (
+                            <button
+                                key={m}
+                                onClick={() => switchMode(m)}
+                                style={{
+                                    fontSize: '0.8rem', padding: '0.25rem 0.75rem', borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--border-color)',
+                                    backgroundColor: rebalanceMode === m ? 'var(--color-primary)' : 'var(--bg-input)',
+                                    color: rebalanceMode === m ? '#fff' : 'var(--text-muted)',
+                                    cursor: 'pointer', fontWeight: 500, transition: 'all 0.2s', whiteSpace: 'nowrap',
+                                }}
+                            >
+                                {m === 'portfolio' ? 'By Portfolio' : 'By Broker'}
+                            </button>
+                        ))}
+                        {rebalanceMode === 'broker' && (
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                Targets = current weights at each broker
+                            </span>
+                        )}
+                    </div>
+                    {rebalanceMode === 'broker' && (
+                        <BrokerAllocationSection
+                            brokers={brokers}
+                            transactions={transactions}
+                            assetSettings={effectiveAssetSettings}
+                            marketData={marketData}
+                            onAddTransactions={addTransactionsBulk}
+                        />
+                    )}
+                    {rebalanceMode === 'portfolio' && <>
                     {groups.map(({ parent, children }) => (
                         <PortfolioGroupSection
                             key={parent.id}
@@ -436,6 +481,7 @@ const AllocationOverview: React.FC = () => {
                     <AggregateAllocationSection
                         goalModeTargets={targetGoalAllocs}
                     />
+                    </>}
                 </>
             )}
         </div>
