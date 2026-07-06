@@ -7,6 +7,7 @@ import { testAzureConnection } from '../../services/azureSync';
 import type { YnabBudgetSummary } from '../../services/ynabApi';
 import EncryptionSettingsCard from '../Security/EncryptionSettingsCard';
 import PremiumPriceCard from './PremiumPriceCard';
+import FreeCommissionCard from './FreeCommissionCard';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -25,6 +26,7 @@ const TargetSettings: React.FC = () => {
         macroAllocations,
         goalAllocations,
         goals,
+        freeCommissionPeriods,
         importData,
         // Price history (separate backup JSON, local-only)
         priceHistory,
@@ -103,7 +105,8 @@ const TargetSettings: React.FC = () => {
             assetAllocationSettings,
             macroAllocations,
             goalAllocations,
-            goals
+            goals,
+            freeCommissionPeriods
         };
 
         const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -438,6 +441,8 @@ const TargetSettings: React.FC = () => {
             <PremiumPriceCard />
 
             <EncryptionSettingsCard />
+
+            <FreeCommissionCard />
 
             {/* Data Management Section */}
             <div>

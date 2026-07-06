@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { TransactionDirection } from '../../types';
 import { isIncomeDirection } from '../../types';
+import { isFreeBuyIsin, monthKeyOfDate, formatMonthKey } from '../../utils/freeCommissions';
 import './Transactions.css';
 
 const directionConfig: { value: TransactionDirection; label: string; color: string; bg: string }[] = [
@@ -12,7 +13,7 @@ const directionConfig: { value: TransactionDirection; label: string; color: stri
 ];
 
 const TransactionForm: React.FC = () => {
-    const { addTransaction, portfolios, brokers } = usePortfolio();
+    const { addTransaction, portfolios, brokers, freeCommissionPeriods } = usePortfolio();
 
     const [ticker, setTicker] = useState('');
 
@@ -25,6 +26,11 @@ const TransactionForm: React.FC = () => {
     const [freeCommission, setFreeCommission] = useState(false);
 
     const isIncome = isIncomeDirection(direction);
+
+    // Buy of an ISIN that is in the selected broker's free-buy list for the
+    // transaction month → pre-check the Free flag (the user can still uncheck it).
+    const freeBuyPromo = direction === 'Buy' && isFreeBuyIsin(freeCommissionPeriods, ticker, monthKeyOfDate(date), broker || undefined);
+    useEffect(() => { setFreeCommission(freeBuyPromo); }, [freeBuyPromo]);
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -210,6 +216,11 @@ const TransactionForm: React.FC = () => {
                             />
                             <span>Free commission (no fee)</span>
                         </label>
+                        {freeBuyPromo && (
+                            <p style={{ marginTop: '5px', fontSize: '0.8rem', color: 'var(--color-success)' }}>
+                                {ticker.toUpperCase()} is in {brokers.find(b => b.id === broker)?.name ?? 'this broker'}'s free-buy list for {formatMonthKey(monthKeyOfDate(date))}.
+                            </p>
+                        )}
                     </div>
                 )}
 

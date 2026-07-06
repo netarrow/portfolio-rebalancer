@@ -120,6 +120,16 @@ export interface AssetAllocationSettings {
   ratioGroups: RatioGroupConfig[];
 }
 
+// Free-buy promo list: ISINs whose BUY commission is waived by a specific
+// broker in a given month (e.g. a rotating "free purchase" promotion). Entered
+// in Settings as free text + reference month + broker; one entry per
+// month/broker pair.
+export interface FreeCommissionPeriod {
+    monthKey: string;   // 'YYYY-MM'
+    brokerId?: string;  // broker running the promo; absent = legacy entry, matches any broker
+    isins: string[];    // uppercase ISINs free to buy in that month at that broker
+}
+
 export interface Transaction {
   id: string;
   ticker: string;
