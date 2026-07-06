@@ -41,11 +41,29 @@ export interface MemberAction {
     shares: number; // signed
 }
 
+/** Why a single member could not take the group's pending action. */
+export interface MemberBlockReason {
+    ticker: string;
+    reason: string;
+}
+
+/** Structured explanation shown when a group is "Not eligible". */
+export interface GroupBlockReason {
+    /** direction the group needed to move */
+    direction: 'buy' | 'sell';
+    /** euro amount that could not be actioned */
+    deltaEur: number;
+    /** per-member explanation of why each one was skipped */
+    members: MemberBlockReason[];
+}
+
 export interface GroupDistribution {
     /** by ticker (UPPERCASE) */
     actions: Record<string, MemberAction>;
     /** true when the delta could not be actioned at all because rules froze every eligible member */
     blocked: boolean;
+    /** populated only when `blocked` — explains, per member, why nothing could be actioned */
+    blockReason?: GroupBlockReason;
     /** euro amount left unactioned (rounding leftover or frozen members) */
     unallocated: number;
 }
@@ -85,7 +103,18 @@ export const distributeGroupDelta = (params: {
             return info && info.price > 0 && !ruleFor(m, rules).noBuy;
         });
         if (!recipient) {
-            return { actions, blocked: true, unallocated: deltaEur };
+            const memberReasons: MemberBlockReason[] = members.map(m => {
+                const info = infoOf(m);
+                if (!info || info.price <= 0) return { ticker: m, reason: 'No price available (run Update Prices)' };
+                if (ruleFor(m, rules).noBuy) return { ticker: m, reason: 'Has a "Never buy" rule' };
+                return { ticker: m, reason: 'Eligible' };
+            });
+            return {
+                actions,
+                blocked: true,
+                blockReason: { direction: 'buy', deltaEur, members: memberReasons },
+                unallocated: deltaEur,
+            };
         }
         const info = infoOf(recipient)!;
         const shares = Math.round(deltaEur / info.price);
@@ -116,9 +145,24 @@ export const distributeGroupDelta = (params: {
         need -= eur;
     }
 
+    const blockReason: GroupBlockReason | undefined = anyEligible
+        ? undefined
+        : {
+            direction: 'sell',
+            deltaEur,
+            members: members.map(m => {
+                const info = infoOf(m);
+                if (!info || info.price <= 0) return { ticker: m, reason: 'No price available (run Update Prices)' };
+                if (info.currentValue <= 0) return { ticker: m, reason: 'Not held (no position to sell)' };
+                if (ruleFor(m, rules).noSell) return { ticker: m, reason: 'Has a "Never sell" rule' };
+                return { ticker: m, reason: 'Eligible' };
+            }),
+        };
+
     return {
         actions,
         blocked: !anyEligible,
+        blockReason,
         unallocated: Math.max(0, need),
     };
 };

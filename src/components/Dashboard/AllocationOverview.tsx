@@ -5,7 +5,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, isVirtualBondTicker, calculateRealizedGains, calculateCommission, calculateCashFlows, estimateTradeCost } from '../../utils/portfolioCalculations';
 import type { Broker, VirtualBond } from '../../types';
 import { getVirtualBondId } from '../../types';
-import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipientOf, memberInfoFromAssets, type BuyOnlyCandidate, type MemberAction } from '../../utils/allocationGroups';
+import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipientOf, memberInfoFromAssets, type BuyOnlyCandidate, type MemberAction, type GroupBlockReason } from '../../utils/allocationGroups';
 import { isFreeBuyIsin, currentMonthKey } from '../../utils/freeCommissions';
 import { CASH_TICKER_PREFIX } from '../../types';
 import ConcretizeModal from '../modals/ConcretizeModal';
@@ -2106,6 +2106,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                                         currentPerc={gc.currentPerc}
                                         actionEur={gc.actionEur}
                                         blocked={gc.full.blocked}
+                                        blockReason={gc.full.blockReason}
                                         postRebalancePerc={gc.postRebalancePerc}
                                         buyOnlyEur={buyOnlyEur}
                                         postBuyPerc={postBuyPerc}
@@ -2545,6 +2546,96 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
     );
 }
 
+/**
+ * The "Not eligible" chip shown when a group has a pending delta but no member
+ * can take it. Click (or hover) to reveal a popover explaining, per member,
+ * exactly why nothing could be actioned (missing price / Never buy / Never sell
+ * / not held).
+ */
+const NotEligibleInfo: React.FC<{ reason?: GroupBlockReason }> = ({ reason }) => {
+    const [open, setOpen] = useState(false);
+    const [coords, setCoords] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+    const ref = useRef<HTMLSpanElement>(null);
+
+    const place = () => {
+        const r = ref.current?.getBoundingClientRect();
+        if (r) {
+            const half = 150 + 8;
+            const x = Math.min(Math.max(r.left + r.width / 2, half), Math.max(window.innerWidth - half, half));
+            setCoords({ x, y: r.bottom });
+        }
+    };
+
+    if (!reason) {
+        // Defensive: shouldn't happen, but keep the chip informative.
+        return (
+            <span
+                style={{ color: 'var(--color-warning)', fontSize: '0.8rem', fontWeight: 600 }}
+                title="No eligible member to act on (check Never buy / Never sell rules)"
+            >
+                Not eligible
+            </span>
+        );
+    }
+
+    const directionText = reason.direction === 'buy'
+        ? `This group is underweight and needs to buy about ${fmtEur(Math.abs(reason.deltaEur), 0)}, but no member can be bought:`
+        : `This group is overweight and needs to sell about ${fmtEur(Math.abs(reason.deltaEur), 0)}, but no member can be sold:`;
+
+    return (
+        <span
+            ref={ref}
+            onMouseEnter={() => { place(); setOpen(true); }}
+            onMouseLeave={() => setOpen(false)}
+            onClick={e => { e.stopPropagation(); place(); setOpen(o => !o); }}
+            style={{
+                color: 'var(--color-warning)', fontSize: '0.8rem', fontWeight: 600,
+                cursor: 'pointer', borderBottom: '1px dotted var(--color-warning)',
+                display: 'inline-block',
+            }}
+        >
+            Not eligible ⓘ
+            {open && createPortal(
+                <div
+                    style={{
+                        position: 'fixed', left: coords.x, top: coords.y + 6,
+                        transform: 'translateX(-50%)', zIndex: 9999,
+                        background: 'var(--bg-card)', color: 'var(--text-primary)',
+                        border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.25)', padding: 'var(--space-3)',
+                        width: 300, fontSize: '0.8rem', textAlign: 'left', cursor: 'default',
+                        fontWeight: 400,
+                    }}
+                    onMouseEnter={() => setOpen(true)}
+                    onClick={e => e.stopPropagation()}
+                >
+                    <div style={{ fontWeight: 600, marginBottom: 6, color: 'var(--color-warning)', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: '0.68rem' }}>
+                        Why not eligible
+                    </div>
+                    <div style={{ marginBottom: 8, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                        {directionText}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {reason.members.map(m => (
+                            <div key={m.ticker} style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontWeight: 600 }}>{m.ticker}</span>
+                                <span style={{ color: 'var(--text-muted)', textAlign: 'right' }}>{m.reason}</span>
+                            </div>
+                        ))}
+                    </div>
+                    <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0 6px' }} />
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                        {reason.direction === 'buy'
+                            ? 'Remove a "Never buy" rule on a member, or update its price, to let the buy land.'
+                            : 'Remove a "Never sell" rule on a held member, or update its price, to let the sell drain.'}
+                    </div>
+                </div>,
+                document.body
+            )}
+        </span>
+    );
+};
+
 interface GroupSummaryRowProps {
     label: string;
     expanded: boolean;
@@ -2555,6 +2646,7 @@ interface GroupSummaryRowProps {
     currentPerc: number;
     actionEur: number;
     blocked: boolean;
+    blockReason?: GroupBlockReason;
     postRebalancePerc: number;
     buyOnlyEur: number;
     postBuyPerc: number;
@@ -2562,14 +2654,14 @@ interface GroupSummaryRowProps {
 
 const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
     label, expanded, onToggle, currentValue, gain, targetPerc, currentPerc,
-    actionEur, blocked, postRebalancePerc, buyOnlyEur, postBuyPerc,
+    actionEur, blocked, blockReason, postRebalancePerc, buyOnlyEur, postBuyPerc,
 }) => {
     const diff = currentPerc - targetPerc;
     const tint = 'rgba(59, 130, 246, 0.06)';
 
     const ActionCell = (
         blocked ? (
-            <span style={{ color: 'var(--color-warning)', fontSize: '0.8rem' }} title="No eligible member to act on (check Never buy / Never sell rules)">Blocked</span>
+            <NotEligibleInfo reason={blockReason} />
         ) : Math.abs(actionEur) < 0.5 ? (
             <span className="trend-neutral">OK</span>
         ) : (
