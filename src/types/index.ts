@@ -59,6 +59,16 @@ export interface Goal {
   order: number;
 }
 
+// PAC (piano di accumulo) flag on an allocation entry (ticker or group id).
+// When new liquidity is deployed (Buy Only), PAC entries are funded first by
+// ascending priority (1 = highest); equal-priority PACs share the budget
+// proportionally to how far behind target they are. Whatever is left flows
+// to the remaining (non-PAC) underweight entries.
+export interface PacConfig {
+    enabled: boolean;
+    priority: number; // 1 = highest
+}
+
 // Per-member rule inside an allocation group.
 export interface AllocationMemberRule {
   noBuy?: boolean;   // never add to this member (e.g. a promo that ended)
@@ -79,6 +89,7 @@ export interface Portfolio {
   description?: string;
   allocations?: Record<string, number>; // Ticker | groupId -> Percentage (0-100)
   allocationGroups?: AllocationGroup[];  // multi-asset "market" groups (target stored in allocations[groupId])
+  pacConfigs?: Record<string, PacConfig>; // Ticker | groupId -> PAC flag + priority for new liquidity
   liquidity?: number; // Cash available for rebalancing
   goalId?: string;
   parentId?: string; // ID of parent portfolio for nested Core/Satellite grouping

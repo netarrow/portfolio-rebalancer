@@ -11,7 +11,7 @@ interface PortfolioAllocationsProps {
 }
 
 const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId, onClose }) => {
-    const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup, virtualBonds, addVirtualBond, deleteVirtualBond } = usePortfolio();
+    const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updatePortfolioPacConfig, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup, virtualBonds, addVirtualBond, deleteVirtualBond } = usePortfolio();
 
     // UI State for "Add Asset" mode
     const [isAddingAsset, setIsAddingAsset] = useState(false);
@@ -34,6 +34,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
 
     const portfolio = portfolios.find(p => p.id === portfolioId);
     const allocations = portfolio?.allocations || {};
+    const pacConfigs = portfolio?.pacConfigs || {};
     const groups = useMemo(() => portfolio?.allocationGroups || [], [portfolio]);
     const groupedTickers = useMemo(() => {
         const set = new Set<string>();
@@ -89,6 +90,40 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
     const handleUpdate = (ticker: string, value: string) => {
         const num = parseFloat(value);
         updatePortfolioAllocation(portfolioId, ticker, isNaN(num) ? 0 : num);
+    };
+
+    // PAC flag + priority cell for an allocation entry (ticker or group id).
+    // New liquidity (Buy Only) funds PAC entries first, by ascending priority.
+    const renderPacCell = (key: string) => {
+        const cfg = pacConfigs[key];
+        const enabled = !!cfg?.enabled;
+        return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <input
+                    type="checkbox"
+                    checked={enabled}
+                    onChange={() => updatePortfolioPacConfig(portfolioId, key, { enabled: !enabled, priority: cfg?.priority || 1 })}
+                    title="PAC: new liquidity funds this entry first"
+                />
+                {enabled ? (
+                    <input
+                        type="number"
+                        className="form-input"
+                        value={cfg?.priority ?? 1}
+                        onChange={(e) => {
+                            const p = parseInt(e.target.value, 10);
+                            updatePortfolioPacConfig(portfolioId, key, { enabled: true, priority: isNaN(p) || p < 1 ? 1 : p });
+                        }}
+                        min="1"
+                        step="1"
+                        style={{ width: '54px', textAlign: 'right', padding: '2px 6px' }}
+                        title="PAC priority (1 = highest, funded first)"
+                    />
+                ) : (
+                    <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>PAC</span>
+                )}
+            </div>
+        );
     };
 
     const handleAddAsset = () => {
@@ -227,10 +262,11 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                         <p style={{ color: 'var(--text-muted)' }}>No assets defined. Add an asset below to start.</p>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-                            <div className="allocation-header alloc-modal-header-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', paddingBottom: 'var(--space-2)', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                            <div className="allocation-header alloc-modal-header-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', paddingBottom: 'var(--space-2)', borderBottom: '1px solid var(--border-color)', fontWeight: 600, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                                 <div>Ticker</div>
                                 <div>Asset</div>
                                 <div>Class</div>
+                                <div title="PAC: new liquidity funds flagged entries first, by priority (1 = highest)">PAC / Prio</div>
                                 <div>Target %</div>
                             </div>
 
@@ -240,7 +276,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 const groupPerc = allocations[group.id] || 0;
                                 return (
                                     <div key={group.id} style={{ border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                                        <div className="alloc-modal-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center', padding: 'var(--space-2) var(--space-3)', backgroundColor: 'var(--bg-app)' }}>
+                                        <div className="alloc-modal-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', alignItems: 'center', padding: 'var(--space-2) var(--space-3)', backgroundColor: 'var(--bg-app)' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                                                 <button
                                                     onClick={() => setExpandedGroups(prev => ({ ...prev, [group.id]: !expanded }))}
@@ -257,6 +293,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                             <div style={{ fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 600 }}>
                                                 Group
                                             </div>
+                                            {renderPacCell(group.id)}
                                             <div>
                                                 <input
                                                     type="number"
@@ -337,7 +374,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 const currentPerc = allocations[ticker] || 0;
 
                                 return (
-                                    <div key={ticker} className="alloc-modal-row" data-ticker={isCash ? 'CASH' : isVBond ? 'VBOND' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+                                    <div key={ticker} className="alloc-modal-row" data-ticker={isCash ? 'CASH' : isVBond ? 'VBOND' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
                                         <div style={{ fontWeight: 500, color: isCash ? 'var(--text-secondary)' : isVBond ? '#8B5CF6' : undefined }}>
                                             {isCash ? 'CASH' : isVBond ? (
                                                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -361,6 +398,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                 </>
                                             )}
                                         </div>
+                                        {isCash ? <div style={{ color: 'var(--text-muted)' }}>-</div> : renderPacCell(ticker)}
                                         <div>
                                             <input
                                                 type="number"
