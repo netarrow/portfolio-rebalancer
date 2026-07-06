@@ -3,12 +3,14 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import type { Transaction, TransactionDirection } from '../../types';
 import { isIncomeDirection } from '../../types';
 import { calculateCommission, calculateRealizedGains, calculateCashFlows } from '../../utils/portfolioCalculations';
+import { looksLikeMissedFreeBuy, formatMonthKey, monthKeyOfDate } from '../../utils/freeCommissions';
 import { exportTransactionsToExcel, EXPORT_TEMPLATES, type ExportTemplate } from '../../utils/exportTransactions';
 import ImportTransactionsModal from './ImportTransactionsModal';
+import Swal from 'sweetalert2';
 import './Transactions.css';
 
 const TransactionList: React.FC = () => {
-    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios, brokers, updateMarketData } = usePortfolio();
+    const { transactions, assets, targets, deleteTransaction, updateTransaction, updateTransactionsBulk, refreshPrices, addTransaction, portfolios, brokers, updateMarketData, freeCommissionPeriods } = usePortfolio();
     const [updating, setUpdating] = useState(false);
     const [showImport, setShowImport] = useState(false);
     const [exportModalOpen, setExportModalOpen] = useState(false);
@@ -159,6 +161,36 @@ const TransactionList: React.FC = () => {
         const target = targets.find(t => t.ticker === ticker);
         return target?.label || '';
     };
+
+    // --- Free-buy promo mismatch: Buy in a free-commission month without the Free flag ---
+    const hasMissedFreeBuy = (tx: Transaction) => looksLikeMissedFreeBuy(freeCommissionPeriods, tx);
+
+    const handleFixFreeCommission = async (tx: Transaction) => {
+        const month = formatMonthKey(monthKeyOfDate(tx.date));
+        const confirm = await Swal.fire({
+            title: 'Missing Free flag?',
+            text: `${tx.ticker} is in ${getBrokerName(tx.brokerId) === '-' ? 'the' : `${getBrokerName(tx.brokerId)}'s`} free-buy ISIN list for ${month}, but this Buy is not flagged as commission-free. Mark it Free?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Mark Free',
+            cancelButtonText: 'Not now',
+        });
+        if (confirm.isConfirmed) {
+            updateTransaction({ ...tx, freeCommission: true });
+        }
+    };
+
+    const renderFreeBuyWarning = (tx: Transaction) => (
+        <button
+            onClick={() => handleFixFreeCommission(tx)}
+            title={`${tx.ticker} was commission-free in ${formatMonthKey(monthKeyOfDate(tx.date))} — the Free flag may be missing. Click to fix.`}
+            style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--color-warning, #F59E0B)', fontSize: '0.9rem',
+                padding: '0 2px', lineHeight: 1, verticalAlign: 'middle',
+            }}
+        >⚠</button>
+    );
 
     // Sort by date desc
     const sortedTransactions = [...transactions].sort((a, b) =>
@@ -447,10 +479,12 @@ const TransactionList: React.FC = () => {
                                     }
                                     const broker = brokers.find(b => b.id === tx.brokerId);
                                     const fee = calculateCommission(tx, broker);
-                                    if (fee === undefined) return <span style={{ color: 'var(--text-muted)' }}>-</span>;
+                                    const warn = hasMissedFreeBuy(tx) ? renderFreeBuyWarning(tx) : null;
+                                    if (fee === undefined) return <span style={{ color: 'var(--text-muted)' }}>-{warn}</span>;
                                     return (
-                                        <span style={{ color: 'var(--color-danger)' }}>
+                                        <span style={{ color: 'var(--color-danger)', whiteSpace: 'nowrap' }}>
                                             €{fee.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            {warn}
                                         </span>
                                     );
                                 })()}
@@ -661,6 +695,20 @@ const TransactionList: React.FC = () => {
                                 <span className="detail-value">{tx.price.toFixed(2)}</span>
                             </div>
                         </div>
+                        {hasMissedFreeBuy(tx) && (
+                            <div
+                                onClick={() => handleFixFreeCommission(tx)}
+                                style={{
+                                    marginTop: '8px', padding: '6px 8px', cursor: 'pointer',
+                                    border: '1px solid rgba(245,158,11,0.45)',
+                                    background: 'rgba(245,158,11,0.08)',
+                                    borderRadius: 'var(--radius-sm)',
+                                    fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4,
+                                }}
+                            >
+                                ⚠ In the free-buy list for {formatMonthKey(monthKeyOfDate(tx.date))} but not flagged Free — tap to fix.
+                            </div>
+                        )}
                         <div className="mobile-card-actions">
                             <button
                                 className="btn-edit"

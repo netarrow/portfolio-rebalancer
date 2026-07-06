@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint, VirtualBond } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
@@ -105,6 +105,9 @@ interface PortfolioContextType {
     getPortfolioAllocationSummary: (portfolioId: string) => { allocated: number; available: number; drift: number; currentValue: number };
     getYnabGoalAllocations: (ynabGoalId: string) => YnabGoalAllocation[];
     ynabGoalsSyncing: boolean;
+    // Free-buy promo lists (ISINs commission-free to buy in a given month)
+    freeCommissionPeriods: FreeCommissionPeriod[];
+    setFreeCommissionPeriods: (periods: FreeCommissionPeriod[] | ((prev: FreeCommissionPeriod[]) => FreeCommissionPeriod[])) => void;
     // Virtual bonds
     virtualBonds: VirtualBond[];
     addVirtualBond: (bond: VirtualBond) => void;
@@ -175,6 +178,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabGoalAllocations, setYnabGoalAllocations] = useLocalStorage<YnabGoalAllocation[]>('portfolio_ynab_goal_allocations', []);
     const [ynabGoalsSyncing, setYnabGoalsSyncing] = useState(false);
     const [virtualBonds, setVirtualBonds] = useLocalStorage<VirtualBond[]>('portfolio_virtual_bonds', []);
+    const [freeCommissionPeriods, setFreeCommissionPeriods] = useLocalStorage<FreeCommissionPeriod[]>('portfolio_free_commissions', []);
     // Ref so sync effect can read latest config without adding azureConfig to deps (avoids loop on lastSync)
     const azureConfigRef = useRef(azureConfig);
     // Timestamp of last restore to suppress the debounced post-restore upload
@@ -631,6 +635,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
                 virtualBonds,
+                freeCommissionPeriods,
             };
             try {
                 setAzureSyncing(true);
@@ -652,7 +657,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
-        ynabGoals, ynabGoalAllocations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds]);
+        ynabGoals, ynabGoalAllocations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -678,6 +683,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                         ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
                         virtualBonds,
+                        freeCommissionPeriods,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -787,6 +793,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const { [cashTicker]: _, ...rest } = p.allocations;
             return { ...p, allocations: rest };
         }));
+        // Free-buy promo lists are broker-specific — drop this broker's entries
+        setFreeCommissionPeriods(prev => prev.filter(p => p.brokerId !== id));
     };
 
     const addGoal = (goal: Goal) => {
@@ -1600,6 +1608,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const importedYnabGoals: YnabGoal[] = Array.isArray(data.ynabGoals) ? data.ynabGoals : [];
             const importedYnabGoalAllocations: YnabGoalAllocation[] = Array.isArray(data.ynabGoalAllocations) ? data.ynabGoalAllocations : [];
             const importedVirtualBonds: VirtualBond[] = Array.isArray(data.virtualBonds) ? data.virtualBonds : [];
+            const importedFreeCommissionPeriods: FreeCommissionPeriod[] = Array.isArray(data.freeCommissionPeriods) ? data.freeCommissionPeriods : [];
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
             const importedYnabGoalsGroupName: string | undefined = typeof data.ynabGoalsGroupName === 'string' ? data.ynabGoalsGroupName : undefined;
             const importedYnabLastGoalsSyncAt: string | undefined = typeof data.ynabLastGoalsSyncAt === 'string' ? data.ynabLastGoalsSyncAt : undefined;
@@ -1623,6 +1632,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_ynab_goals', JSON.stringify(importedYnabGoals));
             localStorage.setItem('portfolio_ynab_goal_allocations', JSON.stringify(importedYnabGoalAllocations));
             localStorage.setItem('portfolio_virtual_bonds', JSON.stringify(importedVirtualBonds));
+            localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
 
             // Then update React state
             setTransactions(transactions);
@@ -1641,6 +1651,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setYnabGoals(importedYnabGoals);
             setYnabGoalAllocations(importedYnabGoalAllocations);
             setVirtualBonds(importedVirtualBonds);
+            setFreeCommissionPeriods(importedFreeCommissionPeriods);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
                 setYnabConfigState(prev => prev ? {
                     ...prev,
@@ -1679,6 +1690,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
                 virtualBonds,
+                freeCommissionPeriods,
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -2213,6 +2225,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         getPortfolioAllocationSummary,
         getYnabGoalAllocations,
         ynabGoalsSyncing,
+        freeCommissionPeriods,
+        setFreeCommissionPeriods,
         virtualBonds,
         addVirtualBond,
         updateVirtualBond,
