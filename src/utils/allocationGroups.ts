@@ -1,4 +1,4 @@
-import type { Asset, AllocationGroup, AllocationMemberRule, Portfolio } from '../types';
+import type { Asset, AllocationGroup, AllocationMemberRule, PacConfig, Portfolio } from '../types';
 
 /**
  * Multi-asset "market" allocation groups.
@@ -172,7 +172,18 @@ export interface BuyOnlyCandidate {
     key: string;   // ticker or groupId
     gap: number;   // positive underweight gap in euro
     price: number; // price of the share that will actually be bought (recipient member for groups)
+    /** PAC priority (1 = highest). Undefined = not a PAC (funded only after all PACs). */
+    pacPriority?: number;
 }
+
+/** Resolve the PAC priority for an allocation key (ticker or groupId), case-tolerant. */
+export const pacPriorityFor = (
+    pacConfigs: Record<string, PacConfig> | undefined,
+    key: string
+): number | undefined => {
+    const cfg = pacConfigs?.[key] ?? pacConfigs?.[key.toUpperCase()];
+    return cfg?.enabled ? cfg.priority : undefined;
+};
 
 /**
  * Largest-remainder distribution of `liquidity` across underweight candidates,
@@ -207,6 +218,77 @@ export const largestRemainderBuyOnly = (
     const result: Record<string, number> = {};
     dist.forEach(d => { if (d.shares > 0) result[d.key] = d.shares * d.price; });
     return result;
+};
+
+/**
+ * PAC-aware buy-only distribution of new liquidity.
+ *
+ * PAC candidates are funded first, tier by tier in ascending `pacPriority`
+ * (1 = highest). Each tier gets at most the sum of its members' gaps; within
+ * a tier the budget is split proportionally to each gap (largest-remainder,
+ * whole shares), so equal-priority PACs that are further behind target
+ * receive more. Whatever euro is left after all PAC tiers (including share-
+ * rounding leftovers) flows to the non-PAC candidates with the same
+ * proportional-gap logic.
+ *
+ * Returns key -> euro to deploy (same shape as `largestRemainderBuyOnly`).
+ */
+export const distributeBuyOnlyWithPac = (
+    candidates: BuyOnlyCandidate[],
+    liquidity: number
+): Record<string, number> => {
+    if (liquidity <= 0) return {};
+    const pacs = candidates.filter(c => c.pacPriority !== undefined);
+    if (pacs.length === 0) return largestRemainderBuyOnly(candidates, liquidity);
+
+    const result: Record<string, number> = {};
+    let remaining = liquidity;
+
+    const tiers = Array.from(new Set(pacs.map(c => c.pacPriority!))).sort((a, b) => a - b);
+    for (const priority of tiers) {
+        if (remaining <= 0) break;
+        const tier = pacs.filter(c => c.pacPriority === priority && c.gap > 0 && c.price > 0);
+        if (tier.length === 0) continue;
+        // A tier never takes more than what it needs to reach target.
+        const tierGap = tier.reduce((s, c) => s + c.gap, 0);
+        const budget = Math.min(remaining, tierGap);
+        const dist = largestRemainderBuyOnly(tier, budget);
+        Object.entries(dist).forEach(([key, eur]) => {
+            result[key] = (result[key] || 0) + eur;
+            remaining -= eur;
+        });
+    }
+
+    if (remaining > 0) {
+        const rest = candidates.filter(c => c.pacPriority === undefined);
+        const dist = largestRemainderBuyOnly(rest, remaining);
+        Object.entries(dist).forEach(([key, eur]) => {
+            result[key] = (result[key] || 0) + eur;
+        });
+    }
+
+    return result;
+};
+
+/**
+ * Cash needed on top of the current holdings to complete a buy-only rebalance:
+ * the pie must grow until the most overweight unit fits its target %, then
+ * every other unit can be bought up to target. Units are standalone tickers
+ * or whole groups (group value = sum of members). Group-aware counterpart of
+ * `calculateRequiredLiquidityForOnlyBuy`.
+ */
+export const requiredLiquidityForFullBuyOnly = (
+    units: { currentValue: number; targetPerc: number }[]
+): number => {
+    let maxImplied = 0;
+    let total = 0;
+    units.forEach(u => {
+        total += u.currentValue;
+        if (u.targetPerc > 0) {
+            maxImplied = Math.max(maxImplied, u.currentValue / (u.targetPerc / 100));
+        }
+    });
+    return Math.max(0, maxImplied - total);
 };
 
 /** Find the member that would receive a buy for this group (first buy-eligible by priority). */

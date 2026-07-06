@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
@@ -34,6 +34,7 @@ interface PortfolioContextType {
     deleteTransaction: (id: string) => void;
     updateAssetSettings: (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     updatePortfolioAllocation: (portfolioId: string, ticker: string, percentage: number) => void;
+    updatePortfolioPacConfig: (portfolioId: string, key: string, config: PacConfig | null) => void;
     upsertAllocationGroup: (portfolioId: string, group: AllocationGroup) => void;
     deleteAllocationGroup: (portfolioId: string, groupId: string) => void;
     updateMacroAllocation: (allocations: MacroAllocation) => void;
@@ -956,6 +957,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
     };
 
+    const updatePortfolioPacConfig = (portfolioId: string, key: string, config: PacConfig | null) => {
+        setPortfolios(prev => prev.map(p => {
+            if (p.id !== portfolioId) return p;
+            const pacConfigs = { ...(p.pacConfigs || {}) };
+            if (config && config.enabled) {
+                pacConfigs[key] = config;
+            } else {
+                delete pacConfigs[key];
+            }
+            return { ...p, pacConfigs };
+        }));
+    };
+
     const upsertAllocationGroup = (portfolioId: string, group: AllocationGroup) => {
         setPortfolios(prev => prev.map(p => {
             if (p.id !== portfolioId) return p;
@@ -976,7 +990,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             if (p.id !== portfolioId) return p;
             const groups = (p.allocationGroups || []).filter(g => g.id !== groupId);
             const { [groupId]: _removed, ...allocations } = (p.allocations || {});
-            return { ...p, allocationGroups: groups, allocations };
+            const { [groupId]: _removedPac, ...pacConfigs } = (p.pacConfigs || {});
+            return { ...p, allocationGroups: groups, allocations, pacConfigs };
         }));
     };
 
@@ -2160,6 +2175,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateTarget,
         updateAssetSettings,
         updatePortfolioAllocation,
+        updatePortfolioPacConfig,
         upsertAllocationGroup,
         deleteAllocationGroup,
         updateMacroAllocation,

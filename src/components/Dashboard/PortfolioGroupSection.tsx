@@ -6,6 +6,7 @@ import {
     isCashTicker,
     isGroupKey,
 } from '../../utils/portfolioCalculations';
+import { distributeBuyOnlyWithPac, pacPriorityFor, type BuyOnlyCandidate } from '../../utils/allocationGroups';
 import { WithdrawalModal } from './WithdrawalModal';
 import { PortfolioAllocationTable } from './AllocationOverview';
 import type { Portfolio, Transaction, AssetDefinition, Broker, Asset } from '../../types';
@@ -55,7 +56,7 @@ function computeBuyOnly(
     if (liq <= 0) return {};
     const allocations = pc.portfolio.allocations || {};
 
-    const candidates = allTickers
+    const candidates: BuyOnlyCandidate[] = allTickers
         .filter(t => !isCashTicker(t))
         .map(ticker => {
             const asset = pc.assets.find(a => a.ticker === ticker);
@@ -65,33 +66,10 @@ function computeBuyOnly(
             // Buy-Only deploys portfolio.liquidity, so its target base is the
             // portfolio total plus that cash (the total itself excludes it).
             const gap = (pc.totalValue + liq) * (targetPerc / 100) - currentValue;
-            return { ticker, gap, price };
-        })
-        .filter(c => c.gap > 0 && c.price > 0);
+            return { key: ticker, gap, price, pacPriority: pacPriorityFor(pc.portfolio.pacConfigs, ticker) };
+        });
 
-    const totalGap = candidates.reduce((s, c) => s + c.gap, 0);
-    if (totalGap <= 0) return {};
-
-    let dist = candidates.map(c => {
-        const rawAlloc = (c.gap / totalGap) * liq;
-        const idealShares = rawAlloc / c.price;
-        const floored = Math.floor(idealShares);
-        return { ...c, shares: floored, fraction: idealShares - floored, cost: floored * c.price };
-    });
-
-    let remaining = liq - dist.reduce((s, d) => s + d.cost, 0);
-    const sorted = dist.map((_, i) => i).sort((a, b) => dist[b].fraction - dist[a].fraction);
-    for (const idx of sorted) {
-        if (remaining >= dist[idx].price) {
-            dist[idx].shares += 1;
-            dist[idx].cost += dist[idx].price;
-            remaining -= dist[idx].price;
-        }
-    }
-
-    const result: Record<string, number> = {};
-    dist.forEach(d => { if (d.shares > 0) result[d.ticker] = d.shares * d.price; });
-    return result;
+    return distributeBuyOnlyWithPac(candidates, liq);
 }
 
 const PortfolioGroupSection: React.FC<Props> = ({
