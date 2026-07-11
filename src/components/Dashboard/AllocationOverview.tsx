@@ -1307,6 +1307,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
     spreadPercent, brokers, tradeBroker, monthsHeld,
     isEditing, isExcluded, onToggleExclude, onConcretize,
 }) => {
+    const [mExpanded, setMExpanded] = React.useState(false);
     const taxRate = assetClass === 'Bond' ? 0.125 : 0.26;
     const diff = currentPerc - targetPerc;
     const colorMap: Record<string, string> = {
@@ -1465,115 +1466,170 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                 </div>
             </div>
 
-            {/* Mobile */}
-            <div className="allocation-mobile-card mobile-only" style={{ opacity: rowOpacity, transition: 'opacity 0.15s' }}>
-                <div className="mobile-card-header">
-                    <div className="mobile-card-title" style={{ gap: 'var(--space-2)' }}>
-                        {isEditing && (
-                            <button
-                                onClick={onToggleExclude}
-                                title={isExcluded ? 'Include' : 'Exclude'}
-                                style={{
-                                    width: '22px', height: '22px', borderRadius: '50%', border: '1.5px solid',
-                                    borderColor: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
-                                    background: isExcluded ? 'transparent' : 'rgba(16,185,129,0.12)',
-                                    color: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
-                                    cursor: 'pointer', fontSize: '0.7rem', display: 'flex', alignItems: 'center',
-                                    justifyContent: 'center', flexShrink: 0,
-                                }}
-                            >{isExcluded ? '✕' : '✓'}</button>
-                        )}
-                        <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
-                        {isVBond && <span style={{ fontSize: '0.6rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', marginRight: '4px' }}>VBOND</span>}
-                        <strong>{label || ticker}</strong>
-                        {isVBond && vbondMaturity && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginLeft: '4px' }}>mat. {vbondMaturity}</span>}
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
-                        {isVBond && onConcretize && <button onClick={onConcretize} style={{ fontSize: '0.65rem', background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: '4px', padding: '2px 6px', cursor: 'pointer', marginBottom: '2px' }}>Concretizza</button>}
-                        {!isCash && (
-                            <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
-                            </div>
-                        )}
-                    </div>
-                </div>
-                <div className="mobile-card-grid">
-                    {!isCash && (
-                        <>
-                            <div className="mobile-detail-group">
-                                <span className="mobile-label">Price</span>
-                                <span className="mobile-value">€{currentPrice.toFixed(2)}</span>
-                            </div>
-                            <div className="mobile-detail-group">
-                                <span className="mobile-label">Qty</span>
-                                <span className="mobile-value">{parseFloat(quantity.toFixed(4))}</span>
-                            </div>
-                        </>
+            {/* Mobile dense expandable row (mrow pattern) — all 14 desktop columns. */}
+            <div className={`mobile-only mrow ${mExpanded ? 'is-open' : ''}`} style={{ opacity: rowOpacity, transition: 'opacity 0.15s' }}>
+                <div className="mrow-head" onClick={() => setMExpanded(v => !v)}>
+                    {isEditing && (
+                        <button
+                            onClick={e => { e.stopPropagation(); onToggleExclude?.(); }}
+                            title={isExcluded ? 'Include' : 'Exclude'}
+                            style={{
+                                width: '22px', height: '22px', borderRadius: '50%', border: '1.5px solid',
+                                borderColor: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
+                                background: isExcluded ? 'transparent' : 'rgba(16,185,129,0.12)',
+                                color: isExcluded ? 'var(--text-muted)' : 'var(--color-success)',
+                                cursor: 'pointer', fontSize: '0.7rem', display: 'flex', alignItems: 'center',
+                                justifyContent: 'center', flexShrink: 0,
+                            }}
+                        >{isExcluded ? '✕' : '✓'}</button>
                     )}
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Target (w)</span>
-                        <span className="mobile-value">{isCash ? '-' : `${targetPerc.toFixed(1)}%`}</span>
-                    </div>
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Actual</span>
-                        <span className="mobile-value">
-                            {currentPerc.toFixed(1)}%
-                            {!isCash && targetPerc > 0 && (
-                                <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
-                                    ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                    <span className="mrow-chevron">▶</span>
+                    <div className="mrow-main">
+                        <div className="mrow-line1">
+                            <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass), flex: '0 0 auto' }} />
+                            {isVBond && <span style={{ fontSize: '0.6rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', flex: '0 0 auto' }}>VBOND</span>}
+                            <span className="mrow-title">{label || ticker}</span>
+                        </div>
+                        <div className="mrow-line2">
+                            {!isCash && (
+                                <span style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', flex: '0 0 auto' }}>
+                                    {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
                                 </span>
                             )}
-                        </span>
+                            <span>
+                                {currentPerc.toFixed(1)}%{!isCash && ` / T ${targetPerc.toFixed(1)}%`}
+                                {!isCash && targetPerc > 0 && (
+                                    <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px' }}>
+                                        ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                    </span>
+                                )}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="mrow-side">
+                        <div className="mrow-side-primary">€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        {!isCash && !isExcluded && (
+                            <div className="mrow-side-secondary" style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                {rebalanceShares === 0
+                                    ? 'OK'
+                                    : `${rebalanceShares > 0 ? 'Buy' : 'Sell'} ${Math.abs(rebalanceShares)} · €${Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}`}
+                            </div>
+                        )}
                     </div>
                 </div>
-                {!isExcluded && (rebalanceShares !== 0 || buyOnlyShares !== 0 || goalModeEur !== 0) && (
-                    <div className="mobile-actions">
-                        {!isCash && rebalanceShares !== 0 && (
-                            <div className="mobile-action-box">
-                                <div className="mobile-action-title">Rebalance</div>
-                                <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                            <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                                €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                            </span>
-                                        </div>
-                                    </TradeCostInfo>
+
+                {mExpanded && (
+                    <div className="mrow-details">
+                        {!isCash && (
+                            <>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Qty</span>
+                                    <span className="mrow-value">{parseFloat(quantity.toFixed(4))}</span>
                                 </div>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Pmc</span>
+                                    <span className="mrow-value">€{averagePrice.toFixed(2)}</span>
+                                </div>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Mkt Price</span>
+                                    <span className="mrow-value">€{currentPrice.toFixed(2)}</span>
+                                </div>
+                            </>
+                        )}
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Value</span>
+                            <span className="mrow-value">€{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Target (w)</span>
+                            <span className="mrow-value">{isCash ? '-' : `${targetPerc.toFixed(1)}%`}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Actual</span>
+                            <span className="mrow-value">
+                                {currentPerc.toFixed(1)}%
+                                {!isCash && targetPerc > 0 && (
+                                    <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.72rem' }}>
+                                        ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                    </span>
+                                )}
+                            </span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Post Act %</span>
+                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{(isCash || isExcluded) ? '-' : `${postRebalancePerc.toFixed(1)}%`}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Post Buy %</span>
+                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{(isCash || isExcluded) ? '-' : `${projectedPerc.toFixed(1)}%`}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Post Goal %</span>
+                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{(isExcluded || goalModeEur === 0) ? '-' : `${postGoalPerc.toFixed(1)}%`}</span>
+                        </div>
+                        {isVBond && vbondMaturity && (
+                            <div className="mrow-detail">
+                                <span className="mrow-label">Maturity</span>
+                                <span className="mrow-value">{vbondMaturity}</span>
                             </div>
                         )}
-                        {!isCash && buyOnlyShares !== 0 && (
-                            <div className="mobile-action-box">
-                                <div className="mobile-action-title">Buy Only</div>
-                                <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
-                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                            <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                                €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                            </span>
-                                        </div>
-                                    </TradeCostInfo>
-                                </div>
+                        {isVBond && onConcretize && (
+                            <div className="mrow-detail--wide">
+                                <button
+                                    onClick={e => { e.stopPropagation(); onConcretize(); }}
+                                    style={{ fontSize: '0.75rem', background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer' }}
+                                >Concretizza</button>
                             </div>
                         )}
-                        {goalModeEur !== 0 && (
-                            <div className="mobile-action-box">
-                                <div className="mobile-action-title" style={{ color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>Goal Rebalance</div>
-                                <div style={{ fontWeight: 600, color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                        {isCash ? (
-                                            <span>{goalModeEur > 0 ? 'Add' : 'Sell'}</span>
-                                        ) : (
-                                            <span>{goalModeShares > 0 ? 'Buy' : 'Sell'} {Math.abs(goalModeShares)}</span>
-                                        )}
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            {isCash && goalModeEur < 0 ? '−' : ''}€{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                        </span>
+                        {!isExcluded && (rebalanceShares !== 0 || buyOnlyShares !== 0 || goalModeEur !== 0) && (
+                            <div className="mrow-actions">
+                                {!isCash && rebalanceShares !== 0 && (
+                                    <div className="mrow-action-box">
+                                        <span className="mrow-label">Rebalance</span>
+                                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                            <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                                    </span>
+                                                </div>
+                                            </TradeCostInfo>
+                                        </div>
                                     </div>
-                                </div>
+                                )}
+                                {!isCash && buyOnlyShares !== 0 && (
+                                    <div className="mrow-action-box">
+                                        <span className="mrow-label">Buy Only</span>
+                                        <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
+                                            <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                                    </span>
+                                                </div>
+                                            </TradeCostInfo>
+                                        </div>
+                                    </div>
+                                )}
+                                {goalModeEur !== 0 && (
+                                    <div className="mrow-action-box">
+                                        <span className="mrow-label" style={{ color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>Goal Rebalance</span>
+                                        <div style={{ fontWeight: 600, color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>
+                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                {isCash ? (
+                                                    <span>{goalModeEur > 0 ? 'Add' : 'Sell'}</span>
+                                                ) : (
+                                                    <span>{goalModeShares > 0 ? 'Buy' : 'Sell'} {Math.abs(goalModeShares)}</span>
+                                                )}
+                                                <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                    {isCash && goalModeEur < 0 ? '−' : ''}€{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
@@ -2240,6 +2296,7 @@ interface RowProps {
 
 const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, isVBond, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, indexationCoefficient, brokers, tradeBroker, monthsHeld, hideTarget, indent, pacPriority }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
+    const [mExpanded, setMExpanded] = React.useState(false);
     const diff = currentPerc - targetPerc;
 
     const taxRate = assetClass === 'Bond' ? 0.125 : 0.26;
@@ -2488,110 +2545,164 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                 </div>
             </div>
 
-            {/* Mobile Card Layout */}
-            <div className="allocation-mobile-card mobile-only">
-                <div className="mobile-card-header">
-                    <div className="mobile-card-title">
-                        <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
-                        {isVBond && <span style={{ fontSize: '0.6rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', marginRight: '4px' }}>VBOND</span>}
-                        <strong>{label || ticker}</strong>
-                        <PacBadge priority={pacPriority} />
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
-                        {!isCash && (
-                            <div
-                                style={{ display: 'inline-block', cursor: 'pointer' }}
-                                onClick={() => setIsModalOpen(true)}
-                            >
-                                <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: '1px dashed currentColor' }}>
-                                    {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
-                                </div>
-                                <div style={{ fontSize: '0.72rem', color: netGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                    Net: {netGain >= 0 ? '+' : ''}€{netGain.toFixed(0)}
-                                </div>
-                                {assetDistributions > 0 && (
-                                    <div style={{ fontSize: '0.7rem', color: '#8B5CF6' }}>
-                                        +€{assetDistributions.toFixed(0)} dist.
-                                    </div>
+            {/* Mobile dense expandable row (mrow pattern, styles/mobile-list.css).
+                Collapsed: 2 text lines with the key data; tap the head to expand
+                a labeled grid with every desktop column. */}
+            <div className={`mobile-only mrow ${mExpanded ? 'is-open' : ''} ${indent ? 'mrow--indent' : ''}`}>
+                <div className="mrow-head" onClick={() => setMExpanded(v => !v)}>
+                    <span className="mrow-chevron">▶</span>
+                    <div className="mrow-main">
+                        <div className="mrow-line1">
+                            <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass), flex: '0 0 auto' }} />
+                            {isVBond && <span style={{ fontSize: '0.6rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', flex: '0 0 auto' }}>VBOND</span>}
+                            <span className="mrow-title">{label || ticker}</span>
+                            <PacBadge priority={pacPriority} />
+                        </div>
+                        <div className="mrow-line2">
+                            {!isCash && (
+                                <span style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', flex: '0 0 auto' }}>
+                                    {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+                                </span>
+                            )}
+                            <span>
+                                {currentPerc.toFixed(1)}%{!hideTarget && ` / T ${targetPerc}%`}
+                                {!hideTarget && (
+                                    <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px' }}>
+                                        ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                    </span>
                                 )}
+                            </span>
+                        </div>
+                    </div>
+                    <div className="mrow-side">
+                        <div className="mrow-side-primary">€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        {!isCash && (
+                            <div className="mrow-side-secondary" style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                {rebalanceShares === 0
+                                    ? 'OK'
+                                    : `${rebalanceShares > 0 ? 'Buy' : 'Sell'} ${Math.abs(rebalanceShares)} · €${Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}`}
                             </div>
                         )}
                     </div>
                 </div>
 
-                <div className="mobile-card-grid">
-                    {!isCash && (
-                        <>
-                            <div className="mobile-detail-group">
-                                <span className="mobile-label">Price</span>
-                                <span className="mobile-value">€{currentPrice.toFixed(2)}</span>
-                            </div>
-                            <div className="mobile-detail-group">
-                                <span className="mobile-label">Qty</span>
-                                <span className="mobile-value">{parseFloat(quantity.toFixed(4))}</span>
-                            </div>
-                        </>
-                    )}
-                    {!hideTarget && (
-                        <div className="mobile-detail-group">
-                            <span className="mobile-label">Target</span>
-                            <span className="mobile-value">{targetPerc}%</span>
+                {mExpanded && (
+                    <div className="mrow-details">
+                        {!isCash && (
+                            <>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Qty</span>
+                                    <span className="mrow-value">{parseFloat(quantity.toFixed(4))}</span>
+                                </div>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Pmc</span>
+                                    <span className="mrow-value">€{averagePrice.toFixed(2)}</span>
+                                </div>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Mkt Price</span>
+                                    <span className="mrow-value">
+                                        €{currentPrice.toFixed(2)}
+                                        {indexationCoefficient != null && (
+                                            <span
+                                                title={`Inflation-linked: price includes indexation coefficient ${indexationCoefficient.toFixed(5)}`}
+                                                style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginLeft: 3 }}
+                                            >CI</span>
+                                        )}
+                                    </span>
+                                </div>
+                            </>
+                        )}
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Value</span>
+                            <span className="mrow-value">€{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
-                    )}
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Actual</span>
-                        <span className="mobile-value">
-                            {currentPerc.toFixed(1)}%
-                            {!hideTarget && (
-                                <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
-                                    ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
-                                </span>
-                            )}
-                        </span>
-                    </div>
-                </div>
-
-                {!isCash && (
-                    <div className="mobile-actions">
-                        <div className="mobile-action-box">
-                            <div className="mobile-action-title">Standard Rebal</div>
-                            <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                                {rebalanceShares === 0 ? (
-                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                        <span>OK</span>
-                                    </TradeCostInfo>
-                                ) : (
-                                    <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                            <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                                €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                            </span>
-                                        </div>
-                                    </TradeCostInfo>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Target</span>
+                            <span className="mrow-value">{hideTarget ? '—' : `${targetPerc}%`}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Actual</span>
+                            <span className="mrow-value">
+                                {currentPerc.toFixed(1)}%
+                                {!hideTarget && (
+                                    <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.72rem' }}>
+                                        ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                    </span>
                                 )}
-                            </div>
+                            </span>
                         </div>
-                        <div className="mobile-action-box">
-                            <div className="mobile-action-title">Buy Only</div>
-                            <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
-                                {buyOnlyShares === 0 ? (
-                                    <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                        <span>-</span>
-                                    </TradeCostInfo>
-                                ) : (
-                                    <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                            <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                            <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                                €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                        {!isCash && (
+                            <>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Post Act %</span>
+                                    <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{postRebalancePerc.toFixed(1)}%</span>
+                                </div>
+                                <div className="mrow-detail">
+                                    <span className="mrow-label">Post Buy %</span>
+                                    <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{projectedPerc.toFixed(1)}%</span>
+                                </div>
+                                <div
+                                    className="mrow-detail mrow-detail--wide"
+                                    onClick={e => { e.stopPropagation(); setIsModalOpen(true); }}
+                                    style={{ cursor: 'pointer' }}
+                                >
+                                    <span className="mrow-label">Gain · tap for P/L breakdown</span>
+                                    <span className="mrow-value">
+                                        <span style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', borderBottom: '1px dashed currentColor' }}>
+                                            {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
+                                        </span>
+                                        <span style={{ color: netGain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', marginLeft: 8 }}>
+                                            Net: {netGain >= 0 ? '+' : ''}€{netGain.toFixed(0)}
+                                        </span>
+                                        {assetDistributions > 0 && (
+                                            <span style={{ color: '#8B5CF6', marginLeft: 8 }}>
+                                                +€{assetDistributions.toFixed(0)} dist.
                                             </span>
+                                        )}
+                                    </span>
+                                </div>
+                                <div className="mrow-actions">
+                                    <div className="mrow-action-box">
+                                        <span className="mrow-label">Rebalance</span>
+                                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                                            {rebalanceShares === 0 ? (
+                                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
+                                                    <span>OK</span>
+                                                </TradeCostInfo>
+                                            ) : (
+                                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
+                                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                                        </span>
+                                                    </div>
+                                                </TradeCostInfo>
+                                            )}
                                         </div>
-                                    </TradeCostInfo>
-                                )}
-                            </div>
-                        </div>
+                                    </div>
+                                    <div className="mrow-action-box">
+                                        <span className="mrow-label">Buy Only</span>
+                                        <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                                            {buyOnlyShares === 0 ? (
+                                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
+                                                    <span>-</span>
+                                                </TradeCostInfo>
+                                            ) : (
+                                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
+                                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
+                                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                                                        </span>
+                                                    </div>
+                                                </TradeCostInfo>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
             </div>
@@ -2782,49 +2893,77 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
                 </div>
             </div>
 
-            {/* Mobile Card */}
-            <div className="allocation-mobile-card mobile-only" style={{ backgroundColor: tint }} onClick={onToggle}>
-                <div className="mobile-card-header">
-                    <div className="mobile-card-title">
-                        <span style={{ color: '#3B82F6', fontSize: '0.95rem', fontWeight: 700 }}>{expanded ? '▾' : '▸'}</span>
-                        <div className="dot" style={{ backgroundColor: '#3B82F6' }} />
-                        <strong>{label}</strong>
-                        <PacBadge priority={pacPriority} />
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
-                        <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                            {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
+            {/* Mobile dense expandable row. One tap (the existing expanded/onToggle
+                contract with the parent) reveals both the group's detail grid and
+                its indented member rows below. */}
+            <div className={`mobile-only mrow mrow--tinted ${expanded ? 'is-open' : ''}`}>
+                <div className="mrow-head" onClick={onToggle}>
+                    <span className="mrow-chevron" style={{ color: '#3B82F6' }}>▶</span>
+                    <div className="mrow-main">
+                        <div className="mrow-line1">
+                            <div className="dot" style={{ backgroundColor: '#3B82F6', flex: '0 0 auto' }} />
+                            <span className="mrow-title">{label}</span>
+                            <PacBadge priority={pacPriority} />
                         </div>
-                    </div>
-                </div>
-                <div className="mobile-card-grid">
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Target</span>
-                        <span className="mobile-value">{targetPerc}%</span>
-                    </div>
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Actual</span>
-                        <span className="mobile-value">
-                            {currentPerc.toFixed(1)}%
-                            <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.75rem' }}>
-                                ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                        <div className="mrow-line2">
+                            <span style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
                             </span>
-                        </span>
-                    </div>
-                </div>
-                <div className="mobile-actions">
-                    <div className="mobile-action-box">
-                        <div className="mobile-action-title">Standard Rebal</div>
-                        <div>{ActionCell}</div>
-                    </div>
-                    <div className="mobile-action-box">
-                        <div className="mobile-action-title">Buy Only</div>
-                        <div style={{ fontWeight: 600, color: buyOnlyEur > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
-                            {buyOnlyEur > 0 ? `Buy €${Math.abs(buyOnlyEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}` : '-'}
+                            <span>
+                                {currentPerc.toFixed(1)}% / T {targetPerc}%
+                                <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px' }}>
+                                    ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                </span>
+                            </span>
                         </div>
                     </div>
+                    <div className="mrow-side">
+                        <div className="mrow-side-primary">€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        <div className="mrow-side-secondary">{ActionCell}</div>
+                    </div>
                 </div>
+
+                {expanded && (
+                    <div className="mrow-details">
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Value</span>
+                            <span className="mrow-value">€{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Target</span>
+                            <span className="mrow-value">{targetPerc}%</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Actual</span>
+                            <span className="mrow-value">
+                                {currentPerc.toFixed(1)}%
+                                <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px', fontSize: '0.72rem' }}>
+                                    ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
+                                </span>
+                            </span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Post Act %</span>
+                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{postRebalancePerc.toFixed(1)}%</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Post Buy %</span>
+                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{postBuyPerc.toFixed(1)}%</span>
+                        </div>
+                        <div className="mrow-actions">
+                            <div className="mrow-action-box">
+                                <span className="mrow-label">Rebalance</span>
+                                <div>{ActionCell}</div>
+                            </div>
+                            <div className="mrow-action-box">
+                                <span className="mrow-label">Buy Only</span>
+                                <div style={{ fontWeight: 600, color: buyOnlyEur > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                                    {buyOnlyEur > 0 ? `Buy €${Math.abs(buyOnlyEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}` : '-'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
             </div>
         </React.Fragment>
     );

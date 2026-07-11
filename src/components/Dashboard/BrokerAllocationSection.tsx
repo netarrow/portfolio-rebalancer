@@ -256,6 +256,7 @@ interface BrokerAssetRowProps {
 const BrokerAssetRow: React.FC<BrokerAssetRowProps> = ({
     label, assetClass, quantity, averagePrice, currentPrice, currentValue, gain, gainPerc, line, estFee,
 }) => {
+    const [mExpanded, setMExpanded] = useState(false);
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf',
         'Bond': 'dot-bond',
@@ -314,42 +315,72 @@ const BrokerAssetRow: React.FC<BrokerAssetRowProps> = ({
                 </div>
             </div>
 
-            {/* Mobile */}
-            <div className="allocation-mobile-card mobile-only" style={{ opacity: hasPrice ? 1 : 0.55 }}>
-                <div className="mobile-card-header">
-                    <div className="mobile-card-title" style={{ gap: 'var(--space-2)' }}>
-                        <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass) }} />
-                        <strong>{label}</strong>
+            {/* Mobile dense expandable row (mrow pattern, styles/mobile-list.css) */}
+            <div className={`mobile-only mrow ${mExpanded ? 'is-open' : ''}`} style={{ opacity: hasPrice ? 1 : 0.55 }}>
+                <div className="mrow-head" onClick={() => setMExpanded(v => !v)}>
+                    <span className="mrow-chevron">▶</span>
+                    <div className="mrow-main">
+                        <div className="mrow-line1">
+                            <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass), flex: '0 0 auto' }} />
+                            <span className="mrow-title">{label}</span>
+                        </div>
+                        <div className="mrow-line2">
+                            <span style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
+                            </span>
+                            <span>{(line?.currentWeight ?? 0).toFixed(1)}%</span>
+                        </div>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                        <div style={{ fontSize: '1rem', fontWeight: 600 }}>€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
-                        <div style={{ fontSize: '0.8rem', color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                            {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)} ({gainPerc.toFixed(1)}%)
+                    <div className="mrow-side">
+                        <div className="mrow-side-primary">€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
+                        <div className="mrow-side-secondary" style={{ fontWeight: 600, color: buyShares > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
+                            {!hasPrice ? 'no price' : buyShares > 0
+                                ? `Buy ${buyShares} · €${buyEur.toLocaleString('en-IE', { maximumFractionDigits: 0 })}`
+                                : '-'}
                         </div>
                     </div>
                 </div>
-                <div className="mobile-card-grid">
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Qty</span>
-                        <span className="mobile-value">{parseFloat(quantity.toFixed(4))}</span>
-                    </div>
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Pmc</span>
-                        <span className="mobile-value">€{averagePrice.toFixed(2)}</span>
-                    </div>
-                    <div className="mobile-detail-group">
-                        <span className="mobile-label">Weight</span>
-                        <span className="mobile-value">{(line?.currentWeight ?? 0).toFixed(1)}%</span>
-                    </div>
-                    {buyShares > 0 && (
-                        <div className="mobile-detail-group">
-                            <span className="mobile-label">Buy Only</span>
-                            <span className="mobile-value" style={{ color: 'var(--color-success)' }}>
-                                Buy {buyShares} (€{buyEur.toLocaleString('en-IE', { maximumFractionDigits: 0 })}) → {(line?.projectedWeight ?? 0).toFixed(1)}%
+                {mExpanded && (
+                    <div className="mrow-details">
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Qty</span>
+                            <span className="mrow-value">{parseFloat(quantity.toFixed(4))}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Pmc</span>
+                            <span className="mrow-value">€{averagePrice.toFixed(2)}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Mkt Price</span>
+                            <span className="mrow-value">{hasPrice ? `€${currentPrice.toFixed(2)}` : '-'}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Value</span>
+                            <span className="mrow-value">€{currentValue.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Weight</span>
+                            <span className="mrow-value">{(line?.currentWeight ?? 0).toFixed(1)}%</span>
+                        </div>
+                        <div className="mrow-detail">
+                            <span className="mrow-label">Post Buy %</span>
+                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>
+                                {buyShares > 0 ? `${(line?.projectedWeight ?? 0).toFixed(1)}%` : '-'}
                             </span>
                         </div>
-                    )}
-                </div>
+                        {buyShares > 0 && (
+                            <div className="mrow-detail mrow-detail--wide">
+                                <span className="mrow-label">Buy Only</span>
+                                <span className="mrow-value" style={{ color: 'var(--color-success)' }}>
+                                    Buy {buyShares} (€{buyEur.toLocaleString('en-IE', { maximumFractionDigits: 0 })})
+                                    {estFee !== undefined && estFee > 0 && (
+                                        <span style={{ color: 'var(--text-muted)' }}> — fee €{estFee.toFixed(2)}</span>
+                                    )}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </>
     );

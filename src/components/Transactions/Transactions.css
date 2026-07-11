@@ -114,11 +114,12 @@
   white-space: nowrap; /* Prevent content from wrapping */
 }
 
-/* Mobile List View */
+/* Mobile List View — rows use the shared mrow pattern (styles/mobile-list.css);
+   the card classes below only serve the inline editing card. */
 .mobile-list-view {
   display: none;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: 0;
 }
 
 .mobile-transaction-card {
@@ -126,6 +127,7 @@
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: var(--space-4);
+  margin: var(--space-2) 0;
 }
 
 .mobile-card-header {
@@ -148,27 +150,10 @@
   color: var(--text-muted);
 }
 
-.mobile-card-details {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2) var(--space-4);
-  font-size: 0.9rem;
-  margin-bottom: var(--space-3);
-}
-
-.detail-row {
-  display: flex;
-  flex-direction: column;
-}
-
 .detail-label {
   font-size: 0.75rem;
   color: var(--text-secondary);
   margin-bottom: 2px;
-}
-
-.detail-value {
-  color: var(--text-primary);
 }
 
 .mobile-card-actions {

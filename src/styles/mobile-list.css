@@ -1,0 +1,181 @@
+/*
+ * Dense expandable mobile row ("mrow") — shared pattern used by
+ * AllocationOverview, TransactionList, GlobalRebalancingView and
+ * PortfolioGroupSection. Collapsed row = two text lines + right value block;
+ * tapping the head expands an inline labeled grid with every desktop column.
+ *
+ * The mrow-* classes are only rendered inside .mobile-only containers (or
+ * view-specific mobile lists), so they need no media query themselves.
+ */
+
+/* Canonical mobile/desktop toggle at 768px. This is the single source of
+   truth for .desktop-only / .mobile-only across the app (moved here from
+   Dashboard.css so every view can use it without importing Dashboard.css). */
+.mobile-only {
+    display: none;
+}
+
+@media (max-width: 768px) {
+    .desktop-only {
+        display: none !important;
+    }
+
+    .mobile-only {
+        display: block;
+    }
+}
+
+.mrow-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.mrow {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.mrow--tinted {
+    background: rgba(59, 130, 246, 0.06);
+}
+
+.mrow--indent .mrow-head {
+    padding-left: var(--space-4);
+}
+
+.mrow.is-muted {
+    opacity: 0.5;
+}
+
+/* Collapsed row: the only tap target for expand/collapse. */
+.mrow-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-1);
+    min-height: 48px;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.mrow-chevron {
+    flex: 0 0 12px;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+}
+
+.mrow.is-open > .mrow-head .mrow-chevron {
+    transform: rotate(90deg);
+}
+
+.mrow-main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mrow-line1 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.mrow-line1 .mrow-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.mrow-line2 {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.mrow-line2 > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mrow-side {
+    flex: 0 0 auto;
+    text-align: right;
+    line-height: 1.25;
+}
+
+.mrow-side-primary {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.mrow-side-secondary {
+    font-size: 0.72rem;
+}
+
+/* Expanded labeled grid with every remaining desktop column. */
+.mrow-details {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-2) var(--space-2);
+    padding: 0 var(--space-1) var(--space-3) calc(12px + var(--space-2));
+}
+
+.mrow-detail {
+    min-width: 0;
+}
+
+.mrow-detail--wide {
+    grid-column: 1 / -1;
+}
+
+.mrow-detail--half {
+    grid-column: span 2;
+}
+
+.mrow-label {
+    display: block;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 1px;
+}
+
+.mrow-value {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+/* Tappable action chips inside the details area (TradeCostInfo triggers,
+   Edit/Delete buttons, goal-rebalance box, ...). */
+.mrow-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+.mrow-action-box {
+    flex: 1 1 0;
+    min-width: 90px;
+    background: var(--bg-app);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-2);
+    text-align: center;
+}
+
+.mrow-action-box .mrow-label {
+    margin-bottom: 2px;
+}
