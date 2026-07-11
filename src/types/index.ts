@@ -73,6 +73,7 @@ export interface PacConfig {
 export interface AllocationMemberRule {
   noBuy?: boolean;   // never add to this member (e.g. a promo that ended)
   noSell?: boolean;  // never reduce this member (e.g. avoid realizing gains/tax)
+  weight?: number;   // intra-group weight % (0-100); ignored when noBuy && noSell
 }
 
 // A market group: one target % shared by several interchangeable tickers.

@@ -4,6 +4,7 @@ import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass, AllocationGroup, BondUniverse } from '../../types';
 import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { getCashTicker, isCashTicker, makeGroupId } from '../../utils/portfolioCalculations';
+import { groupWeightConfig, isFullyFrozen } from '../../utils/allocationGroups';
 
 interface PortfolioAllocationsProps {
     portfolioId: string;
@@ -223,6 +224,20 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
         updateGroup(group, { memberRules });
     };
 
+    const setMemberWeight = (group: AllocationGroup, ticker: string, raw: string) => {
+        const memberRules = { ...(group.memberRules || {}) };
+        const current = { ...(memberRules[ticker] || {}) };
+        if (raw.trim() === '') {
+            delete current.weight;
+        } else {
+            const parsed = parseFloat(raw);
+            if (isNaN(parsed)) return;
+            current.weight = Math.min(100, Math.max(0, parsed));
+        }
+        memberRules[ticker] = current;
+        updateGroup(group, { memberRules });
+    };
+
     const removeMember = (group: AllocationGroup, ticker: string) => {
         const members = group.members.filter(m => m !== ticker);
         const memberRules = { ...(group.memberRules || {}) };
@@ -274,6 +289,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                             {groups.map(group => {
                                 const expanded = !!expandedGroups[group.id];
                                 const groupPerc = allocations[group.id] || 0;
+                                const wcfg = groupWeightConfig(group.members, group.memberRules);
                                 return (
                                     <div key={group.id} style={{ border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
                                         <div className="alloc-modal-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', alignItems: 'center', padding: 'var(--space-2) var(--space-3)', backgroundColor: 'var(--bg-app)' }}>
@@ -311,10 +327,13 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                         {expanded && (
                                             <div style={{ padding: 'var(--space-3)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
                                                 <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                                                    Priority order: buys go to the top member, sells drain from the bottom first.
+                                                    {wcfg.weighted
+                                                        ? 'Weighted mode: buys and sells keep the members close to their weight % (frozen members excluded).'
+                                                        : 'Priority order: buys go to the top member, sells drain from the bottom first. Set weight % to switch to proportional mode.'}
                                                 </div>
                                                 {group.members.map((m, idx) => {
                                                     const rule = group.memberRules?.[m] || {};
+                                                    const frozen = isFullyFrozen(rule);
                                                     return (
                                                         <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '0.85rem' }}>
                                                             <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 0.8 }}>
@@ -326,6 +345,24 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                                 <strong>{m.toUpperCase()}</strong>
                                                                 <span style={{ color: 'var(--text-secondary)', marginLeft: 'var(--space-2)' }}>{labelFor(m)}</span>
                                                             </div>
+                                                            <label
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '4px', color: frozen ? 'var(--text-muted)' : 'var(--text-secondary)' }}
+                                                                title={frozen ? 'Weight ignored: this member has both "Never buy" and "Never sell" (its value stays put)' : 'Intra-group weight %: active members must sum to 100'}
+                                                            >
+                                                                <input
+                                                                    type="number"
+                                                                    className="form-input"
+                                                                    value={rule.weight ?? ''}
+                                                                    onChange={(e) => setMemberWeight(group, m, e.target.value)}
+                                                                    disabled={frozen}
+                                                                    min="0"
+                                                                    max="100"
+                                                                    step="0.01"
+                                                                    placeholder="—"
+                                                                    style={{ width: '64px', textAlign: 'right', padding: '2px 6px', fontSize: '0.8rem' }}
+                                                                />
+                                                                %
+                                                            </label>
                                                             <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: rule.noBuy ? 'var(--color-danger)' : 'var(--text-secondary)' }}>
                                                                 <input type="checkbox" checked={!!rule.noBuy} onChange={() => toggleMemberRule(group, m, 'noBuy')} />
                                                                 Never buy
@@ -338,6 +375,17 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                         </div>
                                                     );
                                                 })}
+                                                {wcfg.weighted && (
+                                                    <div style={{ fontSize: '0.75rem', color: wcfg.valid ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 600 }}>
+                                                        Weights: {Math.round(wcfg.sum * 100) / 100}% / 100%
+                                                        {!wcfg.valid && (
+                                                            <span style={{ fontWeight: 400, display: 'block' }}>
+                                                                Group not eligible for rebalancing until active weights sum to 100%.
+                                                                {wcfg.missing.length > 0 && ` Missing weight: ${wcfg.missing.map(t => t.toUpperCase()).join(', ')}.`}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                )}
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-1)' }}>
                                                     {availableForGroup.length > 0 && (
                                                         <select
