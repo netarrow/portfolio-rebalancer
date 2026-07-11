@@ -633,97 +633,26 @@ const TransactionList: React.FC = () => {
                     );
                 }
 
+                const portfolioName = getPortfolioName(tx.portfolioId);
                 return (
-                    <div key={tx.id} className="mobile-transaction-card">
-                        <div className="mobile-card-header">
-                            <div className="mobile-card-ticker">{tx.ticker}</div>
-                            <div className="mobile-card-date">{tx.date}</div>
-                        </div>
-                        <div className="mobile-card-details">
-                            <div className="detail-row">
-                                <span className="detail-label">Side</span>
-                                <span className="detail-value" style={{
-                                    color: tx.direction === 'Sell' ? 'var(--color-danger)'
-                                        : tx.direction === 'Dividend' ? '#3B82F6'
-                                        : tx.direction === 'Coupon' ? '#8B5CF6'
-                                        : 'var(--color-success)',
-                                    fontWeight: 600
-                                }}>
-                                    {tx.direction || 'Buy'}
-                                </span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Portfolio</span>
-                                <span className="detail-value">{getPortfolioName(tx.portfolioId) === 'Unassigned' ? '-' : getPortfolioName(tx.portfolioId)}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Broker</span>
-                                <span className="detail-value">{getBrokerName(tx.brokerId)}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Total</span>
-                                <span className="detail-value">{((tx.price || 0) * tx.amount).toFixed(2)}</span>
-                            </div>
-                            {(() => {
-                                if (isIncomeDirection(tx.direction)) return null;
-                                if (tx.freeCommission) {
-                                    return (
-                                        <div className="detail-row">
-                                            <span className="detail-label">Est. Fee</span>
-                                            <span className="detail-value" style={{ color: 'var(--color-success)' }}>€0.00</span>
-                                        </div>
-                                    );
-                                }
-                                const broker = brokers.find(b => b.id === tx.brokerId);
-                                const fee = calculateCommission(tx, broker);
-                                if (fee === undefined) return null;
-                                return (
-                                    <div className="detail-row">
-                                        <span className="detail-label">Est. Fee</span>
-                                        <span className="detail-value" style={{ color: 'var(--color-danger)' }}>
-                                            €{fee.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                        </span>
-                                    </div>
-                                );
-                            })()}
-                            <div className="detail-row">
-                                <span className="detail-label">Qty</span>
-                                <span className="detail-value">{tx.amount}</span>
-                            </div>
-                            <div className="detail-row">
-                                <span className="detail-label">Price</span>
-                                <span className="detail-value">{tx.price.toFixed(2)}</span>
-                            </div>
-                        </div>
-                        {hasMissedFreeBuy(tx) && (
-                            <div
-                                onClick={() => handleFixFreeCommission(tx)}
-                                style={{
-                                    marginTop: '8px', padding: '6px 8px', cursor: 'pointer',
-                                    border: '1px solid rgba(245,158,11,0.45)',
-                                    background: 'rgba(245,158,11,0.08)',
-                                    borderRadius: 'var(--radius-sm)',
-                                    fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4,
-                                }}
-                            >
-                                ⚠ In the free-buy list for {formatMonthKey(monthKeyOfDate(tx.date))} but not flagged Free — tap to fix.
-                            </div>
-                        )}
-                        <div className="mobile-card-actions">
-                            <button
-                                className="btn-edit"
-                                onClick={() => startEditing(tx)}
-                            >
-                                Edit
-                            </button>
-                            <button
-                                className="btn-delete"
-                                onClick={() => deleteTransaction(tx.id)}
-                            >
-                                Del
-                            </button>
-                        </div>
-                    </div>
+                    <MobileTransactionRow
+                        key={tx.id}
+                        tx={tx}
+                        isSelected={selectedIds.has(tx.id)}
+                        portfolioName={portfolioName === 'Unassigned' ? '-' : portfolioName}
+                        brokerName={getBrokerName(tx.brokerId)}
+                        assetName={getAssetName(tx.ticker)}
+                        marketPrice={getAssetPrice(tx.ticker)}
+                        sourceUrl={getSourceUrl(tx.ticker)}
+                        fee={!isIncomeDirection(tx.direction) && !tx.freeCommission
+                            ? calculateCommission(tx, brokers.find(b => b.id === tx.brokerId))
+                            : undefined}
+                        missedFreeBuy={hasMissedFreeBuy(tx)}
+                        onToggleSelect={toggleSelectRow}
+                        onFixFree={handleFixFreeCommission}
+                        onEdit={startEditing}
+                        onDelete={deleteTransaction}
+                    />
                 );
             })}
         </div>
@@ -1005,6 +934,145 @@ const TransactionList: React.FC = () => {
                                 Cancel
                             </button>
                         </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+/**
+ * Dense expandable mobile row (mrow pattern, styles/mobile-list.css).
+ * Collapsed: checkbox · ticker+side · date/portfolio/broker · total+fee.
+ * Expanded: every remaining desktop column (Name, Qty, prices, actions).
+ */
+interface MobileTransactionRowProps {
+    tx: Transaction;
+    isSelected: boolean;
+    portfolioName: string;
+    brokerName: string;
+    assetName: string;
+    marketPrice?: number;
+    sourceUrl: string;
+    fee?: number;
+    missedFreeBuy: boolean;
+    onToggleSelect: (id: string) => void;
+    onFixFree: (tx: Transaction) => void;
+    onEdit: (tx: Transaction) => void;
+    onDelete: (id: string) => void;
+}
+
+const MobileTransactionRow: React.FC<MobileTransactionRowProps> = ({
+    tx, isSelected, portfolioName, brokerName, assetName, marketPrice, sourceUrl,
+    fee, missedFreeBuy, onToggleSelect, onFixFree, onEdit, onDelete,
+}) => {
+    const [expanded, setExpanded] = useState(false);
+    const isIncome = isIncomeDirection(tx.direction);
+    const sideColor = tx.direction === 'Sell' ? 'var(--color-danger)'
+        : tx.direction === 'Dividend' ? '#3B82F6'
+        : tx.direction === 'Coupon' ? '#8B5CF6'
+        : 'var(--color-success)';
+    const total = ((tx.price || 0) * tx.amount).toFixed(2);
+
+    const feeSummary = isIncome
+        ? <span style={{ color: 'var(--text-muted)' }}>-</span>
+        : tx.freeCommission
+            ? <span style={{ color: 'var(--color-success)' }}>€0.00</span>
+            : fee === undefined
+                ? <span style={{ color: 'var(--text-muted)' }}>-{missedFreeBuy ? ' ⚠' : ''}</span>
+                : (
+                    <span style={{ color: 'var(--color-danger)' }}>
+                        €{fee.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        {missedFreeBuy ? ' ⚠' : ''}
+                    </span>
+                );
+
+    return (
+        <div className={`mrow ${expanded ? 'is-open' : ''}`} style={isSelected ? { backgroundColor: 'var(--bg-app)' } : undefined}>
+            <div className="mrow-head" onClick={() => setExpanded(v => !v)}>
+                <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => onToggleSelect(tx.id)}
+                    onClick={e => e.stopPropagation()}
+                    style={{ flex: '0 0 auto', width: 16, height: 16 }}
+                />
+                <span className="mrow-chevron">▶</span>
+                <div className="mrow-main">
+                    <div className="mrow-line1">
+                        <span className="mrow-title">{tx.ticker}</span>
+                        <span style={{ color: sideColor, fontSize: '0.72rem', flex: '0 0 auto' }}>{tx.direction || 'Buy'}</span>
+                    </div>
+                    <div className="mrow-line2">
+                        <span>{tx.date}</span>
+                        {portfolioName !== '-' && <span>{portfolioName}</span>}
+                        {brokerName !== '-' && <span>{brokerName}</span>}
+                    </div>
+                </div>
+                <div className="mrow-side">
+                    <div className="mrow-side-primary">€{total}</div>
+                    <div className="mrow-side-secondary">{feeSummary}</div>
+                </div>
+            </div>
+            {expanded && (
+                <div className="mrow-details">
+                    {assetName && (
+                        <div className="mrow-detail mrow-detail--wide">
+                            <span className="mrow-label">Name</span>
+                            <span className="mrow-value">{assetName}</span>
+                        </div>
+                    )}
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Qty</span>
+                        <span className="mrow-value">{tx.amount}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Price (Exec)</span>
+                        <span className="mrow-value">{tx.price.toFixed(2)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Price (Mkt)</span>
+                        <span className="mrow-value">
+                            <a
+                                href={sourceUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}
+                            >
+                                {marketPrice?.toFixed(2) || '-'}
+                            </a>
+                        </span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Portfolio</span>
+                        <span className="mrow-value">{portfolioName}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Broker</span>
+                        <span className="mrow-value">{brokerName}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Est. Fee</span>
+                        <span className="mrow-value">{feeSummary}</span>
+                    </div>
+                    {missedFreeBuy && (
+                        <div
+                            className="mrow-detail--wide"
+                            onClick={() => onFixFree(tx)}
+                            style={{
+                                padding: '6px 8px', cursor: 'pointer',
+                                border: '1px solid rgba(245,158,11,0.45)',
+                                background: 'rgba(245,158,11,0.08)',
+                                borderRadius: 'var(--radius-sm)',
+                                fontSize: '0.75rem', color: 'var(--text-primary)', lineHeight: 1.4,
+                            }}
+                        >
+                            ⚠ In the free-buy list for {formatMonthKey(monthKeyOfDate(tx.date))} but not flagged Free — tap to fix.
+                        </div>
+                    )}
+                    <div className="mrow-actions" style={{ justifyContent: 'flex-end' }}>
+                        <button className="btn-edit" onClick={() => onEdit(tx)}>Edit</button>
+                        <button className="btn-delete" onClick={() => onDelete(tx.id)}>Del</button>
                     </div>
                 </div>
             )}
