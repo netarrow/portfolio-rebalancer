@@ -5,7 +5,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, isVirtualBondTicker, calculateRealizedGains, calculateCommission, calculateCashFlows, estimateTradeCost } from '../../utils/portfolioCalculations';
 import type { Broker, VirtualBond } from '../../types';
 import { getVirtualBondId } from '../../types';
-import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, distributeBuyOnlyWithPac, pacPriorityFor, requiredLiquidityForFullBuyOnly, buyRecipientOf, memberInfoFromAssets, type BuyOnlyCandidate, type MemberAction, type GroupBlockReason } from '../../utils/allocationGroups';
+import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, distributeBuyOnlyWithPac, pacPriorityFor, requiredLiquidityForFullBuyOnly, buyRecipientOf, memberInfoFromAssets, groupWeightConfig, isFullyFrozen, type BuyOnlyCandidate, type MemberAction, type GroupBlockReason } from '../../utils/allocationGroups';
 import { isFreeBuyIsin, currentMonthKey } from '../../utils/freeCommissions';
 import { CASH_TICKER_PREFIX } from '../../types';
 import ConcretizeModal from '../modals/ConcretizeModal';
@@ -1760,12 +1760,27 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             candidates.push({ key: ticker, gap, price, pacPriority: pacPriorityFor(portfolio.pacConfigs, ticker) });
         });
 
-        // Groups — one candidate each, priced at the buy-eligible recipient member.
+        // Groups — one candidate each. Priority groups are priced at the buy-recipient
+        // member; weighted groups at the cheapest buy-eligible active member (buys can
+        // split across members). Weighted groups with an invalid setup are skipped so
+        // they don't soak up liquidity they can't deploy.
         groupComputations.forEach(gc => {
-            const recipient = buyRecipientOf(gc.group, gc.memberInfo);
-            if (!recipient) return;
+            const wcfg = groupWeightConfig(gc.group.members, gc.group.memberRules);
+            let price: number | undefined;
+            if (wcfg.weighted) {
+                if (!wcfg.valid) return;
+                gc.group.members.forEach(m => {
+                    const rule = gc.group.memberRules?.[m] ?? gc.group.memberRules?.[m.toUpperCase()] ?? {};
+                    if (isFullyFrozen(rule) || rule.noBuy) return;
+                    const mi = gc.memberInfo[m.toUpperCase()];
+                    if (mi && mi.price > 0 && (price === undefined || mi.price < price)) price = mi.price;
+                });
+            } else {
+                price = buyRecipientOf(gc.group, gc.memberInfo)?.price;
+            }
+            if (price === undefined) return;
             const gap = totalVal * (gc.targetPerc / 100) - gc.currentValue;
-            candidates.push({ key: gc.group.id, gap, price: recipient.price, pacPriority: pacPriorityFor(portfolio.pacConfigs, gc.group.id) });
+            candidates.push({ key: gc.group.id, gap, price, pacPriority: pacPriorityFor(portfolio.pacConfigs, gc.group.id) });
         });
 
         // PAC entries drink first (by priority tier), the rest shares the leftover.
@@ -2742,9 +2757,15 @@ const NotEligibleInfo: React.FC<{ reason?: GroupBlockReason }> = ({ reason }) =>
         );
     }
 
-    const directionText = reason.direction === 'buy'
-        ? `This group is underweight and needs to buy about ${fmtEur(Math.abs(reason.deltaEur), 0)}, but no member can be bought:`
-        : `This group is overweight and needs to sell about ${fmtEur(Math.abs(reason.deltaEur), 0)}, but no member can be sold:`;
+    const invalidWeights = reason.kind === 'invalidWeights';
+    const hasMissingWeight = reason.members.some(m => m.reason === 'No weight set');
+    const directionText = invalidWeights
+        ? (hasMissingWeight
+            ? 'This group uses member weights, but some members have no weight set:'
+            : `Member weights sum to ${Math.round((reason.weightSum ?? 0) * 100) / 100}%, must be 100%:`)
+        : reason.direction === 'buy'
+            ? `This group is underweight and needs to buy about ${fmtEur(Math.abs(reason.deltaEur), 0)}, but no member can be bought:`
+            : `This group is overweight and needs to sell about ${fmtEur(Math.abs(reason.deltaEur), 0)}, but no member can be sold:`;
 
     return (
         <span
@@ -2789,9 +2810,11 @@ const NotEligibleInfo: React.FC<{ reason?: GroupBlockReason }> = ({ reason }) =>
                     </div>
                     <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0 6px' }} />
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                        {reason.direction === 'buy'
-                            ? 'Remove a "Never buy" rule on a member, or update its price, to let the buy land.'
-                            : 'Remove a "Never sell" rule on a held member, or update its price, to let the sell drain.'}
+                        {invalidWeights
+                            ? "Fix the member weights in this portfolio's Allocations settings so the active members sum to 100%."
+                            : reason.direction === 'buy'
+                                ? 'Remove a "Never buy" rule on a member, or update its price, to let the buy land.'
+                                : 'Remove a "Never sell" rule on a held member, or update its price, to let the sell drain.'}
                     </div>
                 </div>,
                 document.body
