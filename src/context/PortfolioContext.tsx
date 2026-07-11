@@ -1100,6 +1100,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Initialize Modal State
         const initialItems: PriceUpdateItem[] = tokens.map(t => ({
             isin: t.isin,
+            label: assetSettings.find(a => a.ticker === t.isin)?.label,
             status: 'pending'
         }));
 
@@ -1157,6 +1158,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         const initialItems: PriceUpdateItem[] = tokens.map(t => ({
             isin: t.isin,
+            label: assetSettings.find(a => a.ticker === t.isin)?.label,
             status: 'pending'
         }));
 

@@ -3,6 +3,7 @@ import '../Dashboard/Dashboard.css'; // Reusing common styles
 
 export interface PriceUpdateItem {
     isin: string;
+    label?: string;
     status: 'pending' | 'processing' | 'success' | 'error';
     price?: number;
     currency?: string;
@@ -58,7 +59,10 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete,
                                 backgroundColor: item.status === 'processing' ? 'rgba(var(--color-primary-rgb), 0.05)' : 'transparent'
                             }}>
                                 <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.isin}</span>
+                                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{item.label || item.isin}</span>
+                                    {item.label && (
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{item.isin}</span>
+                                    )}
                                     {item.error && <span style={{ fontSize: '0.8rem', color: 'var(--color-danger)' }}>{item.error}</span>}
                                     {item.cached && item.status === 'success' && (
                                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }} title="Served from the free-tier cache — may be up to a day old">
