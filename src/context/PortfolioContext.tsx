@@ -1343,6 +1343,33 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             brokerId: 'b3'
         } as any);
 
+        // Current-month Buy at Trade Republic covered by the free-buy promo but
+        // saved WITHOUT the Free flag → exercises the "Missing Free flag?"
+        // warning in the transaction list.
+        txs.push({
+            id: `mock-tx-${idCounter++}`,
+            portfolioId: pIdMain,
+            ticker: 'IE00B4L5Y983',
+            date: new Date(today - (3 * ONE_DAY)).toISOString().split('T')[0],
+            amount: 5,
+            price: 94.80,
+            direction: 'Buy',
+            brokerId: 'b3'
+        } as any);
+
+        // Virtual-bond parking: cash parked on the _VBOND_ placeholder (price 1)
+        // while waiting to concretize it into a real ISIN.
+        txs.push({
+            id: `mock-tx-${idCounter++}`,
+            portfolioId: pIdSafe,
+            ticker: getVirtualBondTicker('mock-vb-1'),
+            date: new Date(today - (20 * ONE_DAY)).toISOString().split('T')[0],
+            amount: 3000,
+            price: 1,
+            direction: 'Buy',
+            brokerId: 'b2'
+        } as any);
+
         // 3. Create Settings
         const newSettings: AssetDefinition[] = mockAssets.map(m => ({
             ticker: m.ticker,
@@ -1386,7 +1413,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         members: ['IE00B4L5Y983', 'IE00B3RBWM25'], // SWDA (buy-first), VWRL
                         memberRules: { 'IE00B3RBWM25': { noBuy: true } }
                     }
-                ]
+                ],
+                // EMIM runs as a PAC (savings plan): Buy Only funds it first.
+                pacConfigs: {
+                    'IE00BKM4GZ66': { enabled: true, priority: 1 }
+                }
             },
             {
                 id: pIdMainTilt,
@@ -1395,10 +1426,22 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 goalId: 'goal-growth',
                 parentId: pIdMain,
                 order: 1,
+                // Weighted allocation group: instead of priority order, buys and
+                // sells keep VWRL/EMIM close to their intra-group weight %.
                 allocations: {
-                    'IE00B3RBWM25': 60, // VWRL
-                    'IE00BKM4GZ66': 40  // EMIM
-                }
+                    '_GRP_tilt': 100
+                },
+                allocationGroups: [
+                    {
+                        id: '_GRP_tilt',
+                        label: 'EM + Dividend Tilt',
+                        members: ['IE00B3RBWM25', 'IE00BKM4GZ66'], // VWRL, EMIM
+                        memberRules: {
+                            'IE00B3RBWM25': { weight: 60 },
+                            'IE00BKM4GZ66': { weight: 40 }
+                        }
+                    }
+                ]
             },
             {
                 id: pIdBonds,
@@ -1416,9 +1459,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 description: 'Long-duration govt bonds + EUR overnight (Protection)',
                 goalId: 'goal-protection',
                 order: 3,
+                // 20% reserved for a virtual bond placeholder: a ladder rung
+                // waiting to be concretized into a real BTP near its maturity.
                 allocations: {
-                    'LU0290358497': 70, // XEON
-                    'IE00B1FZS798': 30  // IGLT
+                    'LU0290358497': 50, // XEON
+                    'IE00B1FZS798': 30, // IGLT
+                    [getVirtualBondTicker('mock-vb-1')]: 20
                 }
             }
         ];
@@ -1541,6 +1587,37 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             }
         ]);
 
+        // 7b. Virtual bond: a Safety Net ladder rung awaiting a real BTP.
+        // Part of its target is already parked as cash on the placeholder
+        // (see the _VBOND_ Buy above); the bond-proposal engine will suggest
+        // real ISINs when the maturity window opens.
+        setVirtualBonds([
+            {
+                id: 'mock-vb-1',
+                label: 'BTP ladder ~2032',
+                targetMaturityDate: '2032-06-01',
+                universe: 'IT',
+                minMonthsBefore: 6,
+                maxMonthsBefore: 18,
+                createdAt: timestamp
+            }
+        ]);
+
+        // 7c. Free-buy promotions: Trade Republic waives BUY commissions on
+        // these ISINs in the given months. Drives the FREE badge + auto
+        // free-commission toggle in the trade-cost popover and the
+        // "Missing Free flag?" warning in the transaction list.
+        const monthKeyAt = (offsetDays: number) => new Date(today - offsetDays * ONE_DAY).toISOString().slice(0, 7);
+        const promoPeriods: FreeCommissionPeriod[] = [
+            { monthKey: monthKeyAt(0), brokerId: 'b3', isins: ['IE00B4L5Y983', 'IE00B3RBWM25'] }
+        ];
+        if (monthKeyAt(15) !== monthKeyAt(0)) {
+            // Keep the 15-day-old free-commission Buy consistent when it falls
+            // in the previous month.
+            promoPeriods.push({ monthKey: monthKeyAt(15), brokerId: 'b3', isins: ['IE00B4L5Y983'] });
+        }
+        setFreeCommissionPeriods(promoPeriods);
+
         // 8. YNAB integration mock data
         setYnabConfig({
             apiKey: 'mock-ynab-key',
@@ -1592,7 +1669,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ]);
         setYnabGoalAllocations([
             { id: 'yga-1', portfolioId: pIdSafe, ynabGoalId: 'yg-house', amount: 12000, createdAt: timestamp, updatedAt: timestamp },
-            { id: 'yga-2', portfolioId: pIdBonds, ynabGoalId: 'yg-house', amount: 8000, createdAt: timestamp, updatedAt: timestamp },
+            { id: 'yga-2', portfolioId: pIdBonds, ynabGoalId: 'yg-house', amount: 2000, createdAt: timestamp, updatedAt: timestamp },
             { id: 'yga-3', portfolioId: pIdSafe, ynabGoalId: 'yg-car', amount: 6000, createdAt: timestamp, updatedAt: timestamp },
         ]);
 

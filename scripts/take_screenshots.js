@@ -9,7 +9,7 @@ import fs from 'fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'screenshots');
-const URL = 'http://localhost:3002';
+const URL = process.env.APP_URL || 'http://localhost:3002';
 const VIEW = { width: 1440, height: 900 };
 
 if (!fs.existsSync(OUT)) fs.mkdirSync(OUT, { recursive: true });
@@ -113,8 +113,98 @@ async function scrollAndShoot(page, base) {
   if (withdrawalClicked) {
     await sleep(600);
     await shot(page, 'dashboard_withdrawal_simulation');
-    await page.keyboard.press('Escape');
+    // The withdrawal modal does not close on Escape — click its × button.
+    await page.evaluate(() => {
+      const overlay = document.querySelector('.modal-overlay') || document.body;
+      const x = [...overlay.querySelectorAll('button')].find((b) =>
+        /^[×✕☒x]$/i.test(b.textContent.trim())
+      );
+      if (x) x.click();
+      else document.querySelector('.modal-close-btn, .modal-close, .close-btn')?.click();
+    });
+    await sleep(400);
+  }
+
+  // Trade-cost popover: click an Action / Buy Only cell (TradeCostInfo span)
+  // in the first rebalancing table to reveal spread + commission estimates.
+  const tradeCostClicked = await page.evaluate(() => {
+    const spans = [...document.querySelectorAll('span[style*="help"]')];
+    const target = spans.find((s) => s.getBoundingClientRect().width > 0);
+    if (target) {
+      target.scrollIntoView({ block: 'center' });
+      return true;
+    }
+    return false;
+  });
+  if (tradeCostClicked) {
+    await sleep(400);
+    await page.evaluate(() => {
+      const spans = [...document.querySelectorAll('span[style*="help"]')];
+      const target = spans.find((s) => {
+        const r = s.getBoundingClientRect();
+        return r.width > 0 && r.top > 100 && r.top < 700;
+      });
+      if (target) target.click();
+    });
+    await sleep(600);
+    await shot(page, 'dashboard_trade_cost_popover');
+    // The popover is a click-toggle: re-click the same span to close it.
+    await page.evaluate(() => {
+      const spans = [...document.querySelectorAll('span[style*="help"]')];
+      const target = spans.find((s) => {
+        const r = s.getBoundingClientRect();
+        return r.width > 0 && r.top > 100 && r.top < 700;
+      });
+      if (target) target.click();
+    });
+    await sleep(400);
+  }
+
+  // Concretize a virtual bond: the "Concretizza" button on the placeholder's
+  // row opens the proposal modal with real bonds matching the maturity window.
+  const concretizeClicked = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find(
+      (b) => b.textContent.trim() === 'Concretizza'
+    );
+    if (btn) {
+      btn.scrollIntoView({ block: 'center' });
+      btn.click();
+      return true;
+    }
+    return false;
+  });
+  if (concretizeClicked) {
+    // Wait for the bond proposals to load (server-side scrape, up to ~20 s)
+    for (let i = 0; i < 20; i++) {
+      const loaded = await page.evaluate(() => {
+        const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
+        return overlay ? overlay.querySelectorAll('tbody tr').length > 0 : false;
+      });
+      if (loaded) break;
+      await sleep(1000);
+    }
+    // Select the top proposal (fills ISIN + label), then fill quantity/price
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
+      const row = overlay?.querySelector('tbody tr');
+      if (row) row.click();
+    });
     await sleep(300);
+    const numInputs = await page.$$('.modal-overlay input[type="number"]');
+    if (numInputs.length >= 2) {
+      await numInputs[0].type('3000');
+      await numInputs[1].type('0.95');
+    }
+    await sleep(300);
+    await shot(page, 'dashboard_concretize_modal');
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
+      const x = [...(overlay?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent.trim() === '×'
+      );
+      if (x) x.click();
+    });
+    await sleep(400);
   }
 
   // ---------- STATS ----------
@@ -165,6 +255,32 @@ async function scrollAndShoot(page, base) {
   if (assetScoped) {
     await sleep(900);
     await shot(page, 'performance_asset');
+    // back to Net Worth scope for the risk-metrics shot
+    await page.evaluate(() => {
+      const sel = document.querySelector('select');
+      if (sel) {
+        sel.value = sel.options[0].value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    });
+    await sleep(900);
+  }
+  // Risk metrics row (ann. return / volatility / Sharpe / max drawdown)
+  const riskFound = await page.evaluate(() => {
+    const el = [...document.querySelectorAll('*')].find(
+      (e) => e.children.length === 0 && /sharpe/i.test(e.textContent || '')
+    );
+    if (el) {
+      el.scrollIntoView({ block: 'center' });
+      return true;
+    }
+    return false;
+  });
+  if (riskFound) {
+    await sleep(500);
+    await shot(page, 'performance_risk_metrics');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await sleep(300);
   }
 
   // ---------- TRANSACTIONS ----------
@@ -172,6 +288,35 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'Transactions');
   await sleep(700);
   await shot(page, 'transactions_page');
+  // Cycle the Group By button: None → Portfolio → Broker → Asset (Ticker)
+  const groupShots = [
+    ['transactions_group_by_portfolio', 'Portfolio'],
+    ['transactions_group_by_broker', 'Broker'],
+    ['transactions_group_by_asset', 'Ticker'],
+  ];
+  for (const [shotName] of groupShots) {
+    const cycled = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button')].find((b) =>
+        /group by:/i.test(b.textContent)
+      );
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      return false;
+    });
+    if (!cycled) break;
+    await sleep(600);
+    await shot(page, shotName);
+  }
+  // back to ungrouped
+  await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) =>
+      /group by:/i.test(b.textContent)
+    );
+    if (btn) btn.click();
+  });
+  await sleep(400);
   // Open Import modal
   const importClicked = await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')].find((b) =>
@@ -243,28 +388,104 @@ async function scrollAndShoot(page, base) {
   await shot(page, 'portfolios_page');
   // Open the first portfolio's allocation editor (Main Strategy → has the
   // "World Equity" market group) via the "Manage allocations" button.
+  // Helper: expand an allocation group row (its ▸ button has title="Expand")
+  // by matching the group label inside the row that owns the button.
+  const expandGroup = (label) =>
+    page.evaluate((label) => {
+      const btns = [...document.querySelectorAll('button[title="Expand"]')];
+      for (const b of btns) {
+        let row = b;
+        while (row.parentElement && row.parentElement.querySelectorAll('button[title="Expand"]').length === 1) {
+          row = row.parentElement;
+        }
+        if (row.textContent && row.textContent.toLowerCase().includes(label.toLowerCase())) {
+          b.click();
+          return true;
+        }
+      }
+      if (btns.length === 1) { btns[0].click(); return true; }
+      return false;
+    }, label);
   const targets = await page.evaluate(() => {
     const btn = document.querySelector('button[aria-label="Manage allocations"], button[title="Allocations"]');
     if (btn) { btn.click(); return true; }
     return false;
   });
+  // The allocations modal does not close on Escape — click its "Done" button.
+  const closeAllocationsModal = async () => {
+    await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button')].find(
+        (b) => b.textContent.trim() === 'Done'
+      );
+      if (btn) btn.click();
+    });
+    await sleep(400);
+  };
   if (targets) {
     await sleep(700);
     await shot(page, 'portfolio_targets');
     // Expand the World Equity allocation group to reveal members, priority and rules
-    const expanded = await page.evaluate(() => {
-      const el = [...document.querySelectorAll('*')].find(
-        (e) => e.children.length === 0 && /world equity/i.test(e.textContent || '')
-      );
-      if (el) { el.click(); return true; }
-      return false;
-    });
+    const expanded = await expandGroup('world equity');
     if (expanded) {
       await sleep(500);
       await shot(page, 'portfolio_allocation_group');
     }
-    await page.keyboard.press('Escape');
-    await sleep(300);
+    await closeAllocationsModal();
+  }
+
+  // Helper: open "Manage allocations" for the card containing a given name.
+  // For each button, find the widest ancestor still containing only THAT
+  // button (= its portfolio card) and match the portfolio name there —
+  // matching on any shared ancestor would always pick the first card.
+  const openAllocationsFor = (name) =>
+    page.evaluate((name) => {
+      const sel = 'button[aria-label="Manage allocations"], button[title="Allocations"]';
+      const btns = [...document.querySelectorAll(sel)];
+      for (const b of btns) {
+        let card = b;
+        while (card.parentElement && card.parentElement.querySelectorAll(sel).length === 1) {
+          card = card.parentElement;
+        }
+        if (card.textContent && card.textContent.includes(name)) {
+          b.click();
+          return true;
+        }
+      }
+      return false;
+    }, name);
+
+  // Safety Net → allocations with the virtual-bond placeholder row
+  if (await openAllocationsFor('Safety Net')) {
+    await sleep(700);
+    await shot(page, 'portfolio_virtual_bond');
+    // Open the "+ Add Virtual Bond" form
+    const vbFormOpened = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button')].find((b) =>
+        /add virtual bond/i.test(b.textContent)
+      );
+      if (btn) {
+        btn.scrollIntoView({ block: 'center' });
+        btn.click();
+        return true;
+      }
+      return false;
+    });
+    if (vbFormOpened) {
+      await sleep(500);
+      await shot(page, 'portfolio_virtual_bond_form');
+    }
+    await closeAllocationsModal();
+  }
+
+  // Tactical Tilt → weighted allocation group (intra-group weight %)
+  if (await openAllocationsFor('Tactical Tilt')) {
+    await sleep(700);
+    const tiltExpanded = await expandGroup('em + dividend tilt');
+    if (tiltExpanded) {
+      await sleep(500);
+      await shot(page, 'portfolio_group_weighted');
+    }
+    await closeAllocationsModal();
   }
 
   // ---------- ASSET ALLOCATION (Global Rebalancing) ----------
@@ -311,7 +532,7 @@ async function scrollAndShoot(page, base) {
   });
   if (brokerEditClicked) {
     await sleep(500);
-    await shot(page, 'brokers_edit_modal');
+    await shot(page, 'brokers_edit_modal_commission');
     await page.keyboard.press('Escape');
     await sleep(300);
   }
@@ -406,6 +627,50 @@ async function scrollAndShoot(page, base) {
     await sleep(400);
     await shot(page, 'settings_price_history');
   }
+  // Free Buy Promotions card + its "Add free ISIN list" popup
+  const freeBuyFound = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2, h3')].find((e) =>
+      /free buy promotions/i.test(e.textContent)
+    );
+    if (h) {
+      h.scrollIntoView({ block: 'center' });
+      return true;
+    }
+    return false;
+  });
+  if (freeBuyFound) {
+    await sleep(400);
+    await shot(page, 'settings_free_buy');
+    const promoOpened = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('button')].find((b) =>
+        /add free isin list/i.test(b.textContent)
+      );
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      return false;
+    });
+    if (promoOpened) {
+      await sleep(500);
+      // Fill the free-text area with a sample promo list
+      const ta = await page.$('textarea');
+      if (ta) {
+        await ta.type('Promo di luglio: IE00B4L5Y983 (SWDA), IE00B3RBWM25 (VWRL)');
+        await sleep(300);
+      }
+      await shot(page, 'settings_free_buy_modal');
+      // Close without saving
+      await page.evaluate(() => {
+        const h3 = [...document.querySelectorAll('h3')].find((e) =>
+          /free buy isins/i.test(e.textContent)
+        );
+        const x = h3?.parentElement?.querySelector('button');
+        if (x) x.click();
+      });
+      await sleep(400);
+    }
+  }
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await sleep(300);
   // Mock-data confirm popup
@@ -434,7 +699,7 @@ async function scrollAndShoot(page, base) {
 
   // ---------- PRICE UPDATE MODAL ----------
   console.log('Price Update');
-  await navTo(page, 'Dashboard');
+  await navTo(page, 'Transactions');
   await sleep(700);
   const priceClicked = await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')].find((b) =>
@@ -448,8 +713,59 @@ async function scrollAndShoot(page, base) {
   });
   if (priceClicked) {
     await sleep(1200);
+    // Free tier: a "Limited free update" warning appears first — document it,
+    // then confirm to reach the live per-ISIN progress modal.
+    const freeTierWarning = await page.evaluate(() =>
+      !!document.querySelector('.swal2-confirm')
+    );
+    if (freeTierWarning) {
+      await shot(page, 'price_update_free_tier');
+      await page.evaluate(() => document.querySelector('.swal2-confirm')?.click());
+      await sleep(1800);
+    }
     await shot(page, 'updating_prices');
+    // Wait for the batch to finish and capture the completed state with the
+    // free-tier "cached · may be delayed" flags + spread/volatility extras.
+    for (let i = 0; i < 30; i++) {
+      const done = await page.evaluate(() =>
+        [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Close')
+      );
+      if (done) break;
+      await sleep(1000);
+    }
+    await shot(page, 'updating_prices_done');
+    await page.evaluate(() => {
+      const close = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Close');
+      if (close) close.click();
+    });
+    await sleep(500);
+    // Restore mock prices so later shots stay consistent with the demo dataset
+    await loadMock(page);
   }
+
+  // ---------- MOBILE (dense expandable rows) ----------
+  console.log('Mobile');
+  await page.setViewport({ width: 390, height: 844 });
+  await navTo(page, 'Dashboard');
+  await sleep(900);
+  await shot(page, 'mobile_dashboard');
+  await navTo(page, 'Transactions');
+  await sleep(900);
+  await shot(page, 'mobile_transactions');
+  // Scroll down to the dense history list and expand the first row
+  await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2, h3')].find((e) =>
+      /history/i.test(e.textContent)
+    );
+    if (h) h.scrollIntoView({ block: 'start' });
+  });
+  await sleep(500);
+  await page.evaluate(() => {
+    const row = document.querySelector('tbody tr, .tx-row, [class*="dense"]');
+    if (row) row.click();
+  });
+  await sleep(500);
+  await shot(page, 'mobile_transactions_expanded');
 
   await browser.close();
   console.log('Done.');

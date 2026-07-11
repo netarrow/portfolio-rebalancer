@@ -65,6 +65,11 @@ The home hub: the financial summary, broker performance, allocation charts and p
 ![Rebalancing tables](screenshots/dashboard_bottom.png)
 
 - **Per-portfolio rebalancing tables** — current vs target allocation with the explicit buy/sell amount needed to reach target, plus a **Buy Only** column that deploys new capital toward the target without selling.
+- **PAC (savings-plan) entries** — an allocation entry can be flagged as PAC with a priority: *Buy Only* funds PAC entries first (by ascending priority), and whatever is left flows to the remaining underweight entries. The table header also shows what a *non-PAC* full rebalance would look like.
+
+**Trade cost popover** — every Action / Buy Only cell reveals, on hover or tap, what that trade would actually cost: the implicit **bid/ask spread cost** plus the **simulated commission for every broker** (from each broker's commission plan), a **free-buy promo toggle** that waives the buy fee, and a **break-even holding time** — how long the asset's own historical return needs to offset a full buy→sell round trip including taxes. This makes two interchangeable instruments comparable: e.g. a commission-bearing ETF vs a commission-free one with a wider spread.
+
+![Trade cost popover](screenshots/dashboard_trade_cost_popover.png)
 
 **Withdrawal Simulation** lets you plan a divestment while keeping the portfolio close to its target weights:
 
@@ -92,7 +97,10 @@ Historical net-worth and price charts, powered by the **daily price history** th
 - **Ranges** — 1M / 6M / 1Y / MAX.
 - **Net worth** can optionally overlay today's liquidity as a constant line.
 - **Return toggle** — switch between **TWR** (Time-Weighted Return, strips out deposits/withdrawals) and **MWR** (Money-Weighted Return, which on MAX matches the Dashboard's Total Appreciation).
+- **Risk metrics** — flow-adjusted **annualised return**, **annualised volatility**, **Sharpe ratio** (with a configurable risk-free rate) and **max drawdown**, all computed on the return stream net of deposits/withdrawals so a withdrawal never counts as a "loss". A **liquidity overlay** tracks uninvested sale proceeds, so the chart doesn't show fake crashes when you sell.
 - **Caveat badges** flag where history isn't directly comparable — e.g. bonds held at *corso secco* (clean price, no accrued interest), monthly-NAV sources, or assets with no history yet.
+
+![Performance — risk metrics](screenshots/performance_risk_metrics.png)
 
 Per-asset view, here a long-duration govt bond priced at *corso secco*:
 
@@ -107,6 +115,8 @@ The full history of buys, sells, dividends and coupons, with a quick-add form.
 - **Add Transaction** (left) — ticker, direction (Buy / Sell / Dividend / Coupon), quantity, price, date, portfolio, broker, and a *free commission* flag.
 - **History** (right) — sortable table, **Group by Portfolio, Broker or Asset**; each group header shows running totals and **total fees** (toggleable between EUR and %).
 - **Inline & modal editing** for quick fixes vs full entry.
+- **Broker cash auto-sync** — saving a new Buy automatically decreases the broker's available cash and a Sell increases it (dividends/coupons are excluded), keeping broker liquidity aligned with the trade history.
+- **"Missing Free flag?" warning** — a Buy executed in a month/broker covered by a free-buy promotion (see *Settings → Free Buy Promotions*) but saved without the *Free* flag gets a ⚠ badge with a one-click fix.
 - **Update Prices** triggers the live multi-source price refresh (see below).
 
 **Bulk Edit** — select multiple rows to change broker / portfolio / commission together; unchanged fields keep a "keep original" label so you know exactly what will change. The toolbar also offers a quick **Export Excel** for the selected rows.
@@ -162,7 +172,26 @@ Each portfolio has its own **target allocation**, edited from the *Manage alloca
 ![Allocation group](screenshots/portfolio_allocation_group.png)
 
 - **Member priority** — the order decides which member is bought first / sold last.
-- **Per-member rules** — flag a member *no-buy* (held but never topped up) or *no-sell* (never trimmed, e.g. to avoid realising a gain). The rebalancer respects these when splitting the group's target across its members.
+- **Per-member rules** — flag a member *Never buy* (held but never topped up) or *Never sell* (never trimmed, e.g. to avoid realising a gain). The rebalancer respects these when splitting the group's target across its members.
+- **Weighted mode** — alternatively, give the active members an **intra-group weight %** (must sum to 100): buys and sells then keep the members close to their weights instead of following priority order. The demo's *EM + Dividend Tilt* group splits its 100% target 60/40:
+
+![Weighted allocation group](screenshots/portfolio_group_weighted.png)
+
+**Virtual Bonds** — a placeholder for a bond you *plan* to buy (e.g. the next rung of a BTP ladder) before choosing the actual ISIN:
+
+![Virtual bond in allocations](screenshots/portfolio_virtual_bond.png)
+
+- A virtual bond has a **label, target maturity date and universe** (Italy-only or EU) and takes a normal **target %** in the portfolio's allocation.
+- **Parking** — cash earmarked for it is parked on the placeholder (valued 1:1) so the rebalancer stops trying to deploy it elsewhere; the demo's *Safety Net* has €3,000 parked on its 2032 rung.
+- **Bond proposals** — when the maturity window opens, the app suggests real bonds (from public bond lists) matching the target maturity, and **concretising** the placeholder swaps it for the chosen ISIN, migrating target % and parked cash into a real Buy.
+
+**Concretising** happens from the *Concretizza* button on the placeholder's Dashboard row: the modal lists real bonds whose maturity falls inside the configured window (sorted by yield), picking one pre-fills ISIN and label, and you complete the fill with quantity, price, broker and portfolio:
+
+![Concretize modal with bond proposals](screenshots/dashboard_concretize_modal.png)
+
+The *New Virtual Bond* form, from the allocations dialog:
+
+![New virtual bond form](screenshots/portfolio_virtual_bond_form.png)
 
 ### Asset Allocation (Global Rebalancing)
 
@@ -196,7 +225,7 @@ Manage brokers, their commission model and their cash positions.
 ![Brokers](screenshots/brokers_page.png)
 
 - **Commission models** — fixed, or percentage with min/max.
-- **Liquidity tracking** — available cash per broker, with an optional **minimum threshold** the forecast and rebalancer respect.
+- **Liquidity tracking** — available cash per broker, with an optional **minimum threshold** the forecast and rebalancer respect. New Buy/Sell transactions adjust the broker's cash automatically.
 - **Liquidity allocations** — earmark part of a broker's cash to specific portfolios.
 
 Editing a broker lets you configure its **commission rules** (fixed fee, or percentage with optional min/max) and the **minimum liquidity** to keep on hand, either as a percentage of the broker's value or a fixed amount, optionally split across portfolios:
@@ -256,6 +285,13 @@ The control room for data, sync, price refresh and integrations.
 - **Price History** — a *separate* backup for the daily price-history series; **Update History** backfills each asset from its first purchase date.
 - **Cloud Sync (Azure)** — optional encrypted Blob sync: data is encrypted with AES-256-GCM in the browser before upload, so Azure only ever stores an opaque blob.
 
+**Free Buy Promotions** — paste a broker's monthly list of commission-free ISINs (free text, ISINs are auto-detected) and pick the month and the broker running the promo:
+
+![Free buy promotions](screenshots/settings_free_buy.png)
+![Free buy ISIN list popup](screenshots/settings_free_buy_modal.png)
+
+The saved lists are **broker-aware**: they pre-arm the free-buy toggle in the Dashboard's trade-cost popover and drive the *"Missing Free flag?"* warning in the transaction list — both only for trades at that broker.
+
 ![Settings — definitions & developer tools](screenshots/settings_bottom.png)
 
 - **YNAB** — personal access token, budget selection and the "Investment Goals" category group.
@@ -268,10 +304,26 @@ The control room for data, sync, price refresh and integrations.
 
 Real-time feedback during the multi-source refresh, over WebSockets.
 
+Without a Premium key, the update starts with the **free-tier notice** (throttled, shared-cache prices):
+
+![Free tier notice](screenshots/price_update_free_tier.png)
+
 ![Updating prices](screenshots/updating_prices.png)
 
 - Per-ISIN progress with success / error states; one failing asset never aborts the batch.
-- Where the source exposes it, the result also shows **bid/ask spread %** and **volatility %**; free-tier results are flagged *cached · may be delayed*.
+- Where the source exposes it, the result also shows **bid/ask spread %** and **volatility %**; free-tier results are flagged *cached · may be delayed*:
+
+![Prices updated](screenshots/updating_prices_done.png)
+
+### Mobile
+
+Every list view has a **dense expandable layout** on small screens — compact rows with the essentials (ticker, side, amount, fee, warnings), tap to expand:
+
+<p>
+  <img src="screenshots/mobile_dashboard.png" width="30%" alt="Mobile dashboard" />
+  <img src="screenshots/mobile_transactions.png" width="30%" alt="Mobile add transaction" />
+  <img src="screenshots/mobile_transactions_expanded.png" width="30%" alt="Mobile dense transaction list" />
+</p>
 
 ### Disclaimer
 
