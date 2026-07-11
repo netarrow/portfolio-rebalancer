@@ -702,111 +702,19 @@ const GlobalRebalancingView: React.FC = () => {
                     </table>
                 </div>
 
-                {/* Mobile card list */}
-                <div className="aa-mobile-list">
-                    {result.portfolios.map((row) => {
-                        const cfg = assetAllocationSettings.portfolioTargets[row.portfolioId];
-                        const mode = cfg?.mode ?? 'excluded';
-                        const muted = mode === 'excluded';
-                        const valueDisabled = mode === 'excluded' || mode === 'locked';
-                        const unitLabel =
-                            mode === 'fixed' ? '€' : mode === 'percent' ? '%' : mode === 'ratio' ? 'w' : '—';
-                        const displayValue = cfg && !valueDisabled ? String(cfg.value) : '';
-                        return (
-                            <article
-                                key={`${row.portfolioId}-m`}
-                                className={`aa-mobile-card ${muted ? 'muted' : ''}`}
-                            >
-                                <header>
-                                    <strong>{row.name}</strong>
-                                </header>
-                                <div className="aa-mobile-field">
-                                    <label>Mode</label>
-                                    <select
-                                        className="aa-select"
-                                        value={mode}
-                                        onChange={(e) =>
-                                            handleChangePortfolioMode(
-                                                row.portfolioId,
-                                                e.target.value as PortfolioTargetMode
-                                            )
-                                        }
-                                    >
-                                        {(Object.keys(modeLabels) as PortfolioTargetMode[]).map((m) => (
-                                            <option key={m} value={m}>
-                                                {modeLabels[m]}
-                                            </option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div className="aa-mobile-field">
-                                    <label>Value ({unitLabel})</label>
-                                    <input
-                                        type="text"
-                                        className="aa-input"
-                                        value={displayValue}
-                                        onChange={(e) =>
-                                            handleChangePortfolioValue(row.portfolioId, e.target.value)
-                                        }
-                                        disabled={valueDisabled}
-                                        placeholder={valueDisabled ? '—' : '0'}
-                                    />
-                                </div>
-                                {mode === 'ratio' && (
-                                    <div className="aa-mobile-field">
-                                        <label>Ratio Group</label>
-                                        <select
-                                            className="aa-select"
-                                            value={cfg?.ratioGroupId ?? ''}
-                                            onChange={(e) =>
-                                                handleChangePortfolioRatioGroup(row.portfolioId, e.target.value)
-                                            }
-                                        >
-                                            {assetAllocationSettings.ratioGroups.map((g) => (
-                                                <option key={g.id} value={g.id}>
-                                                    {g.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                )}
-                                <dl className="aa-mobile-metrics">
-                                    <div>
-                                        <dt>Current</dt>
-                                        <dd>{formatCurrency(row.currentValue)}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Current %</dt>
-                                        <dd>{muted ? '—' : formatPercent(row.currentWeight)}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Target</dt>
-                                        <dd>{muted ? '—' : formatCurrency(row.targetValue)}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Target %</dt>
-                                        <dd>{muted ? '—' : formatPercent(row.targetWeight)}</dd>
-                                    </div>
-                                    <div>
-                                        <dt>Delta</dt>
-                                        <dd
-                                            className={
-                                                muted
-                                                    ? ''
-                                                    : Math.abs(row.delta) < 0.01
-                                                    ? ''
-                                                    : row.delta > 0
-                                                    ? 'ok'
-                                                    : 'warn'
-                                            }
-                                        >
-                                            {muted ? '—' : formatSignedCurrency(row.delta)}
-                                        </dd>
-                                    </div>
-                                </dl>
-                            </article>
-                        );
-                    })}
+                {/* Mobile dense expandable rows (mrow pattern, styles/mobile-list.css) */}
+                <div className="aa-mobile-list mrow-list">
+                    {result.portfolios.map((row) => (
+                        <PortfolioTargetMobileRow
+                            key={`${row.portfolioId}-m`}
+                            row={row}
+                            cfg={assetAllocationSettings.portfolioTargets[row.portfolioId]}
+                            ratioGroups={assetAllocationSettings.ratioGroups}
+                            onChangeMode={handleChangePortfolioMode}
+                            onChangeValue={handleChangePortfolioValue}
+                            onChangeRatioGroup={handleChangePortfolioRatioGroup}
+                        />
+                    ))}
                 </div>
             </section>
 
@@ -1124,33 +1032,10 @@ const GlobalRebalancingView: React.FC = () => {
                     text-align: left;
                 }
 
+                /* Mobile rows use the shared mrow pattern (styles/mobile-list.css) */
                 .aa-mobile-list { display: none; }
-                .aa-mobile-card {
-                    border: 1px solid var(--border-color);
-                    border-radius: var(--radius-md);
-                    padding: var(--space-4);
-                    background: var(--bg-app);
-                    display: flex;
-                    flex-direction: column;
-                    gap: var(--space-3);
-                }
-                .aa-mobile-card.muted { opacity: 0.5; }
-                .aa-mobile-field { display: flex; flex-direction: column; gap: var(--space-2); }
-                .aa-mobile-field label { font-size: 0.75rem; color: var(--text-secondary); font-weight: 600; }
-                .aa-mobile-metrics {
-                    display: grid;
-                    grid-template-columns: repeat(2, 1fr);
-                    gap: var(--space-2);
-                    margin: 0;
-                }
-                .aa-mobile-metrics div {
-                    background: var(--bg-card);
-                    padding: var(--space-2);
-                    border-radius: var(--radius-sm);
-                    border: 1px solid var(--border-color);
-                }
-                .aa-mobile-metrics dt { color: var(--text-secondary); font-size: 0.7rem; }
-                .aa-mobile-metrics dd { margin: 2px 0 0 0; font-size: 0.85rem; font-weight: 600; }
+                .aa-mobile-list .aa-select,
+                .aa-mobile-list .aa-input { width: 100%; }
 
                 .aa-actions-row {
                     display: flex;
@@ -1227,14 +1112,13 @@ const GlobalRebalancingView: React.FC = () => {
                     .aa-metrics { grid-template-columns: 1fr 1fr; }
                     .aa-actions-row { flex-direction: column; }
                     .aa-projected-chart { flex: none; width: 100%; }
+                    /* Swap the 1000px-wide table for the dense mobile rows at the
+                       same breakpoint every other view uses (was 430px, which left
+                       431-767px with a horizontal-scroll table). */
+                    .aa-table-scroll { display: none; }
+                    .aa-mobile-list { display: flex; flex-direction: column; }
                 }
                 @media (max-width: 430px) {
-                    .aa-table-scroll { display: none; }
-                    .aa-mobile-list {
-                        display: flex;
-                        flex-direction: column;
-                        gap: var(--space-3);
-                    }
                     .aa-metrics { grid-template-columns: 1fr; }
                     .aa-card { padding: var(--space-3); }
                     .aa-group-editor { grid-template-columns: 1fr; }
@@ -1310,6 +1194,127 @@ const GroupEditor: React.FC<GroupEditorProps> = ({ draft, setDraft, onSave, onCa
             {conflictRemainder && (
                 <div className="aa-conflict">
                     ⚠ A "remainder" group already exists: it will be converted to "percent 0" on save.
+                </div>
+            )}
+        </div>
+    );
+};
+
+/**
+ * Dense expandable mobile row for the Portfolio Targets table (mrow pattern,
+ * styles/mobile-list.css). Collapsed: name, mode, current→target; expanded:
+ * the Mode/Value/Ratio-Group editors plus every table column.
+ */
+interface PortfolioTargetMobileRowProps {
+    row: {
+        portfolioId: string;
+        name: string;
+        currentValue: number;
+        currentWeight: number;
+        targetValue: number;
+        targetWeight: number;
+        delta: number;
+    };
+    cfg?: PortfolioTargetConfig;
+    ratioGroups: RatioGroupConfig[];
+    onChangeMode: (portfolioId: string, mode: PortfolioTargetMode) => void;
+    onChangeValue: (portfolioId: string, value: string) => void;
+    onChangeRatioGroup: (portfolioId: string, ratioGroupId: string) => void;
+}
+
+const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
+    row, cfg, ratioGroups, onChangeMode, onChangeValue, onChangeRatioGroup,
+}) => {
+    const [expanded, setExpanded] = useState(false);
+    const mode = cfg?.mode ?? 'excluded';
+    const muted = mode === 'excluded';
+    const valueDisabled = mode === 'excluded' || mode === 'locked';
+    const unitLabel = mode === 'fixed' ? '€' : mode === 'percent' ? '%' : mode === 'ratio' ? 'w' : '—';
+    const displayValue = cfg && !valueDisabled ? String(cfg.value) : '';
+    const deltaClass = muted || Math.abs(row.delta) < 0.01 ? '' : row.delta > 0 ? 'ok' : 'warn';
+
+    return (
+        <div className={`mrow ${expanded ? 'is-open' : ''} ${muted ? 'is-muted' : ''}`}>
+            <div className="mrow-head" onClick={() => setExpanded(v => !v)}>
+                <span className="mrow-chevron">▶</span>
+                <div className="mrow-main">
+                    <div className="mrow-line1">
+                        <span className="mrow-title">{row.name}</span>
+                    </div>
+                    <div className="mrow-line2">
+                        <span>{modeLabels[mode]}</span>
+                        {!muted && (
+                            <span>{formatPercent(row.currentWeight)} → {formatPercent(row.targetWeight)}</span>
+                        )}
+                    </div>
+                </div>
+                <div className="mrow-side">
+                    <div className="mrow-side-primary">{formatCurrency(row.currentValue)}</div>
+                    <div className={`mrow-side-secondary ${deltaClass}`} style={{ fontWeight: 600 }}>
+                        {muted ? '—' : formatSignedCurrency(row.delta)}
+                    </div>
+                </div>
+            </div>
+            {expanded && (
+                <div className="mrow-details">
+                    <div className="mrow-detail mrow-detail--half">
+                        <span className="mrow-label">Mode</span>
+                        <select
+                            className="aa-select"
+                            value={mode}
+                            onChange={(e) => onChangeMode(row.portfolioId, e.target.value as PortfolioTargetMode)}
+                        >
+                            {(Object.keys(modeLabels) as PortfolioTargetMode[]).map((m) => (
+                                <option key={m} value={m}>{modeLabels[m]}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Value ({unitLabel})</span>
+                        <input
+                            type="text"
+                            className="aa-input"
+                            value={displayValue}
+                            onChange={(e) => onChangeValue(row.portfolioId, e.target.value)}
+                            disabled={valueDisabled}
+                            placeholder={valueDisabled ? '—' : '0'}
+                            style={{ width: '100%' }}
+                        />
+                    </div>
+                    {mode === 'ratio' && (
+                        <div className="mrow-detail mrow-detail--wide">
+                            <span className="mrow-label">Ratio Group</span>
+                            <select
+                                className="aa-select"
+                                value={cfg?.ratioGroupId ?? ''}
+                                onChange={(e) => onChangeRatioGroup(row.portfolioId, e.target.value)}
+                            >
+                                {ratioGroups.map((g) => (
+                                    <option key={g.id} value={g.id}>{g.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Current</span>
+                        <span className="mrow-value">{formatCurrency(row.currentValue)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Current %</span>
+                        <span className="mrow-value">{muted ? '—' : formatPercent(row.currentWeight)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Delta</span>
+                        <span className={`mrow-value ${deltaClass}`}>{muted ? '—' : formatSignedCurrency(row.delta)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Target</span>
+                        <span className="mrow-value">{muted ? '—' : formatCurrency(row.targetValue)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Target %</span>
+                        <span className="mrow-value">{muted ? '—' : formatPercent(row.targetWeight)}</span>
+                    </div>
                 </div>
             )}
         </div>

@@ -175,6 +175,68 @@ const PortfolioGroupSection: React.FC<Props> = ({
         return map;
     }, [portfolioCalcs, allTickers]);
 
+    // Per-cell math shared by the desktop matrix and the mobile rows so the two
+    // renderings can never drift apart.
+    const computeCell = (pc: PortfolioCalc, ticker: string, isGroup: boolean, isCash: boolean) => {
+        const asset = pc.assets.find(a => a.ticker === ticker);
+        const currentValue = isGroup
+            ? groupValueInPortfolio(pc, ticker)
+            : (asset?.currentValue || 0);
+        const price = asset?.currentPrice || 0;
+        const actual = pc.totalValue > 0 ? (currentValue / pc.totalValue) * 100 : 0;
+        const target = (pc.portfolio.allocations || {})[ticker] || 0;
+        const diff = actual - target;
+        const hasPosition = isGroup
+            ? currentValue > 0
+            : ((asset?.quantity || 0) > 0 || currentValue > 0);
+        const hasTarget = target > 0;
+
+        // Rebalance action
+        let rebalShares = 0;
+        let rebalAmount = 0;
+        if (!isCash && hasTarget && price > 0) {
+            const targetValue = pc.totalValue * (target / 100);
+            const idealDiff = targetValue - currentValue;
+            rebalShares = Math.round(idealDiff / price);
+            rebalAmount = rebalShares * price;
+        }
+
+        // Buy-only action
+        const buyOnlyAmount = !isCash ? (portfolioBuyOnlyMap[pc.portfolio.id]?.[ticker] || 0) : 0;
+        const buyOnlyShares = buyOnlyAmount > 0 && price > 0 ? Math.round(buyOnlyAmount / price) : 0;
+
+        return { currentValue, actual, target, diff, hasPosition, hasTarget, rebalShares, rebalAmount, buyOnlyShares, buyOnlyAmount };
+    };
+
+    // Per-ticker row metadata shared by the desktop matrix and the mobile rows.
+    const deriveTickerRow = (ticker: string) => {
+        const isGroup = isGroupKey(ticker);
+        const groupAsset = groupAssets.find(a => a.ticker === ticker);
+        const groupValue = isGroup
+            ? portfolioCalcs.reduce((s, pc) => s + groupValueInPortfolio(pc, ticker), 0)
+            : (groupAsset?.currentValue || 0);
+        const groupActual = totalGroupValue > 0 ? (groupValue / totalGroupValue) * 100 : 0;
+
+        const groupWeightedTarget = portfolioCalcs.reduce((sum, pc) => {
+            const weight = totalGroupValue > 0 ? pc.totalValue / totalGroupValue : 0;
+            const target = (pc.portfolio.allocations || {})[ticker] || 0;
+            return sum + weight * target;
+        }, 0);
+
+        const isCash = isCashTicker(ticker);
+        const setting = assetSettings.find(s => s.ticker === ticker);
+        const assetClass = isCash
+            ? 'Cash'
+            : (setting?.assetClass || groupAsset?.assetClass || 'Stock');
+        const label = isGroup
+            ? (groupMeta[ticker]?.label || ticker)
+            : isCash
+                ? (groupAsset?.label || ticker)
+                : (setting?.label || groupAsset?.label || ticker);
+
+        return { isGroup, groupValue, groupActual, groupWeightedTarget, isCash, assetClass, label };
+    };
+
     return (
         <div className="group-section allocation-card">
             {/* Group header */}
@@ -280,7 +342,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
 
             {/* Comparison table + action bars */}
             {viewMode === 'grouped' && (<>
-            <div className="ct-scroll-wrapper">
+            <div className="ct-scroll-wrapper desktop-only">
                 <div
                     className="ct-table"
                     style={{ minWidth: `${220 + 130 + portfolioCalcs.length * 190}px` }}
@@ -316,29 +378,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         <div className="ct-empty">No assets or targets configured.</div>
                     ) : (
                         allTickers.map(ticker => {
-                            const isGroup = isGroupKey(ticker);
-                            const groupAsset = groupAssets.find(a => a.ticker === ticker);
-                            const groupValue = isGroup
-                                ? portfolioCalcs.reduce((s, pc) => s + groupValueInPortfolio(pc, ticker), 0)
-                                : (groupAsset?.currentValue || 0);
-                            const groupActual = totalGroupValue > 0 ? (groupValue / totalGroupValue) * 100 : 0;
-
-                            const groupWeightedTarget = portfolioCalcs.reduce((sum, pc) => {
-                                const weight = totalGroupValue > 0 ? pc.totalValue / totalGroupValue : 0;
-                                const target = (pc.portfolio.allocations || {})[ticker] || 0;
-                                return sum + weight * target;
-                            }, 0);
-
-                            const isCash = isCashTicker(ticker);
-                            const setting = assetSettings.find(s => s.ticker === ticker);
-                            const assetClass = isCash
-                                ? 'Cash'
-                                : (setting?.assetClass || groupAsset?.assetClass || 'Stock');
-                            const label = isGroup
-                                ? (groupMeta[ticker]?.label || ticker)
-                                : isCash
-                                    ? (groupAsset?.label || ticker)
-                                    : (setting?.label || groupAsset?.label || ticker);
+                            const { isGroup, groupValue, groupActual, groupWeightedTarget, isCash, assetClass, label } = deriveTickerRow(ticker);
 
                             return (
                                 <div key={ticker} className="ct-row ct-data-row">
@@ -361,18 +401,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                     </div>
 
                                     {portfolioCalcs.map(pc => {
-                                        const asset = pc.assets.find(a => a.ticker === ticker);
-                                        const currentValue = isGroup
-                                            ? groupValueInPortfolio(pc, ticker)
-                                            : (asset?.currentValue || 0);
-                                        const price = asset?.currentPrice || 0;
-                                        const actual = pc.totalValue > 0 ? (currentValue / pc.totalValue) * 100 : 0;
-                                        const target = (pc.portfolio.allocations || {})[ticker] || 0;
-                                        const diff = actual - target;
-                                        const hasPosition = isGroup
-                                            ? currentValue > 0
-                                            : ((asset?.quantity || 0) > 0 || currentValue > 0);
-                                        const hasTarget = target > 0;
+                                        const { actual, target, diff, hasPosition, hasTarget, rebalShares, rebalAmount, buyOnlyShares, buyOnlyAmount } = computeCell(pc, ticker, isGroup, isCash);
 
                                         if (!hasPosition && !hasTarget) {
                                             return (
@@ -381,20 +410,6 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                                 </div>
                                             );
                                         }
-
-                                        // Rebalance action
-                                        let rebalShares = 0;
-                                        let rebalAmount = 0;
-                                        if (!isCash && hasTarget && price > 0) {
-                                            const targetValue = pc.totalValue * (target / 100);
-                                            const idealDiff = targetValue - currentValue;
-                                            rebalShares = Math.round(idealDiff / price);
-                                            rebalAmount = rebalShares * price;
-                                        }
-
-                                        // Buy-only action
-                                        const buyOnlyAmount = !isCash ? (portfolioBuyOnlyMap[pc.portfolio.id]?.[ticker] || 0) : 0;
-                                        const buyOnlyShares = buyOnlyAmount > 0 && price > 0 ? Math.round(buyOnlyAmount / price) : 0;
 
                                         return (
                                             <div key={pc.portfolio.id} className="ct-col ct-col-portfolio">
@@ -429,6 +444,54 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         })
                     )}
                 </div>
+            </div>
+
+            {/* Mobile comparison: per-portfolio totals strip (the info that lives in
+                the matrix header cells on desktop) + dense expandable asset rows. */}
+            <div className="mobile-only">
+                <div className="ct-mobile-totals">
+                    {portfolioCalcs.map((pc, i) => (
+                        <span key={pc.portfolio.id} className="ct-mobile-total-chip">
+                            <span
+                                className="group-legend-dot"
+                                style={{ backgroundColor: PORTFOLIO_COLORS[i % PORTFOLIO_COLORS.length] }}
+                            />
+                            {pc.portfolio.id === parent.id ? <strong>{pc.portfolio.name}</strong> : pc.portfolio.name}
+                            <span className="ct-mobile-total-value">{fmt(pc.totalValue)}</span>
+                            {(pc.portfolio.liquidity || 0) > 0 && (
+                                <span style={{ color: '#3B82F6' }}>Liq {fmt(pc.portfolio.liquidity || 0)}</span>
+                            )}
+                        </span>
+                    ))}
+                </div>
+                {allTickers.length === 0 ? (
+                    <div className="ct-empty">No assets or targets configured.</div>
+                ) : (
+                    <div className="mrow-list">
+                        {allTickers.map(ticker => {
+                            const row = deriveTickerRow(ticker);
+                            return (
+                                <ComparisonMobileRow
+                                    key={ticker}
+                                    label={row.label}
+                                    assetClass={row.assetClass}
+                                    isCash={row.isCash}
+                                    isGroup={row.isGroup}
+                                    groupValue={row.groupValue}
+                                    groupActual={row.groupActual}
+                                    groupWeightedTarget={row.groupWeightedTarget}
+                                    cells={portfolioCalcs.map((pc, i) => ({
+                                        id: pc.portfolio.id,
+                                        name: pc.portfolio.name,
+                                        isParent: pc.portfolio.id === parent.id,
+                                        color: PORTFOLIO_COLORS[i % PORTFOLIO_COLORS.length],
+                                        cell: computeCell(pc, ticker, row.isGroup, row.isCash),
+                                    }))}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
             </div>
 
             {/* Per-portfolio action bars */}
@@ -711,20 +774,150 @@ const PortfolioGroupSection: React.FC<Props> = ({
 
                 .group-action-bar-buttons { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-left: auto; }
 
-                /* ── Mobile ── */
-                @media (max-width: 640px) {
-                    .ct-col-asset  { width: 120px; }
-                    .ct-col-group  { width: 85px; }
-                    .ct-col-portfolio { width: 140px; }
-                    .ct-label { font-size: 0.78rem; }
-                    .ct-cell-action { font-size: 0.7rem; }
-                    .ct-cell-buyonly { font-size: 0.68rem; }
+                /* ── Mobile ──
+                   The desktop matrix hides at 768px (.desktop-only) and the
+                   mrow-based mobile list takes over (styles/mobile-list.css). */
+                .ct-mobile-totals {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: var(--space-2) var(--space-3);
+                    padding: var(--space-2) 0;
+                    margin-bottom: var(--space-2);
+                    border-bottom: 1px solid var(--border-color);
+                }
+                .ct-mobile-total-chip {
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                    font-size: 0.75rem;
+                    color: var(--text-secondary);
+                    white-space: nowrap;
+                }
+                .ct-mobile-total-value { font-weight: 600; color: var(--text-primary); }
+                .ct-mobile-cell-values {
+                    display: flex;
+                    align-items: baseline;
+                    gap: var(--space-2);
+                    flex-wrap: wrap;
+                }
 
+                @media (max-width: 768px) {
                     .group-action-bar { flex-direction: column; align-items: flex-start; }
                     .group-action-bar-buttons { margin-left: 0; width: 100%; }
                     .group-action-bar-buttons button { flex: 1; }
                 }
             `}</style>
+        </div>
+    );
+};
+
+/* ─── Mobile comparison row ─── */
+
+interface ComparisonCellData {
+    currentValue: number;
+    actual: number;
+    target: number;
+    diff: number;
+    hasPosition: boolean;
+    hasTarget: boolean;
+    rebalShares: number;
+    rebalAmount: number;
+    buyOnlyShares: number;
+    buyOnlyAmount: number;
+}
+
+interface ComparisonMobileRowProps {
+    label: string;
+    assetClass: string;
+    isCash: boolean;
+    isGroup: boolean;
+    groupValue: number;
+    groupActual: number;
+    groupWeightedTarget: number;
+    cells: Array<{ id: string; name: string; isParent: boolean; color: string; cell: ComparisonCellData }>;
+}
+
+/**
+ * Dense expandable mobile row for the comparison matrix (mrow pattern,
+ * styles/mobile-list.css). Collapsed: asset + group aggregate; expanded: the
+ * full per-portfolio breakdown (target/actual/diff/rebalance/buy-only) that
+ * the desktop matrix shows as columns.
+ */
+const ComparisonMobileRow: React.FC<ComparisonMobileRowProps> = ({
+    label, assetClass, isCash, isGroup, groupValue, groupActual, groupWeightedTarget, cells,
+}) => {
+    const [expanded, setExpanded] = useState(false);
+    const showActions = !isCash && !isGroup;
+    const actionsCount = showActions
+        ? cells.filter(c => (c.cell.hasTarget && c.cell.rebalShares !== 0) || c.cell.buyOnlyShares > 0).length
+        : 0;
+
+    return (
+        <div className={`mrow ${expanded ? 'is-open' : ''}`}>
+            <div className="mrow-head" onClick={() => setExpanded(v => !v)}>
+                <span className="mrow-chevron">▶</span>
+                <div className="mrow-main">
+                    <div className="mrow-line1">
+                        <span className="ct-dot" style={{ backgroundColor: getColorForClass(assetClass), flex: '0 0 auto' }} />
+                        <span className="mrow-title">{label}</span>
+                    </div>
+                    <div className="mrow-line2">
+                        <span>Group {groupActual.toFixed(1)}%{groupWeightedTarget > 0.05 && ` / T ${groupWeightedTarget.toFixed(1)}%`}</span>
+                        {actionsCount > 0 && (
+                            <span style={{ color: 'var(--color-primary)', fontWeight: 600 }}>
+                                {actionsCount} action{actionsCount !== 1 ? 's' : ''}
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <div className="mrow-side">
+                    <div className="mrow-side-primary">{fmt(groupValue)}</div>
+                    {groupWeightedTarget > 0.05 && (
+                        <div className={`mrow-side-secondary ${groupActual - groupWeightedTarget > 0.5 ? 'ct-diff-over' : groupActual - groupWeightedTarget < -0.5 ? 'ct-diff-under' : 'ct-diff-ok'}`}>
+                            {groupActual - groupWeightedTarget > 0 ? '+' : ''}{(groupActual - groupWeightedTarget).toFixed(1)}%
+                        </div>
+                    )}
+                </div>
+            </div>
+            {expanded && (
+                <div className="mrow-details">
+                    {cells.map(({ id, name, isParent, color, cell }) => (
+                        <div key={id} className="mrow-detail mrow-detail--wide">
+                            <span className="mrow-label" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <span className="group-legend-dot" style={{ backgroundColor: color }} />
+                                {isParent ? <strong>{name}</strong> : name}
+                            </span>
+                            {!cell.hasPosition && !cell.hasTarget ? (
+                                <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>—</span>
+                            ) : (
+                                <span className="mrow-value ct-mobile-cell-values">
+                                    {cell.hasTarget && <span className="ct-cell-target">T: {cell.target}%</span>}
+                                    <span className="ct-cell-actual">{cell.actual.toFixed(1)}%</span>
+                                    {cell.hasTarget && (
+                                        <span className={`ct-cell-diff ${cell.diff > 0.5 ? 'ct-diff-over' : cell.diff < -0.5 ? 'ct-diff-under' : 'ct-diff-ok'}`}>
+                                            {cell.diff > 0 ? '+' : ''}{cell.diff.toFixed(1)}%
+                                        </span>
+                                    )}
+                                    {showActions && cell.hasTarget && (
+                                        <span className={`ct-cell-action ${cell.rebalShares > 0 ? 'ct-action-buy' : cell.rebalShares < 0 ? 'ct-action-sell' : 'ct-action-ok'}`}>
+                                            {cell.rebalShares === 0
+                                                ? <span className="ct-ok-badge">✓</span>
+                                                : <>{cell.rebalShares > 0 ? '▲' : '▼'} {Math.abs(cell.rebalShares)} · {fmt(Math.abs(cell.rebalAmount))}</>
+                                            }
+                                        </span>
+                                    )}
+                                    {showActions && cell.buyOnlyShares > 0 && (
+                                        <span className="ct-cell-buyonly">
+                                            <span className="ct-buyonly-label">buy only</span>
+                                            ▲ {cell.buyOnlyShares} · {fmt(cell.buyOnlyAmount)}
+                                        </span>
+                                    )}
+                                </span>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 };
