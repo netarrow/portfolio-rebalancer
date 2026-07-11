@@ -93,7 +93,15 @@ const TradeCostInfo: React.FC<{
     // month's free-buy list of the broker driving the headline (default resolved
     // broker, or the one picked in the popover).
     const promoMonthKey = currentMonthKey();
-    const effectiveBrokerId = selectedId ?? defaultBrokerId ?? brokers[0]?.id;
+    // When there's no broker history to infer a default from (e.g. a group member
+    // that hasn't been bought yet in this portfolio), prefer a broker that actually
+    // has this ISIN in its free-buy list this month over an arbitrary first broker —
+    // otherwise a real promo silently goes undetected just because the wrong broker
+    // was guessed.
+    const promoBrokerId = defaultBrokerId
+        ? undefined
+        : brokers.find(b => isFreeBuyIsin(freeCommissionPeriods, ticker, promoMonthKey, b.id))?.id;
+    const effectiveBrokerId = selectedId ?? defaultBrokerId ?? promoBrokerId ?? brokers[0]?.id;
     const freeBuyPromo = isFreeBuyIsin(freeCommissionPeriods, ticker, promoMonthKey, effectiveBrokerId);
     const [freeBuy, setFreeBuy] = useState(freeBuyPromo);
     useEffect(() => { setFreeBuy(freeBuyPromo); }, [freeBuyPromo]);
