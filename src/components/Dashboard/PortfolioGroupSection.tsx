@@ -7,6 +7,9 @@ import {
     isGroupKey,
 } from '../../utils/portfolioCalculations';
 import { distributeBuyOnlyWithPac, pacPriorityFor, type BuyOnlyCandidate } from '../../utils/allocationGroups';
+import { calculateAssetAllocation } from '../../utils/assetAllocation';
+import { computeGroupRebalance, type GroupRebalancePlan } from '../../utils/groupRebalance';
+import { usePortfolio } from '../../context/PortfolioContext';
 import { WithdrawalModal } from './WithdrawalModal';
 import { PortfolioAllocationTable } from './AllocationOverview';
 import type { Portfolio, Transaction, AssetDefinition, Broker, Asset } from '../../types';
@@ -84,6 +87,9 @@ const PortfolioGroupSection: React.FC<Props> = ({
 }) => {
     const [viewMode, setViewMode] = useState<'grouped' | 'individual'>('individual');
     const allPortfolios = useMemo(() => [parent, ...children], [parent, children]);
+    // Global Rebalancing settings + full portfolio list, needed to resolve the
+    // group members' configured proportions (e.g. Core 80% / Bond Buffer 20%).
+    const { portfolios: storedPortfolios, assetAllocationSettings } = usePortfolio();
 
     const portfolioCalcs = useMemo((): PortfolioCalc[] => {
         return allPortfolios.map(portfolio => {
@@ -103,6 +109,80 @@ const PortfolioGroupSection: React.FC<Props> = ({
     }, [allPortfolios, allTransactions, assetSettings, marketData, brokers]);
 
     const totalGroupValue = portfolioCalcs.reduce((s, pc) => s + pc.totalValue, 0);
+
+    /**
+     * Inter-portfolio rebalance plan from the Global Rebalancing targets.
+     *
+     * Runs the same asset-allocation engine as the Global Rebalancing view over
+     * ALL portfolios (percent/ratio targets need the full eligible total), then
+     * normalizes the group members' target values within the group: the plan
+     * only moves value between parent and children — asset-level rebalancing
+     * inside each portfolio stays exactly as it is.
+     *
+     * Members without an active target (locked/excluded/unconfigured) are left
+     * out of the plan and listed in `uncovered`; the panel needs at least two
+     * covered members to be meaningful.
+     */
+    const groupRebalance = useMemo((): (GroupRebalancePlan & { uncovered: string[] }) | null => {
+        const targets = assetAllocationSettings?.portfolioTargets ?? {};
+        const isActive = (pid: string) => {
+            const mode = targets[pid]?.mode;
+            return mode === 'percent' || mode === 'ratio' || mode === 'fixed';
+        };
+        const activeMembers = portfolioCalcs.filter(pc => isActive(pc.portfolio.id));
+        if (activeMembers.length < 2) return null;
+
+        // Engine input over all portfolios, dashboard convention: invested assets
+        // + broker cash allocated to the portfolio (same as AllocationOverview).
+        const memberById = new Map(portfolioCalcs.map(pc => [pc.portfolio.id, pc]));
+        const inputs = storedPortfolios.map(p => {
+            const member = memberById.get(p.id);
+            let investedValue: number;
+            let totalValue: number;
+            if (member) {
+                investedValue = member.summary.totalValue;
+                totalValue = member.totalValue;
+            } else {
+                const txs = allTransactions.filter(t => t.portfolioId === p.id);
+                const { assets: rawAssets, summary } = calculateAssets(txs, assetSettings, marketData);
+                const cash = injectCashAssets(rawAssets, brokers, p.id)
+                    .filter(a => isCashTicker(a.ticker))
+                    .reduce((s, a) => s + a.currentValue, 0);
+                investedValue = summary.totalValue;
+                totalValue = summary.totalValue + cash;
+            }
+            return {
+                portfolioId: p.id,
+                name: p.name,
+                currentInvestedValue: investedValue,
+                currentPortfolioLiquidity: p.liquidity || 0,
+                currentTotalValue: totalValue,
+            };
+        });
+        const brokerLiquidity = brokers.reduce((s, b) => {
+            const alloc = b.liquidityAllocations || {};
+            return s + Object.values(alloc).reduce((a, v) => a + (v || 0), 0);
+        }, 0);
+        const result = calculateAssetAllocation({
+            portfolios: inputs,
+            brokerLiquidity,
+            settings: assetAllocationSettings,
+        });
+        const targetValueById = new Map(result.portfolios.map(r => [r.portfolioId, r.targetValue]));
+
+        const plan = computeGroupRebalance(activeMembers.map(pc => ({
+            portfolioId: pc.portfolio.id,
+            name: pc.portfolio.name,
+            currentValue: pc.totalValue,
+            targetBasis: targetValueById.get(pc.portfolio.id) ?? 0,
+        })));
+        if (!plan) return null;
+
+        const uncovered = portfolioCalcs
+            .filter(pc => !isActive(pc.portfolio.id))
+            .map(pc => pc.portfolio.name);
+        return { ...plan, uncovered };
+    }, [portfolioCalcs, storedPortfolios, allTransactions, assetSettings, marketData, brokers, assetAllocationSettings]);
 
     const groupAssets = useMemo((): Asset[] => {
         const groupTxs = allTransactions.filter(t =>
@@ -300,6 +380,87 @@ const PortfolioGroupSection: React.FC<Props> = ({
                     })}
                 </div>
             </div>
+
+            {/* Inter-portfolio rebalance (Global Rebalancing proportions).
+                Portfolio-level only: the asset tables below keep handling the
+                rebalance inside each portfolio. */}
+            {groupRebalance && (
+                <div className="group-rebal-panel">
+                    <div className="group-rebal-header">
+                        <span className="group-rebal-title">⚖ Portfolio rebalance</span>
+                        <span className="group-rebal-targets">
+                            global targets: {groupRebalance.members.map(m => `${m.name} ${m.targetShare.toFixed(1).replace(/\.0$/, '')}%`).join(' / ')}
+                        </span>
+                        {groupRebalance.balanced && (
+                            <span className="group-rebal-ok">✓ balanced</span>
+                        )}
+                    </div>
+                    <div className="group-rebal-members">
+                        {groupRebalance.members.map(m => {
+                            const idx = portfolioCalcs.findIndex(pc => pc.portfolio.id === m.portfolioId);
+                            const color = PORTFOLIO_COLORS[(idx >= 0 ? idx : 0) % PORTFOLIO_COLORS.length];
+                            const off = Math.abs(m.delta) > groupRebalance.tolerance;
+                            return (
+                                <span key={m.portfolioId} className="group-rebal-member">
+                                    <span className="group-legend-dot" style={{ backgroundColor: color }} />
+                                    <span className="group-rebal-member-name">
+                                        {m.portfolioId === parent.id ? <strong>{m.name}</strong> : m.name}
+                                    </span>
+                                    <span className="group-rebal-member-shares">
+                                        {m.currentShare.toFixed(1)}% → {m.targetShare.toFixed(1)}%
+                                    </span>
+                                    <span className={`group-rebal-delta ${!off ? 'group-rebal-delta-ok' : m.delta > 0 ? 'group-rebal-delta-buy' : 'group-rebal-delta-sell'}`}>
+                                        {!off ? '✓' : <>{m.delta > 0 ? '▲' : '▼'} {fmt(Math.abs(m.delta))}</>}
+                                    </span>
+                                </span>
+                            );
+                        })}
+                    </div>
+                    {!groupRebalance.balanced && (
+                        <div className="group-rebal-actions">
+                            <div className="group-rebal-action">
+                                <span className="group-rebal-mode group-rebal-mode-sellbuy">Sell + Buy</span>
+                                {groupRebalance.transfers.length > 0 ? (
+                                    groupRebalance.transfers.map((t, i) => (
+                                        <span key={i} className="group-rebal-transfer">
+                                            {t.fromName} <span className="group-rebal-arrow">▶</span> {t.toName} · <strong>{fmt(t.amount)}</strong>
+                                        </span>
+                                    ))
+                                ) : (
+                                    <span className="group-rebal-muted">—</span>
+                                )}
+                            </div>
+                            <div className="group-rebal-action">
+                                <span className="group-rebal-mode group-rebal-mode-buyonly">Buy Only</span>
+                                {groupRebalance.buyOnlyRequired > 0 ? (
+                                    <>
+                                        <span>add <strong>{fmt(groupRebalance.buyOnlyRequired)}</strong> fresh liquidity:</span>
+                                        {groupRebalance.members
+                                            .filter(m => m.buyOnlyAmount >= 1)
+                                            .map(m => (
+                                                <span key={m.portfolioId} className="group-rebal-transfer">
+                                                    ▲ {m.name} · <strong>{fmt(m.buyOnlyAmount)}</strong>
+                                                </span>
+                                            ))}
+                                    </>
+                                ) : (
+                                    <span className="group-rebal-muted">—</span>
+                                )}
+                                {groupRebalance.buyOnlyUnreachable && (
+                                    <span className="group-rebal-muted">
+                                        (a 0%-target portfolio holds value — not fully reachable without selling)
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                    {groupRebalance.uncovered.length > 0 && (
+                        <div className="group-rebal-muted">
+                            No global target (excluded from this plan): {groupRebalance.uncovered.join(', ')}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* Individual view */}
             {viewMode === 'individual' && (
@@ -608,6 +769,89 @@ const PortfolioGroupSection: React.FC<Props> = ({
 
                 .group-legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
                 .group-legend-pct { color: var(--text-muted); font-size: 0.78rem; }
+
+                /* ── Inter-portfolio rebalance panel ── */
+                .group-rebal-panel {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-2);
+                    padding: var(--space-3);
+                    background: var(--bg-surface);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-md);
+                }
+                .group-rebal-header {
+                    display: flex;
+                    align-items: baseline;
+                    gap: var(--space-2);
+                    flex-wrap: wrap;
+                }
+                .group-rebal-title {
+                    font-size: 0.8rem;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.04em;
+                    color: var(--text-secondary);
+                }
+                .group-rebal-targets { font-size: 0.78rem; color: var(--text-muted); }
+                .group-rebal-ok {
+                    font-size: 0.75rem;
+                    font-weight: 600;
+                    color: var(--color-success);
+                    margin-left: auto;
+                    white-space: nowrap;
+                }
+                .group-rebal-members {
+                    display: flex;
+                    gap: var(--space-2) var(--space-4);
+                    flex-wrap: wrap;
+                }
+                .group-rebal-member {
+                    display: flex;
+                    align-items: center;
+                    gap: var(--space-1);
+                    font-size: 0.85rem;
+                    color: var(--text-secondary);
+                    flex-wrap: wrap;
+                }
+                .group-rebal-member-name { color: var(--text-primary); }
+                .group-rebal-member-shares { color: var(--text-muted); font-size: 0.78rem; }
+                .group-rebal-delta {
+                    font-size: 0.78rem;
+                    font-weight: 600;
+                    padding: 1px 5px;
+                    border-radius: 3px;
+                }
+                .group-rebal-delta-buy  { color: var(--color-success); background: rgba(16,185,129,0.08); }
+                .group-rebal-delta-sell { color: var(--color-danger);  background: rgba(239,68,68,0.08); }
+                .group-rebal-delta-ok   { color: var(--text-muted); }
+                .group-rebal-actions {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-1);
+                }
+                .group-rebal-action {
+                    display: flex;
+                    align-items: center;
+                    gap: var(--space-2);
+                    flex-wrap: wrap;
+                    font-size: 0.82rem;
+                    color: var(--text-secondary);
+                }
+                .group-rebal-mode {
+                    font-size: 0.65rem;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    letter-spacing: 0.04em;
+                    padding: 1px 6px;
+                    border-radius: 3px;
+                    white-space: nowrap;
+                }
+                .group-rebal-mode-sellbuy { color: var(--color-warning, #F59E0B); background: rgba(245,158,11,0.12); }
+                .group-rebal-mode-buyonly { color: #3B82F6; background: rgba(59,130,246,0.10); }
+                .group-rebal-transfer { min-width: 0; }
+                .group-rebal-arrow { color: var(--text-muted); font-size: 0.7rem; }
+                .group-rebal-muted { font-size: 0.75rem; color: var(--text-muted); }
 
                 /* ── Comparison Table ── */
                 .ct-scroll-wrapper {
