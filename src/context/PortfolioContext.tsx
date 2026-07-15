@@ -1,10 +1,10 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
-import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, milliunitsToEur } from '../services/ynabApi';
+import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
 import { parseGoalDescriptor } from '../utils/ynabGoalParser';
 import io, { Socket } from 'socket.io-client';
@@ -106,6 +106,13 @@ interface PortfolioContextType {
     getPortfolioAllocationSummary: (portfolioId: string) => { allocated: number; available: number; drift: number; currentValue: number };
     getYnabGoalAllocations: (ynabGoalId: string) => YnabGoalAllocation[];
     ynabGoalsSyncing: boolean;
+    // YNAB spending analysis (rolling 12 months of budget/activity/income)
+    ynabSpendingHistory: YnabMonthSnapshot[];
+    ynabMacroMappings: YnabMacroMappings;
+    syncYnabSpending: () => Promise<{ ok: boolean; error?: string }>;
+    setYnabGroupMacro: (groupId: string, macro: YnabMacroCategory | null) => void;
+    setYnabCategoryMacro: (categoryId: string, macro: YnabMacroCategory | null) => void;
+    ynabSpendingSyncing: boolean;
     // Free-buy promo lists (ISINs commission-free to buy in a given month)
     freeCommissionPeriods: FreeCommissionPeriod[];
     setFreeCommissionPeriods: (periods: FreeCommissionPeriod[] | ((prev: FreeCommissionPeriod[]) => FreeCommissionPeriod[])) => void;
@@ -178,6 +185,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabGoals, setYnabGoals] = useLocalStorage<YnabGoal[]>('portfolio_ynab_goals', []);
     const [ynabGoalAllocations, setYnabGoalAllocations] = useLocalStorage<YnabGoalAllocation[]>('portfolio_ynab_goal_allocations', []);
     const [ynabGoalsSyncing, setYnabGoalsSyncing] = useState(false);
+    // Rolling-year spending history is local-only (like priceHistory): it can
+    // grow large and is rebuilt from YNAB with a single sync.
+    const [ynabSpendingHistory, setYnabSpendingHistory] = useLocalStorage<YnabMonthSnapshot[]>('portfolio_ynab_spending_history', []);
+    const [ynabMacroMappings, setYnabMacroMappings] = useLocalStorage<YnabMacroMappings>('portfolio_ynab_macro_mappings', { groups: {}, categories: {} });
+    const [ynabSpendingSyncing, setYnabSpendingSyncing] = useState(false);
     const [virtualBonds, setVirtualBonds] = useLocalStorage<VirtualBond[]>('portfolio_virtual_bonds', []);
     const [freeCommissionPeriods, setFreeCommissionPeriods] = useLocalStorage<FreeCommissionPeriod[]>('portfolio_free_commissions', []);
     // Ref so sync effect can read latest config without adding azureConfig to deps (avoids loop on lastSync)
@@ -632,6 +644,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabMappings,
                 ynabGoals,
                 ynabGoalAllocations,
+                ynabMacroMappings,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -658,7 +671,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
-        ynabGoals, ynabGoalAllocations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -1628,7 +1641,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             lastSyncAt: timestamp,
             goalsGroupId: 'ynab-grp-goals',
             goalsGroupName: 'Investment Goals',
-            lastGoalsSyncAt: timestamp
+            lastGoalsSyncAt: timestamp,
+            lastSpendingSyncAt: timestamp
         });
         setYnabCategories([
             // ── Investments ──────────────────────────────────────────────────
@@ -1673,6 +1687,61 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             { id: 'yga-3', portfolioId: pIdSafe, ynabGoalId: 'yg-car', amount: 6000, createdAt: timestamp, updatedAt: timestamp },
         ]);
 
+        // 8c. Rolling-year spending history + macro-class mappings — drives the
+        // Summary Analysis view. Values are deterministic (seasonal utilities,
+        // a vacation spike in August) so screenshots are reproducible.
+        const mmu = (eur: number) => Math.round(eur * 1000);
+        const winterBoost = [60, 50, 30, 10, 0, 0, 0, 0, 10, 20, 40, 55]; // Jan..Dec
+        const spendingHistory: YnabMonthSnapshot[] = [];
+        for (let i = 12; i >= 1; i--) {
+            const d = new Date(Date.UTC(new Date(today).getUTCFullYear(), new Date(today).getUTCMonth() - i, 1));
+            const monthIdx = d.getUTCMonth();
+            const month = `${d.getUTCFullYear()}-${String(monthIdx + 1).padStart(2, '0')}-01`;
+            const isAugust = monthIdx === 7;
+            const categories = [
+                // Housing → structural
+                { categoryId: 'ynab-cat-12', name: 'Mortgage / Rent', groupId: 'ynab-grp-hous', groupName: 'Housing', budgetedMilliunits: mmu(900), activityMilliunits: -mmu(900) },
+                { categoryId: 'ynab-cat-13', name: 'Utilities (gas, electric, water)', groupId: 'ynab-grp-hous', groupName: 'Housing', budgetedMilliunits: mmu(150), activityMilliunits: -mmu(110 + winterBoost[monthIdx]) },
+                { categoryId: 'ynab-cat-14', name: 'Internet & Phone', groupId: 'ynab-grp-hous', groupName: 'Housing', budgetedMilliunits: mmu(50), activityMilliunits: -mmu(50) },
+                // Monthly Expenses → variable (Restaurants overridden to compressible)
+                { categoryId: 'ynab-cat-8', name: 'Groceries', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', budgetedMilliunits: mmu(400), activityMilliunits: -mmu(360 + (i * 13) % 50) },
+                { categoryId: 'ynab-cat-9', name: 'Restaurants & Takeaway', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', budgetedMilliunits: mmu(200), activityMilliunits: -mmu(150 + (i * 17) % 70) },
+                { categoryId: 'ynab-cat-10', name: 'Transport', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', budgetedMilliunits: mmu(120), activityMilliunits: -mmu(100 + (i * 7) % 30) },
+                { categoryId: 'ynab-cat-11', name: 'Health & Pharmacy', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', budgetedMilliunits: mmu(100), activityMilliunits: -mmu(40 + (i * 23) % 80) },
+                // Lifestyle — intentionally left unmapped to show the warning
+                { categoryId: 'ynab-cat-15', name: 'Streaming & Subscriptions', groupId: 'ynab-grp-life', groupName: 'Lifestyle', budgetedMilliunits: mmu(35), activityMilliunits: -mmu(35) },
+                // Investments
+                { categoryId: 'ynab-cat-1', name: 'ETF DCA (SWDA)', groupId: 'ynab-grp-inv', groupName: 'Investments', budgetedMilliunits: mmu(500), activityMilliunits: -mmu(500) },
+                { categoryId: 'ynab-cat-2', name: 'Bonds ETF (AGGH)', groupId: 'ynab-grp-inv', groupName: 'Investments', budgetedMilliunits: mmu(150), activityMilliunits: -mmu(150) },
+                { categoryId: 'ynab-cat-3', name: 'Pension Fund (COMETA)', groupId: 'ynab-grp-inv', groupName: 'Investments', budgetedMilliunits: mmu(200), activityMilliunits: -mmu(200) },
+                // Savings → sinking funds (Travel is spent during the August vacation)
+                { categoryId: 'ynab-cat-5', name: 'Emergency Fund', groupId: 'ynab-grp-sav', groupName: 'Savings', budgetedMilliunits: mmu(200), activityMilliunits: 0 },
+                { categoryId: 'ynab-cat-6', name: 'Travel Fund', groupId: 'ynab-grp-sav', groupName: 'Savings', budgetedMilliunits: mmu(150), activityMilliunits: isAugust ? -mmu(1400) : 0 },
+                { categoryId: 'ynab-cat-7', name: 'Home Renovations', groupId: 'ynab-grp-sav', groupName: 'Savings', budgetedMilliunits: mmu(300), activityMilliunits: 0 },
+            ];
+            spendingHistory.push({
+                month,
+                incomeMilliunits: mmu(4300 + (i * 31) % 300),
+                budgetedMilliunits: categories.reduce((s, c) => s + c.budgetedMilliunits, 0),
+                activityMilliunits: categories.reduce((s, c) => s + c.activityMilliunits, 0),
+                categories,
+                syncedAt: timestamp,
+            });
+        }
+        setYnabSpendingHistory(spendingHistory);
+        setYnabMacroMappings({
+            groups: {
+                'ynab-grp-hous': 'structural',
+                'ynab-grp-exp': 'variable',
+                'ynab-grp-inv': 'investments',
+                'ynab-grp-sav': 'sinking',
+                // 'ynab-grp-life' left unmapped on purpose
+            },
+            categories: {
+                'ynab-cat-9': 'compressible', // Restaurants & Takeaway overrides its group
+            },
+        });
+
         // 9. Aggregate UI: exclude VWRL from the aggregate view
         setAggregateExcludedTickers(['IE00B3RBWM25']);
 
@@ -1701,6 +1770,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const importedYnabMappings: YnabCategoryMapping[] = Array.isArray(data.ynabMappings) ? data.ynabMappings : [];
             const importedYnabGoals: YnabGoal[] = Array.isArray(data.ynabGoals) ? data.ynabGoals : [];
             const importedYnabGoalAllocations: YnabGoalAllocation[] = Array.isArray(data.ynabGoalAllocations) ? data.ynabGoalAllocations : [];
+            const importedYnabMacroMappings: YnabMacroMappings = (data.ynabMacroMappings && typeof data.ynabMacroMappings === 'object')
+                ? { groups: data.ynabMacroMappings.groups ?? {}, categories: data.ynabMacroMappings.categories ?? {} }
+                : { groups: {}, categories: {} };
             const importedVirtualBonds: VirtualBond[] = Array.isArray(data.virtualBonds) ? data.virtualBonds : [];
             const importedFreeCommissionPeriods: FreeCommissionPeriod[] = Array.isArray(data.freeCommissionPeriods) ? data.freeCommissionPeriods : [];
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
@@ -1725,6 +1797,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_ynab_mappings', JSON.stringify(importedYnabMappings));
             localStorage.setItem('portfolio_ynab_goals', JSON.stringify(importedYnabGoals));
             localStorage.setItem('portfolio_ynab_goal_allocations', JSON.stringify(importedYnabGoalAllocations));
+            localStorage.setItem('portfolio_ynab_macro_mappings', JSON.stringify(importedYnabMacroMappings));
             localStorage.setItem('portfolio_virtual_bonds', JSON.stringify(importedVirtualBonds));
             localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
 
@@ -1744,6 +1817,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setYnabMappings(importedYnabMappings);
             setYnabGoals(importedYnabGoals);
             setYnabGoalAllocations(importedYnabGoalAllocations);
+            setYnabMacroMappings(importedYnabMacroMappings);
             setVirtualBonds(importedVirtualBonds);
             setFreeCommissionPeriods(importedFreeCommissionPeriods);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
@@ -1780,6 +1854,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabMappings,
                 ynabGoals,
                 ynabGoalAllocations,
+                ynabMacroMappings,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -1898,12 +1973,65 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
+    // Sync the rolling 12-month spending window. Months already in the local
+    // history are not refetched, except the 2 most recent (late YNAB edits);
+    // months that fell out of the window are pruned to cap storage.
+    const syncYnabSpending = async (): Promise<{ ok: boolean; error?: string }> => {
+        if (!ynabConfig?.apiKey || !ynabConfig?.budgetId) {
+            return { ok: false, error: 'YNAB not configured.' };
+        }
+        try {
+            setYnabSpendingSyncing(true);
+            const window = rollingMonthsIso(12);
+            const known = new Set(ynabSpendingHistory.map(s => s.month));
+            const recent = new Set(window.slice(-2));
+            const toFetch = window.filter(m => recent.has(m) || !known.has(m));
+            const res = await ynabGetMonthlySnapshots(ynabConfig.apiKey, ynabConfig.budgetId, toFetch);
+            if (!res.success || !res.data) {
+                return { ok: false, error: res.error || 'Error during synchronization.' };
+            }
+            const byMonth = new Map(ynabSpendingHistory.map(s => [s.month, s]));
+            for (const snap of res.data) byMonth.set(snap.month, snap);
+            const windowSet = new Set(window);
+            const next = [...byMonth.values()]
+                .filter(s => windowSet.has(s.month))
+                .sort((a, b) => a.month.localeCompare(b.month));
+            setYnabSpendingHistory(next);
+            setYnabConfigState(prev => prev ? { ...prev, lastSpendingSyncAt: new Date().toISOString() } : prev);
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        } finally {
+            setYnabSpendingSyncing(false);
+        }
+    };
+
+    const setYnabGroupMacro = (groupId: string, macro: YnabMacroCategory | null) => {
+        setYnabMacroMappings(prev => {
+            const groups = { ...prev.groups };
+            if (macro === null) delete groups[groupId];
+            else groups[groupId] = macro;
+            return { ...prev, groups };
+        });
+    };
+
+    const setYnabCategoryMacro = (categoryId: string, macro: YnabMacroCategory | null) => {
+        setYnabMacroMappings(prev => {
+            const categories = { ...prev.categories };
+            if (macro === null) delete categories[categoryId];
+            else categories[categoryId] = macro;
+            return { ...prev, categories };
+        });
+    };
+
     const disconnectYnab = () => {
         setYnabConfigState(null);
         setYnabCategories([]);
         setYnabMappings([]);
         setYnabGoals([]);
         setYnabGoalAllocations([]);
+        setYnabSpendingHistory([]);
+        setYnabMacroMappings({ groups: {}, categories: {} });
     };
 
     // ── YNAB Goals (entità separata dai Goal manuali del tool) ──────────
@@ -2320,6 +2448,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         getPortfolioAllocationSummary,
         getYnabGoalAllocations,
         ynabGoalsSyncing,
+        ynabSpendingHistory,
+        ynabMacroMappings,
+        syncYnabSpending,
+        setYnabGroupMacro,
+        setYnabCategoryMacro,
+        ynabSpendingSyncing,
         freeCommissionPeriods,
         setFreeCommissionPeriods,
         virtualBonds,
