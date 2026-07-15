@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary';
 
 interface LayoutProps {
   currentView: View;
@@ -100,6 +100,12 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             YNAB Goals
           </button>
           <button
+            className={`nav-link ${currentView === 'summary' ? 'active' : ''}`}
+            onClick={() => handleNavigate('summary')}
+          >
+            Summary
+          </button>
+          <button
             className={`nav-link ${currentView === 'settings' ? 'active' : ''}`}
             onClick={() => handleNavigate('settings')}
           >
@@ -143,7 +149,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           display: flex;
           align-items: center;
           justify-content: space-between;
-          width: 100%;
+          flex-shrink: 0;
         }
 
         .navbar-brand {
@@ -179,6 +185,20 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           display: flex;
           gap: var(--space-4);
           width: auto;
+          min-width: 0;
+          overflow-x: auto;
+          scrollbar-width: thin;
+          /* Scroll shadows (background-attachment: local trick): the edge
+             shadow only shows when links are clipped on that side, giving a
+             scroll affordance even with overlay scrollbars. */
+          background:
+            linear-gradient(to right, var(--bg-surface) 30%, transparent),
+            linear-gradient(to left, var(--bg-surface) 30%, transparent) 100% 0,
+            radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.45), transparent),
+            radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.45), transparent) 100% 0;
+          background-repeat: no-repeat;
+          background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+          background-attachment: local, local, scroll, scroll;
         }
 
         .nav-link {
@@ -189,6 +209,20 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           padding: var(--space-2) var(--space-4);
           border-radius: var(--radius-md);
           transition: all 0.2s;
+          flex-shrink: 0;
+          white-space: nowrap;
+        }
+
+        /* Mid desktop widths: tighten spacing so all links fit more often
+           before falling back to horizontal scrolling. */
+        @media (max-width: 1600px) {
+          .navbar-links {
+            gap: var(--space-1);
+          }
+
+          .nav-link {
+            padding: var(--space-2) var(--space-2);
+          }
         }
 
         .nav-link:hover {
@@ -288,6 +322,13 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             width: 100%;
             padding-top: var(--space-4);
             gap: var(--space-2);
+            overflow-x: hidden;
+            background: none;
+          }
+
+          .nav-link {
+            flex-shrink: 1;
+            white-space: normal;
           }
 
           .navbar-links.show {

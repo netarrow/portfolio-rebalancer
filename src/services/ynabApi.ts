@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { YnabCategory, YnabCategoryGroupSummary } from '../types';
+import type { YnabCategory, YnabCategoryGroupSummary, YnabMonthSnapshot, YnabMonthCategorySnapshot } from '../types';
 
 const YNAB_BASE = 'https://api.ynab.com/v1';
 
@@ -240,6 +240,82 @@ export async function getAverageBudgetedByCategory(
         }
 
         return { success: true, data: result };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}
+
+// Months of the rolling window, oldest first: the previous `monthsBack`
+// complete months (the current, partial month is excluded on purpose so
+// averages are computed on full months only).
+export function rollingMonthsIso(monthsBack: number, now: Date = new Date()): string[] {
+    return previousMonthsIso(monthsBack, now).reverse();
+}
+
+export async function getMonthlyBudgetSnapshots(
+    apiKey: string,
+    budgetId: string,
+    monthsIso: string[],
+): Promise<YnabApiResult<YnabMonthSnapshot[]>> {
+    try {
+        const headers = { Authorization: `Bearer ${apiKey}` };
+
+        const groupsResp = await axios.get(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/categories`,
+            { headers },
+        );
+        const categoryGroups: any[] = groupsResp.data?.data?.category_groups ?? [];
+        const groupById = new Map<string, { name: string; hidden: boolean; deleted: boolean }>();
+        for (const g of categoryGroups) {
+            groupById.set(g.id, { name: g.name, hidden: !!g.hidden, deleted: !!g.deleted });
+        }
+
+        const responses = await Promise.all(
+            monthsIso.map(m =>
+                axios
+                    .get(`${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/months/${m}`, { headers })
+                    .then(r => ({ month: m, data: r.data?.data?.month as any }))
+                    .catch(e => {
+                        // Months before the budget's first month don't exist.
+                        if (axios.isAxiosError(e) && e.response?.status === 404) {
+                            return { month: m, data: null };
+                        }
+                        throw e;
+                    }),
+            ),
+        );
+
+        const syncedAt = new Date().toISOString();
+        const snapshots: YnabMonthSnapshot[] = [];
+        for (const r of responses) {
+            if (!r.data) continue;
+            const rawCats: any[] = r.data.categories ?? [];
+            const categories: YnabMonthCategorySnapshot[] = [];
+            for (const c of rawCats) {
+                if (c.hidden || c.deleted) continue;
+                const group = groupById.get(c.category_group_id);
+                if (!group || group.hidden || group.deleted) continue;
+                if (HIDDEN_GROUP_NAMES.has(group.name)) continue;
+                categories.push({
+                    categoryId: c.id,
+                    name: c.name,
+                    groupId: c.category_group_id,
+                    groupName: group.name,
+                    budgetedMilliunits: typeof c.budgeted === 'number' ? c.budgeted : 0,
+                    activityMilliunits: typeof c.activity === 'number' ? c.activity : 0,
+                });
+            }
+            snapshots.push({
+                month: r.month,
+                incomeMilliunits: typeof r.data.income === 'number' ? r.data.income : 0,
+                budgetedMilliunits: typeof r.data.budgeted === 'number' ? r.data.budgeted : 0,
+                activityMilliunits: typeof r.data.activity === 'number' ? r.data.activity : 0,
+                categories,
+                syncedAt,
+            });
+        }
+
+        return { success: true, data: snapshots };
     } catch (e) {
         return { success: false, error: mapError(e) };
     }

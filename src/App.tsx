@@ -4,7 +4,7 @@ import { SecurityProvider } from './context/SecurityContext';
 import UnlockGate from './components/Security/UnlockGate';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -24,6 +24,7 @@ import ForecastView from './components/Forecast/ForecastView';
 import GlobalRebalancingView from './components/GlobalRebalancing/GlobalRebalancingView';
 import YnabImportView from './components/YnabImport/YnabImportView';
 import YnabGoalsView from './components/YnabGoals/YnabGoalsView';
+import SummaryAnalysisView from './components/SummaryAnalysis/SummaryAnalysisView';
 import PerformanceView from './components/Performance/PerformanceView';
 
 // Placeholders for views
@@ -104,6 +105,7 @@ function App() {
       case 'brokers': return <BrokersView />;
       case 'goals': return <GoalsView />;
       case 'ynabGoals': return <YnabGoalsView onNavigateToYnab={() => setCurrentView('ynab')} />;
+      case 'summary': return <SummaryAnalysisView onNavigateToSettings={() => setCurrentView('settings')} />;
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
       case 'performance': return <PerformanceView />;

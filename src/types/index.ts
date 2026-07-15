@@ -229,6 +229,7 @@ export interface YnabConfig {
   goalsGroupId?: string;
   goalsGroupName?: string;
   lastGoalsSyncAt?: string;
+  lastSpendingSyncAt?: string;
 }
 
 export interface YnabCategory {
@@ -305,6 +306,34 @@ export type YnabMappingTarget =
 export interface YnabCategoryMapping {
   categoryId: string;
   target: YnabMappingTarget;
+}
+
+// ── YNAB spending analysis (rolling 12 months) ──────────────────────
+
+export type YnabMacroCategory = 'structural' | 'variable' | 'compressible' | 'investments' | 'sinking';
+
+export interface YnabMacroMappings {
+  // groupId → macro class; a category override (categoryId key) wins over its group.
+  groups: Record<string, YnabMacroCategory>;
+  categories: Record<string, YnabMacroCategory>;
+}
+
+export interface YnabMonthCategorySnapshot {
+  categoryId: string;
+  name: string;
+  groupId: string;
+  groupName: string;
+  budgetedMilliunits: number;
+  activityMilliunits: number; // negative = outflow
+}
+
+export interface YnabMonthSnapshot {
+  month: string; // 'YYYY-MM-01'
+  incomeMilliunits: number;
+  budgetedMilliunits: number;
+  activityMilliunits: number;
+  categories: YnabMonthCategorySnapshot[];
+  syncedAt: string;
 }
 
 export interface PortfolioSummary {

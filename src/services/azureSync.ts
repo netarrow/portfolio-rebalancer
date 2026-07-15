@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, VirtualBond, FreeCommissionPeriod } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -24,6 +24,9 @@ export interface SyncPayload {
     ynabMappings?: YnabCategoryMapping[];
     ynabGoals?: YnabGoal[];
     ynabGoalAllocations?: YnabGoalAllocation[];
+    // Macro-class mappings for spending analysis; the spending history itself
+    // is local-only (like priceHistory) and rebuilt from YNAB on sync.
+    ynabMacroMappings?: YnabMacroMappings;
     ynabGoalsGroupId?: string;
     ynabGoalsGroupName?: string;
     ynabLastGoalsSyncAt?: string;
