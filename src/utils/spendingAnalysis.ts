@@ -27,6 +27,7 @@ export const PROTECTION_FUND_MONTHS = 6;
 export const SECURITY_HORIZON_YEARS = 7;
 export const UPCOMING_EXPENSE_DAYS = 90;
 export const COMPRESSIBLE_INCOME_SHARE_ALERT = 0.15;
+export const PAST_SAVINGS_SHARE_ALERT = 0.10; // of total outflows
 
 const toEur = (milliunits: number): number => milliunits / 1000;
 
@@ -69,6 +70,12 @@ export interface SpendingAnalysis {
     macros: Record<YnabMacroCategory, MacroTotals>;
     unmappedCategories: MacroCategoryTotal[]; // with activity or budgeted, no macro
     unmappedOutflow: number;
+    // Spending funded by savings built before the window: for each category,
+    // outflows in excess of what was assigned to it during the window must
+    // have been covered by its pre-existing YNAB balance (past years' savings).
+    pastSavingsSpent: number;
+    budgetFundedSpending: number; // totalOutflow − pastSavingsSpent
+    pastSavingsCategories: (MacroCategoryTotal & { pastSavingsOutflow: number })[]; // drawdown desc
 }
 
 export function analyzeSpending(
@@ -112,8 +119,17 @@ export function analyzeSpending(
     }
 
     const unmappedCategories: MacroCategoryTotal[] = [];
+    const pastSavingsCategories: (MacroCategoryTotal & { pastSavingsOutflow: number })[] = [];
+    let pastSavingsSpent = 0;
     for (const entry of catTotals.values()) {
         const { macro, ...cat } = entry;
+        // Outflows beyond the window's assignments were paid from the balance
+        // the category carried into the window, i.e. previous years' savings.
+        const pastSavingsOutflow = Math.max(0, cat.totalOutflow - Math.max(0, cat.totalBudgeted));
+        if (pastSavingsOutflow >= 0.005) {
+            pastSavingsSpent += pastSavingsOutflow;
+            pastSavingsCategories.push({ ...cat, pastSavingsOutflow });
+        }
         if (macro) {
             macros[macro].totalOutflow += cat.totalOutflow;
             macros[macro].totalBudgeted += cat.totalBudgeted;
@@ -122,6 +138,7 @@ export function analyzeSpending(
             unmappedCategories.push(cat);
         }
     }
+    pastSavingsCategories.sort((a, b) => b.pastSavingsOutflow - a.pastSavingsOutflow);
 
     for (const m of MACRO_ORDER) {
         macros[m].categories.sort((a, b) => b.totalOutflow - a.totalOutflow);
@@ -146,6 +163,9 @@ export function analyzeSpending(
         macros,
         unmappedCategories,
         unmappedOutflow: unmappedCategories.reduce((s, c) => s + c.totalOutflow, 0),
+        pastSavingsSpent,
+        budgetFundedSpending: totalOutflow - pastSavingsSpent,
+        pastSavingsCategories,
     };
 }
 
@@ -174,6 +194,22 @@ export function generateNarrative(a: SpendingAnalysis, currencyIso: string = 'EU
 
     if (a.totalIncome > 0) {
         lines.push(`You earned ${fmt(a.totalIncome, currencyIso)} (${fmt(a.avgMonthlyIncome, currencyIso)}/month).`);
+    }
+
+    if (a.totalOutflow > 0) {
+        if (a.pastSavingsSpent >= 0.5) {
+            const top = a.pastSavingsCategories
+                .slice(0, 3)
+                .map(c => `${c.name} (${fmt(c.pastSavingsOutflow, currencyIso)})`)
+                .join(', ');
+            lines.push(
+                `Of your ${fmt(a.totalOutflow, currencyIso)} total outflows, ${fmt(a.budgetFundedSpending, currencyIso)} was covered by money assigned during the period ` +
+                `and ${fmt(a.pastSavingsSpent, currencyIso)} drew down savings built in previous years` +
+                (top ? `, mainly ${top}.` : '.'),
+            );
+        } else {
+            lines.push(`All of your ${fmt(a.totalOutflow, currencyIso)} outflows were covered by money assigned during the period — no previous years' savings were consumed.`);
+        }
     }
 
     const sinking = a.macros.sinking;
@@ -280,7 +316,20 @@ export function generateSuggestions(
         });
     }
 
-    // 5. Negative savings.
+    // 5. Meaningful drawdown of previous years' savings.
+    if (a.pastSavingsSpent >= 0.5 && a.totalOutflow > 0) {
+        const share = a.pastSavingsSpent / a.totalOutflow;
+        const top = a.pastSavingsCategories[0];
+        insights.push({
+            id: 'past-savings-drawdown',
+            kind: share > PAST_SAVINGS_SHARE_ALERT ? 'warning' : 'info',
+            text: `${fmt(a.pastSavingsSpent, currencyIso)} of your spending (${pct(share)} of outflows) was funded by savings from previous years` +
+                (top ? `, mostly via “${top.name}”` : '') +
+                ` — factor this into your budget and consider replenishing those funds.`,
+        });
+    }
+
+    // 6. Negative savings.
     if (a.netSavings < 0) {
         insights.push({
             id: 'negative-savings',
@@ -290,7 +339,7 @@ export function generateSuggestions(
         });
     }
 
-    // 6. Unmapped categories reduce accuracy.
+    // 7. Unmapped categories reduce accuracy.
     if (a.unmappedCategories.length > 0) {
         insights.push({
             id: 'unmapped-categories',

@@ -1717,7 +1717,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 // Savings → sinking funds (Travel is spent during the August vacation)
                 { categoryId: 'ynab-cat-5', name: 'Emergency Fund', groupId: 'ynab-grp-sav', groupName: 'Savings', budgetedMilliunits: mmu(200), activityMilliunits: 0 },
                 { categoryId: 'ynab-cat-6', name: 'Travel Fund', groupId: 'ynab-grp-sav', groupName: 'Savings', budgetedMilliunits: mmu(150), activityMilliunits: isAugust ? -mmu(1400) : 0 },
-                { categoryId: 'ynab-cat-7', name: 'Home Renovations', groupId: 'ynab-grp-sav', groupName: 'Savings', budgetedMilliunits: mmu(300), activityMilliunits: 0 },
+                // One-off renovation paid mostly from the balance saved in
+                // previous years (7,500 spent vs 3,600 assigned in-window) —
+                // drives the "From past savings" metric in Summary Analysis.
+                { categoryId: 'ynab-cat-7', name: 'Home Renovations', groupId: 'ynab-grp-sav', groupName: 'Savings', budgetedMilliunits: mmu(300), activityMilliunits: i === 5 ? -mmu(7500) : 0 },
             ];
             spendingHistory.push({
                 month,
