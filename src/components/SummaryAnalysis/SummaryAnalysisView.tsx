@@ -167,6 +167,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                             { label: 'Consumption', value: analysis.consumptionOutflow, sub: 'structural + variable + compressible' },
                             { label: 'Investments', value: analysis.macros.investments.totalOutflow, sub: analysis.macros.investments.shareOfIncome != null ? `${Math.round(analysis.macros.investments.shareOfIncome * 100)}% of income` : '' },
                             { label: 'Net savings', value: analysis.netSavings, sub: analysis.savingsRate != null ? `${Math.round(analysis.savingsRate * 100)}% of income` : '' },
+                            { label: 'From past savings', value: analysis.pastSavingsSpent, sub: 'spending drawn from previous years' },
                         ].map(kpi => (
                             <div key={kpi.label} style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', padding: '1rem 1.25rem' }}>
                                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{kpi.label}</div>
@@ -191,7 +192,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         <h3 style={{ marginTop: 0, marginBottom: '0.35rem' }}>Suggestions</h3>
                         <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.9rem' }}>
                             Deterministic rules: protection fund = {PROTECTION_FUND_MONTHS} months of recurring expenses,
-                            security bucket = goals due within {SECURITY_HORIZON_YEARS} years.
+                            security bucket = goals due within {SECURITY_HORIZON_YEARS} years,
+                            past-savings drawdown = spending beyond what was assigned during the period.
                         </div>
                         {suggestions.length === 0 ? (
                             <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Nothing to report.</p>
