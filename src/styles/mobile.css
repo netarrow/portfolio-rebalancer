@@ -259,13 +259,22 @@
 
 /* ===== PORTFOLIO ALLOCATIONS MODAL ===== */
 @media (max-width: 480px) {
+    /* The desktop table header is meaningless once rows become stacked cards;
+       each field is labelled inline instead (see ::before rules below). */
     .alloc-modal-header-row {
         display: none !important;
     }
 
+    /* Both asset rows and group header rows collapse from a 5-column grid to a
+       single stacked column so nothing is squeezed off-screen. */
     .alloc-modal-row {
         grid-template-columns: 1fr !important;
         gap: var(--space-2) !important;
+        align-items: stretch !important;
+    }
+
+    /* Standalone asset entries read as self-contained cards. */
+    .alloc-asset-row {
         padding: var(--space-3) !important;
         background: var(--bg-app) !important;
         border-radius: var(--radius-md) !important;
@@ -273,15 +282,130 @@
         margin-bottom: var(--space-2) !important;
     }
 
-    .alloc-modal-row::before {
-        content: attr(data-ticker);
-        font-weight: 600;
-        font-size: 0.95rem;
-        color: var(--text-primary);
+    /* The group header sits inside its own bordered container already, so it
+       only needs comfortable padding — no extra card chrome. */
+    .alloc-group-row {
+        padding: var(--space-3) !important;
     }
 
+    /* Ticker / group name is the card title. */
+    .alloc-cell-ticker {
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        padding-bottom: var(--space-2) !important;
+        border-bottom: 1px solid var(--border-color) !important;
+    }
+
+    /* The "Group" type tag is redundant on mobile (the primary border already
+       marks it) — hide it to save a line. */
+    .alloc-cell-grouptag {
+        display: none !important;
+    }
+
+    /* Long text fields (asset name, group members) stack label above value. */
+    .alloc-cell-asset {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 2px !important;
+    }
+
+    /* Short value fields put the label on the left, the control on the right. */
+    .alloc-cell-class,
+    .alloc-cell-pac,
+    .alloc-cell-target {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: var(--space-3) !important;
+    }
+
+    .alloc-cell-asset::before,
+    .alloc-cell-class::before,
+    .alloc-cell-pac::before,
+    .alloc-cell-target::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
+        font-size: 0.7rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-muted);
+    }
+
+    /* Keep the target % input compact and right-aligned rather than full width. */
+    .alloc-cell-target input {
+        width: 120px !important;
+        flex: 0 0 auto !important;
+    }
+
+    /* ----- Expanded group: member rows ----- */
+    /* Let the many per-member controls wrap onto multiple lines instead of
+       overflowing horizontally. The name takes a full row, pushing the
+       weight / never-buy / never-sell controls onto the next line. */
+    .alloc-group-member {
+        flex-wrap: wrap !important;
+        gap: var(--space-2) var(--space-3) !important;
+        padding: var(--space-2) 0 !important;
+        border-bottom: 1px solid var(--border-color) !important;
+    }
+
+    .alloc-member-name {
+        flex: 1 1 60% !important;
+        min-width: 0 !important;
+    }
+
+    /* Enlarge the tiny reorder arrows into tappable targets. */
+    .alloc-member-reorder button {
+        font-size: 0.9rem !important;
+        padding: 2px 4px !important;
+    }
+
+    /* ----- Expanded group: add-asset / delete footer ----- */
+    .alloc-group-footer {
+        flex-direction: column !important;
+        align-items: stretch !important;
+    }
+
+    .alloc-group-footer select {
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+
+    .alloc-group-footer button {
+        margin-left: 0 !important;
+        width: 100% !important;
+    }
+
+    /* "Add New Asset" and "New Virtual Bond" define-forms go single-column. */
     .alloc-modal-add-grid {
         grid-template-columns: 1fr !important;
+    }
+
+    /* ----- Collapsible "add" tools -----
+       On phones the asset / group / bond entry points hide behind a single
+       toggle so they don't permanently occupy the bottom of the modal. */
+    .alloc-add-toggle {
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .alloc-add-tools {
+        margin-top: var(--space-3) !important;
+    }
+
+    .alloc-add-tools:not(.open) {
+        display: none !important;
+    }
+
+    /* ----- Single scroll container -----
+       Drop the ticker list's own 50vh scroll so the whole modal scrolls as
+       one region. With two nested scroll areas iOS Safari can trap the touch
+       gesture, leaving the totals and the "Done" button unreachable below the
+       fold. One container keeps everything at the bottom reachable. */
+    .alloc-list-scroll {
+        max-height: none !important;
+        overflow-y: visible !important;
+        padding-right: 0 !important;
     }
 }
 
