@@ -380,6 +380,33 @@
     .alloc-modal-add-grid {
         grid-template-columns: 1fr !important;
     }
+
+    /* ----- Collapsible "add" tools -----
+       On phones the asset / group / bond entry points hide behind a single
+       toggle so they don't permanently occupy the bottom of the modal. */
+    .alloc-add-toggle {
+        display: block !important;
+        width: 100% !important;
+    }
+
+    .alloc-add-tools {
+        margin-top: var(--space-3) !important;
+    }
+
+    .alloc-add-tools:not(.open) {
+        display: none !important;
+    }
+
+    /* ----- Single scroll container -----
+       Drop the ticker list's own 50vh scroll so the whole modal scrolls as
+       one region. With two nested scroll areas iOS Safari can trap the touch
+       gesture, leaving the totals and the "Done" button unreachable below the
+       fold. One container keeps everything at the bottom reachable. */
+    .alloc-list-scroll {
+        max-height: none !important;
+        overflow-y: visible !important;
+        padding-right: 0 !important;
+    }
 }
 
 /* ===== WITHDRAWAL MODAL ===== */
