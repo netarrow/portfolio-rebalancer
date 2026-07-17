@@ -14,6 +14,10 @@ interface PortfolioAllocationsProps {
 const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId, onClose }) => {
     const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updatePortfolioPacConfig, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup, virtualBonds, addVirtualBond, deleteVirtualBond } = usePortfolio();
 
+    // On mobile the three "add" entry points (asset / group / bond) are hidden
+    // behind this toggle so they don't eat vertical space until needed.
+    const [addToolsOpen, setAddToolsOpen] = useState(false);
+
     // UI State for "Add Asset" mode
     const [isAddingAsset, setIsAddingAsset] = useState(false);
     const [newAssetTicker, setNewAssetTicker] = useState('');
@@ -272,7 +276,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                     Set target percentages for this portfolio. Total should be 100%.
                 </p>
 
-                <div style={{ maxHeight: '50vh', overflowY: 'auto', paddingRight: 'var(--space-2)' }}>
+                <div className="alloc-list-scroll" style={{ maxHeight: '50vh', overflowY: 'auto', paddingRight: 'var(--space-2)' }}>
                     {tickers.length === 0 && groups.length === 0 ? (
                         <p style={{ color: 'var(--text-muted)' }}>No assets defined. Add an asset below to start.</p>
                     ) : (
@@ -471,8 +475,22 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                     )}
                 </div>
 
-                {/* Add New Asset Section */}
+                {/* Add tools (asset / group / bond) — collapsed behind a single
+                    toggle on mobile so they don't take space until needed. */}
                 <div style={{ marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-color)' }}>
+                    <button
+                        type="button"
+                        className="btn alloc-add-toggle"
+                        aria-expanded={addToolsOpen}
+                        style={{ width: '100%', border: '1px dashed var(--border-color)', color: 'var(--text-secondary)', backgroundColor: 'transparent' }}
+                        onClick={() => setAddToolsOpen(o => !o)}
+                    >
+                        {addToolsOpen ? '− Hide add options' : '+ Add asset, group or bond…'}
+                    </button>
+
+                    <div className={`alloc-add-tools${addToolsOpen ? ' open' : ''}`}>
+                {/* Add New Asset Section */}
+                <div>
                     {!isAddingAsset ? (
                         <button
                             className="btn"
@@ -555,7 +573,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                 </div>
 
                 {/* Create Market Group Section */}
-                <div style={{ marginTop: 'var(--space-3)' }}>
+                <div>
                     {!isCreatingGroup ? (
                         <button
                             className="btn"
@@ -608,7 +626,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                 </div>
 
                 {/* Add Virtual Bond Section */}
-                <div style={{ marginTop: 'var(--space-3)' }}>
+                <div>
                     {!isAddingVBond ? (
                         <button
                             className="btn"
@@ -668,6 +686,8 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                             </div>
                         </div>
                     )}
+                </div>
+                    </div>
                 </div>
 
                 <div style={{
@@ -740,6 +760,19 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                 .btn:disabled {
                     opacity: 0.5;
                     cursor: not-allowed;
+                }
+
+                /* The three add entry-points stack with even spacing. On wide
+                   screens they're always visible and the mobile toggle is hidden;
+                   mobile.css flips this to a collapsed, on-demand panel. */
+                .alloc-add-tools {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-3);
+                }
+
+                .alloc-add-toggle {
+                    display: none;
                 }
             `}</style>
         </div>
