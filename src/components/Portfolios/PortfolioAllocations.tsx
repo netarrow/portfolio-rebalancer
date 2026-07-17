@@ -14,6 +14,10 @@ interface PortfolioAllocationsProps {
 const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId, onClose }) => {
     const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updatePortfolioPacConfig, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup, virtualBonds, addVirtualBond, deleteVirtualBond } = usePortfolio();
 
+    // On mobile the three "add" entry points (asset / group / bond) are hidden
+    // behind this toggle so they don't eat vertical space until needed.
+    const [addToolsOpen, setAddToolsOpen] = useState(false);
+
     // UI State for "Add Asset" mode
     const [isAddingAsset, setIsAddingAsset] = useState(false);
     const [newAssetTicker, setNewAssetTicker] = useState('');
@@ -272,7 +276,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                     Set target percentages for this portfolio. Total should be 100%.
                 </p>
 
-                <div style={{ maxHeight: '50vh', overflowY: 'auto', paddingRight: 'var(--space-2)' }}>
+                <div className="alloc-list-scroll" style={{ maxHeight: '50vh', overflowY: 'auto', paddingRight: 'var(--space-2)' }}>
                     {tickers.length === 0 && groups.length === 0 ? (
                         <p style={{ color: 'var(--text-muted)' }}>No assets defined. Add an asset below to start.</p>
                     ) : (
@@ -292,8 +296,8 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 const wcfg = groupWeightConfig(group.members, group.memberRules);
                                 return (
                                     <div key={group.id} style={{ border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
-                                        <div className="alloc-modal-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', alignItems: 'center', padding: 'var(--space-2) var(--space-3)', backgroundColor: 'var(--bg-app)' }}>
-                                            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                                        <div className="alloc-modal-row alloc-group-row" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', alignItems: 'center', padding: 'var(--space-2) var(--space-3)', backgroundColor: 'var(--bg-app)' }}>
+                                            <div className="alloc-cell alloc-cell-ticker" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                                                 <button
                                                     onClick={() => setExpandedGroups(prev => ({ ...prev, [group.id]: !expanded }))}
                                                     style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.8rem', width: '16px' }}
@@ -303,14 +307,16 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                 </button>
                                                 <strong>{group.label}</strong>
                                             </div>
-                                            <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                            <div className="alloc-cell alloc-cell-asset" data-label="Assets" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                                 {group.members.map(m => m.toUpperCase()).join(' + ')}
                                             </div>
-                                            <div style={{ fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 600 }}>
+                                            <div className="alloc-cell alloc-cell-grouptag" style={{ fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 600 }}>
                                                 Group
                                             </div>
-                                            {renderPacCell(group.id)}
-                                            <div>
+                                            <div className="alloc-cell alloc-cell-pac" data-label="PAC / Prio">
+                                                {renderPacCell(group.id)}
+                                            </div>
+                                            <div className="alloc-cell alloc-cell-target" data-label="Target %">
                                                 <input
                                                     type="number"
                                                     className="form-input"
@@ -335,17 +341,18 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                     const rule = group.memberRules?.[m] || {};
                                                     const frozen = isFullyFrozen(rule);
                                                     return (
-                                                        <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '0.85rem' }}>
-                                                            <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 0.8 }}>
+                                                        <div key={m} className="alloc-group-member" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', fontSize: '0.85rem' }}>
+                                                            <div className="alloc-member-reorder" style={{ display: 'flex', flexDirection: 'column', lineHeight: 0.8 }}>
                                                                 <button onClick={() => moveMember(group, idx, -1)} disabled={idx === 0} style={{ background: 'none', border: 'none', cursor: idx === 0 ? 'default' : 'pointer', color: idx === 0 ? 'var(--text-muted)' : 'var(--text-secondary)', fontSize: '0.7rem' }} title="Move up">▲</button>
                                                                 <button onClick={() => moveMember(group, idx, 1)} disabled={idx === group.members.length - 1} style={{ background: 'none', border: 'none', cursor: idx === group.members.length - 1 ? 'default' : 'pointer', color: idx === group.members.length - 1 ? 'var(--text-muted)' : 'var(--text-secondary)', fontSize: '0.7rem' }} title="Move down">▼</button>
                                                             </div>
-                                                            <span style={{ width: '20px', color: 'var(--text-muted)' }}>#{idx + 1}</span>
-                                                            <div style={{ flex: 1 }}>
+                                                            <span className="alloc-member-index" style={{ width: '20px', color: 'var(--text-muted)' }}>#{idx + 1}</span>
+                                                            <div className="alloc-member-name" style={{ flex: 1 }}>
                                                                 <strong>{m.toUpperCase()}</strong>
                                                                 <span style={{ color: 'var(--text-secondary)', marginLeft: 'var(--space-2)' }}>{labelFor(m)}</span>
                                                             </div>
                                                             <label
+                                                                className="alloc-member-weight"
                                                                 style={{ display: 'flex', alignItems: 'center', gap: '4px', color: frozen ? 'var(--text-muted)' : 'var(--text-secondary)' }}
                                                                 title={frozen ? 'Weight ignored: this member has both "Never buy" and "Never sell" (its value stays put)' : 'Intra-group weight %: active members must sum to 100'}
                                                             >
@@ -363,15 +370,15 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                                 />
                                                                 %
                                                             </label>
-                                                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: rule.noBuy ? 'var(--color-danger)' : 'var(--text-secondary)' }}>
+                                                            <label className="alloc-member-rule" style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: rule.noBuy ? 'var(--color-danger)' : 'var(--text-secondary)' }}>
                                                                 <input type="checkbox" checked={!!rule.noBuy} onChange={() => toggleMemberRule(group, m, 'noBuy')} />
                                                                 Never buy
                                                             </label>
-                                                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: rule.noSell ? 'var(--color-danger)' : 'var(--text-secondary)' }}>
+                                                            <label className="alloc-member-rule" style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', color: rule.noSell ? 'var(--color-danger)' : 'var(--text-secondary)' }}>
                                                                 <input type="checkbox" checked={!!rule.noSell} onChange={() => toggleMemberRule(group, m, 'noSell')} />
                                                                 Never sell
                                                             </label>
-                                                            <button onClick={() => removeMember(group, m)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }} title="Remove from group">&times;</button>
+                                                            <button className="alloc-member-remove" onClick={() => removeMember(group, m)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1rem' }} title="Remove from group">&times;</button>
                                                         </div>
                                                     );
                                                 })}
@@ -386,7 +393,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                         )}
                                                     </div>
                                                 )}
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-1)' }}>
+                                                <div className="alloc-group-footer" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-1)' }}>
                                                     {availableForGroup.length > 0 && (
                                                         <select
                                                             className="form-input"
@@ -422,8 +429,8 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 const currentPerc = allocations[ticker] || 0;
 
                                 return (
-                                    <div key={ticker} className="alloc-modal-row" data-ticker={isCash ? 'CASH' : isVBond ? 'VBOND' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
-                                        <div style={{ fontWeight: 500, color: isCash ? 'var(--text-secondary)' : isVBond ? '#8B5CF6' : undefined }}>
+                                    <div key={ticker} className="alloc-modal-row alloc-asset-row" data-ticker={isCash ? 'CASH' : isVBond ? 'VBOND' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 90px 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
+                                        <div className="alloc-cell alloc-cell-ticker" style={{ fontWeight: 500, color: isCash ? 'var(--text-secondary)' : isVBond ? '#8B5CF6' : undefined }}>
                                             {isCash ? 'CASH' : isVBond ? (
                                                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                     <span style={{ fontSize: '0.7rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px' }}>VBOND</span>
@@ -431,12 +438,12 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                 </span>
                                             ) : ticker}
                                         </div>
-                                        <div>
+                                        <div className="alloc-cell alloc-cell-asset" data-label="Asset">
                                             {isCash ? cashInfo?.label : isVBond ? (
                                                 <span>{vb?.label || ticker} <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>mat. {vb?.targetMaturityDate}</span></span>
                                             ) : (setting?.label || '-')}
                                         </div>
-                                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                        <div className="alloc-cell alloc-cell-class" data-label="Class" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
                                             {isCash ? 'Cash' : isVBond ? (
                                                 <span style={{ color: '#8B5CF6' }}>Bond <span style={{ opacity: 0.7 }}>• {vb?.universe}</span></span>
                                             ) : (
@@ -446,8 +453,10 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                 </>
                                             )}
                                         </div>
-                                        {isCash ? <div style={{ color: 'var(--text-muted)' }}>-</div> : renderPacCell(ticker)}
-                                        <div>
+                                        <div className="alloc-cell alloc-cell-pac" data-label="PAC / Prio">
+                                            {isCash ? <span style={{ color: 'var(--text-muted)' }}>-</span> : renderPacCell(ticker)}
+                                        </div>
+                                        <div className="alloc-cell alloc-cell-target" data-label="Target %">
                                             <input
                                                 type="number"
                                                 className="form-input"
@@ -466,8 +475,22 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                     )}
                 </div>
 
-                {/* Add New Asset Section */}
+                {/* Add tools (asset / group / bond) — collapsed behind a single
+                    toggle on mobile so they don't take space until needed. */}
                 <div style={{ marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border-color)' }}>
+                    <button
+                        type="button"
+                        className="btn alloc-add-toggle"
+                        aria-expanded={addToolsOpen}
+                        style={{ width: '100%', border: '1px dashed var(--border-color)', color: 'var(--text-secondary)', backgroundColor: 'transparent' }}
+                        onClick={() => setAddToolsOpen(o => !o)}
+                    >
+                        {addToolsOpen ? '− Hide add options' : '+ Add asset, group or bond…'}
+                    </button>
+
+                    <div className={`alloc-add-tools${addToolsOpen ? ' open' : ''}`}>
+                {/* Add New Asset Section */}
+                <div>
                     {!isAddingAsset ? (
                         <button
                             className="btn"
@@ -550,7 +573,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                 </div>
 
                 {/* Create Market Group Section */}
-                <div style={{ marginTop: 'var(--space-3)' }}>
+                <div>
                     {!isCreatingGroup ? (
                         <button
                             className="btn"
@@ -603,7 +626,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                 </div>
 
                 {/* Add Virtual Bond Section */}
-                <div style={{ marginTop: 'var(--space-3)' }}>
+                <div>
                     {!isAddingVBond ? (
                         <button
                             className="btn"
@@ -663,6 +686,8 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                             </div>
                         </div>
                     )}
+                </div>
+                    </div>
                 </div>
 
                 <div style={{
@@ -735,6 +760,19 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                 .btn:disabled {
                     opacity: 0.5;
                     cursor: not-allowed;
+                }
+
+                /* The three add entry-points stack with even spacing. On wide
+                   screens they're always visible and the mobile toggle is hidden;
+                   mobile.css flips this to a collapsed, on-demand panel. */
+                .alloc-add-tools {
+                    display: flex;
+                    flex-direction: column;
+                    gap: var(--space-3);
+                }
+
+                .alloc-add-toggle {
+                    display: none;
                 }
             `}</style>
         </div>
