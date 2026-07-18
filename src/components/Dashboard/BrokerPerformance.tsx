@@ -1,10 +1,19 @@
 import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets } from '../../utils/portfolioCalculations';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
 import './Dashboard.css';
 
 const BrokerPerformance: React.FC = () => {
     const { transactions, assetSettings, marketData, brokers: brokerList, portfolios } = usePortfolio();
+
+    // When ON, cash already allocated to portfolios (Broker.liquidityAllocations)
+    // is treated as reserved: the "You can invest €X" figure keeps the broker's
+    // minimum liquidity AND the allocated cash aside. When OFF, only the broker's
+    // configured minimum liquidity is reserved (legacy behaviour).
+    const [reserveAllocatedCash, setReserveAllocatedCash] = useLocalStorage<boolean>(
+        'portfolio_broker_reserve_allocated_cash', true
+    );
 
     const brokerStats = useMemo(() => {
         // 1. Identify all unique brokers keys (ID) from transactions AND broker list
@@ -57,7 +66,15 @@ const BrokerPerformance: React.FC = () => {
                 targetLabel = `${targetPercent}%`;
             }
 
-            const deviation = liquidity - targetValue;
+            // Cash already earmarked for the portfolios below this broker. This is
+            // not free to invest, so it must be reserved on top of the broker's
+            // configured minimum liquidity when the dashboard flag is on.
+            const allocatedReserve = Object.values(brokerEntity?.liquidityAllocations || {})
+                .reduce((sum, v) => sum + (v || 0), 0);
+
+            // Effective cash to keep aside: broker minimum + (optionally) allocated cash.
+            const reserve = targetValue + (reserveAllocatedCash ? allocatedReserve : 0);
+            const deviation = liquidity - reserve;
 
             return {
                 broker: displayName,
@@ -66,22 +83,39 @@ const BrokerPerformance: React.FC = () => {
                 liquidity,
                 targetValue,
                 targetLabel,
+                allocatedReserve,
+                reserve,
                 liquidityPercentOnValue,
                 deviation,
-                hasTarget: targetValue > 0
+                hasTarget: targetValue > 0,
+                hasReserve: reserve > 0
             };
         }).filter(s => s !== null && (s.totalValue > 0 || s.liquidity > 0));
 
         // Sort by Total Value desc
         return stats.sort((a, b) => (b.totalValue + b.liquidity) - (a.totalValue + a.liquidity));
 
-    }, [transactions, assetSettings, marketData, brokerList]);
+    }, [transactions, assetSettings, marketData, brokerList, reserveAllocatedCash]);
 
     if (brokerStats.length === 0) return null;
 
     return (
         <div className="broker-performance-section" style={{ marginTop: '3rem' }}>
-            <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>Broker Performance & Liquidity</h2>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                <h2 className="section-title" style={{ fontSize: '1.5rem', margin: 0 }}>Broker Performance & Liquidity</h2>
+                <label
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)', cursor: 'pointer', userSelect: 'none' }}
+                    title="When on, cash allocated to portfolios is kept aside on top of the broker's minimum liquidity, so it is not counted in the 'You can invest' amount."
+                >
+                    <input
+                        type="checkbox"
+                        checked={reserveAllocatedCash}
+                        onChange={e => setReserveAllocatedCash(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                    />
+                    Reserve cash allocated to portfolios
+                </label>
+            </div>
 
             <div className="summary-grid">
                 {brokerStats.map(stat => {
@@ -92,7 +126,7 @@ const BrokerPerformance: React.FC = () => {
                     let liqStatusColor = 'var(--text-secondary)';
                     let liqStatusBg = 'transparent';
 
-                    if (stat.hasTarget) {
+                    if (stat.hasReserve) {
                         if (stat.deviation > 0) {
                             liqStatusText = 'High';
                             liqStatusColor = '#D97706'; // amber
@@ -162,7 +196,14 @@ const BrokerPerformance: React.FC = () => {
                                     <span>€{stat.targetValue.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
                                 </div>
 
-                                {stat.hasTarget && (
+                                {reserveAllocatedCash && stat.allocatedReserve > 0 && (
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                                        <span style={{ color: 'var(--text-secondary)' }}>+ Allocated reserved</span>
+                                        <span>€{stat.allocatedReserve.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                                    </div>
+                                )}
+
+                                {stat.hasReserve && (
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.2rem', alignItems: 'center' }}>
                                         <span style={{ color: 'var(--text-secondary)' }}>Status</span>
                                         <span style={{
@@ -212,7 +253,7 @@ const BrokerPerformance: React.FC = () => {
                                     );
                                 })()}
 
-                                {stat.hasTarget && Math.abs(stat.deviation) >= 100 && (
+                                {stat.hasReserve && Math.abs(stat.deviation) >= 100 && (
                                     <div style={{
                                         marginTop: '0.5rem',
                                         padding: '0.5rem',
