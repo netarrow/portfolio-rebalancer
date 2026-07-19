@@ -348,6 +348,31 @@ export interface MonteCarloSummary {
     finalP90: number;
     startValue: number;
     simulations: number;
+    /** Per-run max drawdown (≤ 0, %) of the net-worth path: median / worst decile */
+    maxDrawdownP50: number;
+    maxDrawdownP90: number;
+    /** Share of runs whose max drawdown is deeper than the historical reference (null when no reference) */
+    probExceedHistoricalMaxDD: number | null;
+    /** The historical reference drawdown (≤ 0, %) the probability is measured against */
+    historicalMaxDrawdownPct: number | null;
+    /** Sampling model actually used per portfolio (for UI display) */
+    modelByPortfolio: Record<string, 'bootstrap' | 'lognormal'>;
+}
+
+// Calibration from real history (Performance data). Portfolios with at least
+// `minBootstrapMonths` monthly flow-adjusted log-returns are simulated by
+// block-bootstrapping those returns (blocks of consecutive months preserve
+// volatility clustering, so realistic drawdown streaks survive resampling);
+// the others fall back to the lognormal model.
+export interface MonteCarloCalibration {
+    /** Historical monthly log-returns per portfolio id (flow-adjusted) */
+    monthlyLogReturnsByPortfolio?: Record<string, number[]>;
+    /** Portfolio ids that must use lognormal even with enough history (e.g. manual vol override) */
+    forceLognormal?: string[];
+    minBootstrapMonths?: number; // default 10
+    blockMonths?: number;        // default 3
+    /** Historical net-worth max drawdown (≤ 0, %) used as stress reference */
+    historicalMaxDrawdownPct?: number | null;
 }
 
 // Deterministic PRNG so the same inputs render the same chart (re-roll via seed).
@@ -381,10 +406,14 @@ export const runMonteCarloForecast = (
     yearlyExpenses: ForecastExpense[] = [],
     simulations: number = 500,
     seed: number = 12345,
-    options: ForecastOptions = {}
+    options: ForecastOptions = {},
+    calibration: MonteCarloCalibration = {}
 ): MonteCarloSummary => {
     const months = timeHorizonYears * 12;
     const rng = mulberry32(seed);
+    const minBootstrapMonths = calibration.minBootstrapMonths ?? 10;
+    const blockMonths = Math.max(1, calibration.blockMonths ?? 3);
+    const forceLognormal = new Set(calibration.forceLognormal ?? []);
 
     // Box-Muller transform, caching the spare deviate
     let spare: number | null = null;
@@ -413,6 +442,18 @@ export const runMonteCarloForecast = (
         params[p.id] = { m, s };
     });
 
+    // Pick the sampling model per portfolio: historical bootstrap when enough
+    // monthly returns exist (and not overridden), lognormal otherwise.
+    const historyByPortfolio = calibration.monthlyLogReturnsByPortfolio ?? {};
+    const modelByPortfolio: Record<string, 'bootstrap' | 'lognormal'> = {};
+    portfolios.forEach(p => {
+        const hist = historyByPortfolio[p.id];
+        modelByPortfolio[p.id] =
+            !forceLognormal.has(p.id) && hist && hist.length >= minBootstrapMonths
+                ? 'bootstrap'
+                : 'lognormal';
+    });
+
     const startValue =
         portfolios.reduce((sum, p) => sum + p.currentValue, 0) +
         brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
@@ -421,9 +462,28 @@ export const runMonteCarloForecast = (
     const totalsByMonth: number[][] = Array.from({ length: months }, () => new Array<number>(simulations));
     let successes = 0;
     let insolvencies = 0;
+    const runMaxDrawdowns: number[] = []; // ≤ 0, fraction
 
     for (let sim = 0; sim < simulations; sim++) {
-        const sampler: MonthlyReturnSampler = (pid) => {
+        // Bootstrap portfolios: pre-draw the whole path as wraparound blocks of
+        // consecutive historical months, so bad streaks stay together.
+        const bootstrapSeq: Record<string, number[]> = {};
+        portfolios.forEach(p => {
+            if (modelByPortfolio[p.id] !== 'bootstrap') return;
+            const src = historyByPortfolio[p.id]!;
+            const seq: number[] = [];
+            while (seq.length < months) {
+                const start = Math.floor(rng() * src.length);
+                for (let k = 0; k < blockMonths && seq.length < months; k++) {
+                    seq.push(src[(start + k) % src.length]);
+                }
+            }
+            bootstrapSeq[p.id] = seq;
+        });
+
+        const sampler: MonthlyReturnSampler = (pid, month) => {
+            const seq = bootstrapSeq[pid];
+            if (seq) return Math.exp(seq[month - 1]) - 1;
             const { m, s } = params[pid] || { m: 0, s: 0 };
             if (s === 0) return Math.exp(m) - 1;
             return Math.exp(m + s * gaussian()) - 1;
@@ -434,9 +494,20 @@ export const runMonteCarloForecast = (
             timeHorizonYears, portfolioReturns, yearlyExpenses, sampler, options
         );
 
+        // Max drawdown of this run's net-worth path (cashflows included: it
+        // answers "how deep could my wealth dip", not pure return drawdown).
+        let peak = startValue > 0 ? startValue : (run[0]?.totalValue ?? 0);
+        let maxDD = 0;
         for (let i = 0; i < months; i++) {
-            totalsByMonth[i][sim] = run[i]?.totalValue ?? 0;
+            const v = run[i]?.totalValue ?? 0;
+            totalsByMonth[i][sim] = v;
+            if (v > peak) peak = v;
+            else if (peak > 0) {
+                const dd = v / peak - 1;
+                if (dd < maxDD) maxDD = dd;
+            }
         }
+        runMaxDrawdowns.push(maxDD);
 
         const last = run[run.length - 1];
         if (last?.insolvent) insolvencies++;
@@ -456,6 +527,18 @@ export const runMonteCarloForecast = (
         p90.push(percentile(sorted, 0.90));
     }
 
+    // Drawdown distribution: P50 = typical run, P90 = worst decile boundary
+    // (both reported as negative %). Magnitudes are sorted ascending so the
+    // 90th percentile of magnitude is the deep tail.
+    const ddMagnitudes = runMaxDrawdowns.map(d => -d).sort((a, b) => a - b);
+    const maxDrawdownP50 = -percentile(ddMagnitudes, 0.50) * 100;
+    const maxDrawdownP90 = -percentile(ddMagnitudes, 0.90) * 100;
+
+    const histDD = calibration.historicalMaxDrawdownPct ?? null;
+    const probExceedHistoricalMaxDD = histDD !== null && histDD < 0 && simulations > 0
+        ? runMaxDrawdowns.filter(d => d * 100 < histDD).length / simulations
+        : null;
+
     return {
         months: monthIdx,
         p10, p25, p50, p75, p90,
@@ -465,6 +548,11 @@ export const runMonteCarloForecast = (
         finalP50: p50[p50.length - 1] ?? 0,
         finalP90: p90[p90.length - 1] ?? 0,
         startValue,
-        simulations
+        simulations,
+        maxDrawdownP50,
+        maxDrawdownP90,
+        probExceedHistoricalMaxDD,
+        historicalMaxDrawdownPct: histDD,
+        modelByPortfolio
     };
 };
