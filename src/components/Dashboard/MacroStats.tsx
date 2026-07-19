@@ -11,7 +11,8 @@ const CLASS_ORDER = ['Stock', 'Bond', 'Commodity', 'Crypto', 'PensionFund'];
 const fmt = (v: number) => `€${Math.round(v).toLocaleString('it-IT')}`;
 
 const MacroStats: React.FC = () => {
-    const { assets, brokers, macroAllocations, goalAllocations, assetSettings } = usePortfolio();
+    // Scoped: respects the family/illiquid asset-scope toggles
+    const { scopedAssets: assets, scopedBrokers: brokers, macroAllocations, goalAllocations, assetSettings } = usePortfolio();
 
     const [simulatedValues, setSimulatedValues] = useState<Record<string, number> | null>(null);
     const [includeCash, setIncludeCash] = useState(true);

@@ -6,7 +6,8 @@ import { CashFlowModal } from './CashFlowModal';
 import './Dashboard.css';
 
 const SummaryCards: React.FC = () => {
-    const { summary, brokers, transactions, assetSettings } = usePortfolio();
+    // Scoped: respects the family/illiquid asset-scope toggles
+    const { scopedSummary: summary, scopedBrokers: brokers, scopedTransactions: transactions, assetSettings } = usePortfolio();
     const [showRealizedModal, setShowRealizedModal] = React.useState(false);
     const [showCashFlowModal, setShowCashFlowModal] = React.useState(false);
 

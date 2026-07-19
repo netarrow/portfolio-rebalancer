@@ -5,7 +5,8 @@ import { useLocalStorage } from '../../hooks/useLocalStorage';
 import './Dashboard.css';
 
 const BrokerPerformance: React.FC = () => {
-    const { transactions, assetSettings, marketData, brokers: brokerList, portfolios } = usePortfolio();
+    // Scoped: respects the family/illiquid asset-scope toggles
+    const { scopedTransactions: transactions, assetSettings, marketData, scopedBrokers: brokerList, portfolios } = usePortfolio();
 
     // When ON, cash already allocated to portfolios (Broker.liquidityAllocations)
     // is treated as reserved: the "You can invest €X" figure keeps the broker's

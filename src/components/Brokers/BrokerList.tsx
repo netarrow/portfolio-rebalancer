@@ -106,6 +106,20 @@ const BrokerList: React.FC = () => {
                                 {broker.description && (
                                     <p className="description">{broker.description}</p>
                                 )}
+                                {(broker.familyAsset || broker.illiquid) && (
+                                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                                        {broker.familyAsset && (
+                                            <span title="Family asset — views can include/exclude it from totals" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#8B5CF620', color: '#8B5CF6', border: '1px solid #8B5CF650' }}>
+                                                👪 Family
+                                            </span>
+                                        )}
+                                        {broker.illiquid && (
+                                            <span title="Illiquid — views can include/exclude it from totals" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#F59E0B20', color: '#F59E0B', border: '1px solid #F59E0B50' }}>
+                                                🔒 Illiquid
+                                            </span>
+                                        )}
+                                    </div>
+                                )}
                                 <div className="stats-grid">
                                     <div className="stat">
                                         <span className="stat-label">Liquidity</span>

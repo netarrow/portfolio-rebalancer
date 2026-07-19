@@ -12,6 +12,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [currentLiquidity, setCurrentLiquidity] = useState<number | ''>('');
+    const [familyAsset, setFamilyAsset] = useState(false);
+    const [illiquid, setIlliquid] = useState(false);
 
     // Liquidity Target
     const [liquidityType, setLiquidityType] = useState<'percent' | 'fixed'>('percent');
@@ -33,6 +35,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
             setName(initialData.name);
             setDescription(initialData.description || '');
             setCurrentLiquidity(initialData.currentLiquidity !== undefined ? initialData.currentLiquidity : '');
+            setFamilyAsset(!!initialData.familyAsset);
+            setIlliquid(!!initialData.illiquid);
 
             const type = initialData.minLiquidityType || 'percent';
             setLiquidityType(type);
@@ -57,6 +61,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
             setName('');
             setDescription('');
             setCurrentLiquidity('');
+            setFamilyAsset(false);
+            setIlliquid(false);
             setLiquidityType('percent');
             setMinLiquidityPercentage('');
             setMinLiquidityAmount('');
@@ -109,6 +115,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
         onSubmit({
             name,
             description,
+            familyAsset: familyAsset || undefined,
+            illiquid: illiquid || undefined,
             currentLiquidity: currentLiquidity === '' ? undefined : Number(currentLiquidity),
             minLiquidityType: liquidityType,
             minLiquidityPercentage: minLiquidityPercentage === '' ? undefined : Number(minLiquidityPercentage),
@@ -151,6 +159,26 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
                             className="form-input"
                             rows={3}
                         />
+                    </div>
+
+                    <div className="form-group">
+                        <label style={{ display: 'block', marginBottom: '0.25rem' }}>Asset Scope</label>
+                        <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                            <input
+                                type="checkbox"
+                                checked={familyAsset}
+                                onChange={e => setFamilyAsset(e.target.checked)}
+                            />
+                            <span>👪 Family asset — belongs to the household; views can include or exclude it from totals</span>
+                        </label>
+                        <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                            <input
+                                type="checkbox"
+                                checked={illiquid}
+                                onChange={e => setIlliquid(e.target.checked)}
+                            />
+                            <span>🔒 Illiquid — not readily spendable (e.g. pension fund); views can include or exclude it</span>
+                        </label>
                     </div>
 
                     <div className="form-group">

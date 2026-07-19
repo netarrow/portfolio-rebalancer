@@ -376,7 +376,7 @@ const REBAL_MODE_KEY = 'dashboard_rebalance_mode_v1';
 type RebalanceMode = 'portfolio' | 'broker';
 
 const AllocationOverview: React.FC = () => {
-    const { portfolios, brokers, transactions, assetSettings, effectiveAssetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals, goalModeTargets: storedGoalModeTargets, setGoalModeTargets } = usePortfolio();
+    const { portfolios, scopedBrokers: brokers, scopedTransactions: transactions, assetSettings, effectiveAssetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals, goalModeTargets: storedGoalModeTargets, setGoalModeTargets } = usePortfolio();
 
     const [rebalanceMode, setRebalanceMode] = useState<RebalanceMode>(
         () => localStorage.getItem(REBAL_MODE_KEY) === 'broker' ? 'broker' : 'portfolio'
@@ -554,7 +554,7 @@ interface AggregateAllocationSectionProps {
 }
 
 const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({ goalModeTargets }) => {
-    const { portfolios, brokers, transactions, assetSettings, effectiveAssetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers, virtualBonds, concretizeVirtualBond, parkVirtualBond } = usePortfolio();
+    const { portfolios, scopedBrokers: brokers, scopedTransactions: transactions, assetSettings, effectiveAssetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers, virtualBonds, concretizeVirtualBond, parkVirtualBond } = usePortfolio();
     const [concretizingVBond, setConcretizingVBond] = useState<VirtualBond | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [additionalLiquidity, setAdditionalLiquidity] = useState<number | undefined>(undefined);

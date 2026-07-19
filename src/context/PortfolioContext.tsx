@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
@@ -122,6 +122,16 @@ interface PortfolioContextType {
     // Free-buy promo lists (ISINs commission-free to buy in a given month)
     freeCommissionPeriods: FreeCommissionPeriod[];
     setFreeCommissionPeriods: (periods: FreeCommissionPeriod[] | ((prev: FreeCommissionPeriod[]) => FreeCommissionPeriod[])) => void;
+    // Asset scope: app-wide include/exclude of family and illiquid brokers in
+    // the counting views. Scoped* mirrors transactions/brokers/assets/summary
+    // with excluded brokers' transactions and liquidity removed.
+    assetScope: AssetScope;
+    setAssetScope: (scope: AssetScope | ((prev: AssetScope) => AssetScope)) => void;
+    hasScopeFlaggedBrokers: boolean;
+    scopedTransactions: Transaction[];
+    scopedBrokers: Broker[];
+    scopedAssets: Asset[];
+    scopedSummary: PortfolioSummary;
     // Virtual bonds
     virtualBonds: VirtualBond[];
     addVirtualBond: (bond: VirtualBond) => void;
@@ -201,6 +211,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabSpendingSyncing, setYnabSpendingSyncing] = useState(false);
     const [virtualBonds, setVirtualBonds] = useLocalStorage<VirtualBond[]>('portfolio_virtual_bonds', []);
     const [freeCommissionPeriods, setFreeCommissionPeriods] = useLocalStorage<FreeCommissionPeriod[]>('portfolio_free_commissions', []);
+    // Include everything by default — the toggles narrow the scope.
+    const [assetScope, setAssetScope] = useLocalStorage<AssetScope>('portfolio_asset_scope', { includeFamily: true, includeIlliquid: true });
 
     // Auto-seed the forecast planned expenses the first time forecastable YNAB
     // goals exist. Runs only while the stored value is null: once the user has
@@ -676,6 +688,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 virtualBonds,
                 freeCommissionPeriods,
                 plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
+                assetScope,
             };
             try {
                 setAzureSyncing(true);
@@ -697,7 +710,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -725,6 +738,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         virtualBonds,
                         freeCommissionPeriods,
                         plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
+                assetScope,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -1267,6 +1281,42 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return calculateAssets(transactions, effectiveAssetSettings, effectiveMarketData);
     }, [transactions, effectiveAssetSettings, effectiveMarketData]);
 
+    // ── Asset scope: filter out family/illiquid brokers when toggled off ──
+    const excludedBrokerIds = useMemo(() => {
+        const ids = new Set<string>();
+        brokers.forEach(b => {
+            if ((b.familyAsset && !assetScope.includeFamily) || (b.illiquid && !assetScope.includeIlliquid)) {
+                ids.add(b.id);
+            }
+        });
+        return ids;
+    }, [brokers, assetScope]);
+
+    const hasScopeFlaggedBrokers = useMemo(
+        () => brokers.some(b => b.familyAsset || b.illiquid),
+        [brokers]
+    );
+
+    // Transactions without a brokerId can't be attributed → always included.
+    const scopedTransactions = useMemo(
+        () => excludedBrokerIds.size === 0
+            ? transactions
+            : transactions.filter(t => !t.brokerId || !excludedBrokerIds.has(t.brokerId)),
+        [transactions, excludedBrokerIds]
+    );
+
+    const scopedBrokers = useMemo(
+        () => excludedBrokerIds.size === 0
+            ? brokers
+            : brokers.filter(b => !excludedBrokerIds.has(b.id)),
+        [brokers, excludedBrokerIds]
+    );
+
+    const { assets: scopedAssets, summary: scopedSummary } = useMemo(() => {
+        if (excludedBrokerIds.size === 0) return { assets, summary };
+        return calculateAssets(scopedTransactions, effectiveAssetSettings, effectiveMarketData);
+    }, [excludedBrokerIds, scopedTransactions, effectiveAssetSettings, effectiveMarketData, assets, summary]);
+
     const updateTransaction = (updatedTransaction: Transaction) => {
         setTransactions((prev) => prev.map((t) => (t.id === updatedTransaction.id ? updatedTransaction : t)));
     };
@@ -1300,6 +1350,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             // Protection (Long-duration govt bonds + short-term EUR overnight)
             { ticker: 'IE00B1FZS798', name: 'iShares Euro Govt Bond 15-30yr', class: 'Bond', subClass: 'Long', source: 'ETF', goal: 'Protection' }, // IGLT (Proxy)
             { ticker: 'LU0290358497', name: 'Xtrackers II EUR Overnight Rate', class: 'Bond', subClass: 'Short', source: 'ETF', goal: 'Protection' }, // XEON
+
+            // Pension fund held at the illiquid mock broker (scope-flag coverage)
+            { ticker: 'COMETA-CRESCITA', name: 'Cometa Crescita (TFR)', class: 'PensionFund', subClass: 'Balanced', source: 'COMETA', goal: 'Security' },
         ];
 
         // 2. Generate Transactions (History)
@@ -1344,6 +1397,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // --- SCENARIO 4: Safety Net (Protection — long-duration & overnight) ---
         addTx(pIdSafe, 'LU0290358497', 60, 450, 139.50, 'Buy', 'Directa');
         addTx(pIdSafe, 'IE00B1FZS798', 120, 50, 180.00, 'Buy', 'Directa');
+
+        // --- SCENARIO 4b: Scope flags coverage ---
+        // Family joint-account holding (broker b4, familyAsset) and an illiquid
+        // pension fund position (broker b5, illiquid) — both togglable in the
+        // counting views via the asset-scope chips.
+        addTx(pIdMain, 'IE00B3RBWM25', 150, 30, 108.00, 'Buy', 'Conto Cointestato');
+        addTx(pIdSafe, 'COMETA-CRESCITA', 180, 500, 26.00, 'Buy', 'Fondo Pensione');
 
         // --- SCENARIO 5: Feature coverage transactions ---
         // Free-commission Buy (Trade Republic style)
@@ -1519,7 +1579,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             'IE00B3RBWM25': { price: 115.00, lastUpdated: timestamp, spreadPercent: 0.05, volatility: 13.5 }, // Profit
             'IE00BDBRDM35': { price: 5.10, lastUpdated: timestamp, spreadPercent: 0.06, volatility: 5.1 },  // Profit
             'IE00B1FZS798': { price: 175.50, lastUpdated: timestamp, spreadPercent: null, volatility: 11.0 }, // Loss
-            'LU0290358497': { price: 142.10, lastUpdated: timestamp, spreadPercent: 0.02, volatility: 0.4 }  // Profit
+            'LU0290358497': { price: 142.10, lastUpdated: timestamp, spreadPercent: 0.02, volatility: 0.4 },  // Profit
+            'COMETA-CRESCITA': { price: 28.40, lastUpdated: timestamp, spreadPercent: null, volatility: null } // Pension fund (illiquid broker)
         };
 
         // 5b. Price History — daily close series from each asset's first purchase
@@ -1534,6 +1595,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             'IE00BDBRDM35': { days: 90, start: 4.80, end: 5.10, vol: 0.004 },
             'IE00B1FZS798': { days: 120, start: 180.00, end: 175.50, vol: 0.007, basis: 'clean' },
             'LU0290358497': { days: 60, start: 139.50, end: 142.10, vol: 0.001 },
+            'COMETA-CRESCITA': { days: 180, start: 26.00, end: 28.40, vol: 0.003 },
         };
         const priceHistoryMap: PriceHistoryMap = {};
         for (const [ticker, cfg] of Object.entries(histConfig)) {
@@ -1624,6 +1686,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 commissionType: 'fixed',
                 commissionFixed: 1,
                 currentLiquidity: 500
+            },
+            {
+                id: 'b4',
+                name: 'Conto Cointestato',
+                description: 'Family investments (spouse joint account)',
+                familyAsset: true,
+                currentLiquidity: 6000
+            },
+            {
+                id: 'b5',
+                name: 'Fondo Pensione',
+                description: 'COMETA — TFR + employer contributions',
+                illiquid: true
             }
         ]);
 
@@ -1807,6 +1882,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const importedFreeCommissionPeriods: FreeCommissionPeriod[] = Array.isArray(data.freeCommissionPeriods) ? data.freeCommissionPeriods : [];
             // null (not []) when absent from the backup so the auto-seed re-runs
             const importedPlannedForecastExpenses: PlannedForecastExpense[] | null = Array.isArray(data.plannedForecastExpenses) ? data.plannedForecastExpenses : null;
+            const importedAssetScope: AssetScope = (data.assetScope && typeof data.assetScope === 'object')
+                ? { includeFamily: data.assetScope.includeFamily !== false, includeIlliquid: data.assetScope.includeIlliquid !== false }
+                : { includeFamily: true, includeIlliquid: true };
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
             const importedYnabGoalsGroupName: string | undefined = typeof data.ynabGoalsGroupName === 'string' ? data.ynabGoalsGroupName : undefined;
             const importedYnabLastGoalsSyncAt: string | undefined = typeof data.ynabLastGoalsSyncAt === 'string' ? data.ynabLastGoalsSyncAt : undefined;
@@ -1833,6 +1911,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_virtual_bonds', JSON.stringify(importedVirtualBonds));
             localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
             localStorage.setItem('portfolio_forecast_planned_expenses', JSON.stringify(importedPlannedForecastExpenses));
+            localStorage.setItem('portfolio_asset_scope', JSON.stringify(importedAssetScope));
 
             // Then update React state
             setTransactions(transactions);
@@ -1854,6 +1933,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setVirtualBonds(importedVirtualBonds);
             setFreeCommissionPeriods(importedFreeCommissionPeriods);
             setStoredPlannedForecastExpenses(importedPlannedForecastExpenses);
+            setAssetScope(importedAssetScope);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
                 setYnabConfigState(prev => prev ? {
                     ...prev,
@@ -1895,6 +1975,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 virtualBonds,
                 freeCommissionPeriods,
                 plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
+                assetScope,
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -2486,6 +2567,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         plannedForecastExpenses: storedPlannedForecastExpenses,
         setPlannedForecastExpenses: setStoredPlannedForecastExpenses,
         restorePlannedForecastExpenses,
+        assetScope,
+        setAssetScope,
+        hasScopeFlaggedBrokers,
+        scopedTransactions,
+        scopedBrokers,
+        scopedAssets,
+        scopedSummary,
         ynabSpendingHistory,
         ynabMacroMappings,
         syncYnabSpending,

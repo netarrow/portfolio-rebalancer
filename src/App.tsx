@@ -26,6 +26,7 @@ import YnabImportView from './components/YnabImport/YnabImportView';
 import YnabGoalsView from './components/YnabGoals/YnabGoalsView';
 import SummaryAnalysisView from './components/SummaryAnalysis/SummaryAnalysisView';
 import PerformanceView from './components/Performance/PerformanceView';
+import AssetScopeToggles from './components/Layout/AssetScopeToggles';
 
 // Placeholders for views
 const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
@@ -37,6 +38,7 @@ const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () 
 
   return (
     <div className="dashboard-container">
+      <AssetScopeToggles style={{ marginBottom: '0.75rem' }} />
       <SummaryCards />
       <BrokerPerformance />
       <AllocationOverview />
@@ -46,6 +48,7 @@ const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () 
 
 const StatsView = () => (
   <div className="dashboard-container">
+    <AssetScopeToggles style={{ marginBottom: '0.75rem' }} />
     <AllocationCharts />
   </div>
 );
