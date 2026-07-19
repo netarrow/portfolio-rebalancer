@@ -1,12 +1,24 @@
 import React, { useMemo, useState } from 'react';
 import {
     calculateAssets,
-    calculateRequiredLiquidityForOnlyBuy,
     injectCashAssets,
     isCashTicker,
     isGroupKey,
 } from '../../utils/portfolioCalculations';
-import { distributeBuyOnlyWithPac, pacPriorityFor, type BuyOnlyCandidate } from '../../utils/allocationGroups';
+import {
+    resolveGroups,
+    distributeGroupDelta,
+    distributeBuyOnlyWithPac,
+    pacPriorityFor,
+    buyRecipientOf,
+    memberInfoFromAssets,
+    groupWeightConfig,
+    isFullyFrozen,
+    requiredLiquidityForFullBuyOnly,
+    type BuyOnlyCandidate,
+    type MemberAction,
+    type ResolvedGroups,
+} from '../../utils/allocationGroups';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { computeGroupRebalance, type GroupRebalancePlan } from '../../utils/groupRebalance';
 import { usePortfolio } from '../../context/PortfolioContext';
@@ -51,28 +63,82 @@ function getColorForClass(assetClass: string): string {
 const fmt = (n: number) =>
     n.toLocaleString('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
+interface BuyOnlyPlan {
+    /** unit key (standalone ticker or groupId) -> euro to deploy */
+    byUnit: Record<string, number>;
+    /** ticker (UPPERCASE) -> member buy action, for tickers bought through their group */
+    memberBuy: Record<string, MemberAction>;
+}
+
+const EMPTY_BUY_ONLY: BuyOnlyPlan = { byUnit: {}, memberBuy: {} };
+
 function computeBuyOnly(
     pc: PortfolioCalc,
-    allTickers: string[],
-): Record<string, number> {
+    resolved: ResolvedGroups,
+    marketData: Record<string, { price: number; lastUpdated: string }>,
+): BuyOnlyPlan {
     const liq = pc.portfolio.liquidity || 0;
-    if (liq <= 0) return {};
+    if (liq <= 0) return EMPTY_BUY_ONLY;
     const allocations = pc.portfolio.allocations || {};
+    const { tickerToGroupId, groupById } = resolved;
+    // Buy-Only deploys portfolio.liquidity, so its target base is the
+    // portfolio total plus that cash (the total itself excludes it).
+    const targetBase = pc.totalValue + liq;
 
-    const candidates: BuyOnlyCandidate[] = allTickers
-        .filter(t => !isCashTicker(t))
-        .map(ticker => {
-            const asset = pc.assets.find(a => a.ticker === ticker);
-            const currentValue = asset?.currentValue || 0;
-            const price = asset?.currentPrice || 0;
-            const targetPerc = allocations[ticker] || 0;
-            // Buy-Only deploys portfolio.liquidity, so its target base is the
-            // portfolio total plus that cash (the total itself excludes it).
-            const gap = (pc.totalValue + liq) * (targetPerc / 100) - currentValue;
-            return { key: ticker, gap, price, pacPriority: pacPriorityFor(pc.portfolio.pacConfigs, ticker) };
-        });
+    const candidates: BuyOnlyCandidate[] = [];
 
-    return distributeBuyOnlyWithPac(candidates, liq);
+    // Standalone tickers: group members compete through their group, not alone.
+    const unitKeys = new Set<string>([
+        ...pc.assets.map(a => a.ticker),
+        ...Object.keys(allocations),
+    ]);
+    unitKeys.forEach(ticker => {
+        if (isCashTicker(ticker) || isGroupKey(ticker) || tickerToGroupId[ticker.toUpperCase()]) return;
+        const asset = pc.assets.find(a => a.ticker === ticker);
+        const currentValue = asset?.currentValue || 0;
+        const price = asset?.currentPrice || 0;
+        const targetPerc = allocations[ticker] || 0;
+        const gap = targetBase * (targetPerc / 100) - currentValue;
+        candidates.push({ key: ticker, gap, price, pacPriority: pacPriorityFor(pc.portfolio.pacConfigs, ticker) });
+    });
+
+    // Groups — one candidate each, same pricing as the single-portfolio view:
+    // priority groups at the buy-recipient member, weighted groups at the
+    // cheapest buy-eligible active member (invalid weighted setups are skipped).
+    Object.values(groupById).forEach(group => {
+        const memberInfo = memberInfoFromAssets(group.members, pc.assets, marketData);
+        const wcfg = groupWeightConfig(group.members, group.memberRules);
+        let price: number | undefined;
+        if (wcfg.weighted) {
+            if (!wcfg.valid) return;
+            group.members.forEach(m => {
+                const rule = group.memberRules?.[m] ?? group.memberRules?.[m.toUpperCase()] ?? {};
+                if (isFullyFrozen(rule) || rule.noBuy) return;
+                const mi = memberInfo[m.toUpperCase()];
+                if (mi && mi.price > 0 && (price === undefined || mi.price < price)) price = mi.price;
+            });
+        } else {
+            price = buyRecipientOf(group, memberInfo)?.price;
+        }
+        if (price === undefined) return;
+        const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
+        const gap = targetBase * (((allocations[group.id] || 0)) / 100) - currentValue;
+        candidates.push({ key: group.id, gap, price, pacPriority: pacPriorityFor(pc.portfolio.pacConfigs, group.id) });
+    });
+
+    const byUnit = distributeBuyOnlyWithPac(candidates, liq);
+
+    // Route each group's assigned euro to its member buy action(s).
+    const memberBuy: Record<string, MemberAction> = {};
+    Object.values(groupById).forEach(group => {
+        const euro = byUnit[group.id] || 0;
+        if (euro <= 0) return;
+        const memberInfo = memberInfoFromAssets(group.members, pc.assets, marketData);
+        const dist = distributeGroupDelta({ deltaEur: euro, members: group.members, memberInfo, rules: group.memberRules });
+        Object.values(dist.actions).forEach(a => { memberBuy[a.ticker.toUpperCase()] = a; });
+    });
+
+    return { byUnit, memberBuy };
 }
 
 const PortfolioGroupSection: React.FC<Props> = ({
@@ -109,6 +175,15 @@ const PortfolioGroupSection: React.FC<Props> = ({
     }, [allPortfolios, allTransactions, assetSettings, marketData, brokers]);
 
     const totalGroupValue = portfolioCalcs.reduce((s, pc) => s + pc.totalValue, 0);
+
+    // Per-portfolio allocation-group lookups. Groups are defined per portfolio,
+    // so a ticker can be a group member in one member portfolio and standalone
+    // in another — every check below must use the right portfolio's map.
+    const resolvedByPortfolio = useMemo(() => {
+        const map: Record<string, ResolvedGroups> = {};
+        allPortfolios.forEach(p => { map[p.id] = resolveGroups(p); });
+        return map;
+    }, [allPortfolios]);
 
     /**
      * Inter-portfolio rebalance plan from the Global Rebalancing targets.
@@ -211,16 +286,33 @@ const PortfolioGroupSection: React.FC<Props> = ({
         return [...rawGroupAssets, ...Array.from(cashMap.values())];
     }, [allTransactions, allPortfolios, assetSettings, marketData, portfolioCalcs]);
 
+    // Row keys for the comparison table: standalone tickers + allocation-group
+    // ids. A ticker that belongs to a group is represented by that group's row
+    // in the portfolios where it's grouped — adding it again as its own row
+    // would count it twice (once aggregated in the group, once standalone).
     const allTickers = useMemo(() => {
         const set = new Set<string>();
         portfolioCalcs.forEach(pc => {
-            pc.assets.forEach(a => { if (a.quantity > 0 || a.currentValue > 0) set.add(a.ticker); });
+            const { tickerToGroupId, groupById } = resolvedByPortfolio[pc.portfolio.id];
+            pc.assets.forEach(a => {
+                if ((a.quantity > 0 || a.currentValue > 0) && !tickerToGroupId[a.ticker.toUpperCase()]) {
+                    set.add(a.ticker);
+                }
+            });
             Object.entries(pc.portfolio.allocations || {}).forEach(([t, pct]) => {
-                if (pct > 0) set.add(t);
+                if (pct > 0 && !isGroupKey(t) && !tickerToGroupId[t.toUpperCase()]) set.add(t);
+            });
+            Object.values(groupById).forEach(g => {
+                const hasTarget = ((pc.portfolio.allocations || {})[g.id] || 0) > 0;
+                const hasValue = g.members.some(m => {
+                    const a = pc.assets.find(x => x.ticker.toUpperCase() === m.toUpperCase());
+                    return (a?.currentValue || 0) > 0;
+                });
+                if (hasTarget || hasValue) set.add(g.id);
             });
         });
         return Array.from(set).sort();
-    }, [portfolioCalcs]);
+    }, [portfolioCalcs, resolvedByPortfolio]);
 
     // Allocation-group metadata (label + members) resolved across all portfolios
     // in this group. A group's target lives in allocations[groupId], so its id
@@ -237,9 +329,11 @@ const PortfolioGroupSection: React.FC<Props> = ({
     }, [allPortfolios]);
 
     // Current value of an allocation group within a single portfolio = sum of
-    // its members' current values.
+    // its members' current values. Resolved per portfolio: a portfolio that
+    // doesn't define the group contributes nothing (its identically-named
+    // tickers stay standalone there).
     const groupValueInPortfolio = (pc: PortfolioCalc, groupId: string): number => {
-        const members = groupMeta[groupId]?.members || [];
+        const members = resolvedByPortfolio[pc.portfolio.id]?.groupById[groupId]?.members || [];
         return members.reduce((s, m) => {
             const a = pc.assets.find(x => x.ticker.toUpperCase() === m.toUpperCase());
             return s + (a?.currentValue || 0);
@@ -248,17 +342,34 @@ const PortfolioGroupSection: React.FC<Props> = ({
 
     // Pre-compute buy-only allocations for every portfolio (used in table + action bars)
     const portfolioBuyOnlyMap = useMemo(() => {
-        const map: Record<string, Record<string, number>> = {};
+        const map: Record<string, BuyOnlyPlan> = {};
         portfolioCalcs.forEach(pc => {
-            map[pc.portfolio.id] = computeBuyOnly(pc, allTickers);
+            map[pc.portfolio.id] = computeBuyOnly(pc, resolvedByPortfolio[pc.portfolio.id], marketData);
         });
         return map;
-    }, [portfolioCalcs, allTickers]);
+    }, [portfolioCalcs, resolvedByPortfolio, marketData]);
 
     // Per-cell math shared by the desktop matrix and the mobile rows so the two
     // renderings can never drift apart.
-    const computeCell = (pc: PortfolioCalc, ticker: string, isGroup: boolean, isCash: boolean) => {
+    const computeCell = (pc: PortfolioCalc, ticker: string, isGroup: boolean, isCash: boolean): ComparisonCellData => {
+        const resolved = resolvedByPortfolio[pc.portfolio.id];
         const asset = pc.assets.find(a => a.ticker === ticker);
+
+        // A ticker that is grouped in THIS portfolio lives in its group's row
+        // here: report the membership instead of a value, so nothing is
+        // counted both in the group row and standalone.
+        const memberGroupId = !isGroup && !isCash ? resolved.tickerToGroupId[ticker.toUpperCase()] : undefined;
+        if (memberGroupId) {
+            const held = (asset?.quantity || 0) > 0 || (asset?.currentValue || 0) > 0;
+            return {
+                currentValue: 0, actual: 0, target: 0, diff: 0,
+                hasPosition: false, hasTarget: false,
+                rebalShares: 0, rebalAmount: 0, buyOnlyShares: 0, buyOnlyAmount: 0,
+                inGroupLabel: held ? (resolved.groupById[memberGroupId]?.label || memberGroupId) : undefined,
+            };
+        }
+
+        const group = isGroup ? resolved.groupById[ticker] : undefined;
         const currentValue = isGroup
             ? groupValueInPortfolio(pc, ticker)
             : (asset?.currentValue || 0);
@@ -274,16 +385,25 @@ const PortfolioGroupSection: React.FC<Props> = ({
         // Rebalance action
         let rebalShares = 0;
         let rebalAmount = 0;
-        if (!isCash && hasTarget && price > 0) {
+        if (!isCash && hasTarget) {
             const targetValue = pc.totalValue * (target / 100);
             const idealDiff = targetValue - currentValue;
-            rebalShares = Math.round(idealDiff / price);
-            rebalAmount = rebalShares * price;
+            if (isGroup && group) {
+                // Group rows act through their members: aggregate the euro the
+                // member rules would actually trade (shares aren't meaningful
+                // at group level).
+                const memberInfo = memberInfoFromAssets(group.members, pc.assets, marketData);
+                const dist = distributeGroupDelta({ deltaEur: idealDiff, members: group.members, memberInfo, rules: group.memberRules });
+                rebalAmount = Object.values(dist.actions).reduce((s, a) => s + a.eur, 0);
+            } else if (!isGroup && price > 0) {
+                rebalShares = Math.round(idealDiff / price);
+                rebalAmount = rebalShares * price;
+            }
         }
 
-        // Buy-only action
-        const buyOnlyAmount = !isCash ? (portfolioBuyOnlyMap[pc.portfolio.id]?.[ticker] || 0) : 0;
-        const buyOnlyShares = buyOnlyAmount > 0 && price > 0 ? Math.round(buyOnlyAmount / price) : 0;
+        // Buy-only action (group rows are keyed by group id in byUnit)
+        const buyOnlyAmount = !isCash ? (portfolioBuyOnlyMap[pc.portfolio.id]?.byUnit[ticker] || 0) : 0;
+        const buyOnlyShares = !isGroup && buyOnlyAmount > 0 && price > 0 ? Math.round(buyOnlyAmount / price) : 0;
 
         return { currentValue, actual, target, diff, hasPosition, hasTarget, rebalShares, rebalAmount, buyOnlyShares, buyOnlyAmount };
     };
@@ -292,9 +412,16 @@ const PortfolioGroupSection: React.FC<Props> = ({
     const deriveTickerRow = (ticker: string) => {
         const isGroup = isGroupKey(ticker);
         const groupAsset = groupAssets.find(a => a.ticker === ticker);
-        const groupValue = isGroup
-            ? portfolioCalcs.reduce((s, pc) => s + groupValueInPortfolio(pc, ticker), 0)
-            : (groupAsset?.currentValue || 0);
+        const isCashRow = isCashTicker(ticker);
+        // Aggregate column: for a standalone-ticker row, portfolios where that
+        // ticker is grouped contribute to the group's row instead — skipping
+        // them here keeps each euro counted exactly once.
+        const groupValue = portfolioCalcs.reduce((s, pc) => {
+            if (isGroup) return s + groupValueInPortfolio(pc, ticker);
+            if (!isCashRow && resolvedByPortfolio[pc.portfolio.id].tickerToGroupId[ticker.toUpperCase()]) return s;
+            const a = pc.assets.find(x => x.ticker === ticker);
+            return s + (a?.currentValue || 0);
+        }, 0);
         const groupActual = totalGroupValue > 0 ? (groupValue / totalGroupValue) * 100 : 0;
 
         const groupWeightedTarget = portfolioCalcs.reduce((sum, pc) => {
@@ -303,7 +430,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
             return sum + weight * target;
         }, 0);
 
-        const isCash = isCashTicker(ticker);
+        const isCash = isCashRow;
         const setting = assetSettings.find(s => s.ticker === ticker);
         const assetClass = isCash
             ? 'Cash'
@@ -562,7 +689,15 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                     </div>
 
                                     {portfolioCalcs.map(pc => {
-                                        const { actual, target, diff, hasPosition, hasTarget, rebalShares, rebalAmount, buyOnlyShares, buyOnlyAmount } = computeCell(pc, ticker, isGroup, isCash);
+                                        const { actual, target, diff, hasPosition, hasTarget, rebalShares, rebalAmount, buyOnlyShares, buyOnlyAmount, inGroupLabel } = computeCell(pc, ticker, isGroup, isCash);
+
+                                        if (inGroupLabel) {
+                                            return (
+                                                <div key={pc.portfolio.id} className="ct-col ct-col-portfolio ct-cell-empty">
+                                                    <span title={`Counted in the "${inGroupLabel}" group row`}>↳ {inGroupLabel}</span>
+                                                </div>
+                                            );
+                                        }
 
                                         if (!hasPosition && !hasTarget) {
                                             return (
@@ -572,6 +707,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                             );
                                         }
 
+                                        const groupRebalOk = Math.abs(rebalAmount) < 1;
                                         return (
                                             <div key={pc.portfolio.id} className="ct-col ct-col-portfolio">
                                                 {hasTarget && (
@@ -591,10 +727,24 @@ const PortfolioGroupSection: React.FC<Props> = ({
                                                         }
                                                     </div>
                                                 )}
+                                                {isGroup && hasTarget && (
+                                                    <div className={`ct-cell-action ${groupRebalOk ? 'ct-action-ok' : rebalAmount > 0 ? 'ct-action-buy' : 'ct-action-sell'}`}>
+                                                        {groupRebalOk
+                                                            ? <span className="ct-ok-badge">✓</span>
+                                                            : <>{rebalAmount > 0 ? '▲' : '▼'} {fmt(Math.abs(rebalAmount))}</>
+                                                        }
+                                                    </div>
+                                                )}
                                                 {!isCash && !isGroup && buyOnlyShares > 0 && (
                                                     <div className="ct-cell-buyonly">
                                                         <span className="ct-buyonly-label">buy only</span>
                                                         ▲ {buyOnlyShares} · {fmt(buyOnlyAmount)}
+                                                    </div>
+                                                )}
+                                                {isGroup && buyOnlyAmount >= 1 && (
+                                                    <div className="ct-cell-buyonly">
+                                                        <span className="ct-buyonly-label">buy only</span>
+                                                        ▲ {fmt(buyOnlyAmount)}
                                                     </div>
                                                 )}
                                             </div>
@@ -662,8 +812,9 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         key={pc.portfolio.id}
                         portfolioCalc={pc}
                         color={PORTFOLIO_COLORS[i % PORTFOLIO_COLORS.length]}
-                        allTickers={allTickers}
-                        buyOnlyAllocations={portfolioBuyOnlyMap[pc.portfolio.id] || {}}
+                        resolved={resolvedByPortfolio[pc.portfolio.id]}
+                        marketData={marketData}
+                        buyOnly={portfolioBuyOnlyMap[pc.portfolio.id] || EMPTY_BUY_ONLY}
                         allTransactions={allTransactions}
                         brokers={brokers}
                         onUpdatePortfolio={onUpdatePortfolio}
@@ -1068,6 +1219,8 @@ interface ComparisonCellData {
     rebalAmount: number;
     buyOnlyShares: number;
     buyOnlyAmount: number;
+    /** Set when the ticker is held here but grouped: its value lives in this group's row. */
+    inGroupLabel?: string;
 }
 
 interface ComparisonMobileRowProps {
@@ -1091,9 +1244,12 @@ const ComparisonMobileRow: React.FC<ComparisonMobileRowProps> = ({
     label, assetClass, isCash, isGroup, groupValue, groupActual, groupWeightedTarget, cells,
 }) => {
     const [expanded, setExpanded] = useState(false);
-    const showActions = !isCash && !isGroup;
+    const showActions = !isCash;
     const actionsCount = showActions
-        ? cells.filter(c => (c.cell.hasTarget && c.cell.rebalShares !== 0) || c.cell.buyOnlyShares > 0).length
+        ? cells.filter(c =>
+            (c.cell.hasTarget && (isGroup ? Math.abs(c.cell.rebalAmount) >= 1 : c.cell.rebalShares !== 0))
+            || (isGroup ? c.cell.buyOnlyAmount >= 1 : c.cell.buyOnlyShares > 0)
+        ).length
         : 0;
 
     return (
@@ -1131,7 +1287,9 @@ const ComparisonMobileRow: React.FC<ComparisonMobileRowProps> = ({
                                 <span className="group-legend-dot" style={{ backgroundColor: color }} />
                                 {isParent ? <strong>{name}</strong> : name}
                             </span>
-                            {!cell.hasPosition && !cell.hasTarget ? (
+                            {cell.inGroupLabel ? (
+                                <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>↳ {cell.inGroupLabel}</span>
+                            ) : !cell.hasPosition && !cell.hasTarget ? (
                                 <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>—</span>
                             ) : (
                                 <span className="mrow-value ct-mobile-cell-values">
@@ -1142,7 +1300,7 @@ const ComparisonMobileRow: React.FC<ComparisonMobileRowProps> = ({
                                             {cell.diff > 0 ? '+' : ''}{cell.diff.toFixed(1)}%
                                         </span>
                                     )}
-                                    {showActions && cell.hasTarget && (
+                                    {showActions && !isGroup && cell.hasTarget && (
                                         <span className={`ct-cell-action ${cell.rebalShares > 0 ? 'ct-action-buy' : cell.rebalShares < 0 ? 'ct-action-sell' : 'ct-action-ok'}`}>
                                             {cell.rebalShares === 0
                                                 ? <span className="ct-ok-badge">✓</span>
@@ -1150,10 +1308,24 @@ const ComparisonMobileRow: React.FC<ComparisonMobileRowProps> = ({
                                             }
                                         </span>
                                     )}
-                                    {showActions && cell.buyOnlyShares > 0 && (
+                                    {showActions && isGroup && cell.hasTarget && (
+                                        <span className={`ct-cell-action ${Math.abs(cell.rebalAmount) < 1 ? 'ct-action-ok' : cell.rebalAmount > 0 ? 'ct-action-buy' : 'ct-action-sell'}`}>
+                                            {Math.abs(cell.rebalAmount) < 1
+                                                ? <span className="ct-ok-badge">✓</span>
+                                                : <>{cell.rebalAmount > 0 ? '▲' : '▼'} {fmt(Math.abs(cell.rebalAmount))}</>
+                                            }
+                                        </span>
+                                    )}
+                                    {showActions && !isGroup && cell.buyOnlyShares > 0 && (
                                         <span className="ct-cell-buyonly">
                                             <span className="ct-buyonly-label">buy only</span>
                                             ▲ {cell.buyOnlyShares} · {fmt(cell.buyOnlyAmount)}
+                                        </span>
+                                    )}
+                                    {showActions && isGroup && cell.buyOnlyAmount >= 1 && (
+                                        <span className="ct-cell-buyonly">
+                                            <span className="ct-buyonly-label">buy only</span>
+                                            ▲ {fmt(cell.buyOnlyAmount)}
                                         </span>
                                     )}
                                 </span>
@@ -1170,8 +1342,9 @@ const ComparisonMobileRow: React.FC<ComparisonMobileRowProps> = ({
 interface ActionBarProps {
     portfolioCalc: PortfolioCalc;
     color: string;
-    allTickers: string[];
-    buyOnlyAllocations: Record<string, number>;
+    resolved: ResolvedGroups;
+    marketData: Record<string, { price: number; lastUpdated: string }>;
+    buyOnly: BuyOnlyPlan;
     allTransactions: Transaction[];
     brokers: Broker[];
     onUpdatePortfolio: (portfolio: Portfolio) => void;
@@ -1181,8 +1354,9 @@ interface ActionBarProps {
 const PortfolioActionBar: React.FC<ActionBarProps> = ({
     portfolioCalc,
     color,
-    allTickers,
-    buyOnlyAllocations,
+    resolved,
+    marketData,
+    buyOnly,
     allTransactions,
     brokers,
     onUpdatePortfolio,
@@ -1192,17 +1366,55 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
     const [isWithdrawalOpen, setIsWithdrawalOpen] = React.useState(false);
     const allocations = portfolio.allocations || {};
 
+    // Group-aware: each allocation group counts as one unit (its target lives
+    // on the group id, not on the member tickers).
     const requiredLiquidity = useMemo(() => {
-        const nonCash = assets.filter(a => !isCashTicker(a.ticker));
-        return calculateRequiredLiquidityForOnlyBuy(nonCash, allocations);
-    }, [assets, allocations]);
+        const { tickerToGroupId, groupById } = resolved;
+        const units: { currentValue: number; targetPerc: number }[] = [];
+        assets.forEach(a => {
+            if (isCashTicker(a.ticker) || tickerToGroupId[a.ticker.toUpperCase()]) return;
+            units.push({ currentValue: a.currentValue, targetPerc: allocations[a.ticker] || 0 });
+        });
+        Object.values(groupById).forEach(group => {
+            const memberInfo = memberInfoFromAssets(group.members, assets, marketData);
+            units.push({
+                currentValue: Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0),
+                targetPerc: allocations[group.id] || 0,
+            });
+        });
+        return requiredLiquidityForFullBuyOnly(units);
+    }, [assets, allocations, resolved, marketData]);
 
     const handleExecuteRebalance = async (mode: 'Full' | 'BuyOnly') => {
         const Swal = (await import('sweetalert2')).default;
         const toCreate: Transaction[] = [];
+        const { tickerToGroupId, groupById } = resolved;
 
-        allTickers.forEach(ticker => {
-            if (isCashTicker(ticker)) return;
+        const pushTx = (ticker: string, shares: number, price: number) => {
+            if (shares === 0 || price <= 0) return;
+            const lastTx = allTransactions
+                .filter(t => t.ticker === ticker && t.portfolioId === portfolio.id)
+                .pop();
+            toCreate.push({
+                id: `auto-rebal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                portfolioId: portfolio.id,
+                ticker,
+                date: new Date().toISOString().split('T')[0],
+                amount: Math.abs(shares),
+                price,
+                direction: shares > 0 ? 'Buy' : 'Sell',
+                brokerId: lastTx?.brokerId,
+            });
+        };
+
+        // Standalone tickers. Group members are traded through their group
+        // below — treating them as standalone (target 0) would sell them off.
+        const unitKeys = new Set<string>([
+            ...assets.map(a => a.ticker),
+            ...Object.keys(allocations),
+        ]);
+        unitKeys.forEach(ticker => {
+            if (isCashTicker(ticker) || isGroupKey(ticker) || tickerToGroupId[ticker.toUpperCase()]) return;
             const asset = assets.find(a => a.ticker === ticker);
             const price = asset?.currentPrice || 0;
             const targetPerc = allocations[ticker] || 0;
@@ -1214,25 +1426,32 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
                 const diff = totalValue * (targetPerc / 100) - (asset?.currentValue || 0);
                 if (price > 0) shares = Math.round(diff / price);
             } else {
-                const buyAmt = buyOnlyAllocations[ticker] || 0;
+                const buyAmt = buyOnly.byUnit[ticker] || 0;
                 if (price > 0) shares = Math.round(buyAmt / price);
             }
+            pushTx(ticker, shares, price);
+        });
 
-            if (shares !== 0 && price > 0) {
-                const lastTx = allTransactions
-                    .filter(t => t.ticker === ticker && t.portfolioId === portfolio.id)
-                    .pop();
-                toCreate.push({
-                    id: `auto-rebal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                    portfolioId: portfolio.id,
-                    ticker,
-                    date: new Date().toISOString().split('T')[0],
-                    amount: Math.abs(shares),
-                    price,
-                    direction: shares > 0 ? 'Buy' : 'Sell',
-                    brokerId: lastTx?.brokerId,
-                });
+        // Allocation groups: Full distributes the group delta by member rules;
+        // Buy Only uses the member buys already routed by the buy-only plan.
+        Object.values(groupById).forEach(group => {
+            const memberInfo = memberInfoFromAssets(group.members, assets, marketData);
+            let actions: MemberAction[];
+            if (mode === 'Full') {
+                const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
+                const delta = totalValue * ((allocations[group.id] || 0) / 100) - currentValue;
+                actions = Object.values(distributeGroupDelta({
+                    deltaEur: delta,
+                    members: group.members,
+                    memberInfo,
+                    rules: group.memberRules,
+                }).actions);
+            } else {
+                actions = group.members
+                    .map(m => buyOnly.memberBuy[m.toUpperCase()])
+                    .filter((a): a is MemberAction => !!a);
             }
+            actions.forEach(a => pushTx(a.ticker, a.shares, memberInfo[a.ticker.toUpperCase()]?.price || 0));
         });
 
         if (toCreate.length === 0) {
