@@ -8,6 +8,11 @@ export interface Broker {
   id: string;
   name: string;
   description?: string;
+  // Scope flags: family = assets/liquidity belonging to the household rather
+  // than the user; illiquid = not readily spendable (e.g. pension fund).
+  // Views offer toggles to include/exclude flagged brokers from the counts.
+  familyAsset?: boolean;
+  illiquid?: boolean;
   currentLiquidity?: number;
   minLiquidityType?: 'percent' | 'fixed';
   minLiquidityPercentage?: number;
@@ -19,6 +24,13 @@ export interface Broker {
   commissionPercent?: number;  // % of transaction value (percent mode)
   commissionMin?: number;      // optional minimum fee (percent mode)
   commissionMax?: number;      // optional maximum fee (percent mode)
+}
+
+// Which flagged brokers are counted in totals (true = included). Persisted as
+// a single app-wide preference; every counting view renders the same toggles.
+export interface AssetScope {
+  includeFamily: boolean;
+  includeIlliquid: boolean;
 }
 
 export const CASH_TICKER_PREFIX = '_CASH_';

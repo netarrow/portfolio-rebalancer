@@ -428,7 +428,8 @@ const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number }> = 
 type StatsTab = 'global' | 'portfolio' | 'broker';
 
 const AllocationCharts: React.FC = () => {
-    const { transactions, assetSettings, marketData, portfolios, brokers, goals, priceHistory } = usePortfolio();
+    // Scoped: respects the family/illiquid asset-scope toggles
+    const { scopedTransactions: transactions, assetSettings, marketData, portfolios, scopedBrokers: brokers, goals, priceHistory } = usePortfolio();
     const [activeTab, setActiveTab] = useState<StatsTab>('global');
 
     // Risk metrics window + risk-free rate are shared with the Performance view

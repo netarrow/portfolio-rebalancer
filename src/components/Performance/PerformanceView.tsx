@@ -3,6 +3,7 @@ import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeReturnStats } from '../../utils/performanceCalculations';
+import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import '../Dashboard/Dashboard.css';
 
 type RangeKey = '1M' | '6M' | '1Y' | 'MAX';
@@ -17,7 +18,8 @@ function rangeFrom(range: RangeKey): string | undefined {
 }
 
 const PerformanceView: React.FC = () => {
-    const { transactions, priceHistory, portfolios, brokers, assetSettings, refreshHistory } = usePortfolio();
+    // Scoped: respects the family/illiquid asset-scope toggles
+    const { scopedTransactions: transactions, priceHistory, portfolios, scopedBrokers: brokers, assetSettings, refreshHistory } = usePortfolio();
 
     // Scope: 'networth' | 'p:<portfolioId>' | 'a:<ticker>'
     const [scope, setScope] = useState('networth');
@@ -245,7 +247,10 @@ const PerformanceView: React.FC = () => {
     return (
         <div className="dashboard-container">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginBottom: '1rem' }}>
-                <h2 className="section-title" style={{ margin: 0 }}>Performance</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                    <h2 className="section-title" style={{ margin: 0 }}>Performance</h2>
+                    <AssetScopeToggles />
+                </div>
                 <button
                     onClick={() => refreshHistory()}
                     style={{

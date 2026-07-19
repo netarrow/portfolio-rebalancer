@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -35,6 +35,8 @@ export interface SyncPayload {
     // Forecast expenses imported from YNAB goals (with per-entry enabled flag).
     // Absent = never seeded on the source device.
     plannedForecastExpenses?: PlannedForecastExpense[];
+    // Include/exclude family and illiquid brokers in the counting views.
+    assetScope?: AssetScope;
 }
 
 const PBKDF2_ITERATIONS = 100000;

@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import Chart from 'react-apexcharts';
 import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
+import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import { calculateForecastWithState, runMonteCarloForecast, getAssetVolatility } from '../../utils/forecastCalculations';
 import { forecastYearForDate } from '../../utils/plannedForecastExpenses';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
@@ -14,7 +15,8 @@ import { isIncomeDirection } from '../../types';
 import type { TransactionDirection } from '../../types';
 
 const ForecastView: React.FC = () => {
-    const { portfolios, brokers, marketData, transactions, assetSettings, goals, priceHistory,
+    // Scoped: the family/illiquid toggles decide what the forecast simulates
+    const { portfolios, scopedBrokers: brokers, marketData, scopedTransactions: transactions, assetSettings, goals, priceHistory,
         plannedForecastExpenses, setPlannedForecastExpenses, restorePlannedForecastExpenses } = usePortfolio();
 
     // null = never seeded (context auto-imports as soon as forecastable goals exist)
@@ -587,7 +589,9 @@ const ForecastView: React.FC = () => {
         <div className="forecast-container" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 320px) 1fr 280px', gap: '1.5rem', width: '100%', maxWidth: '100%' }}>
             {/* Sidebar Controls */}
             <div className="forecast-controls" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', height: 'fit-content' }}>
-                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1.5rem', color: 'var(--text-primary)' }}>Configuration</h2>
+                <h2 style={{ fontSize: '1.25rem', fontWeight: 600, marginBottom: '1rem', color: 'var(--text-primary)' }}>Configuration</h2>
+
+                <AssetScopeToggles style={{ marginBottom: '1rem' }} />
 
                 <div className="form-group" style={{ marginBottom: '1rem' }}>
                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Time Horizon (Years)</label>
