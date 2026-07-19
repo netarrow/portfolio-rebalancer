@@ -245,6 +245,52 @@ export interface ReturnStats {
 }
 
 /**
+ * Flow-adjusted period return factors (the same daily factors TWR links):
+ * factor[i] applies over (dates[i-1], dates[i]] with external flows removed,
+ * so deposits/withdrawals don't show up as gains or losses. Exposed so other
+ * consumers (e.g. the Monte Carlo bootstrap) can reuse the exact return
+ * stream Performance is built on.
+ */
+export function computeFlowAdjustedFactors(
+    series: ValuePoint[],
+    cashFlows: Map<string, number>
+): { factors: number[]; dates: string[] } {
+    const factors: number[] = [];
+    const dates: string[] = [];
+    if (series.length < 2) return { factors, dates };
+    const flowIn = buildFlowWindow(cashFlows);
+    for (let i = 1; i < series.length; i++) {
+        const prev = series[i - 1].value;
+        if (prev <= 0) continue;
+        const cf = flowIn(series[i - 1].date, series[i].date);
+        factors.push((series[i].value - cf) / prev);
+        dates.push(series[i].date);
+    }
+    return { factors, dates };
+}
+
+/**
+ * Monthly log-returns aggregated from flow-adjusted factors: factors are
+ * grouped by calendar month ('YYYY-MM') and their logs summed. The first and
+ * last month are dropped as partial (they'd understate that month's move).
+ * Non-positive factors (total loss) abort the month — it is skipped.
+ */
+export function aggregateMonthlyLogReturns(factors: number[], dates: string[]): number[] {
+    if (factors.length === 0) return [];
+    const byMonth = new Map<string, number>();
+    const skipMonths = new Set<string>();
+    for (let i = 0; i < factors.length; i++) {
+        const month = dates[i].slice(0, 7);
+        if (factors[i] <= 0) { skipMonths.add(month); continue; }
+        byMonth.set(month, (byMonth.get(month) || 0) + Math.log(factors[i]));
+    }
+    const months = Array.from(byMonth.keys()).sort();
+    // Drop partial edge months only when there's enough left to matter.
+    const trimmed = months.length > 3 ? months.slice(1, -1) : months;
+    return trimmed.filter(m => !skipMonths.has(m)).map(m => byMonth.get(m)!);
+}
+
+/**
  * Return/risk metrics on the flow-adjusted return stream (same daily factors
  * TWR links, so deposits/withdrawals don't show up as gains or losses):
  * annualized return and volatility, Sharpe (vs `riskFreePct`, default 0) and
@@ -257,16 +303,7 @@ export function computeReturnStats(
     opts: { riskFreePct?: number; minReturns?: number } = {}
 ): ReturnStats | null {
     if (series.length < 2) return null;
-    const flowIn = buildFlowWindow(cashFlows);
-    const factors: number[] = [];
-    const dates: string[] = [];
-    for (let i = 1; i < series.length; i++) {
-        const prev = series[i - 1].value;
-        if (prev <= 0) continue;
-        const cf = flowIn(series[i - 1].date, series[i].date);
-        factors.push((series[i].value - cf) / prev);
-        dates.push(series[i].date);
-    }
+    const { factors, dates } = computeFlowAdjustedFactors(series, cashFlows);
     if (factors.length === 0) return null;
 
     const msPerYear = 365.25 * 86400000;

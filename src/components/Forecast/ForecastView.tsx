@@ -1,14 +1,24 @@
 import React, { useState, useMemo } from 'react';
 import Chart from 'react-apexcharts';
+import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateForecastWithState, runMonteCarloForecast, getAssetVolatility } from '../../utils/forecastCalculations';
+import { forecastYearForDate } from '../../utils/plannedForecastExpenses';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
-import { computeRealizedVolatility } from '../../utils/performanceCalculations';
+import {
+    computeRealizedVolatility, computeReturnStats, computeFlowAdjustedFactors,
+    aggregateMonthlyLogReturns, getPortfolioValueSeries, getCashFlowsByDate
+} from '../../utils/performanceCalculations';
+import type { ReturnStats } from '../../utils/performanceCalculations';
 import { isIncomeDirection } from '../../types';
 import type { TransactionDirection } from '../../types';
 
 const ForecastView: React.FC = () => {
-    const { portfolios, brokers, marketData, transactions, assetSettings, goals, priceHistory } = usePortfolio();
+    const { portfolios, brokers, marketData, transactions, assetSettings, goals, priceHistory,
+        plannedForecastExpenses, setPlannedForecastExpenses, restorePlannedForecastExpenses } = usePortfolio();
+
+    // null = never seeded (context auto-imports as soon as forecastable goals exist)
+    const ynabPlannedExpenses = plannedForecastExpenses ?? [];
 
     const sortedGoals = useMemo(() => [...goals].sort((a, b) => a.order - b.order), [goals]);
     const goalTitleById = useMemo(() => {
@@ -77,6 +87,48 @@ const ForecastView: React.FC = () => {
         }
     };
 
+    // YNAB goal expenses (persisted in context; enabled ones join the simulation)
+    const toggleYnabExpense = (id: string) => {
+        setPlannedForecastExpenses(prev => (prev ?? []).map(e => e.id === id ? { ...e, enabled: !e.enabled } : e));
+    };
+
+    const removeYnabExpense = (id: string) => {
+        setPlannedForecastExpenses(prev => (prev ?? []).filter(e => e.id !== id));
+    };
+
+    const handleRestoreYnabExpenses = async () => {
+        const result = await Swal.fire({
+            title: 'Restore from YNAB Goals?',
+            text: 'The planned expense list will be rebuilt from the current YNAB goals. Removed entries come back and enable/disable flags are reset.',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Restore',
+            cancelButtonText: 'Cancel',
+        });
+        if (!result.isConfirmed) return;
+        const rebuilt = restorePlannedForecastExpenses();
+        Swal.fire({
+            title: 'Restored',
+            text: `${rebuilt.length} planned expense${rebuilt.length === 1 ? '' : 's'} imported from YNAB goals.`,
+            icon: 'success',
+            timer: 2500,
+            showConfirmButton: false,
+        });
+    };
+
+    // Enabled YNAB goal expenses mapped onto the forecast's relative-year scale
+    const ynabSimulationExpenses = useMemo(() =>
+        (plannedForecastExpenses ?? [])
+            .filter(e => e.enabled)
+            .map(e => ({
+                year: forecastYearForDate(e.targetDate),
+                amount: e.amount,
+                allowedGoalIds: e.allowedGoalIds,
+                allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
+                erosionAllowed: e.erosionAllowed
+            })),
+        [plannedForecastExpenses, goalTitleById]);
+
     // Calculated returns (Read-Only)
     const portfolioPerformance = useMemo(() => {
         const perf: Record<string, { cagr: number; years: number; unrealizedGain: number; realizedGain: number; totalIncome: number; totalGain: number; totalCost: number }> = {};
@@ -130,14 +182,43 @@ const ForecastView: React.FC = () => {
         return values;
     }, [transactions, marketData, portfolios]);
 
-    // Estimated volatility for each Portfolio (value-weighted). Per ticker we
-    // prefer the volatility downloaded by "Update Prices"; otherwise we compute
-    // the realized volatility from the local price history (Performance data);
-    // otherwise we fall back to the static asset-class estimate.
+    // Historical calibration from the Performance data: per-portfolio monthly
+    // flow-adjusted log-returns (bootstrap source), per-portfolio risk stats
+    // (realized volatility, max drawdown) and the whole-account historical max
+    // drawdown used as the stress reference.
+    const historicalCalibration = useMemo(() => {
+        const monthlyLogReturns: Record<string, number[]> = {};
+        const stats: Record<string, ReturnStats | null> = {};
+        portfolios.forEach(p => {
+            const series = getPortfolioValueSeries(transactions, priceHistory, { portfolioId: p.id });
+            const flows = getCashFlowsByDate(transactions, p.id);
+            const { factors, dates } = computeFlowAdjustedFactors(series, flows);
+            monthlyLogReturns[p.id] = aggregateMonthlyLogReturns(factors, dates);
+            stats[p.id] = computeReturnStats(series, flows);
+        });
+        const netWorthSeries = getPortfolioValueSeries(transactions, priceHistory, {});
+        const netWorthStats = computeReturnStats(netWorthSeries, getCashFlowsByDate(transactions));
+        return {
+            monthlyLogReturns,
+            stats,
+            netWorthMaxDrawdownPct: netWorthStats?.maxDrawdownPct ?? null,
+        };
+    }, [portfolios, transactions, priceHistory]);
+
+    // Estimated volatility for each Portfolio. First choice: the realized
+    // flow-adjusted volatility of the portfolio's own value series (same number
+    // shown in Performance). Fallback: value-weighted per-ticker estimate —
+    // downloaded volatility, else per-ticker realized, else asset-class figure.
     const estimatedVolatilities = useMemo(() => {
         const volatilities: Record<string, number> = {};
 
         portfolios.forEach(p => {
+            const realized = historicalCalibration.stats[p.id]?.annualizedVolatilityPct;
+            if (realized != null && realized > 0) {
+                volatilities[p.id] = realized;
+                return;
+            }
+
             const pTx = transactions.filter(t => t.portfolioId === p.id);
             const { assets } = calculateAssets(pTx, assetSettings, marketData);
 
@@ -160,7 +241,7 @@ const ForecastView: React.FC = () => {
         });
 
         return volatilities;
-    }, [portfolios, transactions, assetSettings, marketData, priceHistory]);
+    }, [portfolios, transactions, assetSettings, marketData, priceHistory, historicalCalibration]);
 
     // Generate Forecast Data
     const forecastData = useMemo(() => {
@@ -181,17 +262,20 @@ const ForecastView: React.FC = () => {
             Number(monthlyExpenses) || 0,
             Number(timeHorizon) || 10,
             returnsSearchMap,
-            yearlyExpenses.map(e => ({
-                year: e.year,
-                amount: e.amount,
-                allowedGoalIds: e.allowedGoalIds,
-                allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
-                erosionAllowed: e.erosionAllowed
-            })),
+            [
+                ...yearlyExpenses.map(e => ({
+                    year: e.year,
+                    amount: e.amount,
+                    allowedGoalIds: e.allowedGoalIds,
+                    allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
+                    erosionAllowed: e.erosionAllowed
+                })),
+                ...ynabSimulationExpenses
+            ],
             undefined,
             { rebalanceToInitialWeights: rebalanceAnnually }
         );
-    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, goalTitleById, rebalanceAnnually]);
+    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, rebalanceAnnually]);
 
     // Effective volatility per portfolio (manual override wins over the estimate)
     const effectiveVolatilities = useMemo(() => {
@@ -225,18 +309,30 @@ const ForecastView: React.FC = () => {
             Number(timeHorizon) || 10,
             returnsMap,
             effectiveVolatilities,
-            yearlyExpenses.map(e => ({
-                year: e.year,
-                amount: e.amount,
-                allowedGoalIds: e.allowedGoalIds,
-                allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
-                erosionAllowed: e.erosionAllowed
-            })),
+            [
+                ...yearlyExpenses.map(e => ({
+                    year: e.year,
+                    amount: e.amount,
+                    allowedGoalIds: e.allowedGoalIds,
+                    allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
+                    erosionAllowed: e.erosionAllowed
+                })),
+                ...ynabSimulationExpenses
+            ],
             500,
             mcSeed,
-            { rebalanceToInitialWeights: rebalanceAnnually }
+            { rebalanceToInitialWeights: rebalanceAnnually },
+            {
+                monthlyLogReturnsByPortfolio: historicalCalibration.monthlyLogReturns,
+                // A manual volatility override means the user wants the
+                // lognormal model driven by that number, not the history.
+                forceLognormal: portfolios
+                    .filter(p => volatilityOverrides[p.id] !== undefined && volatilityOverrides[p.id] !== '')
+                    .map(p => p.id),
+                historicalMaxDrawdownPct: historicalCalibration.netWorthMaxDrawdownPct,
+            }
         );
-    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, goalTitleById, effectiveVolatilities, mcSeed, rebalanceAnnually]);
+    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, effectiveVolatilities, mcSeed, rebalanceAnnually, historicalCalibration, volatilityOverrides]);
 
     // Chart Config
     const chartOptions = {
@@ -374,7 +470,7 @@ const ForecastView: React.FC = () => {
         // Monte Carlo mode: judge by probability of success across simulations
         if (monteCarloData) {
             const prob = monteCarloData.successProbability;
-            const probPct = `${Math.round(prob * 100)}% of simulations succeed`;
+            const probPct = `${Math.round(prob * 100)}% of simulations succeed · median max drawdown ${monteCarloData.maxDrawdownP50.toFixed(1)}% (worst 10%: ${monteCarloData.maxDrawdownP90.toFixed(1)}%)`;
             if (prob >= 0.85) {
                 return {
                     status: 'Sustainable',
@@ -674,15 +770,83 @@ const ForecastView: React.FC = () => {
                     </div>
                 </div>
 
+                <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <label style={{ color: 'var(--text-secondary)' }}>YNAB Goal Expenses</label>
+                        <button
+                            onClick={handleRestoreYnabExpenses}
+                            title="Rebuild this list from the current YNAB goals"
+                            style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: '0.8rem' }}
+                        >
+                            ↻ Restore from YNAB
+                        </button>
+                    </div>
+                    {ynabPlannedExpenses.length === 0 ? (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                            No YNAB goal expenses in the plan. Goals with a target amount and date are imported automatically; use Restore to re-import them.
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            {ynabPlannedExpenses.map(expense => {
+                                const year = forecastYearForDate(expense.targetDate);
+                                const beyondHorizon = year > (Number(timeHorizon) || 10);
+                                return (
+                                    <div key={expense.id} style={{ background: 'var(--bg-input)', padding: '0.75rem', borderRadius: 'var(--radius-md)', fontSize: '0.9rem', opacity: expense.enabled ? 1 : 0.55 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={expense.enabled}
+                                                    onChange={() => toggleYnabExpense(expense.id)}
+                                                    title={expense.enabled ? 'Enabled in simulation — click to disable' : 'Disabled — click to include in simulation'}
+                                                />
+                                                <div>
+                                                    <span style={{ fontWeight: 600, color: 'var(--color-accent)' }}>Year {year}</span>
+                                                    <span style={{ marginLeft: '0.5rem', color: 'var(--text-primary)' }}>€{expense.amount.toLocaleString()}</span>
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => removeYnabExpense(expense.id)}
+                                                title="Remove from the plan (Restore re-imports it)"
+                                                style={{ background: 'none', border: 'none', color: 'var(--color-danger)', cursor: 'pointer', fontSize: '1.2rem', padding: '0 0.5rem' }}
+                                            >
+                                                &times;
+                                            </button>
+                                        </div>
+                                        <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
+                                            {expense.description}
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap' }}>
+                                            <span>🎯 {expense.targetDate}</span>
+                                            <span>|</span>
+                                            <span>
+                                                {expense.allowedGoalIds.length === 0
+                                                    ? 'All Portfolios'
+                                                    : expense.allowedGoalIds.map(id => goalTitleById[id] || id).join(', ')}
+                                            </span>
+                                            {beyondHorizon && (
+                                                <>
+                                                    <span>|</span>
+                                                    <span style={{ color: 'var(--color-warning, #F59E0B)' }}>⚠ Beyond horizon — not simulated</span>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '1rem', fontStyle: 'italic' }}>
                     * Projections use historical returns. Expenses deplete only the portfolios linked to the allowed Goals; other portfolios are touched only if those are insufficient (flagged as risk).
-                    {monteCarloEnabled && ' Monte Carlo samples monthly returns from each portfolio\'s volatility (lognormal, uncorrelated); volatility is estimated from asset-class mix and can be overridden per portfolio.'}
+                    {monteCarloEnabled && ' Monte Carlo prefers each portfolio\'s real monthly returns (Performance history) via block bootstrap — preserving fat tails and drawdown streaks; with too little history (or a manual σ) it falls back to lognormal sampling. Volatility defaults to the realized flow-adjusted figure and can be overridden per portfolio.'}
                 </div>
             </div>
 
             {/* Results Area */}
             <div className="forecast-results" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div className="summary-grid forecast-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                <div className="summary-grid forecast-summary-grid" style={{ display: 'grid', gridTemplateColumns: monteCarloData ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', gap: '1rem' }}>
                     <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', position: 'relative' }}>
                         <div style={{ position: 'absolute', top: '1rem', right: '1rem', color: sustainabilityStatus.color }} title={sustainabilityStatus.tooltip || sustainabilityStatus.label}>
                             {sustainabilityStatus.icon}
@@ -717,6 +881,34 @@ const ForecastView: React.FC = () => {
                                     {monteCarloData.insolvencyProbability > 0
                                         ? `${Math.round(monteCarloData.insolvencyProbability * 100)}% runs hit insolvency`
                                         : `${monteCarloData.simulations} runs ending above start value`}
+                                </div>
+                            </div>
+                            <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}
+                                title="Deepest peak-to-trough dip of the simulated net-worth paths (cashflows included). Compared against the historical max drawdown of your whole account from the Performance data.">
+                                <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Max Drawdown (sim.)</h4>
+                                <div style={{
+                                    fontSize: '1.5rem', fontWeight: 700,
+                                    color: (() => {
+                                        const p90 = monteCarloData.maxDrawdownP90;
+                                        const hist = monteCarloData.historicalMaxDrawdownPct;
+                                        if (hist !== null && hist < 0) {
+                                            if (p90 >= hist) return '#10b981';
+                                            if (p90 >= hist * 1.5) return '#F59E0B';
+                                            return '#EF4444';
+                                        }
+                                        return p90 > -20 ? '#10b981' : p90 > -35 ? '#F59E0B' : '#EF4444';
+                                    })()
+                                }}>
+                                    {monteCarloData.maxDrawdownP50.toFixed(1)}%
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                                    median · worst 10%: {monteCarloData.maxDrawdownP90.toFixed(1)}%
+                                    {monteCarloData.probExceedHistoricalMaxDD !== null && (
+                                        <>
+                                            <br />
+                                            {Math.round(monteCarloData.probExceedHistoricalMaxDD * 100)}% of runs deeper than historical ({monteCarloData.historicalMaxDrawdownPct!.toFixed(1)}%)
+                                        </>
+                                    )}
                                 </div>
                             </div>
                         </>
@@ -801,27 +993,58 @@ const ForecastView: React.FC = () => {
                                     </div>
                                 </div>
 
-                                {/* Volatility input — only relevant in Monte Carlo mode */}
-                                {monteCarloEnabled && (
-                                    <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
-                                        <span style={{ color: 'var(--text-tertiary)' }}>Volatility (σ ann.)</span>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
-                                            <input
-                                                type="number"
-                                                min={0}
-                                                step={0.5}
-                                                value={volatilityOverrides[p.id] ?? ''}
-                                                placeholder={(estimatedVolatilities[p.id] || 0).toFixed(1)}
-                                                onChange={e => setVolatilityOverrides({
-                                                    ...volatilityOverrides,
-                                                    [p.id]: e.target.value === '' ? '' : Number(e.target.value)
-                                                })}
-                                                style={{ width: '64px', padding: '0.25rem 0.4rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.75rem', textAlign: 'right' }}
-                                            />
-                                            <span style={{ color: 'var(--text-tertiary)' }}>%</span>
+                                {/* Volatility input + sampling model — only relevant in Monte Carlo mode */}
+                                {monteCarloEnabled && (() => {
+                                    const histMonths = historicalCalibration.monthlyLogReturns[p.id]?.length || 0;
+                                    const histStats = historicalCalibration.stats[p.id];
+                                    const model = monteCarloData?.modelByPortfolio[p.id]
+                                        ?? (histMonths >= 10 && (volatilityOverrides[p.id] === undefined || volatilityOverrides[p.id] === '') ? 'bootstrap' : 'lognormal');
+                                    return (
+                                        <div style={{ marginTop: '0.6rem', paddingTop: '0.6rem', borderTop: '1px solid var(--border-color)', display: 'flex', flexDirection: 'column', gap: '0.35rem', fontSize: '0.75rem' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                <span style={{ color: 'var(--text-tertiary)' }}>Volatility (σ ann.)</span>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                                    <input
+                                                        type="number"
+                                                        min={0}
+                                                        step={0.5}
+                                                        value={volatilityOverrides[p.id] ?? ''}
+                                                        placeholder={(estimatedVolatilities[p.id] || 0).toFixed(1)}
+                                                        onChange={e => setVolatilityOverrides({
+                                                            ...volatilityOverrides,
+                                                            [p.id]: e.target.value === '' ? '' : Number(e.target.value)
+                                                        })}
+                                                        style={{ width: '64px', padding: '0.25rem 0.4rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.75rem', textAlign: 'right' }}
+                                                    />
+                                                    <span style={{ color: 'var(--text-tertiary)' }}>%</span>
+                                                </div>
+                                            </div>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                                title={model === 'bootstrap'
+                                                    ? `Future months are resampled in blocks from this portfolio's ${histMonths} real monthly returns (Performance history), preserving streaks of bad months.`
+                                                    : 'Not enough monthly history (or manual σ set): returns are drawn from a lognormal distribution with the volatility above.'}>
+                                                <span style={{ color: 'var(--text-tertiary)' }}>MC model</span>
+                                                <span style={{
+                                                    padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.65rem',
+                                                    background: model === 'bootstrap' ? '#10B98120' : '#6B728020',
+                                                    color: model === 'bootstrap' ? '#10B981' : 'var(--text-secondary)',
+                                                    border: `1px solid ${model === 'bootstrap' ? '#10B98150' : 'var(--border-color)'}`
+                                                }}>
+                                                    {model === 'bootstrap' ? `Historical (${histMonths} mo)` : 'Lognormal'}
+                                                </span>
+                                            </div>
+                                            {histStats && (
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                                                    title="Realized max drawdown of this portfolio's flow-adjusted return index (same as Performance).">
+                                                    <span style={{ color: 'var(--text-tertiary)' }}>Hist. Max DD</span>
+                                                    <span style={{ color: histStats.maxDrawdownPct < 0 ? 'var(--color-danger)' : 'var(--text-secondary)' }}>
+                                                        {histStats.maxDrawdownPct.toFixed(1)}%
+                                                    </span>
+                                                </div>
+                                            )}
                                         </div>
-                                    </div>
-                                )}
+                                    );
+                                })()}
 
                                 {/* P/L breakdown — shown when there are realized gains or income */}
                                 {hasRealized && (

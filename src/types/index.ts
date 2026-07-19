@@ -298,6 +298,23 @@ export interface YnabGoalSyncCandidate {
   action: 'create' | 'update' | 'skip';
 }
 
+// Forecast planned expense imported from a YNAB Goal. The forecast year is
+// derived at render time from targetDate (so entries stay correct as calendar
+// years pass). `enabled` toggles the expense in the simulation without losing
+// it; removing it from the list is a hard delete until the next "Restore from
+// YNAB Goals", which rebuilds the whole list from the current goals.
+export interface PlannedForecastExpense {
+  id: string;             // stable: equals the source ynabGoalId
+  ynabGoalId: string;
+  description: string;    // goal name at import time
+  targetDate: string;     // 'YYYY-MM-DD'
+  amount: number;         // goal targetAmount at import time
+  enabled: boolean;
+  allowedGoalIds: string[];  // manual Goal ids allowed to fund it (empty = all portfolios)
+  erosionAllowed: boolean;
+  importedAt: string;
+}
+
 export type YnabMappingTarget =
   | { kind: 'asset'; ticker: string }
   | { kind: 'cash'; brokerId: string }

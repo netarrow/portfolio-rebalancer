@@ -1,12 +1,13 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
 import { parseGoalDescriptor } from '../utils/ynabGoalParser';
+import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
@@ -106,6 +107,11 @@ interface PortfolioContextType {
     getPortfolioAllocationSummary: (portfolioId: string) => { allocated: number; available: number; drift: number; currentValue: number };
     getYnabGoalAllocations: (ynabGoalId: string) => YnabGoalAllocation[];
     ynabGoalsSyncing: boolean;
+    // Forecast planned expenses imported from YNAB goals (auto-seeded on first
+    // use; null = never initialized, [] = user cleared them all)
+    plannedForecastExpenses: PlannedForecastExpense[] | null;
+    setPlannedForecastExpenses: (expenses: PlannedForecastExpense[] | ((prev: PlannedForecastExpense[] | null) => PlannedForecastExpense[])) => void;
+    restorePlannedForecastExpenses: () => PlannedForecastExpense[];
     // YNAB spending analysis (rolling 12 months of budget/activity/income)
     ynabSpendingHistory: YnabMonthSnapshot[];
     ynabMacroMappings: YnabMacroMappings;
@@ -185,6 +191,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabGoals, setYnabGoals] = useLocalStorage<YnabGoal[]>('portfolio_ynab_goals', []);
     const [ynabGoalAllocations, setYnabGoalAllocations] = useLocalStorage<YnabGoalAllocation[]>('portfolio_ynab_goal_allocations', []);
     const [ynabGoalsSyncing, setYnabGoalsSyncing] = useState(false);
+    // Forecast expenses derived from YNAB goals. null = never seeded (auto-import
+    // on first eligible goals), [] = user deliberately emptied the plan.
+    const [storedPlannedForecastExpenses, setStoredPlannedForecastExpenses] = useLocalStorage<PlannedForecastExpense[] | null>('portfolio_forecast_planned_expenses', null);
     // Rolling-year spending history is local-only (like priceHistory): it can
     // grow large and is rebuilt from YNAB with a single sync.
     const [ynabSpendingHistory, setYnabSpendingHistory] = useLocalStorage<YnabMonthSnapshot[]>('portfolio_ynab_spending_history', []);
@@ -192,6 +201,22 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabSpendingSyncing, setYnabSpendingSyncing] = useState(false);
     const [virtualBonds, setVirtualBonds] = useLocalStorage<VirtualBond[]>('portfolio_virtual_bonds', []);
     const [freeCommissionPeriods, setFreeCommissionPeriods] = useLocalStorage<FreeCommissionPeriod[]>('portfolio_free_commissions', []);
+
+    // Auto-seed the forecast planned expenses the first time forecastable YNAB
+    // goals exist. Runs only while the stored value is null: once the user has
+    // a list (even an emptied one) their edits are never overwritten — only the
+    // explicit "Restore from YNAB Goals" button rebuilds it.
+    useEffect(() => {
+        if (storedPlannedForecastExpenses !== null) return;
+        if (!ynabGoals.some(isForecastableYnabGoal)) return;
+        setStoredPlannedForecastExpenses(buildPlannedForecastExpenses(ynabGoals, ynabGoalAllocations, portfolios));
+    }, [storedPlannedForecastExpenses, ynabGoals, ynabGoalAllocations, portfolios, setStoredPlannedForecastExpenses]);
+
+    const restorePlannedForecastExpenses = (): PlannedForecastExpense[] => {
+        const rebuilt = buildPlannedForecastExpenses(ynabGoals, ynabGoalAllocations, portfolios);
+        setStoredPlannedForecastExpenses(rebuilt);
+        return rebuilt;
+    };
     // Ref so sync effect can read latest config without adding azureConfig to deps (avoids loop on lastSync)
     const azureConfigRef = useRef(azureConfig);
     // Timestamp of last restore to suppress the debounced post-restore upload
@@ -650,6 +675,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
                 virtualBonds,
                 freeCommissionPeriods,
+                plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
             };
             try {
                 setAzureSyncing(true);
@@ -671,7 +697,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -698,6 +724,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
                         virtualBonds,
                         freeCommissionPeriods,
+                        plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -1778,6 +1805,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 : { groups: {}, categories: {} };
             const importedVirtualBonds: VirtualBond[] = Array.isArray(data.virtualBonds) ? data.virtualBonds : [];
             const importedFreeCommissionPeriods: FreeCommissionPeriod[] = Array.isArray(data.freeCommissionPeriods) ? data.freeCommissionPeriods : [];
+            // null (not []) when absent from the backup so the auto-seed re-runs
+            const importedPlannedForecastExpenses: PlannedForecastExpense[] | null = Array.isArray(data.plannedForecastExpenses) ? data.plannedForecastExpenses : null;
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
             const importedYnabGoalsGroupName: string | undefined = typeof data.ynabGoalsGroupName === 'string' ? data.ynabGoalsGroupName : undefined;
             const importedYnabLastGoalsSyncAt: string | undefined = typeof data.ynabLastGoalsSyncAt === 'string' ? data.ynabLastGoalsSyncAt : undefined;
@@ -1803,6 +1832,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_ynab_macro_mappings', JSON.stringify(importedYnabMacroMappings));
             localStorage.setItem('portfolio_virtual_bonds', JSON.stringify(importedVirtualBonds));
             localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
+            localStorage.setItem('portfolio_forecast_planned_expenses', JSON.stringify(importedPlannedForecastExpenses));
 
             // Then update React state
             setTransactions(transactions);
@@ -1823,6 +1853,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setYnabMacroMappings(importedYnabMacroMappings);
             setVirtualBonds(importedVirtualBonds);
             setFreeCommissionPeriods(importedFreeCommissionPeriods);
+            setStoredPlannedForecastExpenses(importedPlannedForecastExpenses);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
                 setYnabConfigState(prev => prev ? {
                     ...prev,
@@ -1863,6 +1894,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
                 virtualBonds,
                 freeCommissionPeriods,
+                plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -2451,6 +2483,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         getPortfolioAllocationSummary,
         getYnabGoalAllocations,
         ynabGoalsSyncing,
+        plannedForecastExpenses: storedPlannedForecastExpenses,
+        setPlannedForecastExpenses: setStoredPlannedForecastExpenses,
+        restorePlannedForecastExpenses,
         ynabSpendingHistory,
         ynabMacroMappings,
         syncYnabSpending,
