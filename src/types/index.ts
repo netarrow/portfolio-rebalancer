@@ -13,6 +13,9 @@ export interface Broker {
   // Views offer toggles to include/exclude flagged brokers from the counts.
   familyAsset?: boolean;
   illiquid?: boolean;
+  // Person this broker belongs to, for personal (non-family) brokers only.
+  // Empty = personal but unattributed: always counted, never filtered out.
+  ownerId?: string;
   currentLiquidity?: number;
   minLiquidityType?: 'percent' | 'fixed';
   minLiquidityPercentage?: number;
@@ -26,11 +29,23 @@ export interface Broker {
   commissionMax?: number;      // optional maximum fee (percent mode)
 }
 
+// A household member a personal broker can be attributed to. Managed in
+// Settings; referenced by Broker.ownerId.
+export interface Person {
+  id: string;
+  name: string;
+  order: number; // display order (lower = first)
+}
+
 // Which flagged brokers are counted in totals (true = included). Persisted as
 // a single app-wide preference; every counting view renders the same toggles.
 export interface AssetScope {
   includeFamily: boolean;
   includeIlliquid: boolean;
+  // Persons whose personal brokers are left out of the counts. Modelled as an
+  // exclusion list so a newly created person is counted by default, matching
+  // the include-by-default behaviour of the two flags above.
+  excludedPersonIds?: string[];
 }
 
 export const CASH_TICKER_PREFIX = '_CASH_';
@@ -242,6 +257,26 @@ export interface YnabConfig {
   goalsGroupName?: string;
   lastGoalsSyncAt?: string;
   lastSpendingSyncAt?: string;
+  lastAccountsSyncAt?: string;
+}
+
+// brokerId -> YNAB account id. Strictly 1:1: an account backs a single broker,
+// so assigning it elsewhere moves it.
+export type YnabAccountMappings = Record<string, string>;
+
+// One row of the "update broker liquidity from YNAB" preview.
+export interface BrokerLiquiditySyncRow {
+  brokerId: string;
+  brokerName: string;
+  ynabAccountId: string;
+  ynabAccountName: string;
+  currentLiquidity: number;
+  newLiquidity: number;
+  delta: number;
+  // 'account-missing' = the mapped account is gone/closed in YNAB; the row is
+  // shown for context but cannot be applied.
+  status: 'ok' | 'account-missing';
+  allocatedTotal: number; // sum of liquidityAllocations, to warn on shortfalls
 }
 
 export interface YnabCategory {
