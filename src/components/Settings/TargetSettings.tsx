@@ -1,13 +1,15 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
 import type { AssetClass, AssetSubClass } from '../../types';
 import Swal from 'sweetalert2';
 import { testAzureConnection } from '../../services/azureSync';
-import type { YnabBudgetSummary } from '../../services/ynabApi';
+import { milliunitsToEur } from '../../services/ynabApi';
+import type { YnabBudgetSummary, YnabAccountSummary } from '../../services/ynabApi';
 import EncryptionSettingsCard from '../Security/EncryptionSettingsCard';
 import PremiumPriceCard from './PremiumPriceCard';
 import FreeCommissionCard from './FreeCommissionCard';
+import PeopleCard from './PeopleCard';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -28,6 +30,7 @@ const TargetSettings: React.FC = () => {
         goals,
         freeCommissionPeriods,
         plannedForecastExpenses,
+        people,
         importData,
         // Price history (separate backup JSON, local-only)
         priceHistory,
@@ -45,6 +48,9 @@ const TargetSettings: React.FC = () => {
         ynabListBudgets,
         disconnectYnab,
         ynabSyncing,
+        ynabAccountMappings,
+        setYnabAccountMapping,
+        listYnabAccounts,
     } = usePortfolio();
 
     // ... (existing state)
@@ -65,6 +71,36 @@ const TargetSettings: React.FC = () => {
     const [ynabBudgets, setYnabBudgets] = useState<YnabBudgetSummary[] | null>(null);
     const [ynabVerifying, setYnabVerifying] = useState(false);
     const [ynabSelectedBudgetId, setYnabSelectedBudgetId] = useState(ynabConfig?.budgetId ?? '');
+
+    // Broker ↔ YNAB account mapping: accounts are loaded once the budget is
+    // configured, then refreshed whenever the credentials change.
+    const [ynabAccounts, setYnabAccounts] = useState<YnabAccountSummary[]>([]);
+    const [ynabAccountsLoading, setYnabAccountsLoading] = useState(false);
+    const [ynabAccountsError, setYnabAccountsError] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!ynabConfig?.apiKey || !ynabConfig?.budgetId) {
+            setYnabAccounts([]);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            setYnabAccountsLoading(true);
+            setYnabAccountsError(null);
+            const res = await listYnabAccounts();
+            if (cancelled) return;
+            if (res.ok && res.accounts) setYnabAccounts(res.accounts);
+            else setYnabAccountsError(res.error || 'Unable to load YNAB accounts.');
+            setYnabAccountsLoading(false);
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ynabConfig?.apiKey, ynabConfig?.budgetId]);
+
+    // brokerId currently holding each account, to flag reassignments in the UI
+    const brokerIdByAccountId = new Map(
+        Object.entries(ynabAccountMappings).map(([brokerId, accountId]) => [accountId, brokerId])
+    );
 
     // ... (existing helpers)
     const assetTickers = assets.map(a => a.ticker);
@@ -96,7 +132,9 @@ const TargetSettings: React.FC = () => {
 
     const handleBackup = () => {
         const backupData = {
-            version: 4,
+            // v5 adds people + broker↔YNAB account mappings; older backups
+            // restore fine since every added field defaults when absent.
+            version: 5,
             timestamp: new Date().toISOString(),
             transactions,
             assetSettings,
@@ -108,7 +146,9 @@ const TargetSettings: React.FC = () => {
             goalAllocations,
             goals,
             freeCommissionPeriods,
-            plannedForecastExpenses
+            plannedForecastExpenses,
+            people,
+            ynabAccountMappings
         };
 
         const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -445,6 +485,8 @@ const TargetSettings: React.FC = () => {
             <EncryptionSettingsCard />
 
             <FreeCommissionCard />
+
+            <PeopleCard />
 
             {/* Data Management Section */}
             <div>
@@ -824,6 +866,65 @@ const TargetSettings: React.FC = () => {
                                 />
                                 <span>months (excludes the current month, 1–24)</span>
                             </div>
+                        </div>
+                    )}
+
+                    {ynabConfig && (
+                        <div style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
+                            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Broker ↔ YNAB accounts</label>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0.25rem 0 0.75rem 0' }}>
+                                Link each broker to the YNAB account that holds its cash. From the Brokers page you can then
+                                update every mapped broker's liquidity with the account's working balance. One account can
+                                back a single broker.
+                                {ynabConfig.lastAccountsSyncAt && (
+                                    <> Last liquidity update: {new Date(ynabConfig.lastAccountsSyncAt).toLocaleString('en-IE')}.</>
+                                )}
+                            </p>
+
+                            {ynabAccountsError && (
+                                <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                                    {ynabAccountsError}
+                                </div>
+                            )}
+
+                            {brokers.length === 0 ? (
+                                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No brokers yet.</p>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    {brokers.map(broker => (
+                                        <div key={broker.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                            <span style={{ flex: 1, minWidth: '140px', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                                {broker.name}
+                                            </span>
+                                            <select
+                                                className="form-select"
+                                                value={ynabAccountMappings[broker.id] || ''}
+                                                onChange={e => setYnabAccountMapping(broker.id, e.target.value || null)}
+                                                disabled={ynabAccountsLoading || ynabAccounts.length === 0}
+                                                style={{ flex: 2, minWidth: '240px' }}
+                                            >
+                                                <option value="">
+                                                    {ynabAccountsLoading
+                                                        ? 'Loading accounts…'
+                                                        : ynabAccounts.length === 0 ? 'No accounts available' : '— No account —'}
+                                                </option>
+                                                {ynabAccounts.map(account => {
+                                                    const heldBy = brokerIdByAccountId.get(account.id);
+                                                    const otherBroker = heldBy && heldBy !== broker.id
+                                                        ? brokers.find(b => b.id === heldBy)
+                                                        : undefined;
+                                                    return (
+                                                        <option key={account.id} value={account.id}>
+                                                            {account.name} — €{milliunitsToEur(account.balanceMilliunits).toLocaleString('en-IE', { minimumFractionDigits: 2 })}
+                                                            {otherBroker ? ` (on ${otherBroker.name})` : ''}
+                                                        </option>
+                                                    );
+                                                })}
+                                            </select>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>

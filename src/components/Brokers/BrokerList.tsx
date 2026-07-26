@@ -1,13 +1,21 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import BrokerForm from './BrokerForm';
-import type { Broker } from '../../types';
+import BrokerLiquiditySyncModal from './BrokerLiquiditySyncModal';
+import type { Broker, BrokerLiquiditySyncRow } from '../../types';
 import Swal from 'sweetalert2';
 
 const BrokerList: React.FC = () => {
-    const { brokers, portfolios, addBroker, updateBroker, deleteBroker } = usePortfolio();
+    const {
+        brokers, portfolios, people, addBroker, updateBroker, deleteBroker,
+        ynabConfig, ynabAccountMappings, prepareBrokerLiquiditySync, applyBrokerLiquiditySync, brokerLiquiditySyncing,
+    } = usePortfolio();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingBroker, setEditingBroker] = useState<Broker | null>(null);
+    const [syncRows, setSyncRows] = useState<BrokerLiquiditySyncRow[] | null>(null);
+
+    const personById = new Map(people.map(p => [p.id, p]));
+    const canSyncLiquidity = !!ynabConfig && Object.keys(ynabAccountMappings).length > 0;
 
     const handleCreate = (data: Omit<Broker, 'id'>) => {
         addBroker({
@@ -64,13 +72,46 @@ const BrokerList: React.FC = () => {
         setIsModalOpen(false);
     };
 
+    const handleOpenLiquiditySync = async () => {
+        const res = await prepareBrokerLiquiditySync();
+        if (!res.ok || !res.rows) {
+            Swal.fire({ title: 'Unable to read YNAB', text: res.error, icon: 'error' });
+            return;
+        }
+        setSyncRows(res.rows);
+    };
+
+    const handleConfirmLiquiditySync = (rows: BrokerLiquiditySyncRow[]) => {
+        const res = applyBrokerLiquiditySync(rows);
+        setSyncRows(null);
+        Swal.fire({
+            title: 'Liquidity updated',
+            text: `${res.updated} broker${res.updated === 1 ? '' : 's'} updated from YNAB.`,
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false,
+        });
+    };
+
     return (
         <div className="broker-list-container">
             <div className="header-actions">
                 <h2>Your Brokers</h2>
-                <button className="btn btn-primary" onClick={openCreateModal}>
-                    + New Broker
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    {canSyncLiquidity && (
+                        <button
+                            className="btn btn-secondary"
+                            onClick={handleOpenLiquiditySync}
+                            disabled={brokerLiquiditySyncing}
+                            title="Read the mapped YNAB accounts and update each broker's liquidity"
+                        >
+                            {brokerLiquiditySyncing ? 'Reading YNAB…' : '🔄 Update liquidity from YNAB'}
+                        </button>
+                    )}
+                    <button className="btn btn-primary" onClick={openCreateModal}>
+                        + New Broker
+                    </button>
+                </div>
             </div>
 
             <div className="broker-grid">
@@ -106,8 +147,18 @@ const BrokerList: React.FC = () => {
                                 {broker.description && (
                                     <p className="description">{broker.description}</p>
                                 )}
-                                {(broker.familyAsset || broker.illiquid) && (
+                                {(broker.familyAsset || broker.illiquid || broker.ownerId || ynabAccountMappings[broker.id]) && (
                                     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                                        {!broker.familyAsset && broker.ownerId && personById.has(broker.ownerId) && (
+                                            <span title="Personal asset — views can filter by person" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#0EA5E920', color: '#0EA5E9', border: '1px solid #0EA5E950' }}>
+                                                👤 {personById.get(broker.ownerId)!.name}
+                                            </span>
+                                        )}
+                                        {ynabAccountMappings[broker.id] && (
+                                            <span title="Liquidity can be updated from the mapped YNAB account" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#10B98120', color: '#10B981', border: '1px solid #10B98150' }}>
+                                                🔗 YNAB
+                                            </span>
+                                        )}
                                         {broker.familyAsset && (
                                             <span title="Family asset — views can include/exclude it from totals" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#8B5CF620', color: '#8B5CF6', border: '1px solid #8B5CF650' }}>
                                                 👪 Family
@@ -147,8 +198,18 @@ const BrokerList: React.FC = () => {
                 <BrokerForm
                     initialData={editingBroker}
                     portfolios={portfolios}
+                    people={people}
                     onSubmit={editingBroker ? handleUpdate : handleCreate}
                     onCancel={closeModal}
+                />
+            )}
+
+            {syncRows !== null && (
+                <BrokerLiquiditySyncModal
+                    rows={syncRows}
+                    currencyIso={ynabConfig?.currencyIso || 'EUR'}
+                    onConfirm={handleConfirmLiquiditySync}
+                    onCancel={() => setSyncRows(null)}
                 />
             )}
 
