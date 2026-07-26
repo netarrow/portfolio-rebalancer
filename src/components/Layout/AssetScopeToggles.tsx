@@ -1,18 +1,33 @@
 import React from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 
-// App-wide scope chips: include/exclude family-asset and illiquid brokers from
-// the counts. The preference is shared across views (Dashboard, Stats,
-// Forecast, Performance all render these chips and react to the same state).
-// Renders nothing until at least one broker carries a scope flag, so the UI
-// stays clean for users who don't use the feature.
+// App-wide scope chips: include/exclude family-asset, illiquid and per-person
+// brokers from the counts. The preference is shared across views (Dashboard,
+// Stats, Forecast, Performance all render these chips and react to the same
+// state). Renders nothing until at least one broker carries a scope flag or a
+// person, so the UI stays clean for users who don't use the feature.
 const AssetScopeToggles: React.FC<{ style?: React.CSSProperties }> = ({ style }) => {
-    const { assetScope, setAssetScope, hasScopeFlaggedBrokers, brokers } = usePortfolio();
+    const { assetScope, setAssetScope, hasScopeFlaggedBrokers, brokers, people } = usePortfolio();
 
     if (!hasScopeFlaggedBrokers) return null;
 
     const hasFamily = brokers.some(b => b.familyAsset);
     const hasIlliquid = brokers.some(b => b.illiquid);
+    // Only people who actually own a personal broker get a chip.
+    const owningPeople = people.filter(p => brokers.some(b => !b.familyAsset && b.ownerId === p.id));
+    const excludedPersonIds = assetScope.excludedPersonIds ?? [];
+
+    const togglePerson = (personId: string) => {
+        setAssetScope(prev => {
+            const excluded = prev.excludedPersonIds ?? [];
+            return {
+                ...prev,
+                excludedPersonIds: excluded.includes(personId)
+                    ? excluded.filter(id => id !== personId)
+                    : [...excluded, personId],
+            };
+        });
+    };
 
     const chip = (
         active: boolean,
@@ -50,6 +65,21 @@ const AssetScopeToggles: React.FC<{ style?: React.CSSProperties }> = ({ style })
                     : 'Family brokers are excluded from the counts — click to include them',
                 () => setAssetScope(prev => ({ ...prev, includeFamily: !prev.includeFamily }))
             )}
+            {owningPeople.map(person => {
+                const included = !excludedPersonIds.includes(person.id);
+                return (
+                    <React.Fragment key={person.id}>
+                        {chip(
+                            included,
+                            `👤 ${person.name}`,
+                            included
+                                ? `${person.name}'s personal brokers are included — click to exclude them`
+                                : `${person.name}'s personal brokers are excluded — click to include them`,
+                            () => togglePerson(person.id)
+                        )}
+                    </React.Fragment>
+                );
+            })}
             {hasIlliquid && chip(
                 assetScope.includeIlliquid,
                 '🔒 Illiquid',
@@ -57,6 +87,14 @@ const AssetScopeToggles: React.FC<{ style?: React.CSSProperties }> = ({ style })
                     ? 'Illiquid brokers (e.g. pension funds) are included — click to exclude them'
                     : 'Illiquid brokers (e.g. pension funds) are excluded — click to include them',
                 () => setAssetScope(prev => ({ ...prev, includeIlliquid: !prev.includeIlliquid }))
+            )}
+            {owningPeople.length > 0 && (
+                <span
+                    style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}
+                    title="Personal brokers with no person assigned are always counted"
+                >
+                    ⓘ
+                </span>
             )}
         </div>
     );
