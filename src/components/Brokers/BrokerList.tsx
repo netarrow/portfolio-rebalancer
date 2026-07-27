@@ -17,6 +17,18 @@ const BrokerList: React.FC = () => {
     const personById = new Map(people.map(p => [p.id, p]));
     const canSyncLiquidity = !!ynabConfig && Object.keys(ynabAccountMappings).length > 0;
 
+    // Name the budget on the badge: mappings can point at budgets other than the
+    // one the rest of the YNAB integration reads from.
+    const ynabBadgeTitle = (brokerId: string): string => {
+        const mapping = ynabAccountMappings[brokerId];
+        if (!mapping) return 'Liquidity can be updated from the mapped YNAB account';
+        const budgetName = ynabConfig?.budgets?.find(b => b.id === mapping.budgetId)?.name
+            ?? (mapping.budgetId === ynabConfig?.budgetId ? ynabConfig?.budgetName : undefined);
+        return budgetName
+            ? `Liquidity can be updated from the mapped YNAB account (budget: ${budgetName})`
+            : 'Liquidity can be updated from the mapped YNAB account';
+    };
+
     const handleCreate = (data: Omit<Broker, 'id'>) => {
         addBroker({
             ...data,
@@ -155,7 +167,7 @@ const BrokerList: React.FC = () => {
                                             </span>
                                         )}
                                         {ynabAccountMappings[broker.id] && (
-                                            <span title="Liquidity can be updated from the mapped YNAB account" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#10B98120', color: '#10B981', border: '1px solid #10B98150' }}>
+                                            <span title={ynabBadgeTitle(broker.id)} style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#10B98120', color: '#10B981', border: '1px solid #10B98150' }}>
                                                 🔗 YNAB
                                             </span>
                                         )}

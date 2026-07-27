@@ -29,6 +29,9 @@ const BrokerLiquiditySyncModal: React.FC<Props> = ({ rows, currencyIso, onConfir
     const applicable = rows.filter(r => r.status === 'ok');
     const allSelected = applicable.length > 0 && applicable.every(r => selected.has(r.brokerId));
 
+    // The budget column only earns its space when brokers span several budgets.
+    const showBudget = new Set(rows.map(r => r.ynabBudgetId)).size > 1;
+
     const toggleAll = () => {
         setSelected(allSelected ? new Set() : new Set(applicable.map(r => r.brokerId)));
     };
@@ -69,6 +72,7 @@ const BrokerLiquiditySyncModal: React.FC<Props> = ({ rows, currencyIso, onConfir
                                         />
                                     </th>
                                     <th>Broker</th>
+                                    {showBudget && <th>Budget</th>}
                                     <th>YNAB account</th>
                                     <th>Current</th>
                                     <th>New</th>
@@ -77,7 +81,7 @@ const BrokerLiquiditySyncModal: React.FC<Props> = ({ rows, currencyIso, onConfir
                             </thead>
                             <tbody>
                                 {rows.map(row => {
-                                    const missing = row.status === 'account-missing';
+                                    const missing = row.status !== 'ok';
                                     const shortfall = !missing && row.allocatedTotal > 0 && row.newLiquidity < row.allocatedTotal;
                                     return (
                                         <React.Fragment key={row.brokerId}>
@@ -92,11 +96,12 @@ const BrokerLiquiditySyncModal: React.FC<Props> = ({ rows, currencyIso, onConfir
                                                     />
                                                 </td>
                                                 <td style={{ fontWeight: 600 }}>{row.brokerName}</td>
+                                                {showBudget && <td>{row.ynabBudgetName}</td>}
                                                 <td>
                                                     {row.ynabAccountName}
                                                     {missing && (
                                                         <span className="pill pill-warn" style={{ marginLeft: '0.4rem' }}>
-                                                            not found
+                                                            {row.status === 'budget-missing' ? 'budget not found' : 'not found'}
                                                         </span>
                                                     )}
                                                 </td>
@@ -109,7 +114,7 @@ const BrokerLiquiditySyncModal: React.FC<Props> = ({ rows, currencyIso, onConfir
                                             {shortfall && (
                                                 <tr>
                                                     <td />
-                                                    <td colSpan={5} style={{ color: '#F59E0B', fontSize: '0.8rem', paddingTop: 0 }}>
+                                                    <td colSpan={showBudget ? 6 : 5} style={{ color: '#F59E0B', fontSize: '0.8rem', paddingTop: 0 }}>
                                                         The new liquidity is below the {formatCurrency(row.allocatedTotal, currencyIso)} allocated to portfolios.
                                                     </td>
                                                 </tr>
