@@ -255,20 +255,24 @@ export interface YnabBudgetRef {
 
 export interface YnabConfig {
   apiKey: string;
-  // Primary budget: the one categories, Goals and spending analysis read from.
-  // Broker ↔ account mappings can point at any budget of the token.
+  // Primary budget: the one categories and Goals read from.
+  // Broker ↔ account mappings and the Summary analysis can point at any budget
+  // of the token.
   budgetId: string;
   budgetName?: string;
   currencyIso?: string;
   // Budgets visible to the token, cached so the broker mapping UI can offer
   // them without a fresh "Verify". Device-local, like the API key.
   budgets?: YnabBudgetRef[];
+  // Budget the Summary analysis is currently looking at. Independent of the
+  // primary budget: switching it must not move categories, Goals or forecast.
+  // Unset = analyse the primary budget.
+  summaryBudgetId?: string;
   lastSyncAt?: string;
   avgMonthsWindow?: number;
   goalsGroupId?: string;
   goalsGroupName?: string;
   lastGoalsSyncAt?: string;
-  lastSpendingSyncAt?: string;
   lastAccountsSyncAt?: string;
 }
 
@@ -422,6 +426,10 @@ export interface YnabMonthSnapshot {
   categories: YnabMonthCategorySnapshot[];
   syncedAt: string;
 }
+
+// budgetId -> rolling window of that budget's months. Every budget of the token
+// keeps its own history, so switching the Summary between them needs no re-sync.
+export type YnabSpendingHistoryByBudget = Record<string, YnabMonthSnapshot[]>;
 
 export interface PortfolioSummary {
   totalValue: number;
