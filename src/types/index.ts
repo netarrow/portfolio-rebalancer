@@ -246,11 +246,23 @@ export interface BondProposal {
 
 // YNAB integration
 
+// A budget of the connected YNAB token, as needed to label and address it.
+export interface YnabBudgetRef {
+  id: string;
+  name: string;
+  currencyIso: string;
+}
+
 export interface YnabConfig {
   apiKey: string;
+  // Primary budget: the one categories, Goals and spending analysis read from.
+  // Broker ↔ account mappings can point at any budget of the token.
   budgetId: string;
   budgetName?: string;
   currencyIso?: string;
+  // Budgets visible to the token, cached so the broker mapping UI can offer
+  // them without a fresh "Verify". Device-local, like the API key.
+  budgets?: YnabBudgetRef[];
   lastSyncAt?: string;
   avgMonthsWindow?: number;
   goalsGroupId?: string;
@@ -260,22 +272,33 @@ export interface YnabConfig {
   lastAccountsSyncAt?: string;
 }
 
-// brokerId -> YNAB account id. Strictly 1:1: an account backs a single broker,
-// so assigning it elsewhere moves it.
-export type YnabAccountMappings = Record<string, string>;
+// A YNAB account, qualified by the budget that holds it: account ids are only
+// unique within a budget, and a broker may be backed by any budget's account.
+export interface YnabAccountMapping {
+  budgetId: string;
+  accountId: string;
+}
+
+// brokerId -> YNAB account. Strictly 1:1 per (budgetId, accountId): an account
+// backs a single broker, so assigning it elsewhere moves it. The same account
+// id in a different budget is a different account and maps independently.
+export type YnabAccountMappings = Record<string, YnabAccountMapping>;
 
 // One row of the "update broker liquidity from YNAB" preview.
 export interface BrokerLiquiditySyncRow {
   brokerId: string;
   brokerName: string;
+  ynabBudgetId: string;
+  ynabBudgetName: string;
   ynabAccountId: string;
   ynabAccountName: string;
   currentLiquidity: number;
   newLiquidity: number;
   delta: number;
-  // 'account-missing' = the mapped account is gone/closed in YNAB; the row is
-  // shown for context but cannot be applied.
-  status: 'ok' | 'account-missing';
+  // 'account-missing' = the mapped account is gone/closed in YNAB;
+  // 'budget-missing' = its budget is unreachable with the current token.
+  // Both are shown for context but can never be applied.
+  status: 'ok' | 'account-missing' | 'budget-missing';
   allocatedTotal: number; // sum of liquidityAllocations, to warn on shortfalls
 }
 

@@ -87,6 +87,18 @@ export async function listAccounts(
     }
 }
 
+// Accounts of several budgets at once, one request each, keyed by budget id.
+// Failures are per budget: an unreachable budget must not hide the accounts of
+// the others, so its entry carries the error instead of rejecting the whole call.
+export async function listAccountsByBudget(
+    apiKey: string,
+    budgetIds: string[],
+): Promise<Map<string, YnabApiResult<YnabAccountSummary[]>>> {
+    const unique = [...new Set(budgetIds)];
+    const results = await Promise.all(unique.map(id => listAccounts(apiKey, id)));
+    return new Map(unique.map((id, i) => [id, results[i]]));
+}
+
 const HIDDEN_GROUP_NAMES = new Set([
     'Internal Master Category',
     'Credit Card Payments',
