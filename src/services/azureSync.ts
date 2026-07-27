@@ -22,7 +22,8 @@ export interface SyncPayload {
     aggregateExcludedTickers?: string[];
     goalModeTargets?: Record<string, number>;
     ynabMappings?: YnabCategoryMapping[];
-    // brokerId -> YNAB account id: a mapping, not a credential, so it travels.
+    // brokerId -> { budgetId, accountId }: a mapping, not a credential, so it
+    // travels. Older payloads hold a bare account id and are normalized on read.
     ynabAccountMappings?: YnabAccountMappings;
     ynabGoals?: YnabGoal[];
     ynabGoalAllocations?: YnabGoalAllocation[];

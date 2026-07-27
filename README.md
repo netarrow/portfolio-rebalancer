@@ -227,7 +227,7 @@ Manage brokers, their commission model and their cash positions.
 - **Commission models** — fixed, or percentage with min/max.
 - **Liquidity tracking** — available cash per broker, with an optional **minimum threshold** the forecast and rebalancer respect. New Buy/Sell transactions adjust the broker's cash automatically.
 - **Liquidity allocations** — earmark part of a broker's cash to specific portfolios.
-- **Update liquidity from YNAB** — when brokers are mapped to YNAB accounts in Settings, this button reads each account's working balance (cleared + uncleared) and shows a preview of *current → new* per broker; uncheck any row you don't want to touch before applying.
+- **Update liquidity from YNAB** — when brokers are mapped to YNAB accounts in Settings, this button reads each account's working balance (cleared + uncleared) and shows a preview of *current → new* per broker; uncheck any row you don't want to touch before applying. Brokers mapped to different YNAB budgets are all refreshed in the same pass, and the preview names the budget each row came from.
 - **Asset scope** — each broker is either **Personal** (optionally attributed to a person from the Settings *People* list) or **Family**, and can additionally be flagged **Illiquid** (e.g. a pension fund). The counting-scope chips on Dashboard, Stats, Forecast and Performance then filter the totals: *person A + family*, *only person A*, family excluded, and so on. Personal brokers with no person assigned are always counted.
 
 Editing a broker lets you configure its **ownership** (personal/person or family), its **commission rules** (fixed fee, or percentage with optional min/max) and the **minimum liquidity** to keep on hand, either as a percentage of the broker's value or a fixed amount, optionally split across portfolios:
@@ -297,7 +297,7 @@ The saved lists are **broker-aware**: they pre-arm the free-buy toggle in the Da
 ![Settings — definitions & developer tools](screenshots/settings_bottom.png)
 
 - **People** — the members of your household. A broker marked *Personal* can be attributed to one of them, which is what powers the per-person counting-scope chips. Deleting a person leaves their brokers personal but unattributed, so nothing disappears from the totals.
-- **YNAB** — personal access token, budget selection, the "Investment Goals" category group and the **broker ↔ YNAB account** mapping used by *Update liquidity from YNAB* on the Brokers page. The relation is one-to-one: assigning an account that already backs another broker moves it.
+- **YNAB** — personal access token, budget selection, the "Investment Goals" category group and the **broker ↔ YNAB account** mapping used by *Update liquidity from YNAB* on the Brokers page. Each broker picks its own **budget** and then an account inside it, so brokers can be split across several budgets of the same token; the budget saved at the top stays the primary one, the one category import, YNAB Goals and spending analysis read from. The relation is one-to-one *within a budget*: assigning an account that already backs another broker moves it, while the same account id in a different budget is a different account.
 - **Asset Registry & Settings** — asset classes/subclasses, custom labels, macro and goal targets.
 - **Developer Tools** — *Load Mock Data* (full feature coverage) and the *Danger Zone* clear-all.
 
