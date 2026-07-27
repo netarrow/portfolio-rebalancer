@@ -58,17 +58,36 @@ const selectStyle: React.CSSProperties = {
 const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
     const {
         ynabConfig,
+        ynabSummaryBudgetId,
+        setYnabSummaryBudget,
         ynabSpendingHistory,
+        ynabSpendingLastSyncAt,
         ynabMacroMappings,
         syncYnabSpending,
         setYnabGroupMacro,
         setYnabCategoryMacro,
         ynabSpendingSyncing,
         ynabGoals,
+        refreshYnabBudgets,
     } = usePortfolio();
 
-    const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const [showMapping, setShowMapping] = useState(false);
+    const [reloadingBudgets, setReloadingBudgets] = useState(false);
+
+    // Every budget of the token can be analysed. Before the cached list is
+    // populated (or on an older config) only the primary one is offered.
+    const budgets = useMemo(() => {
+        const cached = ynabConfig?.budgets;
+        if (cached && cached.length > 0) return cached;
+        if (!ynabConfig) return [];
+        return [{ id: ynabConfig.budgetId, name: ynabConfig.budgetName || ynabConfig.budgetId, currencyIso: ynabConfig.currencyIso || 'EUR' }];
+    }, [ynabConfig]);
+
+    const selectedBudget = budgets.find(b => b.id === ynabSummaryBudgetId);
+    const selectedBudgetName = selectedBudget?.name || ynabSummaryBudgetId || '';
+    const isPrimaryBudget = ynabSummaryBudgetId === ynabConfig?.budgetId;
+    // Amounts belong to the analysed budget, which may not be the primary one.
+    const currencyIso = selectedBudget?.currencyIso || ynabConfig?.currencyIso || 'EUR';
 
     const analysis = useMemo(
         () => analyzeSpending(ynabSpendingHistory, ynabMacroMappings),
@@ -106,6 +125,15 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
         }
     };
 
+    const handleReloadBudgets = async () => {
+        setReloadingBudgets(true);
+        const result = await refreshYnabBudgets();
+        setReloadingBudgets(false);
+        if (!result.ok) {
+            Swal.fire({ title: 'Unable to load budgets', text: result.error, icon: 'error' });
+        }
+    };
+
     if (!ynabConfig) {
         return (
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
@@ -131,15 +159,44 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div>
                     <h2 style={{ margin: 0 }}>Summary Analysis</h2>
-                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-                        Budget: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong>
-                        {analysis.monthsCount > 0 && analysis.firstMonth && analysis.lastMonth && (
-                            <> · {analysis.monthsCount} months ({monthLabel(analysis.firstMonth)} – {monthLabel(analysis.lastMonth)})</>
-                        )}
-                        {ynabConfig.lastSpendingSyncAt && (
-                            <> · Last sync: {new Date(ynabConfig.lastSpendingSyncAt).toLocaleString('en-IE')}</>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                        <label htmlFor="summary-budget" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Budget:</label>
+                        <select
+                            id="summary-budget"
+                            value={ynabSummaryBudgetId ?? ''}
+                            onChange={e => setYnabSummaryBudget(e.target.value)}
+                            style={{ ...selectStyle, fontWeight: 600 }}
+                        >
+                            {budgets.map(b => (
+                                <option key={b.id} value={b.id}>{b.name}{b.id === ynabConfig.budgetId ? ' (primary)' : ''}</option>
+                            ))}
+                        </select>
+                        <button
+                            onClick={handleReloadBudgets}
+                            disabled={reloadingBudgets}
+                            title="Reload the budget list from YNAB"
+                            style={{ padding: '0.3rem 0.6rem', background: 'transparent', color: 'var(--color-primary)', border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                        >
+                            {reloadingBudgets ? '…' : '↻'}
+                        </button>
+                    </div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.35rem' }}>
+                        {analysis.monthsCount > 0 && analysis.firstMonth && analysis.lastMonth
+                            ? <>{analysis.monthsCount} months ({monthLabel(analysis.firstMonth)} – {monthLabel(analysis.lastMonth)})</>
+                            : <>Not synced yet</>}
+                        {ynabSpendingLastSyncAt && (
+                            <> · Last sync: {new Date(ynabSpendingLastSyncAt).toLocaleString('en-IE')}</>
                         )}
                     </div>
+                    {/* Goals are only synced from the primary budget, so the goal-based
+                        suggestions keep referring to it whatever budget is analysed. */}
+                    {!isPrimaryBudget && (
+                        <div style={{ color: '#f59e0b', fontSize: '0.82rem', marginTop: '0.35rem', maxWidth: 620 }}>
+                            YNAB Goals are only synced from the primary budget
+                            (<strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong>), so the goal-based
+                            suggestions still refer to it, not to “{selectedBudgetName}”.
+                        </div>
+                    )}
                 </div>
                 <button
                     onClick={handleSync}
@@ -152,10 +209,11 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
 
             {analysis.monthsCount === 0 ? (
                 <div style={{ ...cardStyle, textAlign: 'center', padding: '2rem' }}>
-                    <h3 style={{ marginTop: 0 }}>No spending history yet</h3>
+                    <h3 style={{ marginTop: 0}}>No spending history for “{selectedBudgetName}”</h3>
                     <p style={{ color: 'var(--text-secondary)' }}>
-                        Run a sync to import the last 12 months of budget, spending and income from YNAB.
-                        Data is kept locally with a rolling one-year window.
+                        Run a sync to import the last 12 months of budget, spending and income from this budget.
+                        Each budget keeps its own history locally, on a rolling one-year window, so you can
+                        switch back and forth without re-syncing.
                     </p>
                 </div>
             ) : (
