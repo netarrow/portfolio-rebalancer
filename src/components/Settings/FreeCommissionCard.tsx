@@ -10,13 +10,20 @@ import { parseIsinList, upsertFreeCommissionPeriod, currentMonthKey, formatMonth
  * drive the free-buy toggle in the rebalancing trade-cost popover and the
  * "missing Free flag?" warning in the transaction list — both only for
  * trades at that broker.
+ *
+ * The page itself only lists the saved month/broker periods with their ISIN
+ * count: the ISINs are shown (and can be removed one by one) in a dedicated
+ * popup opened from each row, so a long promo list never floods the settings.
  */
+type PeriodRef = { monthKey: string; brokerId?: string };
+
 const FreeCommissionCard: React.FC = () => {
     const { freeCommissionPeriods, setFreeCommissionPeriods, brokers } = usePortfolio();
     const [showModal, setShowModal] = useState(false);
     const [monthKey, setMonthKey] = useState(currentMonthKey());
     const [brokerId, setBrokerId] = useState('');
     const [rawText, setRawText] = useState('');
+    const [viewedPeriod, setViewedPeriod] = useState<PeriodRef | null>(null);
 
     const brokerName = (id?: string) => {
         if (!id) return 'Any broker';
@@ -53,7 +60,9 @@ const FreeCommissionCard: React.FC = () => {
         });
     };
 
-    const handleDeletePeriod = async (period: { monthKey: string; brokerId?: string }) => {
+    const samePeriod = (a: PeriodRef, b: PeriodRef) => a.monthKey === b.monthKey && a.brokerId === b.brokerId;
+
+    const handleDeletePeriod = async (period: PeriodRef) => {
         const confirm = await Swal.fire({
             title: `Remove ${formatMonthKey(period.monthKey)} — ${brokerName(period.brokerId)}?`,
             text: 'The free-buy list for this month and broker will be deleted.',
@@ -64,18 +73,22 @@ const FreeCommissionCard: React.FC = () => {
             confirmButtonColor: '#d33',
         });
         if (!confirm.isConfirmed) return;
-        setFreeCommissionPeriods(prev => prev.filter(p => !(p.monthKey === period.monthKey && p.brokerId === period.brokerId)));
+        setFreeCommissionPeriods(prev => prev.filter(p => !samePeriod(p, period)));
+        if (viewedPeriod && samePeriod(viewedPeriod, period)) setViewedPeriod(null);
     };
 
-    const removeIsin = (period: { monthKey: string; brokerId?: string }, isin: string) => {
+    const removeIsin = (period: PeriodRef, isin: string) => {
         setFreeCommissionPeriods(prev => prev
-            .map(p => (p.monthKey === period.monthKey && p.brokerId === period.brokerId)
+            .map(p => samePeriod(p, period)
                 ? { ...p, isins: p.isins.filter(i => i !== isin) }
                 : p)
             .filter(p => p.isins.length > 0));
     };
 
     const nowKey = currentMonthKey();
+    const viewed = viewedPeriod
+        ? freeCommissionPeriods.find(p => samePeriod(p, viewedPeriod)) ?? null
+        : null;
 
     return (
         <div style={{ marginBottom: '3rem' }}>
@@ -112,7 +125,7 @@ const FreeCommissionCard: React.FC = () => {
                                 padding: '0.6rem 0.8rem',
                             }}
                         >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
                                 <strong style={{ fontSize: '0.9rem' }}>
                                     {formatMonthKey(period.monthKey)}
                                     <span style={{ fontWeight: 500, color: 'var(--text-secondary)' }}> — {brokerName(period.brokerId)}</span>
@@ -124,43 +137,88 @@ const FreeCommissionCard: React.FC = () => {
                                         }}>ACTIVE</span>
                                     )}
                                 </strong>
-                                <button
-                                    onClick={() => handleDeletePeriod(period)}
-                                    style={{
-                                        background: 'transparent', border: '1px solid var(--color-danger)',
-                                        color: 'var(--color-danger)', borderRadius: 'var(--radius-sm)',
-                                        padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer', flexShrink: 0,
-                                    }}
-                                >
-                                    Remove
-                                </button>
-                            </div>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
-                                {period.isins.map(isin => (
-                                    <span
-                                        key={isin}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+                                    <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                        {period.isins.length} ISIN{period.isins.length !== 1 ? 's' : ''}
+                                    </span>
+                                    <button
+                                        onClick={() => setViewedPeriod({ monthKey: period.monthKey, brokerId: period.brokerId })}
                                         style={{
-                                            display: 'inline-flex', alignItems: 'center', gap: '4px',
-                                            fontFamily: 'monospace', fontSize: '0.75rem',
-                                            background: 'rgba(16,185,129,0.1)', color: 'var(--text-primary)',
-                                            border: '1px solid rgba(16,185,129,0.35)',
-                                            borderRadius: '4px', padding: '2px 6px',
+                                            background: 'transparent', border: '1px solid var(--color-primary)',
+                                            color: 'var(--color-primary)', borderRadius: 'var(--radius-sm)',
+                                            padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer',
                                         }}
                                     >
-                                        {isin}
-                                        <button
-                                            onClick={() => removeIsin(period, isin)}
-                                            title={`Remove ${isin}`}
-                                            style={{
-                                                background: 'none', border: 'none', cursor: 'pointer',
-                                                color: 'var(--text-muted)', padding: 0, fontSize: '0.8rem', lineHeight: 1,
-                                            }}
-                                        >×</button>
-                                    </span>
-                                ))}
+                                        View ISINs
+                                    </button>
+                                    <button
+                                        onClick={() => handleDeletePeriod(period)}
+                                        style={{
+                                            background: 'transparent', border: '1px solid var(--color-danger)',
+                                            color: 'var(--color-danger)', borderRadius: 'var(--radius-sm)',
+                                            padding: '2px 8px', fontSize: '0.75rem', cursor: 'pointer',
+                                        }}
+                                    >
+                                        Remove
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     ))}
+                </div>
+            )}
+
+            {viewed && (
+                <div className="modal-overlay" onClick={() => setViewedPeriod(null)}>
+                    <div
+                        className="modal-content"
+                        style={{ position: 'relative', width: 'min(520px, 92vw)' }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        <button
+                            className="modal-close-btn"
+                            type="button"
+                            onClick={() => setViewedPeriod(null)}
+                        >×</button>
+                        <h3 style={{ marginTop: 0, marginBottom: '0.25rem' }}>
+                            {formatMonthKey(viewed.monthKey)} — {brokerName(viewed.brokerId)}
+                        </h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: 0 }}>
+                            {viewed.isins.length} free-buy ISIN{viewed.isins.length !== 1 ? 's' : ''} — use × to remove one from the list.
+                        </p>
+                        <div style={{
+                            display: 'flex', flexWrap: 'wrap', gap: '0.35rem',
+                            maxHeight: '50vh', overflowY: 'auto',
+                        }}>
+                            {viewed.isins.map(isin => (
+                                <span
+                                    key={isin}
+                                    style={{
+                                        display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                        fontFamily: 'monospace', fontSize: '0.75rem',
+                                        background: 'rgba(16,185,129,0.1)', color: 'var(--text-primary)',
+                                        border: '1px solid rgba(16,185,129,0.35)',
+                                        borderRadius: '4px', padding: '2px 6px',
+                                    }}
+                                >
+                                    {isin}
+                                    <button
+                                        onClick={() => removeIsin(viewed, isin)}
+                                        title={`Remove ${isin}`}
+                                        style={{
+                                            background: 'none', border: 'none', cursor: 'pointer',
+                                            color: 'var(--text-muted)', padding: 0, fontSize: '0.8rem', lineHeight: 1,
+                                        }}
+                                    >×</button>
+                                </span>
+                            ))}
+                        </div>
+                        <div style={{ display: 'flex', marginTop: '1rem' }}>
+                            <button className="btn-secondary" onClick={() => setViewedPeriod(null)} style={{ flex: 1 }}>
+                                Close
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
 
