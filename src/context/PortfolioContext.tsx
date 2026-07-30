@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { carryInFor, computeInstalment } from '../utils/pacSchedule';
@@ -41,7 +41,6 @@ interface PortfolioContextType {
     deleteTransaction: (id: string) => void;
     updateAssetSettings: (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     updatePortfolioAllocation: (portfolioId: string, ticker: string, percentage: number) => void;
-    updatePortfolioPacConfig: (portfolioId: string, key: string, config: PacConfig | null) => void;
     upsertAllocationGroup: (portfolioId: string, group: AllocationGroup) => void;
     deleteAllocationGroup: (portfolioId: string, groupId: string) => void;
     updateMacroAllocation: (allocations: MacroAllocation) => void;
@@ -1311,19 +1310,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
     };
 
-    const updatePortfolioPacConfig = (portfolioId: string, key: string, config: PacConfig | null) => {
-        setPortfolios(prev => prev.map(p => {
-            if (p.id !== portfolioId) return p;
-            const pacConfigs = { ...(p.pacConfigs || {}) };
-            if (config && config.enabled) {
-                pacConfigs[key] = config;
-            } else {
-                delete pacConfigs[key];
-            }
-            return { ...p, pacConfigs };
-        }));
-    };
-
     const upsertAllocationGroup = (portfolioId: string, group: AllocationGroup) => {
         setPortfolios(prev => prev.map(p => {
             if (p.id !== portfolioId) return p;
@@ -1344,8 +1330,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             if (p.id !== portfolioId) return p;
             const groups = (p.allocationGroups || []).filter(g => g.id !== groupId);
             const { [groupId]: _removed, ...allocations } = (p.allocations || {});
-            const { [groupId]: _removedPac, ...pacConfigs } = (p.pacConfigs || {});
-            return { ...p, allocationGroups: groups, allocations, pacConfigs };
+            return { ...p, allocationGroups: groups, allocations };
         }));
     };
 
@@ -1805,11 +1790,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         members: ['IE00B4L5Y983', 'IE00B3RBWM25'], // SWDA (buy-first), VWRL
                         memberRules: { 'IE00B3RBWM25': { noBuy: true } }
                     }
-                ],
-                // EMIM runs as a PAC (savings plan): Buy Only funds it first.
-                pacConfigs: {
-                    'IE00BKM4GZ66': { enabled: true, priority: 1 }
-                }
+                ]
             },
             {
                 id: pIdMainTilt,
@@ -2933,7 +2914,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateTarget,
         updateAssetSettings,
         updatePortfolioAllocation,
-        updatePortfolioPacConfig,
         upsertAllocationGroup,
         deleteAllocationGroup,
         updateMacroAllocation,

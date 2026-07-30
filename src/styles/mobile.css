@@ -311,7 +311,6 @@
 
     /* Short value fields put the label on the left, the control on the right. */
     .alloc-cell-class,
-    .alloc-cell-pac,
     .alloc-cell-target {
         display: flex !important;
         align-items: center !important;
@@ -321,7 +320,6 @@
 
     .alloc-cell-asset::before,
     .alloc-cell-class::before,
-    .alloc-cell-pac::before,
     .alloc-cell-target::before {
         content: attr(data-label);
         flex: 0 0 auto;
