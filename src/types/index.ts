@@ -361,14 +361,23 @@ export interface YnabGoalAllocation {
   updatedAt: string;
 }
 
+// Where a single field (target amount or target date) of a sync candidate was
+// taken from. 'local' = kept from the goal already stored in YNAB Goals, so a
+// re-sync proposes it again instead of blanking it.
+export type YnabGoalFieldSource = 'parsed-name' | 'parsed-note' | 'ynab-goal' | 'local';
+
 export interface YnabGoalSyncCandidate {
   ynabCategoryId: string;
   ynabCategoryName: string;
   rawNote: string | null;
   // Values that will be applied: the name/note parse when it found something,
-  // otherwise YNAB's own goal target, otherwise the existing manual override.
+  // otherwise YNAB's own goal target, otherwise the value already stored in
+  // YNAB Goals. Editable in the sync modal before confirming.
   parsedAmount: number | null;
   parsedDate: string | null;
+  // Provenance of each of the two values above, for the modal's captions.
+  amountSource: YnabGoalFieldSource | null;
+  dateSource: YnabGoalFieldSource | null;
   confidence: 'high' | 'medium' | 'low';
   cashCoverage: number;
   ynabMonthlyFunding: number | null;

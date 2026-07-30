@@ -12,7 +12,7 @@ import { assignYnabAccountMapping, groupMappingsByBudget, normalizeYnabAccountMa
 import { getExcludedBrokerIds, hasScopeFlags } from '../utils/assetScope';
 import { parseGoalDescriptor, nativeGoalTarget } from '../utils/ynabGoalParser';
 import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
-import { mergeYnabGoalsFromCandidates } from '../utils/ynabGoalSync';
+import { mergeYnabGoalsFromCandidates, resolveGoalTarget } from '../utils/ynabGoalSync';
 import type { YnabGoalSyncReport } from '../utils/ynabGoalSync';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
@@ -2670,27 +2670,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 const parsed = parseGoalDescriptor(cat.name, cat.note);
                 const native = nativeGoalTarget(cat);
                 const existing = existingById.get(cat.id) ?? null;
-                // Precedence: an explicit target written in the name/note, then
-                // YNAB's own goal target, then whatever the user set by hand (so
-                // a re-sync never silently wipes a manual override).
-                const keepManual = existing?.targetSource === 'manual-override';
-                const amount = parsed.amount ?? native.amount ?? (keepManual ? existing.targetAmount ?? null : null);
-                const date = parsed.date ?? native.date ?? (keepManual ? existing.targetDate ?? null : null);
-                const source: YnabGoalSyncCandidate['parsedSource'] =
-                    parsed.source ?? ((native.amount !== null || native.date !== null) ? 'ynab-goal' : null);
-                // A target read from YNAB's goal fields is authoritative, so it
-                // ranks as high as a fully parsed "7000€ by 2028-06".
-                const confidence: YnabGoalSyncCandidate['confidence'] =
-                    amount !== null && date !== null ? 'high'
-                        : source === 'ynab-goal' ? 'medium'
-                            : parsed.confidence;
+                // Name/note parse → YNAB's own goal target → what YNAB Goals
+                // already holds, per field: a re-sync proposes the values that
+                // are already there instead of blanking them.
+                const resolved = resolveGoalTarget(parsed, native, existing);
                 return {
                     ynabCategoryId: cat.id,
                     ynabCategoryName: cat.name,
                     rawNote: cat.note ?? null,
-                    parsedAmount: amount,
-                    parsedDate: date,
-                    confidence,
+                    parsedAmount: resolved.amount,
+                    parsedDate: resolved.date,
+                    amountSource: resolved.amountSource,
+                    dateSource: resolved.dateSource,
+                    confidence: resolved.confidence,
                     ynabTargetAmount: native.amount,
                     ynabTargetDate: native.date,
                     cashCoverage: milliunitsToEur(cat.balanceMilliunits),
@@ -2702,7 +2694,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         : null,
                     goalType: cat.goalType ?? null,
                     matchedYnabGoalId: existing?.id ?? null,
-                    parsedSource: source,
+                    parsedSource: resolved.source,
                     existingTargetSource: existing?.targetSource ?? null,
                     existingTargetAmount: existing?.targetAmount ?? null,
                     existingTargetDate: existing?.targetDate ?? null,

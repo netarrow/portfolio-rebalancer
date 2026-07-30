@@ -1,4 +1,68 @@
-import type { YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate } from '../types';
+import type { YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabGoalFieldSource } from '../types';
+import type { ParsedGoalDescriptor } from './ynabGoalParser';
+
+export interface ResolvedGoalTarget {
+    amount: number | null;
+    date: string | null;
+    amountSource: YnabGoalFieldSource | null;
+    dateSource: YnabGoalFieldSource | null;
+    // Aggregate origin, stored on the goal as its targetSource.
+    source: YnabGoalSyncCandidate['parsedSource'];
+    confidence: YnabGoalSyncCandidate['confidence'];
+}
+
+// Decide the target amount/date a sync candidate proposes, per field:
+//   1. an explicit target written in the category name or note ("7000€ by 2028-06")
+//   2. YNAB's own goal fields (goal_target / goal_target_month)
+//   3. the value already stored in YNAB Goals
+//
+// Step 3 is what makes a re-sync additive: a due date typed once (or a target
+// YNAB no longer exposes) is proposed again instead of coming back empty, so
+// only what actually changed needs touching. Clearing a field in the modal
+// still clears it — the fallback fills blanks, it does not lock values.
+export function resolveGoalTarget(
+    parsed: ParsedGoalDescriptor,
+    native: { amount: number | null; date: string | null },
+    existing: Pick<YnabGoal, 'targetAmount' | 'targetDate' | 'targetSource'> | null,
+): ResolvedGoalTarget {
+    const localAmount = existing?.targetAmount ?? null;
+    const localDate = existing?.targetDate ?? null;
+    // A goal kept from the local copy keeps the source it already had, so a
+    // manual override stays flagged as one across syncs.
+    const localSource: YnabGoalFieldSource | null = existing
+        ? (existing.targetSource === 'manual-override' ? 'local' : existing.targetSource)
+        : null;
+
+    const amount = parsed.amount ?? native.amount ?? localAmount;
+    const date = parsed.date ?? native.date ?? localDate;
+
+    const amountSource: YnabGoalFieldSource | null =
+        parsed.amount !== null ? (parsed.source ?? null)
+            : native.amount !== null ? 'ynab-goal'
+                : localAmount !== null ? (localSource ?? 'local')
+                    : null;
+    const dateSource: YnabGoalFieldSource | null =
+        parsed.date !== null ? (parsed.source ?? null)
+            : native.date !== null ? 'ynab-goal'
+                : localDate !== null ? (localSource ?? 'local')
+                    : null;
+
+    // The goal's own targetSource follows whichever origin ranks highest among
+    // the two fields; 'local' means neither YNAB nor the text said anything, so
+    // the stored override stands.
+    const rank = (s: YnabGoalFieldSource | null): number =>
+        s === 'parsed-name' || s === 'parsed-note' ? 3 : s === 'ynab-goal' ? 2 : s === 'local' ? 1 : 0;
+    const winner = rank(amountSource) >= rank(dateSource) ? amountSource : dateSource;
+    const source: YnabGoalSyncCandidate['parsedSource'] =
+        winner === 'local' || winner === null ? null : winner;
+
+    const confidence: YnabGoalSyncCandidate['confidence'] =
+        amount !== null && date !== null ? 'high'
+            : winner === 'ynab-goal' || winner === 'local' ? 'medium'
+                : parsed.confidence;
+
+    return { amount, date, amountSource, dateSource, source, confidence };
+}
 
 export interface YnabGoalSyncReport {
     created: number;
