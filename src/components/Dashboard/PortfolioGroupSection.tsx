@@ -16,14 +16,23 @@ import {
     isFullyFrozen,
     requiredLiquidityForFullBuyOnly,
     type BuyOnlyCandidate,
+    type GroupDistribution,
     type MemberAction,
     type ResolvedGroups,
 } from '../../utils/allocationGroups';
+import {
+    computeSellFriction,
+    buyBudgetScale,
+    scaledBuyShares,
+    resolveAssetClass,
+    type SellFriction,
+    type SellLeg,
+} from '../../utils/rebalanceCosts';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { computeGroupRebalance, type GroupRebalancePlan } from '../../utils/groupRebalance';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { WithdrawalModal } from './WithdrawalModal';
-import { PortfolioAllocationTable } from './AllocationOverview';
+import { PortfolioAllocationTable, SellFrictionNote } from './AllocationOverview';
 import type { Portfolio, Transaction, AssetDefinition, Broker, Asset } from '../../types';
 
 interface Props {
@@ -139,6 +148,109 @@ function computeBuyOnly(
     });
 
     return { byUnit, memberBuy };
+}
+
+interface FullRebalancePlan {
+    /** standalone ticker -> netted action in whole shares (signed: + buy, − sell) */
+    standalone: Record<string, { shares: number; amount: number }>;
+    /** groupId -> netted member distribution */
+    groupDist: Record<string, GroupDistribution>;
+    friction: SellFriction;
+    /** fraction of the gross buys that survives the sell-side friction */
+    scale: number;
+    grossBuyTotal: number;
+    /** portfolio total once tax and fees have left the account */
+    postTotal: number;
+}
+
+/**
+ * Full-rebalance plan for one portfolio, netted for sell-side friction.
+ *
+ * Selling X does not free X euro of cash: the broker settles the sale minus
+ * capital-gains tax on the sold portion (26% / 12.5% by asset class) and minus
+ * its own sell commission. So the gross plan is priced first, then the BUY legs
+ * are re-sized on what the sales actually credit — otherwise the orders cost
+ * more than the account receives and settlement goes short. Sells are never
+ * re-sized: the target allocation decides what has to go.
+ */
+function computeFullRebalance(
+    pc: PortfolioCalc,
+    resolved: ResolvedGroups,
+    marketData: Record<string, { price: number; lastUpdated: string }>,
+    assetSettings: AssetDefinition[],
+    brokers: Broker[],
+): FullRebalancePlan {
+    const allocations = pc.portfolio.allocations || {};
+    const { tickerToGroupId, groupById } = resolved;
+
+    const sellLegFor = (ticker: string, shares: number, price: number): SellLeg | null => {
+        const asset = pc.assets.find(a => a.ticker.toUpperCase() === ticker.toUpperCase());
+        if (!asset || shares <= 0 || price <= 0) return null;
+        const tickerTxs = pc.transactions.filter(t => t.ticker === ticker);
+        const lastBrokerId = tickerTxs[tickerTxs.length - 1]?.brokerId;
+        return {
+            ticker,
+            shares,
+            price,
+            averagePrice: asset.averagePrice,
+            assetClass: resolveAssetClass(asset, assetSettings),
+            broker: brokers.find(b => b.id === lastBrokerId) ?? (brokers.length === 1 ? brokers[0] : undefined),
+        };
+    };
+
+    // Pass 1 — gross legs. Standalone tickers only; group members trade through
+    // their group (treating them as standalone with target 0 would sell them off).
+    const unitKeys = new Set<string>([...pc.assets.map(a => a.ticker), ...Object.keys(allocations)]);
+    const standaloneLegs: { ticker: string; price: number; shares: number }[] = [];
+    unitKeys.forEach(ticker => {
+        if (isCashTicker(ticker) || isGroupKey(ticker) || tickerToGroupId[ticker.toUpperCase()]) return;
+        const asset = pc.assets.find(a => a.ticker === ticker);
+        const price = asset?.currentPrice || 0;
+        const targetPerc = allocations[ticker] || 0;
+        if (price <= 0 || ((asset?.quantity || 0) <= 0 && targetPerc <= 0)) return;
+        const shares = Math.round((pc.totalValue * (targetPerc / 100) - (asset?.currentValue || 0)) / price);
+        if (shares !== 0) standaloneLegs.push({ ticker, price, shares });
+    });
+
+    const groups = Object.values(groupById).map(group => {
+        const memberInfo = memberInfoFromAssets(group.members, pc.assets, marketData);
+        const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
+        const delta = pc.totalValue * ((allocations[group.id] || 0) / 100) - currentValue;
+        return { group, memberInfo, delta, dist: distributeGroupDelta({ deltaEur: delta, members: group.members, memberInfo, rules: group.memberRules }) };
+    });
+
+    // Pass 2 — price every sale, then shrink the buy side by what they cost.
+    const sellLegs = [
+        ...standaloneLegs.filter(l => l.shares < 0).map(l => sellLegFor(l.ticker, -l.shares, l.price)),
+        ...groups.flatMap(g =>
+            Object.values(g.dist.actions)
+                .filter(a => a.shares < 0)
+                .map(a => sellLegFor(a.ticker, -a.shares, g.memberInfo[a.ticker.toUpperCase()]?.price || 0))
+        ),
+    ].filter((l): l is SellLeg => l !== null);
+
+    const friction = computeSellFriction(sellLegs);
+    const grossBuyTotal =
+        standaloneLegs.filter(l => l.shares > 0).reduce((s, l) => s + l.shares * l.price, 0) +
+        groups.reduce((s, g) => s + Object.values(g.dist.actions).filter(a => a.shares > 0).reduce((t, a) => t + a.eur, 0), 0);
+    const scale = buyBudgetScale(grossBuyTotal, friction.total);
+
+    const standalone: Record<string, { shares: number; amount: number }> = {};
+    standaloneLegs.forEach(l => {
+        const shares = l.shares > 0 ? scaledBuyShares(l.shares, scale) : l.shares;
+        if (shares !== 0) standalone[l.ticker] = { shares, amount: shares * l.price };
+    });
+
+    // Groups re-run their own distribution on the scaled delta, so member rules
+    // (priority, frozen members, weights) keep deciding who actually trades.
+    const groupDist: Record<string, GroupDistribution> = {};
+    groups.forEach(g => {
+        groupDist[g.group.id] = (scale < 1 && g.delta > 0)
+            ? distributeGroupDelta({ deltaEur: g.delta * scale, members: g.group.members, memberInfo: g.memberInfo, rules: g.group.memberRules })
+            : g.dist;
+    });
+
+    return { standalone, groupDist, friction, scale, grossBuyTotal, postTotal: pc.totalValue - friction.total };
 }
 
 const PortfolioGroupSection: React.FC<Props> = ({
@@ -349,6 +461,17 @@ const PortfolioGroupSection: React.FC<Props> = ({
         return map;
     }, [portfolioCalcs, resolvedByPortfolio, marketData]);
 
+    // Full-rebalance plans, netted for sell taxes and commissions. Shared by the
+    // comparison matrix and the per-portfolio action bars so what is displayed
+    // and what gets executed can't drift apart.
+    const portfolioFullRebalanceMap = useMemo(() => {
+        const map: Record<string, FullRebalancePlan> = {};
+        portfolioCalcs.forEach(pc => {
+            map[pc.portfolio.id] = computeFullRebalance(pc, resolvedByPortfolio[pc.portfolio.id], marketData, assetSettings, brokers);
+        });
+        return map;
+    }, [portfolioCalcs, resolvedByPortfolio, marketData, assetSettings, brokers]);
+
     // Per-cell math shared by the desktop matrix and the mobile rows so the two
     // renderings can never drift apart.
     const computeCell = (pc: PortfolioCalc, ticker: string, isGroup: boolean, isCash: boolean): ComparisonCellData => {
@@ -382,22 +505,21 @@ const PortfolioGroupSection: React.FC<Props> = ({
             : ((asset?.quantity || 0) > 0 || currentValue > 0);
         const hasTarget = target > 0;
 
-        // Rebalance action
+        // Rebalance action — read off the netted plan, so buys already reflect the
+        // tax and commissions the sell leg pays before the cash settles.
+        const plan = portfolioFullRebalanceMap[pc.portfolio.id];
         let rebalShares = 0;
         let rebalAmount = 0;
-        if (!isCash && hasTarget) {
-            const targetValue = pc.totalValue * (target / 100);
-            const idealDiff = targetValue - currentValue;
+        if (!isCash && hasTarget && plan) {
             if (isGroup && group) {
                 // Group rows act through their members: aggregate the euro the
                 // member rules would actually trade (shares aren't meaningful
                 // at group level).
-                const memberInfo = memberInfoFromAssets(group.members, pc.assets, marketData);
-                const dist = distributeGroupDelta({ deltaEur: idealDiff, members: group.members, memberInfo, rules: group.memberRules });
-                rebalAmount = Object.values(dist.actions).reduce((s, a) => s + a.eur, 0);
+                const dist = plan.groupDist[ticker];
+                rebalAmount = dist ? Object.values(dist.actions).reduce((s, a) => s + a.eur, 0) : 0;
             } else if (!isGroup && price > 0) {
-                rebalShares = Math.round(idealDiff / price);
-                rebalAmount = rebalShares * price;
+                rebalShares = plan.standalone[ticker]?.shares ?? 0;
+                rebalAmount = plan.standalone[ticker]?.amount ?? 0;
             }
         }
 
@@ -815,6 +937,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         resolved={resolvedByPortfolio[pc.portfolio.id]}
                         marketData={marketData}
                         buyOnly={portfolioBuyOnlyMap[pc.portfolio.id] || EMPTY_BUY_ONLY}
+                        fullRebalance={portfolioFullRebalanceMap[pc.portfolio.id]}
                         allTransactions={allTransactions}
                         brokers={brokers}
                         onUpdatePortfolio={onUpdatePortfolio}
@@ -1345,6 +1468,8 @@ interface ActionBarProps {
     resolved: ResolvedGroups;
     marketData: Record<string, { price: number; lastUpdated: string }>;
     buyOnly: BuyOnlyPlan;
+    /** Full-rebalance plan already netted for sell taxes and commissions. */
+    fullRebalance?: FullRebalancePlan;
     allTransactions: Transaction[];
     brokers: Broker[];
     onUpdatePortfolio: (portfolio: Portfolio) => void;
@@ -1357,12 +1482,13 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
     resolved,
     marketData,
     buyOnly,
+    fullRebalance,
     allTransactions,
     brokers,
     onUpdatePortfolio,
     onAddTransactions,
 }) => {
-    const { portfolio, assets, totalValue, transactions } = portfolioCalc;
+    const { portfolio, assets, transactions } = portfolioCalc;
     const [isWithdrawalOpen, setIsWithdrawalOpen] = React.useState(false);
     const allocations = portfolio.allocations || {};
 
@@ -1423,8 +1549,9 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
 
             let shares = 0;
             if (mode === 'Full') {
-                const diff = totalValue * (targetPerc / 100) - (asset?.currentValue || 0);
-                if (price > 0) shares = Math.round(diff / price);
+                // Netted plan (buys already sized on what the sells settle for),
+                // so the orders created match the Action column exactly.
+                shares = fullRebalance?.standalone[ticker]?.shares ?? 0;
             } else {
                 const buyAmt = buyOnly.byUnit[ticker] || 0;
                 if (price > 0) shares = Math.round(buyAmt / price);
@@ -1438,14 +1565,7 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
             const memberInfo = memberInfoFromAssets(group.members, assets, marketData);
             let actions: MemberAction[];
             if (mode === 'Full') {
-                const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
-                const delta = totalValue * ((allocations[group.id] || 0) / 100) - currentValue;
-                actions = Object.values(distributeGroupDelta({
-                    deltaEur: delta,
-                    members: group.members,
-                    memberInfo,
-                    rules: group.memberRules,
-                }).actions);
+                actions = Object.values(fullRebalance?.groupDist[group.id]?.actions ?? {});
             } else {
                 actions = group.members
                     .map(m => buyOnly.memberBuy[m.toUpperCase()])
@@ -1541,6 +1661,12 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
                     Exec Full Rebalance
                 </button>
             </div>
+
+            <SellFrictionNote
+                friction={fullRebalance?.friction ?? null}
+                grossBuyTotal={fullRebalance?.grossBuyTotal ?? 0}
+                scale={fullRebalance?.scale ?? 1}
+            />
 
             <WithdrawalModal
                 isOpen={isWithdrawalOpen}
