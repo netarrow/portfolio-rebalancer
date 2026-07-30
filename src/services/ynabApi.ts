@@ -220,6 +220,10 @@ export async function getGoalCategories(
                 note: typeof c.note === 'string' && c.note.length > 0 ? c.note : undefined,
                 goalType: typeof c.goal_type === 'string' && c.goal_type.length > 0 ? c.goal_type : undefined,
                 goalTargetMilliunits: typeof c.goal_target === 'number' ? c.goal_target : undefined,
+                goalTargetMonth: typeof c.goal_target_month === 'string' && c.goal_target_month.length > 0
+                    ? c.goal_target_month
+                    : undefined,
+                goalCadence: typeof c.goal_cadence === 'number' ? c.goal_cadence : undefined,
                 activityMilliunits: typeof monthSnap?.activity === 'number'
                     ? monthSnap.activity
                     : (typeof c.activity === 'number' ? c.activity : undefined),

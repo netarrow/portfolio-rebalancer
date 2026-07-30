@@ -30,6 +30,9 @@ export interface SyncPayload {
     // Macro-class mappings for spending analysis; the spending history itself
     // is local-only (like priceHistory) and rebuilt from YNAB on sync.
     ynabMacroMappings?: YnabMacroMappings;
+    // budgetId -> 'family' | Person id: which source a budget's income and
+    // expenses count as in the Forecast. A mapping, not a credential.
+    ynabBudgetOwners?: Record<string, string>;
     ynabGoalsGroupId?: string;
     ynabGoalsGroupName?: string;
     ynabLastGoalsSyncAt?: string;

@@ -318,6 +318,11 @@ export interface YnabCategory {
   note?: string;
   goalType?: string;
   goalTargetMilliunits?: number;
+  // YNAB's own goal target date ('YYYY-MM-DD'), set on dated goals (TBD/NEED).
+  goalTargetMonth?: string;
+  // YNAB goal cadence: 0 = one-off target by date, 1+ = recurring (monthly,
+  // weekly, yearly…). Tells a one-time NEED target apart from a repeating one.
+  goalCadence?: number;
   activityMilliunits?: number;
 }
 
@@ -327,7 +332,10 @@ export interface YnabCategoryGroupSummary {
   categoryCount: number;
 }
 
-export type YnabGoalTargetSource = 'parsed-name' | 'parsed-note' | 'manual-override';
+// Where a goal's target amount/date came from. 'ynab-goal' = YNAB's own goal
+// fields (goal_target / goal_target_month), used when the category name and
+// note carry no explicit target of their own.
+export type YnabGoalTargetSource = 'parsed-name' | 'parsed-note' | 'ynab-goal' | 'manual-override';
 
 export interface YnabGoal {
   id: string;
@@ -357,15 +365,20 @@ export interface YnabGoalSyncCandidate {
   ynabCategoryId: string;
   ynabCategoryName: string;
   rawNote: string | null;
+  // Values that will be applied: the name/note parse when it found something,
+  // otherwise YNAB's own goal target, otherwise the existing manual override.
   parsedAmount: number | null;
   parsedDate: string | null;
   confidence: 'high' | 'medium' | 'low';
   cashCoverage: number;
   ynabMonthlyFunding: number | null;
   ynabActivityThisMonth: number | null;
+  // YNAB's own goal target, kept for display even when the parse wins.
+  ynabTargetAmount: number | null;
+  ynabTargetDate: string | null;
   goalType: string | null;
   matchedYnabGoalId: string | null;
-  parsedSource: 'parsed-name' | 'parsed-note' | null;
+  parsedSource: 'parsed-name' | 'parsed-note' | 'ynab-goal' | null;
   existingTargetSource: YnabGoalTargetSource | null;
   existingTargetAmount: number | null;
   existingTargetDate: string | null;
