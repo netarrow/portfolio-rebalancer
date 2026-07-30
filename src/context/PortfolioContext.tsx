@@ -4,7 +4,7 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
-import { carryInFor, computeInstalment } from '../utils/pacSchedule';
+import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
 import { fetchAssetHistory } from '../services/marketData';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, listAccounts as ynabListAccounts, listAccountsByBudget as ynabListAccountsByBudget, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary, YnabAccountSummary } from '../services/ynabApi';
@@ -1822,6 +1822,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 description: 'Global aggregate bond exposure (Security goal)',
                 goalId: 'goal-security',
                 order: 2,
+                // Single-broker portfolio: the full rebalance prices every leg
+                // against Trade Republic's commission plan and checks its cash
+                // (Main Strategy is left multi-broker on purpose).
+                preferredBrokerId: 'b3',
                 allocations: {
                     'IE00BDBRDM35': 100 // AGGH
                 }
@@ -1832,6 +1836,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 description: 'Long-duration govt bonds + EUR overnight (Protection)',
                 goalId: 'goal-protection',
                 order: 3,
+                preferredBrokerId: 'b2',
                 // 20% reserved for a virtual bond placeholder: a ladder rung
                 // waiting to be concretized into a real BTP near its maturity.
                 allocations: {
@@ -1839,6 +1844,56 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     'IE00B1FZS798': 30, // IGLT
                     [getVirtualBondTicker('mock-vb-1')]: 20
                 }
+            }
+        ];
+
+        // 5a. Brokers — defined here (rather than inline in setBrokers below) so
+        // the PAC block can park its rounding residue on the right one.
+        const mockBrokers: Broker[] = [
+            {
+                id: 'b1',
+                name: 'Degiro',
+                description: 'Main Broker',
+                ownerId: 'person-a',
+                commissionType: 'fixed',
+                commissionFixed: 2.5,
+                currentLiquidity: 1500
+            },
+            {
+                id: 'b2',
+                name: 'Directa',
+                description: 'Italian Broker',
+                ownerId: 'person-b',
+                commissionType: 'percent',
+                commissionPercent: 0.19,
+                commissionMin: 2.95,
+                commissionMax: 19,
+                currentLiquidity: 8000,
+                minLiquidityType: 'fixed',
+                minLiquidityAmount: 5000,
+                liquidityAllocations: { [pIdSafe]: 5000 }
+            },
+            {
+                id: 'b3',
+                name: 'Trade Republic',
+                description: 'Savings Plans',
+                ownerId: 'person-a',
+                commissionType: 'fixed',
+                commissionFixed: 1,
+                currentLiquidity: 500
+            },
+            {
+                id: 'b4',
+                name: 'Conto Cointestato',
+                description: 'Family investments (spouse joint account)',
+                familyAsset: true,
+                currentLiquidity: 6000
+            },
+            {
+                id: 'b5',
+                name: 'Fondo Pensione',
+                description: 'COMETA — TFR + employer contributions',
+                illiquid: true
             }
         ];
 
@@ -1891,6 +1946,123 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             };
         }
 
+        // 5c. PAC plans (piani di accumulo) — three plans covering the whole
+        // feature matrix: EUR budget with whole-unit rounding whose residue is
+        // parked and carried over, fixed-quantity buys with a skipped
+        // installment, and a paused plan. Past installments are materialized
+        // exactly like confirmPacInstalment does (price read from the local
+        // history, real Buy transaction, residue parked on the broker) so the
+        // schedule, Undo, broker allocations and Performance all agree; the
+        // most recent due date of each active plan is left pending so the
+        // Confirm / Skip actions are visible.
+        const todayIso = new Date(today).toISOString().split('T')[0];
+        const mockPacPlans: PacPlan[] = [
+            {
+                id: 'mock-pac-swda',
+                name: 'Monthly SWDA accumulation',
+                ticker: 'IE00B4L5Y983',
+                portfolioId: pIdMain,
+                brokerId: 'b3',
+                mode: 'amount',
+                amount: 500,
+                frequency: 'monthly',
+                startDate: addPeriods(todayIso, 'monthly', -3),
+                costMode: 'broker',
+                costsIncluded: true,
+                rounding: 'floor-carry',
+                active: true,
+                createdAt: timestamp,
+            },
+            {
+                // Quantity mode on a ticker with a long-enough price history:
+                // installments are priced from it, so the start date must stay
+                // inside the series (EMIM carries 200 days of closes).
+                id: 'mock-pac-emim',
+                name: 'Quarterly EM top-up',
+                ticker: 'IE00BKM4GZ66',
+                portfolioId: pIdMain,
+                brokerId: 'b1',
+                mode: 'quantity',
+                quantity: 20,
+                frequency: 'quarterly',
+                startDate: addPeriods(todayIso, 'quarterly', -2),
+                costMode: 'broker',
+                costsIncluded: true,
+                rounding: 'fractional',
+                active: true,
+                createdAt: timestamp,
+            },
+            {
+                id: 'mock-pac-xeon',
+                name: 'Weekly overnight top-up',
+                ticker: 'LU0290358497',
+                portfolioId: pIdSafe,
+                brokerId: 'b2',
+                mode: 'amount',
+                amount: 200,
+                frequency: 'weekly',
+                startDate: addPeriods(todayIso, 'weekly', -4),
+                endDate: addPeriods(todayIso, 'weekly', 8),
+                costMode: 'percent',
+                costPercent: 0.19,
+                costsIncluded: false,
+                rounding: 'floor',
+                active: false,
+                createdAt: timestamp,
+            },
+        ];
+
+        const mockPacExecutions: PacExecution[] = [];
+        const registerPacInstalment = (plan: PacPlan, dueDate: string) => {
+            const price = priceAtDetailed(priceHistoryMap[plan.ticker], dueDate)?.price;
+            if (price === undefined) return;
+            const broker = mockBrokers.find(b => b.id === plan.brokerId);
+            const carryIn = carryInFor(plan, mockPacExecutions, dueDate);
+            const math = computeInstalment({ plan, price, carryIn, broker });
+            const transactionId = `mock-pac-tx-${mockPacExecutions.length + 1}`;
+            txs.push({
+                id: transactionId,
+                portfolioId: plan.portfolioId,
+                ticker: plan.ticker,
+                date: dueDate,
+                amount: math.quantity,
+                price,
+                direction: 'Buy',
+                brokerId: plan.brokerId,
+                freeCommission: math.fee === 0 ? true : undefined,
+            });
+            if (broker && math.parkedDelta) {
+                const parked = Math.max(0, Math.round(((broker.liquidityAllocations?.[plan.portfolioId] ?? 0) + math.parkedDelta) * 100) / 100);
+                broker.liquidityAllocations = { ...(broker.liquidityAllocations ?? {}), [plan.portfolioId]: parked };
+            }
+            mockPacExecutions.push({
+                planId: plan.id, dueDate, transactionId, executedDate: dueDate,
+                price, quantity: math.quantity, cost: math.fee,
+                carryIn, carryOut: math.carryOut, parkedDelta: math.parkedDelta,
+                priceSource: 'history',
+                confirmedAt: new Date(`${dueDate}T12:00:00`).toISOString(),
+            });
+        };
+
+        for (const plan of mockPacPlans) {
+            const dueDates = generateInstalments(plan, todayIso);
+            dueDates.forEach((dueDate, idx) => {
+                const isLast = idx === dueDates.length - 1;
+                // Active plans keep their latest installment pending (status
+                // "due"); the paused one is fully settled.
+                if (isLast && plan.active) return;
+                // One skipped installment on the quarterly plan, to show that status.
+                if (plan.id === 'mock-pac-emim' && idx === 1) {
+                    mockPacExecutions.push({
+                        planId: plan.id, dueDate, skipped: true,
+                        confirmedAt: new Date(`${dueDate}T12:00:00`).toISOString(),
+                    });
+                    return;
+                }
+                registerPacInstalment(plan, dueDate);
+            });
+        }
+
         // 6. Macro & Goal Allocations (Global Targets)
         // Goal split: 60% Growth, 20% Security, 20% Protection.
         // Reflected in macro classes: 60% Stock (Growth), 40% Bond (Security + Protection).
@@ -1916,6 +2088,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setGoals(mockGoals);
         setMarketData(mockPrices);
         setPriceHistory(priceHistoryMap);
+        setPacPlans(mockPacPlans);
+        setPacExecutions(mockPacExecutions);
         setMacroAllocations(newMacros);
         setGoalAllocations(newGoals);
         setStoredAssetAllocationSettings({
@@ -1936,53 +2110,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             { id: 'person-a', name: 'Marco', order: 0 },
             { id: 'person-b', name: 'Giulia', order: 1 }
         ]);
-        setBrokers([
-            {
-                id: 'b1',
-                name: 'Degiro',
-                description: 'Main Broker',
-                ownerId: 'person-a',
-                commissionType: 'fixed',
-                commissionFixed: 2.5,
-                currentLiquidity: 1500
-            },
-            {
-                id: 'b2',
-                name: 'Directa',
-                description: 'Italian Broker',
-                ownerId: 'person-b',
-                commissionType: 'percent',
-                commissionPercent: 0.19,
-                commissionMin: 2.95,
-                commissionMax: 19,
-                currentLiquidity: 8000,
-                minLiquidityType: 'fixed',
-                minLiquidityAmount: 5000,
-                liquidityAllocations: { [pIdSafe]: 5000 }
-            },
-            {
-                id: 'b3',
-                name: 'Trade Republic',
-                description: 'Savings Plans',
-                ownerId: 'person-a',
-                commissionType: 'fixed',
-                commissionFixed: 1,
-                currentLiquidity: 500
-            },
-            {
-                id: 'b4',
-                name: 'Conto Cointestato',
-                description: 'Family investments (spouse joint account)',
-                familyAsset: true,
-                currentLiquidity: 6000
-            },
-            {
-                id: 'b5',
-                name: 'Fondo Pensione',
-                description: 'COMETA — TFR + employer contributions',
-                illiquid: true
-            }
-        ]);
+        setBrokers(mockBrokers);
 
         // 7b. Virtual bond: a Safety Net ladder rung awaiting a real BTP.
         // Part of its target is already parked as cash on the placeholder
