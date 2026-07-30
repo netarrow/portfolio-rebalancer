@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, PacPlan, PacExecution } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -22,6 +22,9 @@ export interface SyncPayload {
     aggregateExcludedTickers?: string[];
     goalModeTargets?: Record<string, number>;
     ynabMappings?: YnabCategoryMapping[];
+    // brokerId -> { budgetId, accountId }: a mapping, not a credential, so it
+    // travels. Older payloads hold a bare account id and are normalized on read.
+    ynabAccountMappings?: YnabAccountMappings;
     ynabGoals?: YnabGoal[];
     ynabGoalAllocations?: YnabGoalAllocation[];
     // Macro-class mappings for spending analysis; the spending history itself
@@ -35,8 +38,10 @@ export interface SyncPayload {
     // Forecast expenses imported from YNAB goals (with per-entry enabled flag).
     // Absent = never seeded on the source device.
     plannedForecastExpenses?: PlannedForecastExpense[];
-    // Include/exclude family and illiquid brokers in the counting views.
+    // Include/exclude family, illiquid and per-person brokers in the counting views.
     assetScope?: AssetScope;
+    // Household members personal brokers can be attributed to.
+    people?: Person[];
     // PAC (piano di accumulo) auto-tracking plans and their installment ledger.
     pacPlans?: PacPlan[];
     pacExecutions?: PacExecution[];

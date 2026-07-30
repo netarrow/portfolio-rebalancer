@@ -1,18 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Broker, Portfolio, CommissionType } from '../../types';
+import type { Broker, Portfolio, CommissionType, Person } from '../../types';
+
+// Personal vs family is exclusive: a family asset belongs to the household, a
+// personal one optionally to a specific person.
+type Ownership = 'personal' | 'family';
 
 interface BrokerFormProps {
     initialData?: Broker | null;
     portfolios: Portfolio[];
+    people: Person[];
     onSubmit: (data: Omit<Broker, 'id'>) => void;
     onCancel: () => void;
 }
 
-const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubmit, onCancel }) => {
+const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people, onSubmit, onCancel }) => {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [currentLiquidity, setCurrentLiquidity] = useState<number | ''>('');
-    const [familyAsset, setFamilyAsset] = useState(false);
+    const [ownership, setOwnership] = useState<Ownership>('personal');
+    const [ownerId, setOwnerId] = useState('');
     const [illiquid, setIlliquid] = useState(false);
 
     // Liquidity Target
@@ -35,7 +41,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
             setName(initialData.name);
             setDescription(initialData.description || '');
             setCurrentLiquidity(initialData.currentLiquidity !== undefined ? initialData.currentLiquidity : '');
-            setFamilyAsset(!!initialData.familyAsset);
+            setOwnership(initialData.familyAsset ? 'family' : 'personal');
+            setOwnerId(initialData.familyAsset ? '' : (initialData.ownerId || ''));
             setIlliquid(!!initialData.illiquid);
 
             const type = initialData.minLiquidityType || 'percent';
@@ -61,7 +68,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
             setName('');
             setDescription('');
             setCurrentLiquidity('');
-            setFamilyAsset(false);
+            setOwnership('personal');
+            setOwnerId('');
             setIlliquid(false);
             setLiquidityType('percent');
             setMinLiquidityPercentage('');
@@ -115,7 +123,8 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
         onSubmit({
             name,
             description,
-            familyAsset: familyAsset || undefined,
+            familyAsset: ownership === 'family' || undefined,
+            ownerId: ownership === 'personal' ? (ownerId || undefined) : undefined,
             illiquid: illiquid || undefined,
             currentLiquidity: currentLiquidity === '' ? undefined : Number(currentLiquidity),
             minLiquidityType: liquidityType,
@@ -163,14 +172,50 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, onSubm
 
                     <div className="form-group">
                         <label style={{ display: 'block', marginBottom: '0.25rem' }}>Asset Scope</label>
-                        <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
-                            <input
-                                type="checkbox"
-                                checked={familyAsset}
-                                onChange={e => setFamilyAsset(e.target.checked)}
-                            />
-                            <span>👪 Family asset — belongs to the household; views can include or exclude it from totals</span>
-                        </label>
+                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.35rem' }}>
+                            <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="ownership"
+                                    value="personal"
+                                    checked={ownership === 'personal'}
+                                    onChange={() => setOwnership('personal')}
+                                />
+                                👤 Personal
+                            </label>
+                            <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                <input
+                                    type="radio"
+                                    name="ownership"
+                                    value="family"
+                                    checked={ownership === 'family'}
+                                    onChange={() => setOwnership('family')}
+                                />
+                                👪 Family
+                            </label>
+                        </div>
+
+                        {ownership === 'personal' && (
+                            <div style={{ marginBottom: '0.5rem' }}>
+                                <select
+                                    className="form-input"
+                                    value={ownerId}
+                                    onChange={e => setOwnerId(e.target.value)}
+                                    disabled={people.length === 0}
+                                >
+                                    <option value="">— No person —</option>
+                                    {people.map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                </select>
+                                <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '0.25rem' }}>
+                                    {people.length === 0
+                                        ? 'Add the people of your household in Settings to attribute this broker to one of them.'
+                                        : 'Attributing the broker to a person lets the counting views filter by person. Brokers with no person are always counted.'}
+                                </small>
+                            </div>
+                        )}
+
                         <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
                             <input
                                 type="checkbox"

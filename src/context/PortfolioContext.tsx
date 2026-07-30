@@ -1,13 +1,15 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, PacPlan, PacExecution } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { carryInFor, computeInstalment } from '../utils/pacSchedule';
 import { fetchAssetHistory } from '../services/marketData';
-import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
-import type { YnabBudgetSummary } from '../services/ynabApi';
+import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, listAccounts as ynabListAccounts, listAccountsByBudget as ynabListAccountsByBudget, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
+import type { YnabBudgetSummary, YnabAccountSummary } from '../services/ynabApi';
+import { assignYnabAccountMapping, groupMappingsByBudget, normalizeYnabAccountMappings } from '../utils/ynabAccountMappings';
+import { getExcludedBrokerIds, hasScopeFlags } from '../utils/assetScope';
 import { parseGoalDescriptor } from '../utils/ynabGoalParser';
 import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
 import io, { Socket } from 'socket.io-client';
@@ -95,6 +97,15 @@ interface PortfolioContextType {
     setYnabMapping: (categoryId: string, target: YnabMappingTarget) => void;
     disconnectYnab: () => void;
     ynabSyncing: boolean;
+    // Broker ↔ YNAB account mapping (1:1 per budget) and liquidity refresh from
+    // account balances. Mappings may span several budgets of the same token.
+    ynabAccountMappings: YnabAccountMappings;
+    setYnabAccountMapping: (brokerId: string, mapping: YnabAccountMapping | null) => void;
+    refreshYnabBudgets: () => Promise<{ ok: boolean; budgets?: YnabBudgetRef[]; error?: string }>;
+    listYnabAccounts: (budgetId?: string) => Promise<{ ok: boolean; accounts?: YnabAccountSummary[]; error?: string }>;
+    prepareBrokerLiquiditySync: () => Promise<{ ok: boolean; rows?: BrokerLiquiditySyncRow[]; error?: string }>;
+    applyBrokerLiquiditySync: (rows: BrokerLiquiditySyncRow[]) => { ok: boolean; updated: number };
+    brokerLiquiditySyncing: boolean;
     // YNAB Goals (entità separata dai Goal manuali)
     ynabGoals: YnabGoal[];
     ynabGoalAllocations: YnabGoalAllocation[];
@@ -114,19 +125,31 @@ interface PortfolioContextType {
     plannedForecastExpenses: PlannedForecastExpense[] | null;
     setPlannedForecastExpenses: (expenses: PlannedForecastExpense[] | ((prev: PlannedForecastExpense[] | null) => PlannedForecastExpense[])) => void;
     restorePlannedForecastExpenses: () => PlannedForecastExpense[];
-    // YNAB spending analysis (rolling 12 months of budget/activity/income)
-    ynabSpendingHistory: YnabMonthSnapshot[];
+    // YNAB spending analysis (rolling 12 months of budget/activity/income).
+    // The analysis runs on one budget at a time — `ynabSummaryBudgetId` — while
+    // every budget's history is kept side by side, so switching is free.
+    ynabSummaryBudgetId: string | null;
+    setYnabSummaryBudget: (budgetId: string) => void;
+    ynabSpendingHistory: YnabMonthSnapshot[]; // of the selected budget
+    ynabSpendingLastSyncAt: string | null;    // of the selected budget
     ynabMacroMappings: YnabMacroMappings;
-    syncYnabSpending: () => Promise<{ ok: boolean; error?: string }>;
+    syncYnabSpending: (budgetId?: string) => Promise<{ ok: boolean; error?: string }>;
     setYnabGroupMacro: (groupId: string, macro: YnabMacroCategory | null) => void;
     setYnabCategoryMacro: (categoryId: string, macro: YnabMacroCategory | null) => void;
     ynabSpendingSyncing: boolean;
     // Free-buy promo lists (ISINs commission-free to buy in a given month)
     freeCommissionPeriods: FreeCommissionPeriod[];
     setFreeCommissionPeriods: (periods: FreeCommissionPeriod[] | ((prev: FreeCommissionPeriod[]) => FreeCommissionPeriod[])) => void;
-    // Asset scope: app-wide include/exclude of family and illiquid brokers in
-    // the counting views. Scoped* mirrors transactions/brokers/assets/summary
-    // with excluded brokers' transactions and liquidity removed.
+    // Household members: personal brokers can be attributed to one, so the
+    // counting views can be filtered per person (e.g. "A + family", "only A").
+    people: Person[];
+    addPerson: (name: string) => void;
+    renamePerson: (id: string, name: string) => void;
+    deletePerson: (id: string) => void;
+    // Asset scope: app-wide include/exclude of family, illiquid and per-person
+    // brokers in the counting views. Scoped* mirrors
+    // transactions/brokers/assets/summary with excluded brokers' transactions
+    // and liquidity removed.
     assetScope: AssetScope;
     setAssetScope: (scope: AssetScope | ((prev: AssetScope) => AssetScope)) => void;
     hasScopeFlaggedBrokers: boolean;
@@ -210,7 +233,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabConfig, setYnabConfigState] = useLocalStorage<YnabConfig | null>('portfolio_ynab_config', null);
     const [ynabCategories, setYnabCategories] = useLocalStorage<YnabCategory[]>('portfolio_ynab_categories', []);
     const [ynabMappings, setYnabMappings] = useLocalStorage<YnabCategoryMapping[]>('portfolio_ynab_mappings', []);
+    const [ynabAccountMappings, setYnabAccountMappings] = useLocalStorage<YnabAccountMappings>('portfolio_ynab_account_mappings', {});
     const [ynabSyncing, setYnabSyncing] = useState(false);
+    const [brokerLiquiditySyncing, setBrokerLiquiditySyncing] = useState(false);
     const [ynabGoals, setYnabGoals] = useLocalStorage<YnabGoal[]>('portfolio_ynab_goals', []);
     const [ynabGoalAllocations, setYnabGoalAllocations] = useLocalStorage<YnabGoalAllocation[]>('portfolio_ynab_goal_allocations', []);
     const [ynabGoalsSyncing, setYnabGoalsSyncing] = useState(false);
@@ -218,14 +243,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // on first eligible goals), [] = user deliberately emptied the plan.
     const [storedPlannedForecastExpenses, setStoredPlannedForecastExpenses] = useLocalStorage<PlannedForecastExpense[] | null>('portfolio_forecast_planned_expenses', null);
     // Rolling-year spending history is local-only (like priceHistory): it can
-    // grow large and is rebuilt from YNAB with a single sync.
-    const [ynabSpendingHistory, setYnabSpendingHistory] = useLocalStorage<YnabMonthSnapshot[]>('portfolio_ynab_spending_history', []);
+    // grow large and is rebuilt from YNAB with a single sync. Keyed by budget id;
+    // the legacy shape was a bare array for the primary budget (migration below),
+    // so the stored value is read as either and normalised right after.
+    const [storedYnabSpendingHistory, setStoredYnabSpendingHistory] =
+        useLocalStorage<YnabSpendingHistoryByBudget | YnabMonthSnapshot[]>('portfolio_ynab_spending_history', {});
     const [ynabMacroMappings, setYnabMacroMappings] = useLocalStorage<YnabMacroMappings>('portfolio_ynab_macro_mappings', { groups: {}, categories: {} });
     const [ynabSpendingSyncing, setYnabSpendingSyncing] = useState(false);
     const [virtualBonds, setVirtualBonds] = useLocalStorage<VirtualBond[]>('portfolio_virtual_bonds', []);
     const [freeCommissionPeriods, setFreeCommissionPeriods] = useLocalStorage<FreeCommissionPeriod[]>('portfolio_free_commissions', []);
     // Include everything by default — the toggles narrow the scope.
     const [assetScope, setAssetScope] = useLocalStorage<AssetScope>('portfolio_asset_scope', { includeFamily: true, includeIlliquid: true });
+    // Household members a personal broker can be attributed to.
+    const [people, setPeople] = useLocalStorage<Person[]>('portfolio_people', []);
 
     const [pacPlans, setPacPlans] = useLocalStorage<PacPlan[]>('portfolio_pac_plans', []);
     const [pacExecutions, setPacExecutions] = useLocalStorage<PacExecution[]>('portfolio_pac_executions', []);
@@ -676,6 +706,60 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     }, [transactions, assetSettings, setAssetSettings]);
 
+    // Migration Effect 5: broker ↔ YNAB account mappings became budget-qualified.
+    // Legacy entries stored a bare account id, which belonged to the only budget
+    // configured at the time — the current primary one. Runs only when a legacy
+    // entry is actually present, so it never touches already-migrated data.
+    useEffect(() => {
+        const hasLegacyEntry = Object.values(ynabAccountMappings).some(v => typeof v === 'string');
+        if (!hasLegacyEntry) return;
+        const budgetId = ynabConfig?.budgetId;
+        if (!budgetId) return;
+        setYnabAccountMappings(prev => normalizeYnabAccountMappings(prev, budgetId));
+    }, [ynabAccountMappings, ynabConfig?.budgetId, setYnabAccountMappings]);
+
+    // Migration Effect 6: the spending history became keyed by budget id. The
+    // legacy bare array was always the primary budget's, so it moves under that
+    // key. Without a configured budget there is nothing to attribute it to — the
+    // history is local-only and a single sync rebuilds it, so it is dropped.
+    useEffect(() => {
+        if (!Array.isArray(storedYnabSpendingHistory)) return;
+        const legacy = storedYnabSpendingHistory;
+        const budgetId = ynabConfig?.budgetId;
+        setStoredYnabSpendingHistory(legacy.length > 0 && budgetId ? { [budgetId]: legacy } : {});
+    }, [storedYnabSpendingHistory, ynabConfig?.budgetId, setStoredYnabSpendingHistory]);
+
+    const ynabSpendingHistoryByBudget = useMemo<YnabSpendingHistoryByBudget>(
+        () => (Array.isArray(storedYnabSpendingHistory) ? {} : storedYnabSpendingHistory),
+        [storedYnabSpendingHistory],
+    );
+
+    // Budget the Summary analyses: the explicit pick when it is still reachable
+    // with the current token, the primary budget otherwise.
+    const ynabSummaryBudgetId = useMemo<string | null>(() => {
+        if (!ynabConfig) return null;
+        const picked = ynabConfig.summaryBudgetId;
+        if (!picked) return ynabConfig.budgetId;
+        const known = ynabConfig.budgets;
+        if (known && known.length > 0 && !known.some(b => b.id === picked)) return ynabConfig.budgetId;
+        return picked;
+    }, [ynabConfig]);
+
+    const ynabSpendingHistory = useMemo<YnabMonthSnapshot[]>(
+        () => (ynabSummaryBudgetId ? ynabSpendingHistoryByBudget[ynabSummaryBudgetId] ?? [] : []),
+        [ynabSpendingHistoryByBudget, ynabSummaryBudgetId],
+    );
+
+    // Last sync of the selected budget, derived from the snapshots themselves:
+    // every sync refetches the 2 most recent months, so this always advances.
+    const ynabSpendingLastSyncAt = useMemo<string | null>(() => {
+        let latest: string | null = null;
+        for (const snap of ynabSpendingHistory) {
+            if (snap.syncedAt && (latest === null || snap.syncedAt > latest)) latest = snap.syncedAt;
+        }
+        return latest;
+    }, [ynabSpendingHistory]);
+
     // Debounced Azure sync: fires 3s after any portfolio data change
     // azureConfig intentionally excluded from deps to avoid loop when lastSync updates
     useEffect(() => {
@@ -695,6 +779,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 macroAllocations, goalAllocations, goals,
                 aggregateExcludedTickers, goalModeTargets,
                 ynabMappings,
+                ynabAccountMappings,
                 ynabGoals,
                 ynabGoalAllocations,
                 ynabMacroMappings,
@@ -705,6 +790,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 freeCommissionPeriods,
                 plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
                 assetScope,
+                people,
                 pacPlans,
                 pacExecutions,
             };
@@ -727,8 +813,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
-        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, pacPlans, pacExecutions]);
+        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings, ynabAccountMappings,
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -748,6 +834,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         macroAllocations, goalAllocations, goals,
                         aggregateExcludedTickers, goalModeTargets,
                         ynabMappings,
+                        ynabAccountMappings,
                         ynabGoals,
                         ynabGoalAllocations,
                         ynabGoalsGroupId: ynabConfig?.goalsGroupId,
@@ -756,7 +843,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         virtualBonds,
                         freeCommissionPeriods,
                         plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
-                assetScope,
+                        assetScope,
+                        people,
                         pacPlans,
                         pacExecutions,
                     };
@@ -870,6 +958,36 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
         // Free-buy promo lists are broker-specific — drop this broker's entries
         setFreeCommissionPeriods(prev => prev.filter(p => p.brokerId !== id));
+        // Release the YNAB account this broker was mapped to
+        setYnabAccountMappings(prev => {
+            if (!(id in prev)) return prev;
+            const { [id]: _, ...rest } = prev;
+            return rest;
+        });
+    };
+
+    // ── People (household members attributable to personal brokers) ──
+    const addPerson = (name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        setPeople(prev => [...prev, { id: `person-${Date.now()}`, name: trimmed, order: prev.length }]);
+    };
+
+    const renamePerson = (id: string, name: string) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        setPeople(prev => prev.map(p => (p.id === id ? { ...p, name: trimmed } : p)));
+    };
+
+    // Deleting a person leaves their brokers personal but unattributed (so they
+    // stay in the counts) and drops any scope exclusion referencing them.
+    const deletePerson = (id: string) => {
+        setPeople(prev => prev.filter(p => p.id !== id));
+        setBrokers(prev => prev.map(b => (b.ownerId === id ? { ...b, ownerId: undefined } : b)));
+        setAssetScope(prev => {
+            if (!prev.excludedPersonIds?.includes(id)) return prev;
+            return { ...prev, excludedPersonIds: prev.excludedPersonIds.filter(pid => pid !== id) };
+        });
     };
 
     const addGoal = (goal: Goal) => {
@@ -1446,21 +1564,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return calculateAssets(transactions, effectiveAssetSettings, effectiveMarketData);
     }, [transactions, effectiveAssetSettings, effectiveMarketData]);
 
-    // ── Asset scope: filter out family/illiquid brokers when toggled off ──
-    const excludedBrokerIds = useMemo(() => {
-        const ids = new Set<string>();
-        brokers.forEach(b => {
-            if ((b.familyAsset && !assetScope.includeFamily) || (b.illiquid && !assetScope.includeIlliquid)) {
-                ids.add(b.id);
-            }
-        });
-        return ids;
-    }, [brokers, assetScope]);
-
-    const hasScopeFlaggedBrokers = useMemo(
-        () => brokers.some(b => b.familyAsset || b.illiquid),
-        [brokers]
+    // ── Asset scope: filter out family/illiquid/per-person brokers when toggled off ──
+    const excludedBrokerIds = useMemo(
+        () => getExcludedBrokerIds(brokers, assetScope),
+        [brokers, assetScope]
     );
+
+    const hasScopeFlaggedBrokers = useMemo(() => hasScopeFlags(brokers), [brokers]);
 
     // Transactions without a brokerId can't be attributed → always included.
     const scopedTransactions = useMemo(
@@ -1822,11 +1932,18 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 { id: 'rg-growth-remainder', name: 'Growth Remainder', groupTargetMode: 'remainder', groupTargetValue: 0 }
             ]
         });
+        // 7a-bis. Household members: personal brokers are split between two
+        // people so the per-person scope chips have something to filter.
+        setPeople([
+            { id: 'person-a', name: 'Marco', order: 0 },
+            { id: 'person-b', name: 'Giulia', order: 1 }
+        ]);
         setBrokers([
             {
                 id: 'b1',
                 name: 'Degiro',
                 description: 'Main Broker',
+                ownerId: 'person-a',
                 commissionType: 'fixed',
                 commissionFixed: 2.5,
                 currentLiquidity: 1500
@@ -1835,6 +1952,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 id: 'b2',
                 name: 'Directa',
                 description: 'Italian Broker',
+                ownerId: 'person-b',
                 commissionType: 'percent',
                 commissionPercent: 0.19,
                 commissionMin: 2.95,
@@ -1848,6 +1966,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 id: 'b3',
                 name: 'Trade Republic',
                 description: 'Savings Plans',
+                ownerId: 'person-a',
                 commissionType: 'fixed',
                 commissionFixed: 1,
                 currentLiquidity: 500
@@ -1904,12 +2023,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             budgetId: 'mock-budget-id',
             budgetName: 'Family Budget',
             currencyIso: 'EUR',
+            // Two budgets, so broker mappings can be spread across them.
+            budgets: [
+                { id: 'mock-budget-id', name: 'Family Budget', currencyIso: 'EUR' },
+                { id: 'mock-budget-personal', name: 'Personal Budget', currencyIso: 'EUR' },
+            ],
             avgMonthsWindow: 6,
             lastSyncAt: timestamp,
             goalsGroupId: 'ynab-grp-goals',
             goalsGroupName: 'Investment Goals',
-            lastGoalsSyncAt: timestamp,
-            lastSpendingSyncAt: timestamp
+            lastGoalsSyncAt: timestamp
         });
         setYnabCategories([
             // ── Investments ──────────────────────────────────────────────────
@@ -1998,7 +2121,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 syncedAt: timestamp,
             });
         }
-        setYnabSpendingHistory(spendingHistory);
+        // Only the primary budget carries a history: "Personal Budget" stays empty
+        // on purpose, to show what an unsynced budget looks like in the Summary.
+        setStoredYnabSpendingHistory({ 'mock-budget-id': spendingHistory });
         setYnabMacroMappings({
             groups: {
                 'ynab-grp-hous': 'structural',
@@ -2048,8 +2173,17 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             // null (not []) when absent from the backup so the auto-seed re-runs
             const importedPlannedForecastExpenses: PlannedForecastExpense[] | null = Array.isArray(data.plannedForecastExpenses) ? data.plannedForecastExpenses : null;
             const importedAssetScope: AssetScope = (data.assetScope && typeof data.assetScope === 'object')
-                ? { includeFamily: data.assetScope.includeFamily !== false, includeIlliquid: data.assetScope.includeIlliquid !== false }
-                : { includeFamily: true, includeIlliquid: true };
+                ? {
+                    includeFamily: data.assetScope.includeFamily !== false,
+                    includeIlliquid: data.assetScope.includeIlliquid !== false,
+                    excludedPersonIds: Array.isArray(data.assetScope.excludedPersonIds) ? data.assetScope.excludedPersonIds : [],
+                }
+                : { includeFamily: true, includeIlliquid: true, excludedPersonIds: [] };
+            const importedPeople: Person[] = Array.isArray(data.people) ? data.people : [];
+            // Backups/payloads written before mappings were budget-qualified hold
+            // bare account ids; attach them to the budget configured here.
+            const importedYnabAccountMappings: YnabAccountMappings =
+                normalizeYnabAccountMappings(data.ynabAccountMappings, ynabConfig?.budgetId);
             const importedPacPlans: PacPlan[] = Array.isArray(data.pacPlans) ? data.pacPlans : [];
             const importedPacExecutions: PacExecution[] = Array.isArray(data.pacExecutions) ? data.pacExecutions : [];
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
@@ -2079,6 +2213,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
             localStorage.setItem('portfolio_forecast_planned_expenses', JSON.stringify(importedPlannedForecastExpenses));
             localStorage.setItem('portfolio_asset_scope', JSON.stringify(importedAssetScope));
+            localStorage.setItem('portfolio_people', JSON.stringify(importedPeople));
+            localStorage.setItem('portfolio_ynab_account_mappings', JSON.stringify(importedYnabAccountMappings));
             localStorage.setItem('portfolio_pac_plans', JSON.stringify(importedPacPlans));
             localStorage.setItem('portfolio_pac_executions', JSON.stringify(importedPacExecutions));
 
@@ -2103,6 +2239,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setFreeCommissionPeriods(importedFreeCommissionPeriods);
             setStoredPlannedForecastExpenses(importedPlannedForecastExpenses);
             setAssetScope(importedAssetScope);
+            setPeople(importedPeople);
+            setYnabAccountMappings(importedYnabAccountMappings);
             setPacPlans(importedPacPlans);
             setPacExecutions(importedPacExecutions);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
@@ -2137,6 +2275,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 macroAllocations, goalAllocations, goals,
                 aggregateExcludedTickers, goalModeTargets,
                 ynabMappings,
+                ynabAccountMappings,
                 ynabGoals,
                 ynabGoalAllocations,
                 ynabMacroMappings,
@@ -2147,6 +2286,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 freeCommissionPeriods,
                 plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
                 assetScope,
+                people,
                 pacPlans,
                 pacExecutions,
             };
@@ -2262,37 +2402,157 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
-    // Sync the rolling 12-month spending window. Months already in the local
-    // history are not refetched, except the 2 most recent (late YNAB edits);
-    // months that fell out of the window are pruned to cap storage.
-    const syncYnabSpending = async (): Promise<{ ok: boolean; error?: string }> => {
-        if (!ynabConfig?.apiKey || !ynabConfig?.budgetId) {
+    // ── Broker ↔ YNAB account mapping ──────────────────────────────────
+    // The relation is 1:1 on (budgetId, accountId), so assigning an account that
+    // already backs another broker moves it rather than duplicating the balance
+    // across two brokers. Brokers may be spread over several budgets.
+    const setYnabAccountMapping = (brokerId: string, mapping: YnabAccountMapping | null) => {
+        setYnabAccountMappings(prev => assignYnabAccountMapping(prev, brokerId, mapping));
+    };
+
+    // Refresh the cached list of budgets reachable with the stored token, so the
+    // broker mapping UI can offer them all without re-running "Verify".
+    const refreshYnabBudgets = async (): Promise<{ ok: boolean; budgets?: YnabBudgetRef[]; error?: string }> => {
+        if (!ynabConfig?.apiKey) return { ok: false, error: 'YNAB not configured.' };
+        const res = await ynabListBudgets(ynabConfig.apiKey);
+        if (!res.success || !res.data) return { ok: false, error: res.error || 'Unable to load YNAB budgets.' };
+        const budgets: YnabBudgetRef[] = res.data.map(b => ({ id: b.id, name: b.name, currencyIso: b.currencyIso }));
+        setYnabConfigState(prev => prev ? { ...prev, budgets } : prev);
+        return { ok: true, budgets };
+    };
+
+    const listYnabAccounts = async (budgetId?: string): Promise<{ ok: boolean; accounts?: YnabAccountSummary[]; error?: string }> => {
+        const targetBudgetId = budgetId || ynabConfig?.budgetId;
+        if (!ynabConfig?.apiKey || !targetBudgetId) {
+            return { ok: false, error: 'YNAB not configured.' };
+        }
+        const res = await ynabListAccounts(ynabConfig.apiKey, targetBudgetId);
+        if (!res.success || !res.data) return { ok: false, error: res.error || 'Unable to load YNAB accounts.' };
+        return { ok: true, accounts: res.data };
+    };
+
+    // Build the preview of "broker liquidity ← YNAB account balance". Uses the
+    // working balance (cleared + uncleared), the figure YNAB shows per account.
+    // Mappings may span several budgets: each one is fetched once, and a budget
+    // that fails leaves its rows visible but not applicable.
+    const prepareBrokerLiquiditySync = async (): Promise<{ ok: boolean; rows?: BrokerLiquiditySyncRow[]; error?: string }> => {
+        const mappings = normalizeYnabAccountMappings(ynabAccountMappings, ynabConfig?.budgetId);
+        const budgetIds = [...groupMappingsByBudget(mappings).keys()];
+        if (budgetIds.length === 0) {
+            return { ok: false, error: 'No broker is mapped to a YNAB account yet. Set the mapping up in Settings.' };
+        }
+        if (!ynabConfig?.apiKey) return { ok: false, error: 'YNAB not configured.' };
+        try {
+            setBrokerLiquiditySyncing(true);
+            const perBudget = await ynabListAccountsByBudget(ynabConfig.apiKey, budgetIds);
+            // Every budget failed: nothing to preview, surface the first error.
+            if (budgetIds.every(id => !perBudget.get(id)?.success)) {
+                const firstError = budgetIds.map(id => perBudget.get(id)?.error).find(Boolean);
+                return { ok: false, error: firstError || 'Unable to load YNAB accounts.' };
+            }
+
+            const accountsByBudget = new Map<string, Map<string, YnabAccountSummary>>();
+            for (const budgetId of budgetIds) {
+                const res = perBudget.get(budgetId);
+                if (res?.success && res.data) {
+                    accountsByBudget.set(budgetId, new Map(res.data.map(a => [a.id, a])));
+                }
+            }
+            const budgetNameById = new Map((ynabConfig.budgets ?? []).map(b => [b.id, b.name]));
+
+            const rows: BrokerLiquiditySyncRow[] = [];
+            for (const broker of brokers) {
+                const mapping = mappings[broker.id];
+                if (!mapping) continue;
+                const accountsOfBudget = accountsByBudget.get(mapping.budgetId);
+                const account = accountsOfBudget?.get(mapping.accountId);
+                const current = broker.currentLiquidity || 0;
+                const newLiquidity = account
+                    ? Math.round(milliunitsToEur(account.balanceMilliunits) * 100) / 100
+                    : current;
+                const status: BrokerLiquiditySyncRow['status'] = account
+                    ? 'ok'
+                    : accountsOfBudget ? 'account-missing' : 'budget-missing';
+                rows.push({
+                    brokerId: broker.id,
+                    brokerName: broker.name,
+                    ynabBudgetId: mapping.budgetId,
+                    ynabBudgetName: budgetNameById.get(mapping.budgetId)
+                        ?? (mapping.budgetId === ynabConfig.budgetId ? (ynabConfig.budgetName || mapping.budgetId) : mapping.budgetId),
+                    ynabAccountId: mapping.accountId,
+                    ynabAccountName: account?.name
+                        ?? (status === 'budget-missing' ? '(budget unavailable)' : '(no longer in YNAB)'),
+                    currentLiquidity: current,
+                    newLiquidity,
+                    delta: Math.round((newLiquidity - current) * 100) / 100,
+                    status,
+                    allocatedTotal: Object.values(broker.liquidityAllocations || {}).reduce((s, v) => s + v, 0),
+                });
+            }
+            return { ok: true, rows };
+        } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        } finally {
+            setBrokerLiquiditySyncing(false);
+        }
+    };
+
+    const applyBrokerLiquiditySync = (rows: BrokerLiquiditySyncRow[]): { ok: boolean; updated: number } => {
+        const applicable = rows.filter(r => r.status === 'ok');
+        if (applicable.length === 0) return { ok: true, updated: 0 };
+        const byBrokerId = new Map(applicable.map(r => [r.brokerId, r]));
+        setBrokers(prev => prev.map(b => {
+            const row = byBrokerId.get(b.id);
+            if (!row) return b;
+            return { ...b, currentLiquidity: Math.round(row.newLiquidity * 100) / 100 };
+        }));
+        setYnabConfigState(prev => prev ? { ...prev, lastAccountsSyncAt: new Date().toISOString() } : prev);
+        return { ok: true, updated: applicable.length };
+    };
+
+    // Sync the rolling 12-month spending window of one budget (the one the
+    // Summary is analysing by default). Months already in that budget's history
+    // are not refetched, except the 2 most recent (late YNAB edits); months that
+    // fell out of the window are pruned to cap storage. Other budgets' histories
+    // are left untouched.
+    const syncYnabSpending = async (budgetId?: string): Promise<{ ok: boolean; error?: string }> => {
+        const targetBudgetId = budgetId || ynabSummaryBudgetId;
+        if (!ynabConfig?.apiKey || !targetBudgetId) {
             return { ok: false, error: 'YNAB not configured.' };
         }
         try {
             setYnabSpendingSyncing(true);
             const window = rollingMonthsIso(12);
-            const known = new Set(ynabSpendingHistory.map(s => s.month));
+            const current = ynabSpendingHistoryByBudget[targetBudgetId] ?? [];
+            const known = new Set(current.map(s => s.month));
             const recent = new Set(window.slice(-2));
             const toFetch = window.filter(m => recent.has(m) || !known.has(m));
-            const res = await ynabGetMonthlySnapshots(ynabConfig.apiKey, ynabConfig.budgetId, toFetch);
+            const res = await ynabGetMonthlySnapshots(ynabConfig.apiKey, targetBudgetId, toFetch);
             if (!res.success || !res.data) {
                 return { ok: false, error: res.error || 'Error during synchronization.' };
             }
-            const byMonth = new Map(ynabSpendingHistory.map(s => [s.month, s]));
+            const byMonth = new Map(current.map(s => [s.month, s]));
             for (const snap of res.data) byMonth.set(snap.month, snap);
             const windowSet = new Set(window);
             const next = [...byMonth.values()]
                 .filter(s => windowSet.has(s.month))
                 .sort((a, b) => a.month.localeCompare(b.month));
-            setYnabSpendingHistory(next);
-            setYnabConfigState(prev => prev ? { ...prev, lastSpendingSyncAt: new Date().toISOString() } : prev);
+            setStoredYnabSpendingHistory(prev => ({
+                ...(Array.isArray(prev) ? {} : prev),
+                [targetBudgetId]: next,
+            }));
             return { ok: true };
         } catch (e) {
             return { ok: false, error: e instanceof Error ? e.message : String(e) };
         } finally {
             setYnabSpendingSyncing(false);
         }
+    };
+
+    // Switching the analysed budget is Summary-local: the primary budget, and
+    // with it categories, Goals and the forecast, stays where it is.
+    const setYnabSummaryBudget = (budgetId: string) => {
+        setYnabConfigState(prev => prev ? { ...prev, summaryBudgetId: budgetId } : prev);
     };
 
     const setYnabGroupMacro = (groupId: string, macro: YnabMacroCategory | null) => {
@@ -2317,9 +2577,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabConfigState(null);
         setYnabCategories([]);
         setYnabMappings([]);
+        setYnabAccountMappings({});
         setYnabGoals([]);
         setYnabGoalAllocations([]);
-        setYnabSpendingHistory([]);
+        setStoredYnabSpendingHistory({});
         setYnabMacroMappings({ groups: {}, categories: {} });
     };
 
@@ -2724,6 +2985,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabMapping,
         disconnectYnab,
         ynabSyncing,
+        ynabAccountMappings,
+        setYnabAccountMapping,
+        refreshYnabBudgets,
+        listYnabAccounts,
+        prepareBrokerLiquiditySync,
+        applyBrokerLiquiditySync,
+        brokerLiquiditySyncing,
         ynabGoals,
         ynabGoalAllocations,
         listYnabCategoryGroups,
@@ -2740,6 +3008,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         plannedForecastExpenses: storedPlannedForecastExpenses,
         setPlannedForecastExpenses: setStoredPlannedForecastExpenses,
         restorePlannedForecastExpenses,
+        people,
+        addPerson,
+        renamePerson,
+        deletePerson,
         assetScope,
         setAssetScope,
         hasScopeFlaggedBrokers,
@@ -2747,7 +3019,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         scopedBrokers,
         scopedAssets,
         scopedSummary,
+        ynabSummaryBudgetId,
+        setYnabSummaryBudget,
         ynabSpendingHistory,
+        ynabSpendingLastSyncAt,
         ynabMacroMappings,
         syncYnabSpending,
         setYnabGroupMacro,
