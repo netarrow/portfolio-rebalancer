@@ -48,6 +48,57 @@ export async function listBudgets(apiKey: string): Promise<YnabApiResult<YnabBud
     }
 }
 
+export interface YnabAccountSummary {
+    id: string;
+    name: string;
+    type: string;              // 'checking' | 'savings' | 'otherAsset' | ...
+    onBudget: boolean;
+    balanceMilliunits: number;         // working balance: cleared + uncleared
+    clearedBalanceMilliunits: number;
+}
+
+// Open, non-deleted accounts of a budget. `balance` is the figure YNAB shows in
+// the account sidebar, which is what we mirror into broker liquidity.
+export async function listAccounts(
+    apiKey: string,
+    budgetId: string,
+): Promise<YnabApiResult<YnabAccountSummary[]>> {
+    try {
+        const response = await axios.get(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/accounts`,
+            { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        const accounts: any[] = response.data?.data?.accounts ?? [];
+        const result: YnabAccountSummary[] = [];
+        for (const a of accounts) {
+            if (a.deleted || a.closed) continue;
+            result.push({
+                id: a.id,
+                name: a.name,
+                type: typeof a.type === 'string' ? a.type : '',
+                onBudget: !!a.on_budget,
+                balanceMilliunits: typeof a.balance === 'number' ? a.balance : 0,
+                clearedBalanceMilliunits: typeof a.cleared_balance === 'number' ? a.cleared_balance : 0,
+            });
+        }
+        return { success: true, data: result };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}
+
+// Accounts of several budgets at once, one request each, keyed by budget id.
+// Failures are per budget: an unreachable budget must not hide the accounts of
+// the others, so its entry carries the error instead of rejecting the whole call.
+export async function listAccountsByBudget(
+    apiKey: string,
+    budgetIds: string[],
+): Promise<Map<string, YnabApiResult<YnabAccountSummary[]>>> {
+    const unique = [...new Set(budgetIds)];
+    const results = await Promise.all(unique.map(id => listAccounts(apiKey, id)));
+    return new Map(unique.map((id, i) => [id, results[i]]));
+}
+
 const HIDDEN_GROUP_NAMES = new Set([
     'Internal Master Category',
     'Credit Card Payments',

@@ -13,6 +13,9 @@ export interface Broker {
   // Views offer toggles to include/exclude flagged brokers from the counts.
   familyAsset?: boolean;
   illiquid?: boolean;
+  // Person this broker belongs to, for personal (non-family) brokers only.
+  // Empty = personal but unattributed: always counted, never filtered out.
+  ownerId?: string;
   currentLiquidity?: number;
   minLiquidityType?: 'percent' | 'fixed';
   minLiquidityPercentage?: number;
@@ -26,11 +29,23 @@ export interface Broker {
   commissionMax?: number;      // optional maximum fee (percent mode)
 }
 
+// A household member a personal broker can be attributed to. Managed in
+// Settings; referenced by Broker.ownerId.
+export interface Person {
+  id: string;
+  name: string;
+  order: number; // display order (lower = first)
+}
+
 // Which flagged brokers are counted in totals (true = included). Persisted as
 // a single app-wide preference; every counting view renders the same toggles.
 export interface AssetScope {
   includeFamily: boolean;
   includeIlliquid: boolean;
+  // Persons whose personal brokers are left out of the counts. Modelled as an
+  // exclusion list so a newly created person is counted by default, matching
+  // the include-by-default behaviour of the two flags above.
+  excludedPersonIds?: string[];
 }
 
 export const CASH_TICKER_PREFIX = '_CASH_';
@@ -231,17 +246,64 @@ export interface BondProposal {
 
 // YNAB integration
 
+// A budget of the connected YNAB token, as needed to label and address it.
+export interface YnabBudgetRef {
+  id: string;
+  name: string;
+  currencyIso: string;
+}
+
 export interface YnabConfig {
   apiKey: string;
+  // Primary budget: the one categories and Goals read from.
+  // Broker ↔ account mappings and the Summary analysis can point at any budget
+  // of the token.
   budgetId: string;
   budgetName?: string;
   currencyIso?: string;
+  // Budgets visible to the token, cached so the broker mapping UI can offer
+  // them without a fresh "Verify". Device-local, like the API key.
+  budgets?: YnabBudgetRef[];
+  // Budget the Summary analysis is currently looking at. Independent of the
+  // primary budget: switching it must not move categories, Goals or forecast.
+  // Unset = analyse the primary budget.
+  summaryBudgetId?: string;
   lastSyncAt?: string;
   avgMonthsWindow?: number;
   goalsGroupId?: string;
   goalsGroupName?: string;
   lastGoalsSyncAt?: string;
-  lastSpendingSyncAt?: string;
+  lastAccountsSyncAt?: string;
+}
+
+// A YNAB account, qualified by the budget that holds it: account ids are only
+// unique within a budget, and a broker may be backed by any budget's account.
+export interface YnabAccountMapping {
+  budgetId: string;
+  accountId: string;
+}
+
+// brokerId -> YNAB account. Strictly 1:1 per (budgetId, accountId): an account
+// backs a single broker, so assigning it elsewhere moves it. The same account
+// id in a different budget is a different account and maps independently.
+export type YnabAccountMappings = Record<string, YnabAccountMapping>;
+
+// One row of the "update broker liquidity from YNAB" preview.
+export interface BrokerLiquiditySyncRow {
+  brokerId: string;
+  brokerName: string;
+  ynabBudgetId: string;
+  ynabBudgetName: string;
+  ynabAccountId: string;
+  ynabAccountName: string;
+  currentLiquidity: number;
+  newLiquidity: number;
+  delta: number;
+  // 'account-missing' = the mapped account is gone/closed in YNAB;
+  // 'budget-missing' = its budget is unreachable with the current token.
+  // Both are shown for context but can never be applied.
+  status: 'ok' | 'account-missing' | 'budget-missing';
+  allocatedTotal: number; // sum of liquidityAllocations, to warn on shortfalls
 }
 
 export interface YnabCategory {
@@ -364,6 +426,10 @@ export interface YnabMonthSnapshot {
   categories: YnabMonthCategorySnapshot[];
   syncedAt: string;
 }
+
+// budgetId -> rolling window of that budget's months. Every budget of the token
+// keeps its own history, so switching the Summary between them needs no re-sync.
+export type YnabSpendingHistoryByBudget = Record<string, YnabMonthSnapshot[]>;
 
 export interface PortfolioSummary {
   totalValue: number;
