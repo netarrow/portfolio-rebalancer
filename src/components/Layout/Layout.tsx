@@ -41,17 +41,72 @@ const menuStructure = [
   { label: '⚠️ Disclaimer', view: 'disclaimer' as const },
 ];
 
+// Desktop breakpoint: the mobile media query below stops at 768px.
+const DESKTOP_QUERY = '(min-width: 769px)';
+
 const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) => {
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const [expandedMenus, setExpandedMenus] = React.useState<Record<string, boolean>>({});
+  // Desktop floats the submenu over the page anchored to its toggle; mobile
+  // keeps it in flow as an accordion. The two need different positioning (not
+  // just different styling), so the breakpoint is tracked here as well as in CSS.
+  const [isDesktop, setIsDesktop] = React.useState(() => window.matchMedia(DESKTOP_QUERY).matches);
+  const [submenuAnchors, setSubmenuAnchors] = React.useState<Record<string, { left: number; top: number }>>({});
+  const navRef = React.useRef<HTMLElement>(null);
+
+  const closeSubmenus = () => setExpandedMenus({});
+
+  React.useEffect(() => {
+    const mq = window.matchMedia(DESKTOP_QUERY);
+    const onChange = () => {
+      setIsDesktop(mq.matches);
+      // An anchor measured for one layout is meaningless in the other.
+      closeSubmenus();
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  const hasOpenSubmenu = Object.values(expandedMenus).some(Boolean);
+
+  // The desktop dropdown is positioned from coordinates measured on open, so a
+  // resize would leave it detached from its toggle. Also close it on Escape or
+  // an outside click, as an overlay should.
+  React.useEffect(() => {
+    if (!isDesktop || !hasOpenSubmenu) return;
+    const onResize = () => closeSubmenus();
+    const onMouseDown = (e: MouseEvent) => {
+      if (!navRef.current?.contains(e.target as Node)) closeSubmenus();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeSubmenus();
+    };
+    window.addEventListener('resize', onResize);
+    document.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('mousedown', onMouseDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [isDesktop, hasOpenSubmenu]);
 
   const handleNavigate = (view: View) => {
     onNavigate(view);
     setIsMenuOpen(false);
+    // Leaving a dropdown open would keep it floating over the view just opened.
+    closeSubmenus();
   };
 
-  const toggleMenu = (label: string) => {
-    setExpandedMenus(prev => ({ ...prev, [label]: !prev[label] }));
+  const toggleMenu = (label: string, toggle: HTMLElement) => {
+    const willOpen = !expandedMenus[label];
+    if (isDesktop && willOpen) {
+      const rect = toggle.getBoundingClientRect();
+      setSubmenuAnchors(prev => ({ ...prev, [label]: { left: rect.left, top: rect.bottom + 4 } }));
+    }
+    // Desktop behaves like a menubar (one dropdown at a time); the mobile
+    // accordion lets several groups stay expanded.
+    setExpandedMenus(prev => (isDesktop ? { [label]: willOpen } : { ...prev, [label]: willOpen }));
   };
 
   return (
@@ -70,20 +125,24 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             <span className={`hamburger-icon ${isMenuOpen ? 'open' : ''}`}></span>
           </button>
         </div>
-        <nav className={`navbar-links ${isMenuOpen ? 'show' : ''}`}>
+        <nav ref={navRef} className={`navbar-links ${isMenuOpen ? 'show' : ''}`}>
           {menuStructure.map((item, idx) => {
             if ('items' in item && item.items) {
+              const anchor = submenuAnchors[item.label];
               return (
                 <div key={idx} className="nav-group">
                   <button
                     className="nav-group-toggle"
-                    onClick={() => toggleMenu(item.label)}
+                    onClick={e => toggleMenu(item.label, e.currentTarget)}
                   >
                     {item.label}
                     <span className={`toggle-icon ${expandedMenus[item.label] ? 'open' : ''}`}>›</span>
                   </button>
                   {expandedMenus[item.label] && (
-                    <div className="nav-submenu">
+                    <div
+                      className="nav-submenu"
+                      style={isDesktop && anchor ? { left: anchor.left, top: anchor.top } : undefined}
+                    >
                       {item.items.map((subitem, subidx) => (
                         <button
                           key={subidx}
@@ -274,6 +333,27 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           margin-left: var(--space-2);
           padding-left: var(--space-2);
           animation: slideDown 0.2s ease-out;
+        }
+
+        /* Desktop: .navbar is fixed at the 72px .layout reserves, and
+           .navbar-links scrolls horizontally (which makes it clip vertically
+           too). So an in-flow submenu grows the navbar over the page content,
+           and an absolute one gets clipped by that scroll container. Fixed
+           positioning, anchored to coordinates measured from the toggle,
+           escapes both. */
+        @media (min-width: 769px) {
+          .nav-submenu {
+            position: fixed;
+            z-index: 1001;
+            min-width: 180px;
+            margin-left: 0;
+            padding: var(--space-2);
+            border-left: none;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            background-color: var(--bg-surface);
+            box-shadow: var(--shadow-lg);
+          }
         }
 
         @keyframes slideDown {
