@@ -25,8 +25,8 @@ const FAMILY_SOURCE = 'family';
 const ForecastView: React.FC = () => {
     // Scoped: the family/illiquid toggles decide what the forecast simulates
     const { portfolios, scopedBrokers: brokers, marketData, scopedTransactions: transactions, assetSettings, goals, priceHistory,
-        plannedForecastExpenses, setPlannedForecastExpenses, restorePlannedForecastExpenses, syncYnabGoalsToForecast,
-        ynabGoals, ynabGoalsSyncing, ynabConfig, ynabSpendingHistoryByBudget, ynabMacroMappings,
+        plannedForecastExpenses, setPlannedForecastExpenses, restorePlannedForecastExpenses,
+        ynabGoals, ynabConfig, ynabSpendingHistoryByBudget, ynabMacroMappings,
         ynabBudgetOwners, setYnabBudgetOwner, syncYnabSpending, ynabSpendingSyncing, people } = usePortfolio();
 
     // null = never seeded (context auto-imports as soon as forecastable goals exist)
@@ -201,13 +201,13 @@ const ForecastView: React.FC = () => {
         setPlannedForecastExpenses(prev => (prev ?? []).filter(e => e.id !== id));
     };
 
-    // Re-reads the goals from YNAB first, then rebuilds the list from them, so a
-    // target set in YNAB lands in the plan without a detour through YNAB Goals.
-    // With YNAB unreachable it still rebuilds from the goals stored locally.
+    // Rebuilds the list from the YNAB Goals section — the enriched local copy,
+    // with its targets (parsed, YNAB-native or manually overridden) and its
+    // portfolio allocations. YNAB itself is contacted only by the Goals sync.
     const handleSyncYnabExpenses = async () => {
         const result = await Swal.fire({
             title: 'Sync from YNAB Goals?',
-            text: 'Goals are re-read from YNAB, then the planned expense list is rebuilt from them: removed entries come back and enable/disable flags are reset.',
+            text: 'The planned expense list is rebuilt from the goals in the YNAB Goals section, with their targets and portfolio allocations. Removed entries come back and enable/disable flags are reset.',
             icon: 'question',
             showCancelButton: true,
             confirmButtonText: 'Sync',
@@ -215,25 +215,16 @@ const ForecastView: React.FC = () => {
         });
         if (!result.isConfirmed) return;
 
-        const synced = await syncYnabGoalsToForecast();
-        if (!synced.ok) {
-            const rebuilt = restorePlannedForecastExpenses();
-            Swal.fire({
-                title: 'Rebuilt from stored goals',
-                html: `YNAB could not be reached: ${synced.error}<br/>`
-                    + `${rebuilt.length} planned expense${rebuilt.length === 1 ? '' : 's'} rebuilt from the goals saved on this device.`,
-                icon: 'warning',
-            });
-            return;
-        }
-        const imported = synced.expenses?.length ?? 0;
-        const report = synced.report;
+        const rebuilt = restorePlannedForecastExpenses();
         Swal.fire({
             title: 'Synced',
-            html: `${imported} planned expense${imported === 1 ? '' : 's'} from YNAB goals.`
-                + (report ? `<br/><span style="font-size:0.85rem">Goals: ${report.created} new, ${report.updated} updated.</span>` : '')
-                + (imported === 0 ? '<br/><span style="font-size:0.85rem">No goal carries both a target amount and a target date.</span>' : ''),
-            icon: imported === 0 ? 'info' : 'success',
+            html: `${rebuilt.length} planned expense${rebuilt.length === 1 ? '' : 's'} from the YNAB Goals section.`
+                + (rebuilt.length === 0
+                    ? '<br/><span style="font-size:0.85rem">No goal there carries both a target amount and a target date — set one in YNAB Goals, or sync the goals from YNAB first.</span>'
+                    : ''),
+            icon: rebuilt.length === 0 ? 'info' : 'success',
+            timer: rebuilt.length === 0 ? undefined : 2500,
+            showConfirmButton: rebuilt.length === 0,
         });
     };
 
@@ -1055,19 +1046,18 @@ const ForecastView: React.FC = () => {
                         <label style={{ color: 'var(--text-secondary)' }}>YNAB Goal Expenses</label>
                         <button
                             onClick={handleSyncYnabExpenses}
-                            disabled={ynabGoalsSyncing}
-                            title="Re-read the goals from YNAB and rebuild this list from them"
-                            style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: ynabGoalsSyncing ? 'wait' : 'pointer', fontSize: '0.8rem' }}
+                            title="Rebuild this list from the goals in the YNAB Goals section"
+                            style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: '0.8rem' }}
                         >
-                            {ynabGoalsSyncing ? '…' : '↻ Sync from YNAB'}
+                            ↻ Sync from YNAB Goals
                         </button>
                     </div>
                     {ynabPlannedExpenses.length === 0 ? (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                            No YNAB goal expenses in the plan. Goals with a target amount and date are imported automatically; use Sync to re-import them.
+                            No YNAB goal expenses in the plan. Goals with a target amount and date are imported automatically from the YNAB Goals section; use Sync to re-import them.
                             {goalsWithoutTarget > 0 && (
                                 <div style={{ marginTop: '0.35rem', color: 'var(--color-warning, #F59E0B)' }}>
-                                    ⚠ {goalsWithoutTarget} YNAB goal{goalsWithoutTarget === 1 ? ' has' : 's have'} no target amount + date, so {goalsWithoutTarget === 1 ? 'it cannot' : 'they cannot'} become a planned expense. Set a target in YNAB (or in the category name/note) and Sync.
+                                    ⚠ {goalsWithoutTarget} goal{goalsWithoutTarget === 1 ? ' in' : 's in'} YNAB Goals {goalsWithoutTarget === 1 ? 'has' : 'have'} no target amount + date, so {goalsWithoutTarget === 1 ? 'it cannot' : 'they cannot'} become a planned expense. Give {goalsWithoutTarget === 1 ? 'it' : 'them'} a target there (or in YNAB, then sync the goals) and Sync here.
                                 </div>
                             )}
                         </div>

@@ -127,8 +127,6 @@ interface PortfolioContextType {
     plannedForecastExpenses: PlannedForecastExpense[] | null;
     setPlannedForecastExpenses: (expenses: PlannedForecastExpense[] | ((prev: PlannedForecastExpense[] | null) => PlannedForecastExpense[])) => void;
     restorePlannedForecastExpenses: () => PlannedForecastExpense[];
-    // Fetch the goals from YNAB and rebuild the planned expenses from them.
-    syncYnabGoalsToForecast: () => Promise<{ ok: boolean; error?: string; expenses?: PlannedForecastExpense[]; report?: YnabGoalSyncReport }>;
     // YNAB spending analysis (rolling 12 months of budget/activity/income).
     // The analysis runs on one budget at a time — `ynabSummaryBudgetId` — while
     // every budget's history is kept side by side, so switching is free.
@@ -283,6 +281,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setStoredPlannedForecastExpenses(buildPlannedForecastExpenses(ynabGoals, ynabGoalAllocations, portfolios));
     }, [storedPlannedForecastExpenses, ynabGoals, ynabGoalAllocations, portfolios, setStoredPlannedForecastExpenses]);
 
+    // Rebuild from the stored YNAB goals — the enriched copy behind the YNAB
+    // Goals view, holding the reviewed targets (parsed, YNAB-native or manually
+    // overridden) and the portfolio allocations. No YNAB call: refreshing that
+    // copy from YNAB is the Goals view's own sync.
     const restorePlannedForecastExpenses = (): PlannedForecastExpense[] => {
         const rebuilt = buildPlannedForecastExpenses(ynabGoals, ynabGoalAllocations, portfolios);
         setStoredPlannedForecastExpenses(rebuilt);
@@ -2733,27 +2735,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ok: true as const, report, goals: nextGoals };
     };
 
-    // One-click path used by the Forecast: pull the goals from YNAB (same fetch
-    // and merge the Goals view does, taking every candidate as prepared) and
-    // rebuild the planned expenses from the goals that just landed, so the
-    // forecast reflects YNAB without a detour through the Goals screen.
-    const syncYnabGoalsToForecast = async (): Promise<{
-        ok: boolean;
-        error?: string;
-        expenses?: PlannedForecastExpense[];
-        report?: YnabGoalSyncReport;
-    }> => {
-        const prepared = await prepareYnabGoalsSync();
-        if (!prepared.ok || !prepared.candidates) {
-            return { ok: false, error: prepared.error || 'Failed to fetch YNAB goals.' };
-        }
-        const applied = applyYnabGoalsSync(prepared.candidates);
-        if (!applied.ok) return { ok: false, error: applied.error };
-        const rebuilt = buildPlannedForecastExpenses(applied.goals, ynabGoalAllocations, portfolios);
-        setStoredPlannedForecastExpenses(rebuilt);
-        return { ok: true, expenses: rebuilt, report: applied.report };
-    };
-
     const deleteYnabGoal = (ynabGoalId: string) => {
         const hasAllocs = ynabGoalAllocations.some(a => a.ynabGoalId === ynabGoalId);
         if (hasAllocs) {
@@ -3036,7 +3017,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         plannedForecastExpenses: storedPlannedForecastExpenses,
         setPlannedForecastExpenses: setStoredPlannedForecastExpenses,
         restorePlannedForecastExpenses,
-        syncYnabGoalsToForecast,
         people,
         addPerson,
         renamePerson,
