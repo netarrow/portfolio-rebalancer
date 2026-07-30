@@ -25,6 +25,8 @@ import {
     buyBudgetScale,
     scaledBuyShares,
     resolveAssetClass,
+    projectBrokerCash,
+    type CashProjection,
     type SellFriction,
     type SellLeg,
 } from '../../utils/rebalanceCosts';
@@ -32,7 +34,7 @@ import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { computeGroupRebalance, type GroupRebalancePlan } from '../../utils/groupRebalance';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { WithdrawalModal } from './WithdrawalModal';
-import { PortfolioAllocationTable, SellFrictionNote } from './AllocationOverview';
+import { PortfolioAllocationTable, SellFrictionNote, BrokerPicker } from './AllocationOverview';
 import type { Portfolio, Transaction, AssetDefinition, Broker, Asset } from '../../types';
 
 interface Props {
@@ -159,8 +161,12 @@ interface FullRebalancePlan {
     /** fraction of the gross buys that survives the sell-side friction */
     scale: number;
     grossBuyTotal: number;
+    /** what the netted buy legs actually cost */
+    netBuyTotal: number;
     /** portfolio total once tax and fees have left the account */
     postTotal: number;
+    /** cash left at the portfolio's broker — null in multi-broker mode */
+    cash: CashProjection | null;
 }
 
 /**
@@ -172,6 +178,11 @@ interface FullRebalancePlan {
  * are re-sized on what the sales actually credit — otherwise the orders cost
  * more than the account receives and settlement goes short. Sells are never
  * re-sized: the target allocation decides what has to go.
+ *
+ * With a preferred broker the whole plan is priced against that one commission
+ * plan and checked against its cash; without one (multi-broker portfolios) the
+ * broker is guessed per ticker from its last transaction and no cash check is
+ * possible, since the legs may settle at different brokers.
  */
 function computeFullRebalance(
     pc: PortfolioCalc,
@@ -179,6 +190,7 @@ function computeFullRebalance(
     marketData: Record<string, { price: number; lastUpdated: string }>,
     assetSettings: AssetDefinition[],
     brokers: Broker[],
+    preferredBroker?: Broker,
 ): FullRebalancePlan {
     const allocations = pc.portfolio.allocations || {};
     const { tickerToGroupId, groupById } = resolved;
@@ -194,7 +206,9 @@ function computeFullRebalance(
             price,
             averagePrice: asset.averagePrice,
             assetClass: resolveAssetClass(asset, assetSettings),
-            broker: brokers.find(b => b.id === lastBrokerId) ?? (brokers.length === 1 ? brokers[0] : undefined),
+            broker: preferredBroker
+                ?? brokers.find(b => b.id === lastBrokerId)
+                ?? (brokers.length === 1 ? brokers[0] : undefined),
         };
     };
 
@@ -250,7 +264,24 @@ function computeFullRebalance(
             : g.dist;
     });
 
-    return { standalone, groupDist, friction, scale, grossBuyTotal, postTotal: pc.totalValue - friction.total };
+    // Netted buy legs, for the cash projection.
+    const buys = [
+        ...standaloneLegs
+            .filter(l => l.shares > 0)
+            .map(l => ({ shares: scaledBuyShares(l.shares, scale), price: l.price })),
+        ...groups.flatMap(g =>
+            Object.values(groupDist[g.group.id]?.actions ?? {})
+                .filter(a => a.shares > 0)
+                .map(a => ({ shares: a.shares, price: g.memberInfo[a.ticker.toUpperCase()]?.price || 0 }))
+        ),
+    ].filter(b => b.shares > 0 && b.price > 0);
+    const netBuyTotal = buys.reduce((s, b) => s + b.shares * b.price, 0);
+
+    const cash = preferredBroker
+        ? projectBrokerCash({ broker: preferredBroker, portfolioId: pc.portfolio.id, friction, buys })
+        : null;
+
+    return { standalone, groupDist, friction, scale, grossBuyTotal, netBuyTotal, postTotal: pc.totalValue - friction.total, cash };
 }
 
 const PortfolioGroupSection: React.FC<Props> = ({
@@ -467,7 +498,8 @@ const PortfolioGroupSection: React.FC<Props> = ({
     const portfolioFullRebalanceMap = useMemo(() => {
         const map: Record<string, FullRebalancePlan> = {};
         portfolioCalcs.forEach(pc => {
-            map[pc.portfolio.id] = computeFullRebalance(pc, resolvedByPortfolio[pc.portfolio.id], marketData, assetSettings, brokers);
+            const preferred = brokers.find(b => b.id === pc.portfolio.preferredBrokerId);
+            map[pc.portfolio.id] = computeFullRebalance(pc, resolvedByPortfolio[pc.portfolio.id], marketData, assetSettings, brokers, preferred);
         });
         return map;
     }, [portfolioCalcs, resolvedByPortfolio, marketData, assetSettings, brokers]);
@@ -1491,6 +1523,7 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
     const { portfolio, assets, transactions } = portfolioCalc;
     const [isWithdrawalOpen, setIsWithdrawalOpen] = React.useState(false);
     const allocations = portfolio.allocations || {};
+    const preferredBroker = brokers.find(b => b.id === portfolio.preferredBrokerId);
 
     // Group-aware: each allocation group counts as one unit (its target lives
     // on the group id, not on the member tickers).
@@ -1529,7 +1562,9 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
                 amount: Math.abs(shares),
                 price,
                 direction: shares > 0 ? 'Buy' : 'Sell',
-                brokerId: lastTx?.brokerId,
+                // The declared broker wins: it priced the commissions and the cash
+                // check, so the recorded trade has to hit the same account.
+                brokerId: preferredBroker?.id ?? lastTx?.brokerId,
             });
         };
 
@@ -1610,6 +1645,9 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
         <div className="group-action-bar" style={{ borderLeft: `3px solid ${color}` }}>
             <div className="group-action-bar-name">{portfolio.name}</div>
             <div className="group-action-bar-controls">
+                <BrokerPicker portfolio={portfolio} brokers={brokers} onUpdatePortfolio={onUpdatePortfolio} />
+                {/* Kept as one flex unit so the label never wraps away from its input. */}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                 <label>Liquidity:</label>
                 <input
                     type="number"
@@ -1636,6 +1674,7 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
                     onClick={() => onUpdatePortfolio({ ...portfolio, liquidity: parseFloat(requiredLiquidity.toFixed(2)) })}
                 >
                     (Req: <span style={{ textDecoration: 'underline' }}>€{requiredLiquidity.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>)
+                </span>
                 </span>
             </div>
             <div className="group-action-bar-buttons">
@@ -1665,7 +1704,9 @@ const PortfolioActionBar: React.FC<ActionBarProps> = ({
             <SellFrictionNote
                 friction={fullRebalance?.friction ?? null}
                 grossBuyTotal={fullRebalance?.grossBuyTotal ?? 0}
+                netBuyTotal={fullRebalance?.netBuyTotal ?? 0}
                 scale={fullRebalance?.scale ?? 1}
+                cash={fullRebalance?.cash ?? null}
             />
 
             <WithdrawalModal

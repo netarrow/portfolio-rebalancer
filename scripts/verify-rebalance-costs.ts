@@ -2,7 +2,7 @@
 // sold portion only, per-class rates, broker sell commissions, and the resulting
 // buy-budget scale (buys must never cost more than the sells actually settle for).
 // Run with: npx esbuild scripts/verify-rebalance-costs.ts --bundle --format=esm | node --input-type=module
-import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate } from '../src/utils/rebalanceCosts';
+import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate, projectBrokerCash } from '../src/utils/rebalanceCosts';
 import type { Broker } from '../src/types';
 
 const assertEq = (label: string, actual: number, expected: number, tol = 1e-6) => {
@@ -144,6 +144,77 @@ const percentBroker = (perc: number, min?: number, max?: number): Broker => ({
     assertEq('p9 priceless leg ignored', computeSellFriction([
         { ticker: 'X', shares: 10, price: 0, averagePrice: 50 },
     ]).legs.length, 0);
+}
+
+// ── 10. Broker cash projection ──
+{
+    // €5,000 cash. Sell €13,000 gross (€3,000 gain, 26% = €780) with a €5 fixed
+    // fee ⇒ €12,215 credited. Buy €12,200 with the same €5 fee.
+    const f = computeSellFriction([
+        { ticker: 'SELLME', shares: 100, price: 130, averagePrice: 100, assetClass: 'Stock', broker: fixedBroker(5) },
+    ]);
+    const p = projectBrokerCash({
+        broker: { ...fixedBroker(5), currentLiquidity: 5000 },
+        portfolioId: 'p1',
+        friction: f,
+        buys: [{ shares: 122, price: 100 }],
+    });
+    assertEq('p10 cash before', p.before, 5000);
+    assertEq('p10 buy gross', p.buyGross, 12200);
+    assertEq('p10 buy commission counted', p.buyCommission, 5);
+    // 5000 + 12215 − 12200 − 5
+    assertEq('p10 cash after', p.after, 5010);
+    assertEq('p10 no warnings', p.warnings.length, 0);
+}
+
+// ── 11. Overdraft is detected and reported alone ──
+{
+    const p = projectBrokerCash({
+        broker: { ...fixedBroker(0), currentLiquidity: 1000, minLiquidityType: 'fixed', minLiquidityAmount: 500 },
+        portfolioId: 'p1',
+        friction: computeSellFriction([]),
+        buys: [{ shares: 30, price: 100 }],
+    });
+    assertEq('p11 cash after', p.after, -2000);
+    assertEq('p11 single warning', p.warnings.length, 1);
+    assertTrue('p11 kind is overdraft', p.warnings[0].kind === 'overdraft');
+    assertEq('p11 deficit', p.warnings[0].deficit, 2000);
+}
+
+// ── 12. Earmarks for other portfolios and the min-liquidity floor ──
+{
+    const broker: Broker = {
+        ...fixedBroker(0),
+        currentLiquidity: 10000,
+        minLiquidityType: 'fixed',
+        minLiquidityAmount: 3000,
+        liquidityAllocations: { p1: 2000, p2: 4000 },
+    };
+    const p = projectBrokerCash({
+        broker,
+        portfolioId: 'p1',
+        friction: computeSellFriction([]),
+        buys: [{ shares: 80, price: 100 }],
+    });
+    // Only p2's €4,000 is "someone else's" — p1's own allocation is spendable.
+    assertEq('p12 earmarked elsewhere', p.earmarkedElsewhere, 4000);
+    assertEq('p12 cash after', p.after, 2000);
+    assertEq('p12 two warnings', p.warnings.length, 2);
+    assertTrue('p12 flags earmark', p.warnings.some(w => w.kind === 'earmark' && Math.abs(w.deficit - 2000) < 1e-6));
+    assertTrue('p12 flags min liquidity', p.warnings.some(w => w.kind === 'min-liquidity' && Math.abs(w.deficit - 1000) < 1e-6));
+}
+
+// ── 13. Percent min-liquidity is measured on the broker's own cash ──
+{
+    const p = projectBrokerCash({
+        broker: { ...fixedBroker(0), currentLiquidity: 10000, minLiquidityType: 'percent', minLiquidityPercentage: 20 },
+        portfolioId: 'p1',
+        friction: computeSellFriction([]),
+        buys: [{ shares: 90, price: 100 }],
+    });
+    assertEq('p13 threshold', p.minLiquidity, 2000);
+    assertEq('p13 cash after', p.after, 1000);
+    assertTrue('p13 flags min liquidity', p.warnings.some(w => w.kind === 'min-liquidity'));
 }
 
 console.log('\nAll rebalance-cost checks passed.');

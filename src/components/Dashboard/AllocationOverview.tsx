@@ -7,7 +7,7 @@ import type { Broker, VirtualBond } from '../../types';
 import { getVirtualBondId } from '../../types';
 import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, distributeBuyOnlyWithPac, pacPriorityFor, requiredLiquidityForFullBuyOnly, buyRecipientOf, memberInfoFromAssets, groupWeightConfig, isFullyFrozen, type BuyOnlyCandidate, type MemberAction, type GroupBlockReason } from '../../utils/allocationGroups';
 import { isFreeBuyIsin, currentMonthKey } from '../../utils/freeCommissions';
-import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate, resolveAssetClass, type SellFriction, type SellLeg } from '../../utils/rebalanceCosts';
+import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate, resolveAssetClass, projectBrokerCash, type CashProjection, type SellFriction, type SellLeg } from '../../utils/rebalanceCosts';
 import { CASH_TICKER_PREFIX } from '../../types';
 import ConcretizeModal from '../modals/ConcretizeModal';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
@@ -373,43 +373,136 @@ const TradeCostInfo: React.FC<{
 };
 
 
+const eur0 = (n: number) => `€${n.toLocaleString('en-IE', { maximumFractionDigits: 0 })}`;
+
 /**
- * Explains why the full-rebalance buys are smaller than the sells: the broker
- * settles a sale net of capital-gains tax and its own commission, so that money
- * is never available to reinvest. Renders nothing when nothing is being sold.
+ * Picks the broker a portfolio trades through. "Multi broker" (the default, and
+ * the only behaviour before this existed) keeps the per-ticker last-transaction
+ * heuristic and disables the cash check — the right choice for a portfolio whose
+ * positions really are spread across several brokers.
+ */
+export const BrokerPicker: React.FC<{
+    portfolio: import('../../types').Portfolio;
+    brokers: Broker[];
+    onUpdatePortfolio: (p: import('../../types').Portfolio) => void;
+}> = ({ portfolio, brokers, onUpdatePortfolio }) => {
+    if (brokers.length === 0) return null;
+    // One flex unit so the label and the select never wrap apart from each other
+    // (the controls row they live in wraps freely on narrow screens).
+    return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Broker:</label>
+            <select
+                value={portfolio.preferredBrokerId ?? ''}
+                title="Broker this portfolio trades through — drives commissions and the cash check"
+                onChange={e => onUpdatePortfolio({ ...portfolio, preferredBrokerId: e.target.value || undefined })}
+                style={{
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--bg-input)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.85rem',
+                    padding: '2px 6px',
+                }}
+            >
+                <option value="">Multi broker</option>
+                {brokers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+        </span>
+    );
+};
+
+/** One "label / amount" cell of the rebalance summary strip. */
+const SummaryFigure: React.FC<{ label: string; value: string; color?: string; strong?: boolean }> =
+    ({ label, value, color, strong }) => (
+        <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.3 }}>
+            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.03em' }}>{label}</span>
+            <span style={{ fontWeight: strong ? 700 : 600, color: color ?? 'var(--text-primary)' }}>{value}</span>
+        </div>
+    );
+
+/**
+ * Recap of what a full rebalance actually does to the money: what is sold, what
+ * is bought, what the taxman and the broker take, and — when the portfolio
+ * trades through a single declared broker — the cash left once it all settles.
+ *
+ * Renders nothing when there is neither friction to explain nor a cash
+ * projection to show (e.g. a multi-broker portfolio with no sales).
  */
 export const SellFrictionNote: React.FC<{
     friction: SellFriction | null;
     grossBuyTotal: number;
+    /** cost of the netted buy legs */
+    netBuyTotal: number;
     scale: number;
-}> = ({ friction, grossBuyTotal, scale }) => {
-    if (!friction || friction.total <= 0) return null;
-    const eur = (n: number) => `€${n.toLocaleString('en-IE', { maximumFractionDigits: 0 })}`;
-    // What the buy leg actually gave up (capped by how much was being bought).
+    /** null in multi-broker mode: the legs may settle at different brokers */
+    cash: CashProjection | null;
+    /** false for the aggregate view, which spans portfolios and has no picker */
+    canPickBroker?: boolean;
+}> = ({ friction, grossBuyTotal, netBuyTotal, scale, cash, canPickBroker = true }) => {
+    const hasFriction = !!friction && friction.total > 0;
+    const hasCash = !!cash && (cash.buyGross > 0 || (friction?.gross ?? 0) > 0);
+    if (!hasFriction && !hasCash) return null;
+
+    // What the buy leg gave up to the friction (capped by how much was bought).
     const cut = grossBuyTotal - grossBuyTotal * scale;
     const cutPerc = (1 - scale) * 100;
+    const totalCommission = (friction?.commission ?? 0) + (cash?.buyCommission ?? 0);
+    const overdrawn = cash?.warnings.some(w => w.kind === 'overdraft') ?? false;
 
     return (
         <div style={{
             marginBottom: 'var(--space-3)',
             padding: 'var(--space-2) var(--space-3)',
-            border: '1px solid rgba(59,130,246,0.45)',
-            background: 'rgba(59,130,246,0.08)',
+            border: `1px solid ${overdrawn ? 'rgba(239,68,68,0.5)' : 'rgba(59,130,246,0.45)'}`,
+            background: overdrawn ? 'rgba(239,68,68,0.08)' : 'rgba(59,130,246,0.08)',
             borderRadius: 'var(--radius-sm)',
             fontSize: '0.82rem',
             color: 'var(--text-primary)',
         }}>
-            <div style={{ fontWeight: 600, marginBottom: '4px', color: '#1D4ED8' }}>
-                ⚖ Action: buys sized on the net sale proceeds
+            <div style={{ fontWeight: 600, marginBottom: '6px', color: overdrawn ? '#B91C1C' : '#1D4ED8' }}>
+                ⚖ Full rebalance — cash recap{cash ? <span style={{ fontWeight: 500 }}> · {cash.brokerName}</span> : null}
             </div>
-            <div style={{ lineHeight: 1.5 }}>
-                Selling {eur(friction.gross)} settles at <strong>{eur(friction.net)}</strong> — capital-gains tax {eur(friction.tax)} + sell commissions {eur(friction.commission)}.
-                {grossBuyTotal > 0
-                    ? <> Buys were cut by <strong>{eur(cut)}</strong> ({cutPerc.toFixed(1)}%) so the orders can't overdraw the account at settlement.</>
-                    : <> There is nothing to buy, so the whole cost lands on the cash raised.</>}
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--space-4)', rowGap: 'var(--space-2)' }}>
+                <SummaryFigure label="Sold" value={eur0(friction?.gross ?? 0)} />
+                <SummaryFigure label="Bought" value={eur0(netBuyTotal)} />
+                <SummaryFigure label="Taxes" value={eur0(friction?.tax ?? 0)} color="var(--color-danger)" />
+                <SummaryFigure label="Commissions" value={eur0(totalCommission)} color="var(--color-danger)" />
+                {cash && (
+                    <>
+                        <SummaryFigure label="Cash now" value={eur0(cash.before)} />
+                        <SummaryFigure
+                            label="Cash after"
+                            value={eur0(cash.after)}
+                            color={cash.after < 0 ? 'var(--color-danger)' : cash.warnings.length > 0 ? '#B45309' : 'var(--color-success)'}
+                            strong
+                        />
+                    </>
+                )}
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                Tax is estimated on the sold portion only (26% stocks/crypto/gold, 12.5% bonds/monetary, 20% pension funds); losses are not offset against gains, and buy commissions are not deducted.
+
+            {hasFriction && grossBuyTotal > 0 && (
+                <div style={{ lineHeight: 1.5, marginTop: '6px' }}>
+                    Buys were cut by <strong>{eur0(cut)}</strong> ({cutPerc.toFixed(1)}%) so the orders can't cost more than the sales settle for.
+                </div>
+            )}
+
+            {cash?.warnings.map(w => (
+                <div key={w.kind} style={{ lineHeight: 1.5, marginTop: '4px', color: w.kind === 'overdraft' ? '#B91C1C' : '#B45309' }}>
+                    {w.kind === 'overdraft' && <>⚠ This would overdraw {cash.brokerName} by <strong>{eur0(w.deficit)}</strong> at settlement.</>}
+                    {w.kind === 'earmark' && <>⚠ Leaves less than the {eur0(w.threshold)} this broker has reserved for other portfolios (short {eur0(w.deficit)}).</>}
+                    {w.kind === 'min-liquidity' && <>⚠ Below this broker's {eur0(w.threshold)} minimum liquidity (short {eur0(w.deficit)}).</>}
+                </div>
+            ))}
+
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                Tax is estimated on the sold portion only (26% stocks/crypto/gold, 12.5% bonds/monetary, 20% pension funds); losses are not offset against gains.
+                {cash
+                    ? ' Buy commissions are counted in the cash projection but deliberately do not shrink the orders; free-buy promotions are ignored.'
+                    : canPickBroker
+                        ? ' Multi-broker portfolio: commissions use each ticker\'s last-transaction broker and no cash check is possible — pick a broker above to enable it.'
+                        : ' Commissions use each ticker\'s last-transaction broker: this view spans every portfolio, so the legs can settle at different brokers and no single cash balance applies.'}
             </div>
         </div>
     );
@@ -830,6 +923,7 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
             friction: null as SellFriction | null,
             scale: 1,
             grossBuyTotal: 0,
+            netBuyTotal: 0,
             postTotal: calcTotalValue,
         };
         if (calcTotalValue <= 0) return empty;
@@ -866,9 +960,12 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
             if (shares === 0) return;
             byTicker[l.asset.ticker] = { shares, amount: shares * l.price };
         });
+        const netBuyTotal = Object.values(byTicker)
+            .filter(a => a.shares > 0)
+            .reduce((s, a) => s + a.amount, 0);
 
         // Tax and fees leave the portfolio for good, so the post-action base shrinks.
-        return { byTicker, friction, scale, grossBuyTotal, postTotal: calcTotalValue - friction.total };
+        return { byTicker, friction, scale, grossBuyTotal, netBuyTotal, postTotal: calcTotalValue - friction.total };
     }, [includedAssets, calcTotalValue, weightedTargets, tickerToBroker, assetSettings]);
 
     const excludedCount = excludedTickers.filter(t => allVisibleAssets.some(a => a.ticker === t)).length;
@@ -1234,7 +1331,10 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
             <SellFrictionNote
                 friction={fullRebalance.friction}
                 grossBuyTotal={fullRebalance.grossBuyTotal}
+                netBuyTotal={fullRebalance.netBuyTotal}
                 scale={fullRebalance.scale}
+                cash={null}
+                canPickBroker={false}
             />
 
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
@@ -1831,6 +1931,12 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
         [allTickers, tickerToGroupId]
     );
 
+    // Broker this portfolio trades through; undefined = multi-broker mode.
+    const preferredBroker = useMemo(
+        () => brokers.find(b => b.id === portfolio.preferredBrokerId),
+        [brokers, portfolio.preferredBrokerId]
+    );
+
     // Per-group aggregates + full-rebalance member actions, sized on the GROSS gap
     // to target. `groupComputations` below re-sizes the buy side once the sell
     // leg's tax and commissions are known.
@@ -1860,6 +1966,11 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
      * commission. The buy legs are therefore re-sized on that net pot — otherwise
      * the generated orders cost more cash than the sells raise and the account
      * goes short at settlement. Sells are never re-sized.
+     *
+     * With a preferred broker the whole plan is priced against that one
+     * commission plan and checked against its cash; without one the broker is
+     * guessed per ticker from its last transaction and no cash check is
+     * possible, since the legs may settle at different brokers.
      */
     const fullRebalance = useMemo(() => {
         // Sell-side inputs for a ticker: PMC, class (for the rate) and the broker
@@ -1875,7 +1986,9 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 price,
                 averagePrice: asset.averagePrice,
                 assetClass: resolveAssetClass(asset, assetSettings),
-                broker: brokers.find(b => b.id === lastBrokerId) ?? (brokers.length === 1 ? brokers[0] : undefined),
+                broker: preferredBroker
+                    ?? brokers.find(b => b.id === lastBrokerId)
+                    ?? (brokers.length === 1 ? brokers[0] : undefined),
             };
         };
 
@@ -1923,9 +2036,26 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 : gc.full;
         });
 
+        // Netted buy legs, for the cash projection.
+        const buys = [
+            ...standaloneLegs
+                .filter(l => l.shares > 0)
+                .map(l => ({ shares: scaledBuyShares(l.shares, scale), price: l.price })),
+            ...rawGroupComputations.flatMap(gc =>
+                Object.values(groupDist[gc.group.id]?.actions ?? {})
+                    .filter(a => a.shares > 0)
+                    .map(a => ({ shares: a.shares, price: gc.memberInfo[a.ticker.toUpperCase()]?.price || 0 }))
+            ),
+        ].filter(b => b.shares > 0 && b.price > 0);
+        const netBuyTotal = buys.reduce((s, b) => s + b.shares * b.price, 0);
+
+        const cash = preferredBroker
+            ? projectBrokerCash({ broker: preferredBroker, portfolioId: portfolio.id, friction, buys })
+            : null;
+
         // Tax and fees leave the portfolio, so the post-action base shrinks.
-        return { standalone, groupDist, friction, scale, grossBuyTotal, postTotal: totalPortfolioValue - friction.total };
-    }, [standaloneTickers, rawGroupComputations, assets, allocations, totalPortfolioValue, portfolioTxs, brokers, assetSettings]);
+        return { standalone, groupDist, friction, scale, grossBuyTotal, netBuyTotal, postTotal: totalPortfolioValue - friction.total, cash };
+    }, [standaloneTickers, rawGroupComputations, assets, allocations, totalPortfolioValue, portfolioTxs, brokers, assetSettings, preferredBroker, portfolio.id]);
 
     // Group rows/actions after netting: same aggregates, buy side re-sized.
     const groupComputations = useMemo(() => {
@@ -2044,7 +2174,9 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 amount: Math.abs(shares),
                 price,
                 direction: shares > 0 ? 'Buy' : 'Sell',
-                brokerId: lastTx?.brokerId,
+                // The declared broker wins: it priced the commissions and the cash
+                // check, so the recorded trade has to hit the same account.
+                brokerId: preferredBroker?.id ?? lastTx?.brokerId,
             });
         };
 
@@ -2312,7 +2444,10 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                     />
                 </h3>
                 <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>Liquidity:</label>
+                    <BrokerPicker portfolio={portfolio} brokers={brokers} onUpdatePortfolio={onUpdatePortfolio} />
+                    {/* Kept as one flex unit so the label never wraps away from its input. */}
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                    <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Liquidity:</label>
                     <input
                         type="number"
                         placeholder="0.00"
@@ -2357,6 +2492,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                             </div>
                         );
                     })()}
+                    </span>
                     {hasPacs && (
                         <div
                             className="allocation-liquidity-hint"
@@ -2398,7 +2534,9 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             <SellFrictionNote
                 friction={fullRebalance.friction}
                 grossBuyTotal={fullRebalance.grossBuyTotal}
+                netBuyTotal={fullRebalance.netBuyTotal}
                 scale={fullRebalance.scale}
+                cash={fullRebalance.cash}
             />
 
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
