@@ -169,6 +169,91 @@ export function analyzeSpending(
     };
 }
 
+// ── Forecast cashflow ────────────────────────────────────────────────
+// The Forecast needs a single monthly income/expense pair, taken from the same
+// rolling-year history the Summary analyses. Several budgets can be counted
+// together (one per household source), and only the selected macro classes
+// count as expenses — so "structural only" or "without compressible" become
+// two clicks instead of a hand-computed figure.
+
+// Expense classes counted by default: what the household actually consumes.
+// Sinking funds are the planned expenses the goals already model, and
+// investments are contributions the forecast grows on its own.
+export const DEFAULT_FORECAST_EXPENSE_MACROS: YnabMacroCategory[] = ['structural', 'variable', 'compressible'];
+
+export interface ForecastCashflowPerBudget {
+    budgetId: string;
+    monthsCount: number;
+    avgMonthlyIncome: number;
+    avgMonthlyExpenses: number;
+}
+
+export interface ForecastCashflow {
+    // Longest history among the counted budgets, for "over the last N months".
+    monthsCount: number;
+    firstMonth: string | null;
+    lastMonth: string | null;
+    avgMonthlyIncome: number;
+    avgMonthlyExpenses: number;      // selected macro classes only
+    avgMonthlyByMacro: Record<YnabMacroCategory, number>;
+    // Categories with no macro class: never counted, surfaced so the number can
+    // be recognised as incomplete.
+    avgMonthlyUnmapped: number;
+    perBudget: ForecastCashflowPerBudget[];
+}
+
+export function computeForecastCashflow(
+    historyByBudget: Record<string, YnabMonthSnapshot[]>,
+    mappings: YnabMacroMappings,
+    budgetIds: string[],
+    macros: YnabMacroCategory[],
+): ForecastCashflow {
+    const selected = new Set(macros);
+    const avgMonthlyByMacro = Object.fromEntries(MACRO_ORDER.map(m => [m, 0])) as Record<YnabMacroCategory, number>;
+    const perBudget: ForecastCashflowPerBudget[] = [];
+    let avgMonthlyIncome = 0;
+    let avgMonthlyExpenses = 0;
+    let avgMonthlyUnmapped = 0;
+    let monthsCount = 0;
+    let firstMonth: string | null = null;
+    let lastMonth: string | null = null;
+
+    for (const budgetId of budgetIds) {
+        const history = historyByBudget[budgetId];
+        if (!history || history.length === 0) continue;
+        const a = analyzeSpending(history, mappings);
+        const budgetExpenses = MACRO_ORDER
+            .filter(m => selected.has(m))
+            .reduce((sum, m) => sum + a.macros[m].avgMonthlyOutflow, 0);
+
+        for (const m of MACRO_ORDER) avgMonthlyByMacro[m] += a.macros[m].avgMonthlyOutflow;
+        avgMonthlyIncome += a.avgMonthlyIncome;
+        avgMonthlyExpenses += budgetExpenses;
+        avgMonthlyUnmapped += a.monthsCount > 0 ? a.unmappedOutflow / a.monthsCount : 0;
+        monthsCount = Math.max(monthsCount, a.monthsCount);
+        if (a.firstMonth && (firstMonth === null || a.firstMonth < firstMonth)) firstMonth = a.firstMonth;
+        if (a.lastMonth && (lastMonth === null || a.lastMonth > lastMonth)) lastMonth = a.lastMonth;
+
+        perBudget.push({
+            budgetId,
+            monthsCount: a.monthsCount,
+            avgMonthlyIncome: a.avgMonthlyIncome,
+            avgMonthlyExpenses: budgetExpenses,
+        });
+    }
+
+    return {
+        monthsCount,
+        firstMonth,
+        lastMonth,
+        avgMonthlyIncome,
+        avgMonthlyExpenses,
+        avgMonthlyByMacro,
+        avgMonthlyUnmapped,
+        perBudget,
+    };
+}
+
 const fmt = (value: number, iso: string): string =>
     new Intl.NumberFormat('en-IE', { style: 'currency', currency: iso, maximumFractionDigits: 0 }).format(value);
 

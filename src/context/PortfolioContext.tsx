@@ -10,8 +10,10 @@ import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCat
 import type { YnabBudgetSummary, YnabAccountSummary } from '../services/ynabApi';
 import { assignYnabAccountMapping, groupMappingsByBudget, normalizeYnabAccountMappings } from '../utils/ynabAccountMappings';
 import { getExcludedBrokerIds, hasScopeFlags } from '../utils/assetScope';
-import { parseGoalDescriptor } from '../utils/ynabGoalParser';
+import { parseGoalDescriptor, nativeGoalTarget } from '../utils/ynabGoalParser';
 import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
+import { mergeYnabGoalsFromCandidates } from '../utils/ynabGoalSync';
+import type { YnabGoalSyncReport } from '../utils/ynabGoalSync';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
@@ -112,7 +114,7 @@ interface PortfolioContextType {
     listYnabCategoryGroups: () => Promise<{ ok: boolean; groups?: YnabCategoryGroupSummary[]; error?: string }>;
     setYnabGoalsGroup: (groupId: string, groupName: string) => void;
     prepareYnabGoalsSync: () => Promise<{ ok: boolean; candidates?: YnabGoalSyncCandidate[]; error?: string }>;
-    applyYnabGoalsSync: (candidates: YnabGoalSyncCandidate[]) => { ok: boolean; report?: { created: number; updated: number; skipped: number; archived: number; deleted: number }; error?: string };
+    applyYnabGoalsSync: (candidates: YnabGoalSyncCandidate[]) => { ok: boolean; report?: YnabGoalSyncReport; goals?: YnabGoal[]; error?: string };
     deleteYnabGoal: (ynabGoalId: string) => { ok: boolean; error?: string };
     addAllocation: (input: { portfolioId: string; ynabGoalId: string; amount: number; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
     updateAllocation: (allocationId: string, input: { amount: number; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
@@ -125,14 +127,20 @@ interface PortfolioContextType {
     plannedForecastExpenses: PlannedForecastExpense[] | null;
     setPlannedForecastExpenses: (expenses: PlannedForecastExpense[] | ((prev: PlannedForecastExpense[] | null) => PlannedForecastExpense[])) => void;
     restorePlannedForecastExpenses: () => PlannedForecastExpense[];
+    // Fetch the goals from YNAB and rebuild the planned expenses from them.
+    syncYnabGoalsToForecast: () => Promise<{ ok: boolean; error?: string; expenses?: PlannedForecastExpense[]; report?: YnabGoalSyncReport }>;
     // YNAB spending analysis (rolling 12 months of budget/activity/income).
     // The analysis runs on one budget at a time — `ynabSummaryBudgetId` — while
     // every budget's history is kept side by side, so switching is free.
     ynabSummaryBudgetId: string | null;
     setYnabSummaryBudget: (budgetId: string) => void;
     ynabSpendingHistory: YnabMonthSnapshot[]; // of the selected budget
+    ynabSpendingHistoryByBudget: YnabSpendingHistoryByBudget; // every synced budget
     ynabSpendingLastSyncAt: string | null;    // of the selected budget
     ynabMacroMappings: YnabMacroMappings;
+    // Which source (family or a person) each budget's income/expenses belong to.
+    ynabBudgetOwners: Record<string, string>;
+    setYnabBudgetOwner: (budgetId: string, owner: string) => void;
     syncYnabSpending: (budgetId?: string) => Promise<{ ok: boolean; error?: string }>;
     setYnabGroupMacro: (groupId: string, macro: YnabMacroCategory | null) => void;
     setYnabCategoryMacro: (categoryId: string, macro: YnabMacroCategory | null) => void;
@@ -249,6 +257,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [storedYnabSpendingHistory, setStoredYnabSpendingHistory] =
         useLocalStorage<YnabSpendingHistoryByBudget | YnabMonthSnapshot[]>('portfolio_ynab_spending_history', {});
     const [ynabMacroMappings, setYnabMacroMappings] = useLocalStorage<YnabMacroMappings>('portfolio_ynab_macro_mappings', { groups: {}, categories: {} });
+    // budgetId -> income/expense source: FAMILY_SOURCE or a Person id. A YNAB
+    // budget is the finest grain at which income is attributable (month totals
+    // carry no payee/account breakdown), so the Forecast source filter counts
+    // whole budgets. Unlisted budgets count as family.
+    const [ynabBudgetOwners, setYnabBudgetOwners] = useLocalStorage<Record<string, string>>('portfolio_ynab_budget_owners', {});
     const [ynabSpendingSyncing, setYnabSpendingSyncing] = useState(false);
     const [virtualBonds, setVirtualBonds] = useLocalStorage<VirtualBond[]>('portfolio_virtual_bonds', []);
     const [freeCommissionPeriods, setFreeCommissionPeriods] = useLocalStorage<FreeCommissionPeriod[]>('portfolio_free_commissions', []);
@@ -783,6 +796,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoals,
                 ynabGoalAllocations,
                 ynabMacroMappings,
+                ynabBudgetOwners,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -814,7 +828,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings, ynabAccountMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -837,6 +851,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         ynabAccountMappings,
                         ynabGoals,
                         ynabGoalAllocations,
+                        ynabBudgetOwners,
                         ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                         ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                         ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -2070,6 +2085,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             { id: 'yg-house', ynabBudgetId: 'mock-budget-id', name: 'House Down Payment', targetAmount: 60000, targetDate: '2027-12-01', cashCoverage: 15000, ynabMonthlyFunding: 800, ynabActivityThisMonth: 800, goalType: 'TB', targetSource: 'parsed-name', lastSyncedAt: timestamp },
             { id: 'yg-car', ynabBudgetId: 'mock-budget-id', name: 'New Car', targetAmount: 25000, targetDate: '2026-09-01', cashCoverage: 9000, ynabMonthlyFunding: 400, ynabActivityThisMonth: 400, goalType: 'TBD', targetSource: 'parsed-note', lastSyncedAt: timestamp },
             { id: 'yg-sabbatical', ynabBudgetId: 'mock-budget-id', name: 'Sabbatical Year', targetAmount: 40000, cashCoverage: 5000, ynabMonthlyFunding: 300, targetSource: 'manual-override', lastSyncedAt: timestamp },
+            // Target taken from YNAB's own goal fields (no "15000€ by 2029-06" in
+            // the category name or note) — the case the forecast used to miss.
+            { id: 'yg-wedding', ynabBudgetId: 'mock-budget-id', name: 'Wedding', targetAmount: 15000, targetDate: '2029-06-30', cashCoverage: 3000, ynabMonthlyFunding: 250, ynabActivityThisMonth: 250, goalType: 'TBD', targetSource: 'ynab-goal', lastSyncedAt: timestamp },
         ]);
         setYnabGoalAllocations([
             { id: 'yga-1', portfolioId: pIdSafe, ynabGoalId: 'yg-house', amount: 12000, createdAt: timestamp, updatedAt: timestamp },
@@ -2121,9 +2139,26 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 syncedAt: timestamp,
             });
         }
-        // Only the primary budget carries a history: "Personal Budget" stays empty
-        // on purpose, to show what an unsynced budget looks like in the Summary.
-        setStoredYnabSpendingHistory({ 'mock-budget-id': spendingHistory });
+        // The second budget carries a smaller history of its own and is attributed
+        // to Giulia, so the Forecast source chips have both a family and a personal
+        // stream of income/expenses to add up or leave out.
+        const personalHistory: YnabMonthSnapshot[] = spendingHistory.map(snap => {
+            const categories = [
+                { categoryId: 'ynab-p-rent', name: 'Room & Bills', groupId: 'ynab-grp-hous', groupName: 'Housing', budgetedMilliunits: mmu(400), activityMilliunits: -mmu(400) },
+                { categoryId: 'ynab-p-food', name: 'Groceries', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', budgetedMilliunits: mmu(180), activityMilliunits: -mmu(170) },
+                { categoryId: 'ynab-cat-9', name: 'Restaurants & Takeaway', groupId: 'ynab-grp-exp', groupName: 'Monthly Expenses', budgetedMilliunits: mmu(120), activityMilliunits: -mmu(110) },
+            ];
+            return {
+                month: snap.month,
+                incomeMilliunits: mmu(1800),
+                budgetedMilliunits: categories.reduce((s, c) => s + c.budgetedMilliunits, 0),
+                activityMilliunits: categories.reduce((s, c) => s + c.activityMilliunits, 0),
+                categories,
+                syncedAt: timestamp,
+            };
+        });
+        setStoredYnabSpendingHistory({ 'mock-budget-id': spendingHistory, 'mock-budget-personal': personalHistory });
+        setYnabBudgetOwners({ 'mock-budget-personal': 'person-b' });
         setYnabMacroMappings({
             groups: {
                 'ynab-grp-hous': 'structural',
@@ -2168,6 +2203,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const importedYnabMacroMappings: YnabMacroMappings = (data.ynabMacroMappings && typeof data.ynabMacroMappings === 'object')
                 ? { groups: data.ynabMacroMappings.groups ?? {}, categories: data.ynabMacroMappings.categories ?? {} }
                 : { groups: {}, categories: {} };
+            const importedYnabBudgetOwners: Record<string, string> =
+                (data.ynabBudgetOwners && typeof data.ynabBudgetOwners === 'object' && !Array.isArray(data.ynabBudgetOwners))
+                    ? Object.fromEntries(
+                        Object.entries(data.ynabBudgetOwners as Record<string, unknown>)
+                            .filter(([budgetId, owner]) => !!budgetId && typeof owner === 'string' && owner.length > 0)
+                    ) as Record<string, string>
+                    : {};
             const importedVirtualBonds: VirtualBond[] = Array.isArray(data.virtualBonds) ? data.virtualBonds : [];
             const importedFreeCommissionPeriods: FreeCommissionPeriod[] = Array.isArray(data.freeCommissionPeriods) ? data.freeCommissionPeriods : [];
             // null (not []) when absent from the backup so the auto-seed re-runs
@@ -2209,6 +2251,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_ynab_goals', JSON.stringify(importedYnabGoals));
             localStorage.setItem('portfolio_ynab_goal_allocations', JSON.stringify(importedYnabGoalAllocations));
             localStorage.setItem('portfolio_ynab_macro_mappings', JSON.stringify(importedYnabMacroMappings));
+            localStorage.setItem('portfolio_ynab_budget_owners', JSON.stringify(importedYnabBudgetOwners));
             localStorage.setItem('portfolio_virtual_bonds', JSON.stringify(importedVirtualBonds));
             localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
             localStorage.setItem('portfolio_forecast_planned_expenses', JSON.stringify(importedPlannedForecastExpenses));
@@ -2235,6 +2278,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setYnabGoals(importedYnabGoals);
             setYnabGoalAllocations(importedYnabGoalAllocations);
             setYnabMacroMappings(importedYnabMacroMappings);
+            setYnabBudgetOwners(importedYnabBudgetOwners);
             setVirtualBonds(importedVirtualBonds);
             setFreeCommissionPeriods(importedFreeCommissionPeriods);
             setStoredPlannedForecastExpenses(importedPlannedForecastExpenses);
@@ -2279,6 +2323,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoals,
                 ynabGoalAllocations,
                 ynabMacroMappings,
+                ynabBudgetOwners,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -2555,6 +2600,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabConfigState(prev => prev ? { ...prev, summaryBudgetId: budgetId } : prev);
     };
 
+    const setYnabBudgetOwner = (budgetId: string, owner: string) => {
+        setYnabBudgetOwners(prev => ({ ...prev, [budgetId]: owner }));
+    };
+
     const setYnabGroupMacro = (groupId: string, macro: YnabMacroCategory | null) => {
         setYnabMacroMappings(prev => {
             const groups = { ...prev.groups };
@@ -2617,14 +2666,31 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
             const candidates: YnabGoalSyncCandidate[] = res.data.map(cat => {
                 const parsed = parseGoalDescriptor(cat.name, cat.note);
+                const native = nativeGoalTarget(cat);
                 const existing = existingById.get(cat.id) ?? null;
+                // Precedence: an explicit target written in the name/note, then
+                // YNAB's own goal target, then whatever the user set by hand (so
+                // a re-sync never silently wipes a manual override).
+                const keepManual = existing?.targetSource === 'manual-override';
+                const amount = parsed.amount ?? native.amount ?? (keepManual ? existing.targetAmount ?? null : null);
+                const date = parsed.date ?? native.date ?? (keepManual ? existing.targetDate ?? null : null);
+                const source: YnabGoalSyncCandidate['parsedSource'] =
+                    parsed.source ?? ((native.amount !== null || native.date !== null) ? 'ynab-goal' : null);
+                // A target read from YNAB's goal fields is authoritative, so it
+                // ranks as high as a fully parsed "7000€ by 2028-06".
+                const confidence: YnabGoalSyncCandidate['confidence'] =
+                    amount !== null && date !== null ? 'high'
+                        : source === 'ynab-goal' ? 'medium'
+                            : parsed.confidence;
                 return {
                     ynabCategoryId: cat.id,
                     ynabCategoryName: cat.name,
                     rawNote: cat.note ?? null,
-                    parsedAmount: parsed.amount,
-                    parsedDate: parsed.date,
-                    confidence: parsed.confidence,
+                    parsedAmount: amount,
+                    parsedDate: date,
+                    confidence,
+                    ynabTargetAmount: native.amount,
+                    ynabTargetDate: native.date,
                     cashCoverage: milliunitsToEur(cat.balanceMilliunits),
                     ynabMonthlyFunding: cat.goalType === 'MF' && typeof cat.goalTargetMilliunits === 'number'
                         ? milliunitsToEur(cat.goalTargetMilliunits)
@@ -2634,7 +2700,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         : null,
                     goalType: cat.goalType ?? null,
                     matchedYnabGoalId: existing?.id ?? null,
-                    parsedSource: parsed.source,
+                    parsedSource: source,
                     existingTargetSource: existing?.targetSource ?? null,
                     existingTargetAmount: existing?.targetAmount ?? null,
                     existingTargetDate: existing?.targetDate ?? null,
@@ -2657,73 +2723,35 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return { ok: false as const, error: 'YNAB not configured.' };
         }
         const now = new Date().toISOString();
-        const incomingIds = new Set(candidates.filter(c => c.action !== 'skip').map(c => c.ynabCategoryId));
-        const allFetchedIds = new Set(candidates.map(c => c.ynabCategoryId));
-        const report = { created: 0, updated: 0, skipped: 0, archived: 0, deleted: 0 };
-
-        setYnabGoals(prev => {
-            const byId = new Map<string, YnabGoal>();
-            for (const g of prev) byId.set(g.id, g);
-
-            for (const c of candidates) {
-                if (c.action === 'skip') {
-                    report.skipped += 1;
-                    continue;
-                }
-                const existing = byId.get(c.ynabCategoryId) ?? null;
-
-                let targetSource: YnabGoal['targetSource'];
-                if (existing && existing.targetSource === 'manual-override') {
-                    const sameAmount = (existing.targetAmount ?? null) === c.parsedAmount;
-                    const sameDate = (existing.targetDate ?? null) === c.parsedDate;
-                    if (sameAmount && sameDate) {
-                        targetSource = c.parsedSource ?? 'manual-override';
-                    } else {
-                        targetSource = 'manual-override';
-                    }
-                } else {
-                    targetSource = c.parsedSource ?? 'manual-override';
-                }
-
-                const next: YnabGoal = {
-                    id: c.ynabCategoryId,
-                    ynabBudgetId: ynabConfig.budgetId,
-                    name: c.ynabCategoryName,
-                    targetAmount: c.parsedAmount ?? undefined,
-                    targetDate: c.parsedDate ?? undefined,
-                    cashCoverage: c.cashCoverage,
-                    ynabMonthlyFunding: c.ynabMonthlyFunding ?? undefined,
-                    ynabActivityThisMonth: c.ynabActivityThisMonth ?? undefined,
-                    goalType: c.goalType ?? undefined,
-                    targetSource,
-                    lastSyncedAt: now,
-                    archived: false,
-                };
-                byId.set(c.ynabCategoryId, next);
-                if (existing) report.updated += 1;
-                else report.created += 1;
-            }
-
-            // Categorie scomparse dal gruppo YNAB: archive (se hanno allocations) o delete
-            for (const g of prev) {
-                if (allFetchedIds.has(g.id)) continue;
-                if (!incomingIds.has(g.id)) {
-                    const hasAllocs = ynabGoalAllocations.some(a => a.ynabGoalId === g.id);
-                    if (hasAllocs) {
-                        byId.set(g.id, { ...g, archived: true, lastSyncedAt: now });
-                        report.archived += 1;
-                    } else {
-                        byId.delete(g.id);
-                        report.deleted += 1;
-                    }
-                }
-            }
-
-            return Array.from(byId.values());
+        const { goals: nextGoals, report } = mergeYnabGoalsFromCandidates(ynabGoals, candidates, {
+            budgetId: ynabConfig.budgetId,
+            allocations: ynabGoalAllocations,
+            now,
         });
-
+        setYnabGoals(nextGoals);
         setYnabConfigState(prev => prev ? { ...prev, lastGoalsSyncAt: now } : prev);
-        return { ok: true as const, report };
+        return { ok: true as const, report, goals: nextGoals };
+    };
+
+    // One-click path used by the Forecast: pull the goals from YNAB (same fetch
+    // and merge the Goals view does, taking every candidate as prepared) and
+    // rebuild the planned expenses from the goals that just landed, so the
+    // forecast reflects YNAB without a detour through the Goals screen.
+    const syncYnabGoalsToForecast = async (): Promise<{
+        ok: boolean;
+        error?: string;
+        expenses?: PlannedForecastExpense[];
+        report?: YnabGoalSyncReport;
+    }> => {
+        const prepared = await prepareYnabGoalsSync();
+        if (!prepared.ok || !prepared.candidates) {
+            return { ok: false, error: prepared.error || 'Failed to fetch YNAB goals.' };
+        }
+        const applied = applyYnabGoalsSync(prepared.candidates);
+        if (!applied.ok) return { ok: false, error: applied.error };
+        const rebuilt = buildPlannedForecastExpenses(applied.goals, ynabGoalAllocations, portfolios);
+        setStoredPlannedForecastExpenses(rebuilt);
+        return { ok: true, expenses: rebuilt, report: applied.report };
     };
 
     const deleteYnabGoal = (ynabGoalId: string) => {
@@ -3008,6 +3036,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         plannedForecastExpenses: storedPlannedForecastExpenses,
         setPlannedForecastExpenses: setStoredPlannedForecastExpenses,
         restorePlannedForecastExpenses,
+        syncYnabGoalsToForecast,
         people,
         addPerson,
         renamePerson,
@@ -3022,8 +3051,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ynabSummaryBudgetId,
         setYnabSummaryBudget,
         ynabSpendingHistory,
+        ynabSpendingHistoryByBudget,
         ynabSpendingLastSyncAt,
         ynabMacroMappings,
+        ynabBudgetOwners,
+        setYnabBudgetOwner,
         syncYnabSpending,
         setYnabGroupMacro,
         setYnabCategoryMacro,

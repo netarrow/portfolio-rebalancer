@@ -149,6 +149,9 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                                         <span className="badge badge-ynab">YNAB</span>
                                         {g.archived && <span className="badge badge-warn">archived</span>}
                                         {g.targetSource === 'manual-override' && <span className="badge badge-info">manual</span>}
+                                        {g.targetSource === 'ynab-goal' && (
+                                            <span className="badge badge-info" title="Target read from YNAB's own goal fields">ynab target</span>
+                                        )}
                                     </div>
                                 </div>
                                 <button

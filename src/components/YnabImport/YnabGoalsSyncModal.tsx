@@ -42,6 +42,7 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                     <code style={{ marginLeft: 4 }}>7000€ by 2028-06</code>,
                     <code style={{ marginLeft: 4 }}>[target:7000][date:2028-06]</code>,
                     <code style={{ marginLeft: 4 }}>7k entro 2028-06</code>.
+                    {' '}Without one, YNAB's own goal target (amount and target month) is used.
                 </p>
 
                 <div className="goal-sync-table-wrap">
@@ -76,6 +77,14 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                                                     >
                                                         {noteOpen ? 'Hide note' : 'Show note'}
                                                     </button>
+                                                )}
+                                                {row.parsedSource === 'ynab-goal' && (
+                                                    <div
+                                                        style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
+                                                        title="Read from YNAB's own goal fields — the name and note carry no explicit target"
+                                                    >
+                                                        From YNAB goal target
+                                                    </div>
                                                 )}
                                                 {row.matchedYnabGoalId && (
                                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>

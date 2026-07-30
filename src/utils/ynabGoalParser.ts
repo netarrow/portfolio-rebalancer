@@ -123,3 +123,26 @@ export function parseGoalDescriptor(name: string, note: string | null | undefine
 
     return { amount: null, date: null, confidence: 'low', source: null };
 }
+
+// YNAB's own goal fields, read as a target descriptor for categories that carry
+// no explicit "7000€ by 2028-06" in their name or note. Only goals expressing a
+// total to reach qualify: TB/TBD keep that total in goal_target, and a NEED goal
+// does too when it is a one-off dated target (cadence 0) — a recurring NEED is a
+// monthly spending plan. MF holds a per-month contribution and is never a total.
+export function nativeGoalTarget(cat: {
+    goalType?: string;
+    goalTargetMilliunits?: number;
+    goalTargetMonth?: string;
+    goalCadence?: number;
+}): { amount: number | null; date: string | null } {
+    const type = cat.goalType;
+    const usable = type === 'TB' || type === 'TBD' || (type === 'NEED' && (cat.goalCadence ?? 0) === 0);
+    if (!usable) return { amount: null, date: null };
+    const amount = typeof cat.goalTargetMilliunits === 'number' && cat.goalTargetMilliunits > 0
+        ? cat.goalTargetMilliunits / 1000
+        : null;
+    const date = cat.goalTargetMonth && /^\d{4}-\d{2}-\d{2}$/.test(cat.goalTargetMonth)
+        ? cat.goalTargetMonth
+        : null;
+    return { amount, date };
+}

@@ -11,16 +11,31 @@ import {
     aggregateMonthlyLogReturns, getPortfolioValueSeries, getCashFlowsByDate
 } from '../../utils/performanceCalculations';
 import type { ReturnStats } from '../../utils/performanceCalculations';
+import {
+    computeForecastCashflow, DEFAULT_FORECAST_EXPENSE_MACROS,
+    MACRO_ORDER, MACRO_LABELS, MACRO_DESCRIPTIONS
+} from '../../utils/spendingAnalysis';
 import { isIncomeDirection } from '../../types';
-import type { TransactionDirection } from '../../types';
+import type { TransactionDirection, YnabMacroCategory } from '../../types';
+
+// Household source a YNAB budget's income and expenses count as, when no
+// person is assigned to it.
+const FAMILY_SOURCE = 'family';
 
 const ForecastView: React.FC = () => {
     // Scoped: the family/illiquid toggles decide what the forecast simulates
     const { portfolios, scopedBrokers: brokers, marketData, scopedTransactions: transactions, assetSettings, goals, priceHistory,
-        plannedForecastExpenses, setPlannedForecastExpenses, restorePlannedForecastExpenses } = usePortfolio();
+        plannedForecastExpenses, setPlannedForecastExpenses, restorePlannedForecastExpenses, syncYnabGoalsToForecast,
+        ynabGoals, ynabGoalsSyncing, ynabConfig, ynabSpendingHistoryByBudget, ynabMacroMappings,
+        ynabBudgetOwners, setYnabBudgetOwner, syncYnabSpending, ynabSpendingSyncing, people } = usePortfolio();
 
     // null = never seeded (context auto-imports as soon as forecastable goals exist)
     const ynabPlannedExpenses = plannedForecastExpenses ?? [];
+    // Goals YNAB knows about but that carry no target amount + date, so they can
+    // never become a planned expense. Explains an empty list.
+    const goalsWithoutTarget = useMemo(
+        () => ynabGoals.filter(g => !g.archived && !((g.targetAmount ?? 0) > 0 && g.targetDate)).length,
+        [ynabGoals]);
 
     const sortedGoals = useMemo(() => [...goals].sort((a, b) => a.order - b.order), [goals]);
     const goalTitleById = useMemo(() => {
@@ -33,6 +48,94 @@ const ForecastView: React.FC = () => {
     const [timeHorizon, setTimeHorizon] = useState<number | ''>('');
     const [monthlyIncome, setMonthlyIncome] = useState<number | ''>('');
     const [monthlyExpenses, setMonthlyExpenses] = useState<number | ''>('');
+
+    // ── Cashflow from YNAB ───────────────────────────────────────────
+    // Income and expenses come from the rolling-year spending history, filtered
+    // by household source (which budgets count) and by expense class.
+    const [excludedSources, setExcludedSources] = useState<string[]>([]);
+    const [expenseMacros, setExpenseMacros] = useState<YnabMacroCategory[]>(DEFAULT_FORECAST_EXPENSE_MACROS);
+    const [useYnabCashflow, setUseYnabCashflow] = useState(true);
+    const [showSourceMapping, setShowSourceMapping] = useState(false);
+
+    // Budgets the token knows about, or at least the primary one.
+    const ynabBudgets = useMemo(() => {
+        const cached = ynabConfig?.budgets;
+        if (cached && cached.length > 0) return cached;
+        if (!ynabConfig) return [];
+        return [{ id: ynabConfig.budgetId, name: ynabConfig.budgetName || ynabConfig.budgetId, currencyIso: ynabConfig.currencyIso || 'EUR' }];
+    }, [ynabConfig]);
+
+    // A budget counts as family until it is attributed to a person who still exists.
+    const sourceOfBudget = useMemo(() => {
+        const personIds = new Set(people.map(p => p.id));
+        return (budgetId: string): string => {
+            const owner = ynabBudgetOwners[budgetId];
+            return owner && personIds.has(owner) ? owner : FAMILY_SOURCE;
+        };
+    }, [ynabBudgetOwners, people]);
+
+    // One chip per source actually backing a budget: family plus each person who
+    // owns one. A single-budget setup therefore shows just "Family".
+    const cashflowSources = useMemo(() => {
+        const used = new Set(ynabBudgets.map(b => sourceOfBudget(b.id)));
+        const list: { key: string; label: string }[] = [];
+        if (used.has(FAMILY_SOURCE)) list.push({ key: FAMILY_SOURCE, label: '👪 Family' });
+        for (const p of [...people].sort((a, b) => a.order - b.order)) {
+            if (used.has(p.id)) list.push({ key: p.id, label: `👤 ${p.name}` });
+        }
+        return list;
+    }, [ynabBudgets, people, sourceOfBudget]);
+
+    const includedBudgetIds = useMemo(
+        () => ynabBudgets.filter(b => !excludedSources.includes(sourceOfBudget(b.id))).map(b => b.id),
+        [ynabBudgets, excludedSources, sourceOfBudget]);
+
+    const ynabCashflow = useMemo(
+        () => computeForecastCashflow(ynabSpendingHistoryByBudget, ynabMacroMappings, includedBudgetIds, expenseMacros),
+        [ynabSpendingHistoryByBudget, ynabMacroMappings, includedBudgetIds, expenseMacros]);
+
+    // Averages drive the simulation only while there is a history to average and
+    // the user hasn't taken the inputs over.
+    const cashflowFromYnab = useYnabCashflow && ynabCashflow.monthsCount > 0;
+    const effectiveMonthlyIncome = cashflowFromYnab
+        ? Math.round(ynabCashflow.avgMonthlyIncome)
+        : (Number(monthlyIncome) || 0);
+    const effectiveMonthlyExpenses = cashflowFromYnab
+        ? Math.round(ynabCashflow.avgMonthlyExpenses)
+        : (Number(monthlyExpenses) || 0);
+
+    const toggleSource = (key: string) => {
+        setExcludedSources(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+    };
+
+    const toggleExpenseMacro = (macro: YnabMacroCategory) => {
+        setExpenseMacros(prev => prev.includes(macro) ? prev.filter(m => m !== macro) : [...prev, macro]);
+    };
+
+    // Refresh the rolling-year history of every known budget, so a source that
+    // was just attributed or re-included has numbers to contribute.
+    const handleSyncCashflow = async () => {
+        if (ynabBudgets.length === 0) {
+            Swal.fire({ title: 'YNAB not configured', text: 'Connect YNAB in Settings to import income and expenses.', icon: 'info' });
+            return;
+        }
+        const errors: string[] = [];
+        for (const budget of ynabBudgets) {
+            const res = await syncYnabSpending(budget.id);
+            if (!res.ok) errors.push(`${budget.name}: ${res.error || 'sync failed'}`);
+        }
+        if (errors.length > 0) {
+            Swal.fire({ title: 'Sync incomplete', html: errors.join('<br/>'), icon: 'warning' });
+            return;
+        }
+        Swal.fire({
+            title: 'Income & expenses updated',
+            text: `Rolling-year history refreshed for ${ynabBudgets.length} budget${ynabBudgets.length === 1 ? '' : 's'}.`,
+            icon: 'success',
+            timer: 2500,
+            showConfirmButton: false,
+        });
+    };
 
     // Monte Carlo (volatility) simulation
     const [monteCarloEnabled, setMonteCarloEnabled] = useState(false);
@@ -98,23 +201,39 @@ const ForecastView: React.FC = () => {
         setPlannedForecastExpenses(prev => (prev ?? []).filter(e => e.id !== id));
     };
 
-    const handleRestoreYnabExpenses = async () => {
+    // Re-reads the goals from YNAB first, then rebuilds the list from them, so a
+    // target set in YNAB lands in the plan without a detour through YNAB Goals.
+    // With YNAB unreachable it still rebuilds from the goals stored locally.
+    const handleSyncYnabExpenses = async () => {
         const result = await Swal.fire({
-            title: 'Restore from YNAB Goals?',
-            text: 'The planned expense list will be rebuilt from the current YNAB goals. Removed entries come back and enable/disable flags are reset.',
+            title: 'Sync from YNAB Goals?',
+            text: 'Goals are re-read from YNAB, then the planned expense list is rebuilt from them: removed entries come back and enable/disable flags are reset.',
             icon: 'question',
             showCancelButton: true,
-            confirmButtonText: 'Restore',
+            confirmButtonText: 'Sync',
             cancelButtonText: 'Cancel',
         });
         if (!result.isConfirmed) return;
-        const rebuilt = restorePlannedForecastExpenses();
+
+        const synced = await syncYnabGoalsToForecast();
+        if (!synced.ok) {
+            const rebuilt = restorePlannedForecastExpenses();
+            Swal.fire({
+                title: 'Rebuilt from stored goals',
+                html: `YNAB could not be reached: ${synced.error}<br/>`
+                    + `${rebuilt.length} planned expense${rebuilt.length === 1 ? '' : 's'} rebuilt from the goals saved on this device.`,
+                icon: 'warning',
+            });
+            return;
+        }
+        const imported = synced.expenses?.length ?? 0;
+        const report = synced.report;
         Swal.fire({
-            title: 'Restored',
-            text: `${rebuilt.length} planned expense${rebuilt.length === 1 ? '' : 's'} imported from YNAB goals.`,
-            icon: 'success',
-            timer: 2500,
-            showConfirmButton: false,
+            title: 'Synced',
+            html: `${imported} planned expense${imported === 1 ? '' : 's'} from YNAB goals.`
+                + (report ? `<br/><span style="font-size:0.85rem">Goals: ${report.created} new, ${report.updated} updated.</span>` : '')
+                + (imported === 0 ? '<br/><span style="font-size:0.85rem">No goal carries both a target amount and a target date.</span>' : ''),
+            icon: imported === 0 ? 'info' : 'success',
         });
     };
 
@@ -260,8 +379,8 @@ const ForecastView: React.FC = () => {
         return calculateForecastWithState(
             inputPortfolios,
             brokers,
-            Number(monthlyIncome) || 0,
-            Number(monthlyExpenses) || 0,
+            effectiveMonthlyIncome,
+            effectiveMonthlyExpenses,
             Number(timeHorizon) || 10,
             returnsSearchMap,
             [
@@ -277,7 +396,7 @@ const ForecastView: React.FC = () => {
             undefined,
             { rebalanceToInitialWeights: rebalanceAnnually }
         );
-    }, [portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, rebalanceAnnually]);
+    }, [portfolios, currentPortfolioValues, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, rebalanceAnnually]);
 
     // Effective volatility per portfolio (manual override wins over the estimate)
     const effectiveVolatilities = useMemo(() => {
@@ -306,8 +425,8 @@ const ForecastView: React.FC = () => {
         return runMonteCarloForecast(
             inputPortfolios,
             brokers,
-            Number(monthlyIncome) || 0,
-            Number(monthlyExpenses) || 0,
+            effectiveMonthlyIncome,
+            effectiveMonthlyExpenses,
             Number(timeHorizon) || 10,
             returnsMap,
             effectiveVolatilities,
@@ -334,7 +453,7 @@ const ForecastView: React.FC = () => {
                 historicalMaxDrawdownPct: historicalCalibration.netWorthMaxDrawdownPct,
             }
         );
-    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, monthlyIncome, monthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, effectiveVolatilities, mcSeed, rebalanceAnnually, historicalCalibration, volatilityOverrides]);
+    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, effectiveVolatilities, mcSeed, rebalanceAnnually, historicalCalibration, volatilityOverrides]);
 
     // Chart Config
     const chartOptions = {
@@ -593,6 +712,149 @@ const ForecastView: React.FC = () => {
 
                 <AssetScopeToggles style={{ marginBottom: '1rem' }} />
 
+                {/* Cashflow sources: which budgets and which expense classes feed
+                    the monthly income/expense figures the simulation runs on. */}
+                <div className="form-group" style={{ marginBottom: '1rem', padding: '0.75rem', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                        <label style={{ color: 'var(--text-secondary)' }}>Income & Expenses (YNAB)</label>
+                        <button
+                            onClick={handleSyncCashflow}
+                            disabled={ynabSpendingSyncing}
+                            title="Refresh the rolling-year income and spending history of every YNAB budget"
+                            style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-card)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: ynabSpendingSyncing ? 'wait' : 'pointer', fontSize: '0.8rem' }}
+                        >
+                            {ynabSpendingSyncing ? '…' : '↻ Sync'}
+                        </button>
+                    </div>
+
+                    {ynabBudgets.length === 0 ? (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                            YNAB is not connected — type the monthly figures below by hand.
+                        </div>
+                    ) : (
+                        <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Sources:</span>
+                                {cashflowSources.map(source => {
+                                    const included = !excludedSources.includes(source.key);
+                                    return (
+                                        <button
+                                            key={source.key}
+                                            onClick={() => toggleSource(source.key)}
+                                            title={included
+                                                ? `Counted in income and expenses — click to leave out`
+                                                : `Left out of income and expenses — click to count`}
+                                            style={{
+                                                padding: '0.2rem 0.6rem', borderRadius: '14px', fontSize: '0.74rem', cursor: 'pointer',
+                                                background: included ? 'var(--color-primary)' : 'var(--bg-card)',
+                                                color: included ? 'white' : 'var(--text-tertiary)',
+                                                border: included ? '1px solid var(--color-primary)' : '1px solid var(--border-color)',
+                                                textDecoration: included ? 'none' : 'line-through',
+                                            }}
+                                        >
+                                            {source.label}
+                                        </button>
+                                    );
+                                })}
+                                <button
+                                    onClick={() => setShowSourceMapping(v => !v)}
+                                    title="Assign each YNAB budget to the family or to a person"
+                                    style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: '0.85rem', padding: 0 }}
+                                >
+                                    ⚙
+                                </button>
+                            </div>
+
+                            {showSourceMapping && (
+                                <div style={{ marginBottom: '0.6rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                    {ynabBudgets.map(budget => (
+                                        <div key={budget.id} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem' }}>
+                                            <span style={{ flex: 1, color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={budget.name}>
+                                                {budget.name}
+                                            </span>
+                                            <select
+                                                value={sourceOfBudget(budget.id)}
+                                                onChange={e => setYnabBudgetOwner(budget.id, e.target.value)}
+                                                style={{ padding: '0.15rem 0.3rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-card)', color: 'var(--text-primary)', fontSize: '0.75rem' }}
+                                            >
+                                                <option value={FAMILY_SOURCE}>Family</option>
+                                                {[...people].sort((a, b) => a.order - b.order).map(p => (
+                                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    ))}
+                                    {people.length === 0 && (
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)' }}>
+                                            Add people in Settings to attribute a budget to one of them.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                                <span style={{ fontSize: '0.72rem', color: 'var(--text-tertiary)' }}>Expenses counted:</span>
+                                {MACRO_ORDER.map(macro => {
+                                    const on = expenseMacros.includes(macro);
+                                    const avg = ynabCashflow.avgMonthlyByMacro[macro];
+                                    return (
+                                        <button
+                                            key={macro}
+                                            onClick={() => toggleExpenseMacro(macro)}
+                                            title={`${MACRO_DESCRIPTIONS[macro]} — €${Math.round(avg).toLocaleString()}/month`}
+                                            style={{
+                                                padding: '0.2rem 0.6rem', borderRadius: '14px', fontSize: '0.74rem', cursor: 'pointer',
+                                                background: on ? 'var(--color-primary)' : 'var(--bg-card)',
+                                                color: on ? 'white' : 'var(--text-tertiary)',
+                                                border: on ? '1px solid var(--color-primary)' : '1px solid var(--border-color)',
+                                                textDecoration: on ? 'none' : 'line-through',
+                                            }}
+                                        >
+                                            {MACRO_LABELS[macro]}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+
+                            {ynabCashflow.monthsCount === 0 ? (
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
+                                    No spending history for the selected sources — hit ↻ Sync to import the rolling year.
+                                </div>
+                            ) : (
+                                <>
+                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                                        Average over {ynabCashflow.monthsCount} month{ynabCashflow.monthsCount === 1 ? '' : 's'}:
+                                        {' '}<strong style={{ color: '#10b981' }}>€{Math.round(ynabCashflow.avgMonthlyIncome).toLocaleString()}</strong> in,
+                                        {' '}<strong style={{ color: '#ef4444' }}>€{Math.round(ynabCashflow.avgMonthlyExpenses).toLocaleString()}</strong> out
+                                    </div>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginTop: '0.4rem' }}>
+                                        <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Use these averages</label>
+                                        <input
+                                            type="checkbox"
+                                            checked={useYnabCashflow}
+                                            onChange={e => {
+                                                // Taking the inputs over starts from the YNAB figures
+                                                // rather than from two empty fields.
+                                                if (!e.target.checked) {
+                                                    if (monthlyIncome === '') setMonthlyIncome(Math.round(ynabCashflow.avgMonthlyIncome));
+                                                    if (monthlyExpenses === '') setMonthlyExpenses(Math.round(ynabCashflow.avgMonthlyExpenses));
+                                                }
+                                                setUseYnabCashflow(e.target.checked);
+                                            }}
+                                            title="Off = type the monthly income and expenses by hand"
+                                        />
+                                    </div>
+                                    {ynabCashflow.avgMonthlyUnmapped >= 1 && (
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--color-warning, #F59E0B)', marginTop: '0.35rem' }}>
+                                            ⚠ €{Math.round(ynabCashflow.avgMonthlyUnmapped).toLocaleString()}/month sits in categories with no expense class — map them in Summary to count them.
+                                        </div>
+                                    )}
+                                </>
+                            )}
+                        </>
+                    )}
+                </div>
+
                 <div className="form-group" style={{ marginBottom: '1rem' }}>
                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Time Horizon (Years)</label>
                     <input
@@ -608,22 +870,36 @@ const ForecastView: React.FC = () => {
                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Monthly Income (€)</label>
                     <input
                         type="number"
-                        value={monthlyIncome}
+                        value={cashflowFromYnab ? effectiveMonthlyIncome : monthlyIncome}
                         onChange={e => setMonthlyIncome(e.target.value === '' ? '' : Number(e.target.value))}
                         placeholder="0"
-                        style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+                        disabled={cashflowFromYnab}
+                        title={cashflowFromYnab ? 'YNAB average — untick "Use these averages" to type your own' : undefined}
+                        style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)', opacity: cashflowFromYnab ? 0.7 : 1 }}
                     />
+                    {cashflowFromYnab && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.2rem' }}>from YNAB</div>
+                    )}
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '1.5rem' }}>
                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--text-secondary)' }}>Monthly Expenses (€)</label>
                     <input
                         type="number"
-                        value={monthlyExpenses}
+                        value={cashflowFromYnab ? effectiveMonthlyExpenses : monthlyExpenses}
                         onChange={e => setMonthlyExpenses(e.target.value === '' ? '' : Number(e.target.value))}
                         placeholder="0"
-                        style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)' }}
+                        disabled={cashflowFromYnab}
+                        title={cashflowFromYnab ? 'YNAB average — untick "Use these averages" to type your own' : undefined}
+                        style={{ width: '100%', padding: '0.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-color)', background: 'var(--bg-input)', color: 'var(--text-primary)', opacity: cashflowFromYnab ? 0.7 : 1 }}
                     />
+                    {cashflowFromYnab && (
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-tertiary)', marginTop: '0.2rem' }}>
+                            from YNAB · {expenseMacros.length === 0
+                                ? 'no expense class selected'
+                                : MACRO_ORDER.filter(m => expenseMacros.includes(m)).map(m => MACRO_LABELS[m].toLowerCase()).join(' + ')}
+                        </div>
+                    )}
                 </div>
 
                 <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
@@ -778,16 +1054,22 @@ const ForecastView: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                         <label style={{ color: 'var(--text-secondary)' }}>YNAB Goal Expenses</label>
                         <button
-                            onClick={handleRestoreYnabExpenses}
-                            title="Rebuild this list from the current YNAB goals"
-                            style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: '0.8rem' }}
+                            onClick={handleSyncYnabExpenses}
+                            disabled={ynabGoalsSyncing}
+                            title="Re-read the goals from YNAB and rebuild this list from them"
+                            style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: ynabGoalsSyncing ? 'wait' : 'pointer', fontSize: '0.8rem' }}
                         >
-                            ↻ Restore from YNAB
+                            {ynabGoalsSyncing ? '…' : '↻ Sync from YNAB'}
                         </button>
                     </div>
                     {ynabPlannedExpenses.length === 0 ? (
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-                            No YNAB goal expenses in the plan. Goals with a target amount and date are imported automatically; use Restore to re-import them.
+                            No YNAB goal expenses in the plan. Goals with a target amount and date are imported automatically; use Sync to re-import them.
+                            {goalsWithoutTarget > 0 && (
+                                <div style={{ marginTop: '0.35rem', color: 'var(--color-warning, #F59E0B)' }}>
+                                    ⚠ {goalsWithoutTarget} YNAB goal{goalsWithoutTarget === 1 ? ' has' : 's have'} no target amount + date, so {goalsWithoutTarget === 1 ? 'it cannot' : 'they cannot'} become a planned expense. Set a target in YNAB (or in the category name/note) and Sync.
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
