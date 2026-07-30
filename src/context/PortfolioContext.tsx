@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, PacConfig, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, PacPlan, PacExecution } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
-import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses } from '../utils/priceHistory';
+import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
+import { carryInFor, computeInstalment } from '../utils/pacSchedule';
+import { fetchAssetHistory } from '../services/marketData';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
 import type { YnabBudgetSummary } from '../services/ynabApi';
 import { parseGoalDescriptor } from '../utils/ynabGoalParser';
@@ -139,6 +141,17 @@ interface PortfolioContextType {
     deleteVirtualBond: (id: string) => void;
     parkVirtualBond: (id: string, amount: number, brokerId?: string, portfolioId?: string) => void;
     concretizeVirtualBond: (id: string, fill: { isin: string; quantity: number; price: number; brokerId?: string; portfolioId?: string; source?: 'ETF' | 'MOT'; label?: string }) => void;
+    // PAC (piano di accumulo) auto-tracking
+    pacPlans: PacPlan[];
+    pacExecutions: PacExecution[];
+    addPacPlan: (plan: PacPlan) => void;
+    updatePacPlan: (plan: PacPlan) => void;
+    deletePacPlan: (id: string) => void;
+    confirmPacInstalment: (planId: string, dueDate: string, opts?: { manualPrice?: number }) => { ok: boolean; error?: string };
+    skipPacInstalment: (planId: string, dueDate: string) => void;
+    unskipPacInstalment: (planId: string, dueDate: string) => void;
+    undoPacInstalment: (planId: string, dueDate: string) => { ok: boolean };
+    backfillTickerHistory: (ticker: string, source: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', beginDate?: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -213,6 +226,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [freeCommissionPeriods, setFreeCommissionPeriods] = useLocalStorage<FreeCommissionPeriod[]>('portfolio_free_commissions', []);
     // Include everything by default — the toggles narrow the scope.
     const [assetScope, setAssetScope] = useLocalStorage<AssetScope>('portfolio_asset_scope', { includeFamily: true, includeIlliquid: true });
+
+    const [pacPlans, setPacPlans] = useLocalStorage<PacPlan[]>('portfolio_pac_plans', []);
+    const [pacExecutions, setPacExecutions] = useLocalStorage<PacExecution[]>('portfolio_pac_executions', []);
 
     // Auto-seed the forecast planned expenses the first time forecastable YNAB
     // goals exist. Runs only while the stored value is null: once the user has
@@ -689,6 +705,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 freeCommissionPeriods,
                 plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
                 assetScope,
+                pacPlans,
+                pacExecutions,
             };
             try {
                 setAzureSyncing(true);
@@ -710,7 +728,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, pacPlans, pacExecutions]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -739,6 +757,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         freeCommissionPeriods,
                         plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
                 assetScope,
+                        pacPlans,
+                        pacExecutions,
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -979,7 +999,152 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         applyTradeCashToBrokers(newTransactions);
     };
 
-    const updateAssetSettings = (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
+    // ── PAC (piano di accumulo) auto-tracking ───────────────────────────
+    const addPacPlan = (plan: PacPlan) => {
+        setPacPlans(prev => [...prev, plan]);
+    };
+
+    const updatePacPlan = (plan: PacPlan) => {
+        setPacPlans(prev => prev.map(p => p.id === plan.id ? plan : p));
+    };
+
+    const deletePacPlan = (id: string) => {
+        setPacPlans(prev => prev.filter(p => p.id !== id));
+        setPacExecutions(prev => prev.filter(e => e.planId !== id));
+    };
+
+    /**
+     * Moves `delta` EUR in/out of a broker's reserved allocation for a
+     * portfolio. liquidityAllocations is a reserved SUBSET of currentLiquidity
+     * (see injectCashAssets), so this only ever re-labels cash that
+     * applyTradeCashToBrokers already accounted for — never double-counted.
+     * Applied by delta (not overwrite) so it composes safely with manual edits
+     * from the Broker form and with PAC undo.
+     */
+    const parkResidue = (brokerId: string, portfolioId: string, delta: number) => {
+        if (!delta) return;
+        setBrokers(prev => prev.map(b => {
+            if (b.id !== brokerId) return b;
+            const current = b.liquidityAllocations?.[portfolioId] ?? 0;
+            const next = Math.max(0, Math.round((current + delta) * 100) / 100);
+            const allocations = { ...(b.liquidityAllocations ?? {}) };
+            if (next === 0) {
+                delete allocations[portfolioId];
+            } else {
+                allocations[portfolioId] = next;
+            }
+            return { ...b, liquidityAllocations: Object.keys(allocations).length > 0 ? allocations : undefined };
+        }));
+    };
+
+    const confirmPacInstalment = (planId: string, dueDate: string, opts?: { manualPrice?: number }): { ok: boolean; error?: string } => {
+        const plan = pacPlans.find(p => p.id === planId);
+        if (!plan) return { ok: false, error: 'Plan not found' };
+
+        let price: number | undefined;
+        let priceSource: 'history' | 'manual' | undefined;
+        if (opts?.manualPrice !== undefined && opts.manualPrice > 0) {
+            price = opts.manualPrice;
+            priceSource = 'manual';
+        } else {
+            const detailed = priceAtDetailed(priceHistory[plan.ticker.toUpperCase()], dueDate);
+            if (detailed) {
+                price = detailed.price;
+                priceSource = 'history';
+            }
+        }
+        if (price === undefined) return { ok: false, error: 'price-missing' };
+
+        const broker = brokers.find(b => b.id === plan.brokerId);
+        const carryIn = carryInFor(plan, pacExecutions, dueDate);
+        const math = computeInstalment({ plan, price, carryIn, broker });
+
+        const transactionId = crypto.randomUUID();
+        addTransaction({
+            id: transactionId,
+            ticker: plan.ticker,
+            amount: math.quantity,
+            price,
+            date: dueDate,
+            direction: 'Buy',
+            portfolioId: plan.portfolioId,
+            brokerId: plan.brokerId,
+            freeCommission: math.fee === 0 ? true : undefined,
+        });
+
+        parkResidue(plan.brokerId, plan.portfolioId, math.parkedDelta);
+
+        setPacExecutions(prev => [
+            ...prev.filter(e => !(e.planId === planId && e.dueDate === dueDate)),
+            {
+                planId, dueDate,
+                transactionId,
+                executedDate: dueDate,
+                price,
+                quantity: math.quantity,
+                cost: math.fee,
+                carryIn,
+                carryOut: math.carryOut,
+                parkedDelta: math.parkedDelta,
+                priceSource,
+                confirmedAt: new Date().toISOString(),
+            },
+        ]);
+
+        return { ok: true };
+    };
+
+    const skipPacInstalment = (planId: string, dueDate: string) => {
+        setPacExecutions(prev => [
+            ...prev.filter(e => !(e.planId === planId && e.dueDate === dueDate)),
+            { planId, dueDate, skipped: true, confirmedAt: new Date().toISOString() },
+        ]);
+    };
+
+    const unskipPacInstalment = (planId: string, dueDate: string) => {
+        setPacExecutions(prev => prev.filter(e => !(e.planId === planId && e.dueDate === dueDate && e.skipped)));
+    };
+
+    const undoPacInstalment = (planId: string, dueDate: string): { ok: boolean } => {
+        const execution = pacExecutions.find(e => e.planId === planId && e.dueDate === dueDate && !e.skipped);
+        if (!execution) return { ok: false };
+        const plan = pacPlans.find(p => p.id === planId);
+        if (execution.transactionId) {
+            deleteTransaction(execution.transactionId);
+        }
+        // Mirrors deleteTransaction's own rule (cash deltas from a deleted trade
+        // are not reverted); the parked residue is PAC-only bookkeeping though,
+        // so reversing it here is safe and keeps the broker allocation correct.
+        if (plan && execution.parkedDelta) {
+            parkResidue(plan.brokerId, plan.portfolioId, -execution.parkedDelta);
+        }
+        setPacExecutions(prev => prev.filter(e => !(e.planId === planId && e.dueDate === dueDate)));
+        return { ok: true };
+    };
+
+    const backfillTickerHistory = async (
+        ticker: string,
+        source: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA',
+        beginDate?: string
+    ): Promise<{ ok: boolean; error?: string }> => {
+        try {
+            const results = await fetchAssetHistory([{ isin: ticker, source, beginDate }], premiumPriceKey.trim() || undefined);
+            const result = results[0];
+            if (!result || !result.success || !result.data) {
+                return { ok: false, error: result?.error || 'No history available' };
+            }
+            const points: PricePoint[] = result.data.points.map(p => [p.date, p.price]);
+            setPriceHistory(prev => upsertTickerHistory(prev, ticker, points, {
+                granularity: result.data!.granularity,
+                priceBasis: result.data!.priceBasis,
+            }));
+            return { ok: true };
+        } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+    };
+
+    const updateAssetSettings =(ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
         setAssetSettings((prev) => {
             const exists = prev.find(t => t.ticker === ticker);
 
@@ -1885,6 +2050,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const importedAssetScope: AssetScope = (data.assetScope && typeof data.assetScope === 'object')
                 ? { includeFamily: data.assetScope.includeFamily !== false, includeIlliquid: data.assetScope.includeIlliquid !== false }
                 : { includeFamily: true, includeIlliquid: true };
+            const importedPacPlans: PacPlan[] = Array.isArray(data.pacPlans) ? data.pacPlans : [];
+            const importedPacExecutions: PacExecution[] = Array.isArray(data.pacExecutions) ? data.pacExecutions : [];
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
             const importedYnabGoalsGroupName: string | undefined = typeof data.ynabGoalsGroupName === 'string' ? data.ynabGoalsGroupName : undefined;
             const importedYnabLastGoalsSyncAt: string | undefined = typeof data.ynabLastGoalsSyncAt === 'string' ? data.ynabLastGoalsSyncAt : undefined;
@@ -1912,6 +2079,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
             localStorage.setItem('portfolio_forecast_planned_expenses', JSON.stringify(importedPlannedForecastExpenses));
             localStorage.setItem('portfolio_asset_scope', JSON.stringify(importedAssetScope));
+            localStorage.setItem('portfolio_pac_plans', JSON.stringify(importedPacPlans));
+            localStorage.setItem('portfolio_pac_executions', JSON.stringify(importedPacExecutions));
 
             // Then update React state
             setTransactions(transactions);
@@ -1934,6 +2103,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setFreeCommissionPeriods(importedFreeCommissionPeriods);
             setStoredPlannedForecastExpenses(importedPlannedForecastExpenses);
             setAssetScope(importedAssetScope);
+            setPacPlans(importedPacPlans);
+            setPacExecutions(importedPacExecutions);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
                 setYnabConfigState(prev => prev ? {
                     ...prev,
@@ -1976,6 +2147,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 freeCommissionPeriods,
                 plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
                 assetScope,
+                pacPlans,
+                pacExecutions,
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -2588,6 +2761,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteVirtualBond,
         parkVirtualBond,
         concretizeVirtualBond,
+        pacPlans,
+        pacExecutions,
+        addPacPlan,
+        updatePacPlan,
+        deletePacPlan,
+        confirmPacInstalment,
+        skipPacInstalment,
+        unskipPacInstalment,
+        undoPacInstalment,
+        backfillTickerHistory,
     };
 
     return (

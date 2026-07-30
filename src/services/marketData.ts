@@ -34,3 +34,32 @@ export const fetchAssetPrices = async (tokens: PriceRequestToken[], premiumKey?:
         throw error;
     }
 };
+
+export interface HistoryRequestToken extends PriceRequestToken {
+    beginDate?: string; // 'YYYY-MM-DD'; server defaults to one year ago
+}
+
+export interface HistoryResult {
+    isin: string;
+    success: boolean;
+    data?: {
+        points: { date: string; price: number }[];
+        granularity: 'D' | 'M';
+        priceBasis?: 'clean' | 'dirty';
+        currency?: string;
+        lastUpdated: string;
+    };
+    error?: string;
+    cached?: boolean;
+}
+
+/** HTTP (non-socket) targeted history fetch — used for on-demand PAC price backfill. */
+export const fetchAssetHistory = async (tokens: HistoryRequestToken[], premiumKey?: string): Promise<HistoryResult[]> => {
+    try {
+        const response = await axios.post('/api/history', { tokens, premiumKey: premiumKey?.trim() || undefined });
+        return response.data.results;
+    } catch (error: any) {
+        console.error('Error fetching bulk history:', error);
+        throw error;
+    }
+};

@@ -88,6 +88,33 @@ export function priceAt(history: TickerPriceHistory | undefined, date: string): 
     return ans >= 0 ? points[ans][1] : null;
 }
 
+/**
+ * Like priceAt, but also reports whether the returned point actually matches
+ * `date` or was carried forward from an earlier one — used by PAC installment
+ * confirmation to warn when the price shown isn't for the exact execution date.
+ */
+export function priceAtDetailed(
+    history: TickerPriceHistory | undefined,
+    date: string
+): { price: number; asOfDate: string; exact: boolean } | null {
+    if (!history || history.points.length === 0) return null;
+    const points = history.points;
+    if (date < points[0][0]) return null;
+    let lo = 0, hi = points.length - 1, ans = -1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (points[mid][0] <= date) {
+            ans = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    if (ans < 0) return null;
+    const [asOfDate, price] = points[ans];
+    return { price, asOfDate, exact: asOfDate === date };
+}
+
 export type MarketDataMap = Record<string, { price: number; lastUpdated: string; spreadPercent?: number | null; volatility?: number | null; indexationCoefficient?: number | null }>;
 
 /**
