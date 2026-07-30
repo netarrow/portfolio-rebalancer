@@ -28,6 +28,8 @@ const TargetSettings: React.FC = () => {
         goals,
         freeCommissionPeriods,
         plannedForecastExpenses,
+        pacPlans,
+        pacExecutions,
         importData,
         // Price history (separate backup JSON, local-only)
         priceHistory,
@@ -96,7 +98,7 @@ const TargetSettings: React.FC = () => {
 
     const handleBackup = () => {
         const backupData = {
-            version: 4,
+            version: 5,
             timestamp: new Date().toISOString(),
             transactions,
             assetSettings,
@@ -108,7 +110,9 @@ const TargetSettings: React.FC = () => {
             goalAllocations,
             goals,
             freeCommissionPeriods,
-            plannedForecastExpenses
+            plannedForecastExpenses,
+            pacPlans,
+            pacExecutions
         };
 
         const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });

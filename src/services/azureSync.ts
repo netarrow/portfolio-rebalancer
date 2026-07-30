@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, PacPlan, PacExecution } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -37,6 +37,9 @@ export interface SyncPayload {
     plannedForecastExpenses?: PlannedForecastExpense[];
     // Include/exclude family and illiquid brokers in the counting views.
     assetScope?: AssetScope;
+    // PAC (piano di accumulo) auto-tracking plans and their installment ledger.
+    pacPlans?: PacPlan[];
+    pacExecutions?: PacExecution[];
 }
 
 const PBKDF2_ITERATIONS = 100000;

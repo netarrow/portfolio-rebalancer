@@ -4,7 +4,7 @@ import { SecurityProvider } from './context/SecurityContext';
 import UnlockGate from './components/Security/UnlockGate';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -27,6 +27,7 @@ import YnabGoalsView from './components/YnabGoals/YnabGoalsView';
 import SummaryAnalysisView from './components/SummaryAnalysis/SummaryAnalysisView';
 import PerformanceView from './components/Performance/PerformanceView';
 import AssetScopeToggles from './components/Layout/AssetScopeToggles';
+import PacView from './components/Pac/PacView';
 
 // Placeholders for views
 const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
@@ -115,6 +116,7 @@ function App() {
       case 'disclaimer': return <DisclaimerView />;
       case 'globalRebalancing': return <GlobalRebalancingPage />;
       case 'ynab': return <YnabImportView onNavigateToSettings={() => setCurrentView('settings')} />;
+      case 'pac': return <PacView />;
       default: return <DashboardView onNavigateToDisclaimer={() => setCurrentView('disclaimer')} />;
     }
   };

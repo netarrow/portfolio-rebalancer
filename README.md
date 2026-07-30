@@ -251,6 +251,14 @@ Risky and failed plans:
 ![Forecast — risky](screenshots/forecast_riskyplan.png)
 ![Forecast — failed](screenshots/forecast_failed.png)
 
+### PAC
+
+Auto-track a recurring investment plan (*piano di accumulo*) — since the app has no background jobs, installments are only ever computed on the fly and only ever recorded when you confirm them.
+
+- **Plans** — a plan buys either a **fixed EUR amount** or a **fixed quantity of units** of a ticker, on a **broker + portfolio** pair, on a recurring schedule (weekly through yearly), with its own **fee model** (broker's commission plan, a fixed override, a percent override, or none) and, for the EUR-amount mode, a **rounding rule**: fractional units, whole units with the remainder parked, or whole units with the remainder parked *and* reused as extra budget for the next installment.
+- **Summary** — every plan's due installments (based on today's date) and already-registered ones, in one schedule. **Confirm** looks up the unit price at the installment's date from the local price history (with an on-demand backfill button, or a manual override, when it's missing), then records a matching Buy in Transactions. **Skip** marks an installment as intentionally not taken. **Undo** removes the transaction and reverses the parked residue.
+- **Liquidity parking** — any leftover cash from whole-unit rounding is parked into the broker's existing **liquidity allocation** for that portfolio (the same mechanism used on the Brokers page), not left as an abstract number on the plan.
+
 ### YNAB
 
 Pull your [YNAB](https://www.youneedabudget.com/) budget category balances and map each one to an investment asset or to broker cash.

@@ -373,6 +373,68 @@ export interface PortfolioSummary {
   totalGainPercentage: number;
 }
 
+// ── PAC (piano di accumulo) auto-tracking ───────────────────────────
+// Recurring investment plan: every N periods, buy a fixed EUR amount or a
+// fixed quantity of a ticker in a given portfolio at a given broker. There is
+// no background scheduler, so installments are only ever generated on the fly
+// (pacSchedule.ts) from startDate/frequency and materialized into a real
+// Transaction only when the user explicitly confirms one.
+export type PacFrequency = 'weekly' | 'biweekly' | 'monthly' | 'bimonthly' | 'quarterly' | 'semiannual' | 'annual';
+export type PacContributionMode = 'amount' | 'quantity';
+// 'fractional': buy the exact (possibly fractional) share count, no residue.
+// 'floor': buy whole units only; the leftover cash is parked on the broker's
+//          liquidityAllocations for this portfolio and left there.
+// 'floor-carry': same leftover parking, but the residue is also reused as
+//          extra budget for the next installment (see carryInFor).
+export type PacRoundingMode = 'fractional' | 'floor' | 'floor-carry';
+// How the trade fee is sourced: the broker's own commission plan, a flat
+// override, a percent-of-trade-value override, or no fee at all.
+export type PacCostMode = 'broker' | 'fixed' | 'percent' | 'none';
+
+export interface PacPlan {
+    id: string;
+    name: string;
+    ticker: string;
+    portfolioId: string;
+    brokerId: string;
+    mode: PacContributionMode;
+    amount?: number;    // EUR budget per installment, mode 'amount'
+    quantity?: number;  // fixed unit count per installment, mode 'quantity'
+    frequency: PacFrequency;
+    startDate: string;  // 'YYYY-MM-DD', first due date
+    endDate?: string;   // 'YYYY-MM-DD', last due date (inclusive); absent = open-ended
+    costMode: PacCostMode;
+    costFixed?: number;    // EUR, costMode 'fixed'
+    costPercent?: number;  // % of trade value, costMode 'percent'
+    // true: the fee is deducted from `amount` itself (less is invested);
+    // false: the fee is an outlay on top of `amount` (full amount invested).
+    // Ignored in mode 'quantity' (there is no budget to net against).
+    costsIncluded: boolean;
+    rounding: PacRoundingMode; // only meaningful in mode 'amount'
+    active: boolean; // paused plans keep their history but stop surfacing new due installments
+    createdAt: string;
+}
+
+// One row per due date of a plan. Absence of an entry for a due date means
+// "not yet actioned" (still pending in the summary view). Keyed by
+// (planId, dueDate) rather than its own id since a plan has at most one
+// installment per due date.
+export interface PacExecution {
+    planId: string;
+    dueDate: string;
+    skipped?: boolean;        // user explicitly skipped this installment
+    transactionId?: string;   // id of the Transaction created on confirm
+    executedDate?: string;    // date recorded on the Transaction (usually === dueDate)
+    price?: number;           // unit price used
+    quantity?: number;        // units bought
+    cost?: number;            // fee applied, EUR
+    carryIn?: number;         // residue consumed from a prior installment's carryOut ('floor-carry' only)
+    carryOut?: number;        // residue left by this installment, parked on the broker
+    parkedDelta?: number;     // carryOut − carryIn: net change applied to Broker.liquidityAllocations
+    priceSource?: 'history' | 'manual';
+    confirmedAt?: string;     // when the user actually clicked confirm/skip (audit only)
+}
+
 // Second-Layer Encryption: persisted opt-in config (itself stored in plaintext).
 export interface SLEConfig {
   enabled: boolean;
