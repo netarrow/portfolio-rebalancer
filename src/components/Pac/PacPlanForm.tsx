@@ -83,6 +83,19 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
         }
     }, [initialData, portfolios, brokers]);
 
+    // Assets are picked by their descriptive label; the ISIN/ticker stays the stored
+    // value. A plan whose asset is no longer in the settings keeps its own entry so
+    // editing it doesn't silently clear the selection.
+    const assetOptions = useMemo(() => {
+        const options = [...assetSettings].sort((a, b) =>
+            (a.label || a.ticker).localeCompare(b.label || b.ticker)
+        );
+        if (ticker && !options.some(a => a.ticker === ticker)) {
+            options.unshift({ ticker });
+        }
+        return options;
+    }, [assetSettings, ticker]);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (!name || !ticker || !portfolioId || !brokerId) return;
@@ -149,15 +162,13 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
                     </div>
 
                     <div className="form-group">
-                        <label>Ticker / ISIN</label>
-                        <input
-                            type="text" className="form-input" list="pac-ticker-options"
-                            value={ticker} onChange={(e) => setTicker(e.target.value)}
-                            placeholder="e.g. VWCE" required
-                        />
-                        <datalist id="pac-ticker-options">
-                            {assetSettings.map(a => <option key={a.ticker} value={a.ticker} />)}
-                        </datalist>
+                        <label>Asset</label>
+                        <select className="form-input" value={ticker} onChange={(e) => setTicker(e.target.value)} required>
+                            <option value="">Select asset...</option>
+                            {assetOptions.map(a => (
+                                <option key={a.ticker} value={a.ticker}>{a.label || a.ticker}</option>
+                            ))}
+                        </select>
                     </div>
 
                     <div className="form-group">

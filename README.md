@@ -64,14 +64,14 @@ The home hub: the financial summary, broker performance, allocation charts and p
 
 ![Rebalancing tables](screenshots/dashboard_bottom.png)
 
-- **Per-portfolio rebalancing tables** — current vs target allocation with the explicit buy/sell amount needed to reach target, plus a **Buy Only** column that deploys new capital toward the target without selling.
-- **PAC (savings-plan) entries** — an allocation entry can be flagged as PAC with a priority: *Buy Only* funds PAC entries first (by ascending priority), and whatever is left flows to the remaining underweight entries. The table header also shows what a *non-PAC* full rebalance would look like.
+- **Per-portfolio rebalancing tables** — current vs target allocation with the explicit buy/sell amount needed to reach target, plus a **Buy Only** column that deploys new capital toward the target without selling (recurring savings plans live in [PAC](#pac), under Planning).
+- **Sell friction** — a full rebalance sizes its buys on the *net* proceeds of the sales it proposes: the sale commissions come out first, so the plan stays payable. Each table's **Broker** selector picks the portfolio's *broker di appoggio*: with one selected, every leg is priced against that broker's commission plan and checked against its available cash; left on *Multi broker* (for a portfolio spread across several) the per-ticker heuristic applies and no cash check is made.
 
 **Trade cost popover** — every Action / Buy Only cell reveals, on hover or tap, what that trade would actually cost: the implicit **bid/ask spread cost** plus the **simulated commission for every broker** (from each broker's commission plan), a **free-buy promo toggle** that waives the buy fee, and a **break-even holding time** — how long the asset's own historical return needs to offset a full buy→sell round trip including taxes. This makes two interchangeable instruments comparable: e.g. a commission-bearing ETF vs a commission-free one with a wider spread.
 
 ![Trade cost popover](screenshots/dashboard_trade_cost_popover.png)
 
-**Withdrawal Simulation** lets you plan a divestment while keeping the portfolio close to its target weights:
+**Withdrawal Simulation** lets you plan a divestment while keeping the portfolio close to its target weights: enter the **net cash you need** and it works backwards to the gross amount to sell, netting out capital-gains tax (26% stocks / 12.5% bonds, on the gain portion only) and the sell commissions of each asset's broker, then lists the per-asset sell actions and the resulting post-sale weights.
 
 ![Withdrawal simulation](screenshots/dashboard_withdrawal_simulation.png)
 
@@ -106,13 +106,34 @@ Per-asset view, here a long-duration govt bond priced at *corso secco*:
 
 ![Performance — single asset](screenshots/performance_asset.png)
 
+### Summary
+
+A rolling-year read of your YNAB spending, turned into a plain-language cash-flow narrative and a set of deterministic suggestions.
+
+![Summary analysis](screenshots/summary_analysis_top.png)
+
+- **Cards** — income, consumption (structural + variable + compressible), investments, net savings and how much of the year's spending was drawn from **savings built in previous years** rather than from money assigned during the period.
+- **Yearly summary** — the same figures written out as sentences, including which sinking funds your income financed and what was covered by past savings.
+- **Suggestions** — rule-based, not predictive: protection fund = 6 months of recurring expenses, security bucket = goals due within 7 years, a warning ahead of each planned expense, and a flag for any category still unmapped.
+
+![Summary — suggestions](screenshots/summary_analysis_middle.png)
+
+- **Spending by macro category** — the year's outflows split into structural, variable, compressible, sinking funds and investments, each with its monthly average, its share of income and its top categories.
+- **Budget selector** — each YNAB budget keeps its own rolling-year history, so a family budget and a personal one are analysed separately.
+
+![Summary — per category](screenshots/summary_analysis_bottom.png)
+
+- **Macro mapping** — every YNAB category group is assigned a macro class, and individual categories can override their group (here *Restaurants & Takeaway* is compressible while the rest of *Monthly Expenses* is variable). Unmapped groups are called out so nothing silently drops out of the totals.
+
+![Summary — macro mapping](screenshots/summary_macro_mapping.png)
+
 ### Transactions
 
 The full history of buys, sells, dividends and coupons, with a quick-add form.
 
 ![Transactions list](screenshots/transactions_page.png)
 
-- **Add Transaction** (left) — ticker, direction (Buy / Sell / Dividend / Coupon), quantity, price, date, portfolio, broker, and a *free commission* flag.
+- **Add Transaction** (left) — ticker, direction (Buy / Sell / Dividend / Coupon), quantity, price, date, portfolio, broker, and a *free commission* flag that ticks itself when the ISIN is on that broker's free-buy list for the month.
 - **History** (right) — sortable table, **Group by Portfolio, Broker or Asset**; each group header shows running totals and **total fees** (toggleable between EUR and %).
 - **Inline & modal editing** for quick fixes vs full entry.
 - **Broker cash auto-sync** — saving a new Buy automatically decreases the broker's available cash and a Sell increases it (dividends/coupons are excluded), keeping broker liquidity aligned with the trade history.
@@ -257,9 +278,23 @@ Risky and failed plans:
 
 Auto-track a recurring investment plan (*piano di accumulo*) — since the app has no background jobs, installments are only ever computed on the fly and only ever recorded when you confirm them.
 
-- **Plans** — a plan buys either a **fixed EUR amount** or a **fixed quantity of units** of a ticker, on a **broker + portfolio** pair, on a recurring schedule (weekly through yearly), with its own **fee model** (broker's commission plan, a fixed override, a percent override, or none) and, for the EUR-amount mode, a **rounding rule**: fractional units, whole units with the remainder parked, or whole units with the remainder parked *and* reused as extra budget for the next installment.
-- **Summary** — every plan's due installments (based on today's date) and already-registered ones, in one schedule. **Confirm** looks up the unit price at the installment's date from the local price history (with an on-demand backfill button, or a manual override, when it's missing), then records a matching Buy in Transactions. **Skip** marks an installment as intentionally not taken. **Undo** removes the transaction and reverses the parked residue.
-- **Liquidity parking** — any leftover cash from whole-unit rounding is parked into the broker's existing **liquidity allocation** for that portfolio (the same mechanism used on the Brokers page), not left as an abstract number on the plan.
+![PAC plans](screenshots/pac_plans.png)
+
+- **Plans** — a plan buys either a **fixed EUR amount** or a **fixed quantity of units** of an asset, on a **broker + portfolio** pair, on a recurring schedule (weekly through yearly), with its own **fee model** (broker's commission plan, a fixed override, a percent override, or none) and, for the EUR-amount mode, a **rounding rule**: fractional units, whole units with the remainder parked, or whole units with the remainder parked *and* reused as extra budget for the next installment. Plans can be **paused**: they keep their history but stop suggesting new installments.
+
+The plan form picks the asset from a dropdown that shows its **descriptive label** (the ISIN is what gets stored), and previews the resulting quantity, fee, outlay and parked residue at the latest known price while you type:
+
+![New PAC plan](screenshots/pac_plan_form.png)
+
+- **Installments** — every plan's due installments (based on today's date), the upcoming one and the already-registered ones, in one schedule with its quantity, price, fee and parked residue.
+
+![PAC installments](screenshots/pac_schedule.png)
+
+- **Confirm** looks up the unit price at the installment's date from the local price history (with an on-demand backfill button, or a manual override, when it's missing), then records a matching Buy in Transactions. **Skip** marks an installment as intentionally not taken, **Undo** removes the transaction and reverses the parked residue.
+
+![Confirm installment](screenshots/pac_confirm_modal.png)
+
+- **Liquidity parking** — any leftover cash from whole-unit rounding is parked into the broker's existing **liquidity allocation** for that portfolio (the same mechanism used on the Brokers page), not left as an abstract number on the plan. With the *reuse* rounding rule it comes back as extra budget on the next installment (the *Carry-in used* line above).
 
 ### YNAB
 

@@ -28,13 +28,77 @@ async function fullShot(page, name) {
   console.log('  ->', path.relative(ROOT, file));
 }
 
+// Navbar entries carry an emoji prefix, and most views live inside a dropdown
+// group (Portfolio / Analysis / Planning) that has to be opened first — so
+// match on the emoji-stripped label and fall back to walking the groups.
+/**
+ * Fills a React-controlled field matched by the text of its <label>, so the
+ * screenshots show forms in use rather than empty. Scoped to the topmost open
+ * modal when there is one. `labelSource` is a case-insensitive regex source.
+ */
+async function fillField(page, labelSource, value) {
+  const ok = await page.evaluate(
+    (labelSource, value) => {
+      const re = new RegExp(labelSource, 'i');
+      const root = [...document.querySelectorAll('.modal-overlay')].pop() || document;
+      const label = [...root.querySelectorAll('label')].find((l) => re.test(l.textContent || ''));
+      if (!label) return false;
+      const field =
+        label.querySelector('input, select, textarea') ||
+        label.parentElement?.querySelector('input, select, textarea');
+      if (!field) return false;
+      const proto =
+        field instanceof HTMLSelectElement
+          ? HTMLSelectElement
+          : field instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement
+            : HTMLInputElement;
+      Object.getOwnPropertyDescriptor(proto.prototype, 'value').set.call(field, value);
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      field.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    },
+    labelSource,
+    value
+  );
+  if (!ok) console.warn(`  !! field not found: ${labelSource}`);
+  await sleep(200);
+  return ok;
+}
+
 async function navTo(page, label) {
-  await page.evaluate((label) => {
+  let clicked = await page.evaluate((label) => {
+    const norm = (s) => (s || '').replace(/[^\p{L}\p{N} ]/gu, '').trim().toLowerCase();
     const link = [...document.querySelectorAll('.nav-link')].find(
-      (a) => a.textContent.trim() === label
+      (a) => norm(a.textContent) === norm(label)
     );
-    if (link) link.click();
+    if (link) { link.click(); return true; }
+    return false;
   }, label);
+  if (!clicked) {
+    const groupCount = await page.evaluate(
+      () => document.querySelectorAll('.nav-group-toggle').length
+    );
+    for (let i = 0; i < groupCount && !clicked; i++) {
+      await page.evaluate((i) => document.querySelectorAll('.nav-group-toggle')[i]?.click(), i);
+      await sleep(250);
+      clicked = await page.evaluate((label) => {
+        const norm = (s) => (s || '').replace(/[^\p{L}\p{N} ]/gu, '').trim().toLowerCase();
+        const sub = [...document.querySelectorAll('.nav-sublink')].find(
+          (b) => norm(b.textContent) === norm(label)
+        );
+        if (sub) { sub.click(); return true; }
+        return false;
+      }, label);
+      // Navigating closes the dropdown itself; otherwise close it by hand
+      // so it does not float over the next screenshot.
+      if (!clicked) {
+        await page.evaluate((i) => document.querySelectorAll('.nav-group-toggle')[i]?.click(), i);
+        await sleep(150);
+      }
+    }
+  }
+  if (!clicked) console.warn(`  !! nav entry not found: ${label}`);
   await sleep(900);
   await page.evaluate(() => window.scrollTo(0, 0));
   await sleep(300);
@@ -112,6 +176,17 @@ async function scrollAndShoot(page, base) {
   });
   if (withdrawalClicked) {
     await sleep(600);
+    // Enter an amount and run the simulation, so the shot shows the resulting
+    // sell plan (gross vs net, tax and commissions) rather than an empty form.
+    await fillField(page, 'net cash needed', '10000');
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
+      const btn = [...(overlay?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent.trim() === 'Calculate'
+      );
+      if (btn) btn.click();
+    });
+    await sleep(700);
     await shot(page, 'dashboard_withdrawal_simulation');
     // The withdrawal modal does not close on Escape — click its × button.
     await page.evaluate(() => {
@@ -195,6 +270,10 @@ async function scrollAndShoot(page, base) {
       await numInputs[0].type('3000');
       await numInputs[1].type('0.95');
     }
+    // Destination of the concretized bond — the same broker/portfolio the
+    // placeholder was parked on.
+    await fillField(page, '^broker$', 'b2');
+    await fillField(page, '^portfolio$', 'mock-p-safe');
     await sleep(300);
     await shot(page, 'dashboard_concretize_modal');
     await page.evaluate(() => {
@@ -283,10 +362,42 @@ async function scrollAndShoot(page, base) {
     await sleep(300);
   }
 
+  // ---------- SUMMARY ANALYSIS ----------
+  console.log('Summary');
+  await navTo(page, 'Summary');
+  await sleep(1000);
+  await scrollAndShoot(page, 'summary_analysis');
+  // Expand the macro-class mapping editor (collapsed behind "Configure")
+  const mappingOpened = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find(
+      (b) => b.textContent.trim() === 'Configure'
+    );
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  if (mappingOpened) {
+    await sleep(500);
+    await page.evaluate(() => {
+      const h = [...document.querySelectorAll('h3')].find((e) =>
+        /macro category mapping/i.test(e.textContent)
+      );
+      if (h) h.scrollIntoView({ block: 'start' });
+    });
+    await sleep(400);
+    await shot(page, 'summary_macro_mapping');
+  }
+
   // ---------- TRANSACTIONS ----------
   console.log('Transactions');
   await navTo(page, 'Transactions');
   await sleep(700);
+  // Fill (never submit) the quick-add form so the shot shows it in use
+  await fillField(page, 'ticker / symbol', 'IE00B4L5Y983');
+  await fillField(page, '^quantity', '10');
+  await fillField(page, 'price per unit', '95.50');
+  await fillField(page, '^portfolio', 'mock-p-main');
+  await fillField(page, '^broker', 'b3');
+  await sleep(300);
   await shot(page, 'transactions_page');
   // Cycle the Group By button: None → Portfolio → Broker → Asset (Ticker)
   const groupShots = [
@@ -472,6 +583,10 @@ async function scrollAndShoot(page, base) {
     });
     if (vbFormOpened) {
       await sleep(500);
+      await fillField(page, '^label$', 'BTP ladder ~2035');
+      await fillField(page, 'maturity date', '2035-03-01');
+      await fillField(page, '^universe$', 'IT');
+      await sleep(300);
       await shot(page, 'portfolio_virtual_bond_form');
     }
     await closeAllocationsModal();
@@ -511,6 +626,10 @@ async function scrollAndShoot(page, base) {
   });
   if (newGoal) {
     await sleep(600);
+    await fillField(page, '^title', 'Education');
+    await fillField(page, '^description', 'University fees, 15-year horizon');
+    await fillField(page, '^order', '4');
+    await sleep(300);
     await shot(page, 'goal_form_modal');
     await page.keyboard.press('Escape');
     await sleep(300);
@@ -588,6 +707,76 @@ async function scrollAndShoot(page, base) {
       await expenseInputs[idx].type('15000');
       await sleep(400);
     }
+  }
+
+  // ---------- PAC ----------
+  console.log('PAC');
+  await navTo(page, 'PAC');
+  await sleep(800);
+  await shot(page, 'pac_plans');
+  // Installments table (registered / skipped / due rows)
+  const scheduleFound = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h2')].find((e) => /installments/i.test(e.textContent));
+    if (h) { h.scrollIntoView({ block: 'start' }); return true; }
+    return false;
+  });
+  if (scheduleFound) {
+    await sleep(400);
+    await shot(page, 'pac_schedule');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await sleep(300);
+  }
+  // New-plan form, filled in: assets are picked by their descriptive label,
+  // and the live preview shows the resulting quantity / fee / residue.
+  const pacFormOpened = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) => /new plan/i.test(b.textContent));
+    if (btn) { btn.click(); return true; }
+    return false;
+  });
+  if (pacFormOpened) {
+    await sleep(500);
+    await fillField(page, '^name$', 'Monthly world-equity accumulation');
+    await fillField(page, '^asset$', 'IE00B4L5Y983');
+    await fillField(page, 'amount per installment', '500');
+    await fillField(page, '^rounding$', 'floor-carry');
+    await sleep(500);
+    // The filled form is taller than the standard viewport (the modal caps at
+    // 90vh): grow the window for this one shot so the rounding rule and the
+    // live installment preview are visible too.
+    await page.setViewport({ width: VIEW.width, height: 1300 });
+    await sleep(500);
+    await shot(page, 'pac_plan_form');
+    await page.setViewport(VIEW);
+    await sleep(300);
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
+      const cancel = [...(overlay?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent.trim() === 'Cancel'
+      );
+      if (cancel) cancel.click();
+    });
+    await sleep(400);
+  }
+  // Confirm-installment modal on the first due row (price resolved from the
+  // local history, with quantity / fee / parked residue preview).
+  const pacConfirmOpened = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('.pac-schedule-table button')].find(
+      (b) => b.textContent.trim() === 'Confirm'
+    );
+    if (btn) { btn.scrollIntoView({ block: 'center' }); btn.click(); return true; }
+    return false;
+  });
+  if (pacConfirmOpened) {
+    await sleep(600);
+    await shot(page, 'pac_confirm_modal');
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
+      const cancel = [...(overlay?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent.trim() === 'Cancel'
+      );
+      if (cancel) cancel.click();
+    });
+    await sleep(400);
   }
 
   // ---------- YNAB ----------
