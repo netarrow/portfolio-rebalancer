@@ -5,7 +5,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, calculateRequiredLiquidityForOnlyBuy, injectCashAssets, isCashTicker, isGroupKey, isVirtualBondTicker, calculateRealizedGains, calculateCommission, calculateCashFlows, estimateTradeCost } from '../../utils/portfolioCalculations';
 import type { Broker, VirtualBond } from '../../types';
 import { getVirtualBondId } from '../../types';
-import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, distributeBuyOnlyWithPac, pacPriorityFor, requiredLiquidityForFullBuyOnly, buyRecipientOf, memberInfoFromAssets, groupWeightConfig, isFullyFrozen, type BuyOnlyCandidate, type MemberAction, type GroupBlockReason } from '../../utils/allocationGroups';
+import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipientOf, memberInfoFromAssets, groupWeightConfig, isFullyFrozen, type BuyOnlyCandidate, type MemberAction, type GroupBlockReason } from '../../utils/allocationGroups';
 import { isFreeBuyIsin, currentMonthKey } from '../../utils/freeCommissions';
 import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate, resolveAssetClass, projectBrokerCash, type CashProjection, type SellFriction, type SellLeg } from '../../utils/rebalanceCosts';
 import { CASH_TICKER_PREFIX } from '../../types';
@@ -24,20 +24,6 @@ import './Dashboard.css';
 const GOAL_COLOR_PALETTE = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899', '#6366F1'];
 
 
-// Small badge flagging a PAC entry (with its priority) in the rebalancing table.
-const PacBadge: React.FC<{ priority?: number }> = ({ priority }) =>
-    priority === undefined ? null : (
-        <span
-            title={`PAC — priority ${priority} (1 = highest): new liquidity funds this entry first`}
-            style={{
-                fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.03em',
-                background: 'rgba(245,158,11,0.15)', color: '#B45309',
-                border: '1px solid rgba(245,158,11,0.5)', borderRadius: '3px',
-                padding: '1px 4px', marginLeft: '6px', verticalAlign: 'middle',
-                whiteSpace: 'nowrap',
-            }}
-        >PAC P{priority}</span>
-    );
 
 const fmtEur = (n: number, dp = 2) =>
     `€${n.toLocaleString('en-IE', { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
@@ -2094,7 +2080,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             const price = asset?.currentPrice ?? 0;
             const targetPerc = allocations[ticker] || 0;
             const gap = totalVal * (targetPerc / 100) - currentValue;
-            candidates.push({ key: ticker, gap, price, pacPriority: pacPriorityFor(portfolio.pacConfigs, ticker) });
+            candidates.push({ key: ticker, gap, price });
         });
 
         // Groups — one candidate each. Priority groups are priced at the buy-recipient
@@ -2117,11 +2103,11 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
             }
             if (price === undefined) return;
             const gap = totalVal * (gc.targetPerc / 100) - gc.currentValue;
-            candidates.push({ key: gc.group.id, gap, price, pacPriority: pacPriorityFor(portfolio.pacConfigs, gc.group.id) });
+            candidates.push({ key: gc.group.id, gap, price });
         });
 
         // PAC entries drink first (by priority tier), the rest shares the leftover.
-        const byUnit = distributeBuyOnlyWithPac(candidates, liq);
+        const byUnit = largestRemainderBuyOnly(candidates, liq);
 
         // Route each group's assigned euro to its member buy action(s).
         const memberBuy: Record<string, MemberAction> = {};
@@ -2133,29 +2119,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
         });
 
         return { byUnit, memberBuy };
-    }, [standaloneTickers, groupComputations, allocations, assets, portfolio.liquidity, portfolio.pacConfigs, summary.totalValue, cashAssetsValue]);
-
-    const hasPacs = useMemo(
-        () => Object.values(portfolio.pacConfigs || {}).some(c => c.enabled),
-        [portfolio.pacConfigs]
-    );
-
-    // Extra cash needed — beyond the liquidity already entered (which PAC entries
-    // absorb first) — to complete a buy-only rebalance of what's left behind
-    // (the non-PAC underweights). Group-aware: a group counts as one unit.
-    const nonPacExtraLiquidity = useMemo(() => {
-        if (!hasPacs) return 0;
-        const units: { currentValue: number; targetPerc: number }[] = [];
-        standaloneTickers.forEach(t => {
-            const asset = assets.find(a => a.ticker === t);
-            units.push({ currentValue: asset?.currentValue ?? 0, targetPerc: allocations[t] || 0 });
-        });
-        groupComputations.forEach(gc => {
-            units.push({ currentValue: gc.currentValue, targetPerc: gc.targetPerc });
-        });
-        const required = requiredLiquidityForFullBuyOnly(units);
-        return Math.max(0, required - (portfolio.liquidity || 0));
-    }, [hasPacs, standaloneTickers, groupComputations, assets, allocations, portfolio.liquidity]);
+    }, [standaloneTickers, groupComputations, allocations, assets, portfolio.liquidity, summary.totalValue, cashAssetsValue]);
 
     // --- Execution Handlers ---
     const handleExecuteRebalance = async (mode: 'Full' | 'BuyOnly') => {
@@ -2360,7 +2324,6 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 brokers={brokers}
                 tradeBroker={tradeBroker}
                 monthsHeld={monthsHeld}
-                pacPriority={opts?.member ? undefined : pacPriorityFor(portfolio.pacConfigs, ticker)}
             />
         );
     };
@@ -2493,15 +2456,6 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                         );
                     })()}
                     </span>
-                    {hasPacs && (
-                        <div
-                            className="allocation-liquidity-hint"
-                            style={{ fontSize: '0.8rem', color: '#F59E0B', marginLeft: 'var(--space-2)' }}
-                            title="PAC entries absorb the entered liquidity first. This is the extra cash needed, on top of it, to also bring the remaining (non-PAC) assets back to target buying only."
-                        >
-                            (Non-PAC full rebalance: +€{nonPacExtraLiquidity.toLocaleString('en-IE', { maximumFractionDigits: 0 })})
-                        </div>
-                    )}
                 </div>
             </div>
 
@@ -2582,7 +2536,6 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                                         postRebalancePerc={gc.postRebalancePerc}
                                         buyOnlyEur={buyOnlyEur}
                                         postBuyPerc={postBuyPerc}
-                                        pacPriority={pacPriorityFor(portfolio.pacConfigs, gc.group.id)}
                                     />
                                     {expanded && gc.group.members.map(m => {
                                         const full = gc.full.actions[m.toUpperCase()];
@@ -2659,10 +2612,9 @@ interface RowProps {
     /** Visually nest this row under a group summary row. */
     indent?: boolean;
     /** PAC priority of this entry (undefined = not a PAC). */
-    pacPriority?: number;
 }
 
-const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, isVBond, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, indexationCoefficient, brokers, tradeBroker, monthsHeld, hideTarget, indent, pacPriority }) => {
+const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, isVBond, currentPerc, targetPerc, rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, currentValue, quantity, averagePrice, currentPrice, gain, gainPerc, postRebalancePerc, projectedPerc, totalFees, assetDistributions, assetDistributionEvents, spreadPercent, indexationCoefficient, brokers, tradeBroker, monthsHeld, hideTarget, indent }) => {
     const [isModalOpen, setIsModalOpen] = React.useState(false);
     const [mExpanded, setMExpanded] = React.useState(false);
     const diff = currentPerc - targetPerc;
@@ -2695,7 +2647,6 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                     <div>
                         {isVBond && <span style={{ fontSize: '0.65rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', marginRight: '6px', verticalAlign: 'middle' }}>VBOND</span>}
                         <strong style={{ fontWeight: indent ? 400 : undefined }}>{label || ticker}</strong>
-                        <PacBadge priority={pacPriority} />
                     </div>
                 </div>
 
@@ -2924,8 +2875,7 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                             <div className={`dot ${colorClass}`} style={{ backgroundColor: getColorForClass(assetClass), flex: '0 0 auto' }} />
                             {isVBond && <span style={{ fontSize: '0.6rem', background: '#8B5CF6', color: '#fff', borderRadius: '3px', padding: '1px 4px', flex: '0 0 auto' }}>VBOND</span>}
                             <span className="mrow-title">{label || ticker}</span>
-                            <PacBadge priority={pacPriority} />
-                        </div>
+                            </div>
                         <div className="mrow-line2">
                             {!isCash && (
                                 <span style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)', flex: '0 0 auto' }}>
@@ -3190,12 +3140,11 @@ interface GroupSummaryRowProps {
     postRebalancePerc: number;
     buyOnlyEur: number;
     postBuyPerc: number;
-    pacPriority?: number;
 }
 
 const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
     label, expanded, onToggle, currentValue, gain, targetPerc, currentPerc,
-    actionEur, blocked, blockReason, postRebalancePerc, buyOnlyEur, postBuyPerc, pacPriority,
+    actionEur, blocked, blockReason, postRebalancePerc, buyOnlyEur, postBuyPerc,
 }) => {
     const diff = currentPerc - targetPerc;
     const tint = 'rgba(59, 130, 246, 0.06)';
@@ -3221,7 +3170,6 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
                     <div className="dot" style={{ backgroundColor: '#3B82F6' }} />
                     <div>
                         <strong>{label}</strong>
-                        <PacBadge priority={pacPriority} />
                     </div>
                 </div>
 
@@ -3279,8 +3227,7 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
                         <div className="mrow-line1">
                             <div className="dot" style={{ backgroundColor: '#3B82F6', flex: '0 0 auto' }} />
                             <span className="mrow-title">{label}</span>
-                            <PacBadge priority={pacPriority} />
-                        </div>
+                            </div>
                         <div className="mrow-line2">
                             <span style={{ color: gain >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                                 {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}

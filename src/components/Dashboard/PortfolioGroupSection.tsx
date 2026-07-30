@@ -8,8 +8,7 @@ import {
 import {
     resolveGroups,
     distributeGroupDelta,
-    distributeBuyOnlyWithPac,
-    pacPriorityFor,
+    largestRemainderBuyOnly,
     buyRecipientOf,
     memberInfoFromAssets,
     groupWeightConfig,
@@ -110,7 +109,7 @@ function computeBuyOnly(
         const price = asset?.currentPrice || 0;
         const targetPerc = allocations[ticker] || 0;
         const gap = targetBase * (targetPerc / 100) - currentValue;
-        candidates.push({ key: ticker, gap, price, pacPriority: pacPriorityFor(pc.portfolio.pacConfigs, ticker) });
+        candidates.push({ key: ticker, gap, price });
     });
 
     // Groups — one candidate each, same pricing as the single-portfolio view:
@@ -134,10 +133,10 @@ function computeBuyOnly(
         if (price === undefined) return;
         const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
         const gap = targetBase * (((allocations[group.id] || 0)) / 100) - currentValue;
-        candidates.push({ key: group.id, gap, price, pacPriority: pacPriorityFor(pc.portfolio.pacConfigs, group.id) });
+        candidates.push({ key: group.id, gap, price });
     });
 
-    const byUnit = distributeBuyOnlyWithPac(candidates, liq);
+    const byUnit = largestRemainderBuyOnly(candidates, liq);
 
     // Route each group's assigned euro to its member buy action(s).
     const memberBuy: Record<string, MemberAction> = {};
