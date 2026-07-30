@@ -119,6 +119,12 @@ export interface Portfolio {
   allocationGroups?: AllocationGroup[];  // multi-asset "market" groups (target stored in allocations[groupId])
   pacConfigs?: Record<string, PacConfig>; // Ticker | groupId -> PAC flag + priority for new liquidity
   liquidity?: number; // Cash available for rebalancing
+  // Broker this portfolio trades through ("broker di appoggio"). When set, the
+  // full rebalance prices every leg against this broker's commission plan,
+  // checks the plan against its cash, and stamps generated transactions with it.
+  // Unset = multi-broker: the per-ticker last-transaction heuristic, no cash
+  // check — the right mode for a portfolio spread across several brokers.
+  preferredBrokerId?: string;
   goalId?: string;
   parentId?: string; // ID of parent portfolio for nested Core/Satellite grouping
   order: number; // Display order (lower = left)
