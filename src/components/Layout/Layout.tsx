@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac';
 
 interface LayoutProps {
   currentView: View;
@@ -8,12 +8,50 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+const menuStructure = [
+  { label: '🏠 Dashboard', view: 'dashboard' as const },
+  {
+    label: '💼 Portfolio',
+    items: [
+      { label: '💱 Transactions', view: 'transactions' as const },
+      { label: '📋 Portfolios', view: 'portfolios' as const },
+      { label: '🏦 Brokers', view: 'brokers' as const },
+      { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
+    ],
+  },
+  {
+    label: '📊 Analysis',
+    items: [
+      { label: '📈 Stats', view: 'stats' as const },
+      { label: '📉 Performance', view: 'performance' as const },
+      { label: '📋 Summary', view: 'summary' as const },
+    ],
+  },
+  {
+    label: '📅 Planning',
+    items: [
+      { label: '🎯 Goals', view: 'goals' as const },
+      { label: '🔮 Forecast', view: 'forecast' as const },
+      { label: '📊 PAC', view: 'pac' as const },
+      { label: '💰 YNAB', view: 'ynab' as const },
+      { label: '🎯 YNAB Goals', view: 'ynabGoals' as const },
+    ],
+  },
+  { label: '⚙️ Settings', view: 'settings' as const },
+  { label: '⚠️ Disclaimer', view: 'disclaimer' as const },
+];
+
 const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) => {
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
+  const [expandedMenus, setExpandedMenus] = React.useState<Record<string, boolean>>({});
 
   const handleNavigate = (view: View) => {
     onNavigate(view);
     setIsMenuOpen(false);
+  };
+
+  const toggleMenu = (label: string) => {
+    setExpandedMenus(prev => ({ ...prev, [label]: !prev[label] }));
   };
 
   return (
@@ -33,93 +71,47 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           </button>
         </div>
         <nav className={`navbar-links ${isMenuOpen ? 'show' : ''}`}>
-          <button
-            className={`nav-link ${currentView === 'dashboard' ? 'active' : ''}`}
-            onClick={() => handleNavigate('dashboard')}
-          >
-            Dashboard
-          </button>
-          <button
-            className={`nav-link ${currentView === 'stats' ? 'active' : ''}`}
-            onClick={() => handleNavigate('stats')}
-          >
-            Stats
-          </button>
-          <button
-            className={`nav-link ${currentView === 'performance' ? 'active' : ''}`}
-            onClick={() => handleNavigate('performance')}
-          >
-            Performance
-          </button>
-          <button
-            className={`nav-link ${currentView === 'transactions' ? 'active' : ''}`}
-            onClick={() => handleNavigate('transactions')}
-          >
-            Transactions
-          </button>
-          <button
-            className={`nav-link ${currentView === 'portfolios' ? 'active' : ''}`}
-            onClick={() => handleNavigate('portfolios')}
-          >
-            Portfolios
-          </button>
-          <button
-            className={`nav-link ${currentView === 'globalRebalancing' ? 'active' : ''}`}
-            onClick={() => handleNavigate('globalRebalancing')}
-          >
-            Asset Allocation
-          </button>
-          <button
-            className={`nav-link ${currentView === 'goals' ? 'active' : ''}`}
-            onClick={() => handleNavigate('goals')}
-          >
-            Goals
-          </button>
-          <button
-            className={`nav-link ${currentView === 'brokers' ? 'active' : ''}`}
-            onClick={() => handleNavigate('brokers')}
-          >
-            Brokers
-          </button>
-          <button
-            className={`nav-link ${currentView === 'forecast' ? 'active' : ''}`}
-            onClick={() => handleNavigate('forecast')}
-          >
-            Forecast
-          </button>
-          <button
-            className={`nav-link ${currentView === 'ynab' ? 'active' : ''}`}
-            onClick={() => handleNavigate('ynab')}
-          >
-            YNAB
-          </button>
-          <button
-            className={`nav-link ${currentView === 'ynabGoals' ? 'active' : ''}`}
-            onClick={() => handleNavigate('ynabGoals')}
-          >
-            YNAB Goals
-          </button>
-          <button
-            className={`nav-link ${currentView === 'summary' ? 'active' : ''}`}
-            onClick={() => handleNavigate('summary')}
-          >
-            Summary
-          </button>
-          <button
-            className={`nav-link ${currentView === 'settings' ? 'active' : ''}`}
-            onClick={() => handleNavigate('settings')}
-          >
-            Settings
-          </button>
-          <button
-            className={`nav-link ${currentView === 'disclaimer' ? 'active' : ''}`}
-            onClick={() => handleNavigate('disclaimer')}
-          >
-            Disclaimer
-          </button>
+          {menuStructure.map((item, idx) => {
+            if ('items' in item && item.items) {
+              return (
+                <div key={idx} className="nav-group">
+                  <button
+                    className="nav-group-toggle"
+                    onClick={() => toggleMenu(item.label)}
+                  >
+                    {item.label}
+                    <span className={`toggle-icon ${expandedMenus[item.label] ? 'open' : ''}`}>›</span>
+                  </button>
+                  {expandedMenus[item.label] && (
+                    <div className="nav-submenu">
+                      {item.items.map((subitem, subidx) => (
+                        <button
+                          key={subidx}
+                          className={`nav-sublink ${currentView === subitem.view ? 'active' : ''}`}
+                          onClick={() => handleNavigate(subitem.view)}
+                        >
+                          {subitem.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            const link = item as { label: string; view: View };
+            return (
+              <button
+                key={idx}
+                className={`nav-link ${currentView === link.view ? 'active' : ''}`}
+                onClick={() => handleNavigate(link.view)}
+              >
+                {link.label}
+              </button>
+            );
+          })}
         </nav>
       </header>
-      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' || currentView === 'globalRebalancing' ? 'full-width' : ''}`}>
+      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' || currentView === 'globalRebalancing' || currentView === 'pac' ? 'full-width' : ''}`}>
         {children}
       </main>
 
@@ -235,6 +227,90 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           background-color: var(--color-primary);
         }
 
+        .nav-group {
+          display: flex;
+          flex-direction: column;
+          flex-shrink: 0;
+        }
+
+        .nav-group-toggle {
+          background: transparent;
+          border: none;
+          color: var(--text-secondary);
+          font-weight: 500;
+          padding: var(--space-2) var(--space-4);
+          border-radius: var(--radius-md);
+          transition: all 0.2s;
+          flex-shrink: 0;
+          white-space: nowrap;
+          display: flex;
+          align-items: center;
+          gap: var(--space-2);
+          cursor: pointer;
+        }
+
+        .nav-group-toggle:hover {
+          color: var(--text-primary);
+          background-color: var(--bg-card);
+        }
+
+        .toggle-icon {
+          display: inline-block;
+          transition: transform 0.2s;
+          font-size: 1.25rem;
+          line-height: 1;
+        }
+
+        .toggle-icon.open {
+          transform: rotate(90deg);
+        }
+
+        .nav-submenu {
+          display: flex;
+          flex-direction: column;
+          gap: 0;
+          background-color: rgba(255, 255, 255, 0.03);
+          border-left: 2px solid var(--color-primary);
+          margin-left: var(--space-2);
+          padding-left: var(--space-2);
+          animation: slideDown 0.2s ease-out;
+        }
+
+        @keyframes slideDown {
+          from {
+            opacity: 0;
+            transform: translateY(-8px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .nav-sublink {
+          background: transparent;
+          border: none;
+          color: var(--text-secondary);
+          font-weight: 400;
+          padding: var(--space-2) var(--space-3);
+          border-radius: var(--radius-sm);
+          transition: all 0.2s;
+          text-align: left;
+          white-space: nowrap;
+          font-size: 0.9rem;
+        }
+
+        .nav-sublink:hover {
+          color: var(--text-primary);
+          background-color: var(--bg-card);
+        }
+
+        .nav-sublink.active {
+          color: var(--text-primary);
+          background-color: var(--color-primary);
+          font-weight: 500;
+        }
+
         .hamburger-btn {
           display: none;
           background: transparent;
@@ -347,7 +423,29 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             text-align: left;
             padding: var(--space-3) var(--space-4);
           }
-          
+
+          .nav-group {
+            width: 100%;
+          }
+
+          .nav-group-toggle {
+            width: 100%;
+            justify-content: space-between;
+            padding: var(--space-3) var(--space-4);
+          }
+
+          .nav-submenu {
+            margin-left: 0;
+            padding-left: var(--space-6);
+            border-left: none;
+            background: transparent;
+          }
+
+          .nav-sublink {
+            width: 100%;
+            padding: var(--space-2) var(--space-3);
+          }
+
           .content {
             padding: var(--space-4);
           }
