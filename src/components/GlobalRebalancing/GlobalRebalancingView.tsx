@@ -15,6 +15,7 @@ import type {
     RatioGroupTargetMode
 } from '../../types';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import AssetScopeToggles from '../Layout/AssetScopeToggles';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -115,10 +116,13 @@ const ProjectedTooltip = ({ active, payload }: any) => {
 const GlobalRebalancingView: React.FC = () => {
     const {
         portfolios,
-        transactions,
+        // Same app-wide Counting scope as Dashboard/Stats/Forecast/Performance:
+        // excluded brokers (family, illiquid, per-person) drop out of both the
+        // invested values and the broker liquidity feeding the engine.
+        scopedTransactions: transactions,
         assetSettings,
         marketData,
-        brokers,
+        scopedBrokers: brokers,
         assetAllocationSettings,
         updatePortfolioTarget,
         updateLiquidityTarget,
@@ -407,6 +411,7 @@ const GlobalRebalancingView: React.FC = () => {
                         or ratio group). The system calculates the expected distribution, suggests sell/buy actions and signals
                         whether the configuration is sustainable.
                     </p>
+                    <AssetScopeToggles style={{ marginTop: 'var(--space-4)' }} />
                 </div>
                 <div className="aa-metrics">
                     <div className="aa-metric">
