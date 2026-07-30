@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import type { YnabGoalSyncCandidate } from '../../types';
+import type { YnabGoalSyncCandidate, YnabGoalFieldSource } from '../../types';
 
 interface Props {
     candidates: YnabGoalSyncCandidate[];
@@ -12,6 +12,30 @@ const formatCurrency = (value: number | null, iso: string) =>
     value == null
         ? '—'
         : new Intl.NumberFormat('en-IE', { style: 'currency', currency: iso, maximumFractionDigits: 2 }).format(value);
+
+// Where a prefilled value came from, so nothing looks invented.
+const FIELD_SOURCE_LABEL: Record<YnabGoalFieldSource, string> = {
+    'parsed-name': 'from name',
+    'parsed-note': 'from note',
+    'ynab-goal': 'YNAB target',
+    local: 'kept from Goals',
+};
+
+const FIELD_SOURCE_TITLE: Record<YnabGoalFieldSource, string> = {
+    'parsed-name': 'Read from the category name',
+    'parsed-note': 'Read from the category note',
+    'ynab-goal': "Read from YNAB's own goal fields",
+    local: 'Kept from the goal already stored in YNAB Goals — edit it only if it changed',
+};
+
+const fieldCaption = (source: YnabGoalFieldSource | null) => source && (
+    <div
+        style={{ fontSize: '0.7rem', color: source === 'local' ? 'var(--color-primary)' : 'var(--text-muted)', marginTop: 2 }}
+        title={FIELD_SOURCE_TITLE[source]}
+    >
+        {FIELD_SOURCE_LABEL[source]}
+    </div>
+);
 
 const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfirm, onCancel }) => {
     const [rows, setRows] = useState<YnabGoalSyncCandidate[]>(candidates);
@@ -42,7 +66,9 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                     <code style={{ marginLeft: 4 }}>7000€ by 2028-06</code>,
                     <code style={{ marginLeft: 4 }}>[target:7000][date:2028-06]</code>,
                     <code style={{ marginLeft: 4 }}>7k entro 2028-06</code>.
-                    {' '}Without one, YNAB's own goal target (amount and target month) is used.
+                    {' '}Without one, YNAB's own goal target (amount and target month) is used, and failing that the
+                    value already stored in YNAB Goals is proposed again — so a due date typed once does not need
+                    retyping at every sync.
                 </p>
 
                 <div className="goal-sync-table-wrap">
@@ -78,14 +104,6 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                                                         {noteOpen ? 'Hide note' : 'Show note'}
                                                     </button>
                                                 )}
-                                                {row.parsedSource === 'ynab-goal' && (
-                                                    <div
-                                                        style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}
-                                                        title="Read from YNAB's own goal fields — the name and note carry no explicit target"
-                                                    >
-                                                        From YNAB goal target
-                                                    </div>
-                                                )}
                                                 {row.matchedYnabGoalId && (
                                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                                                         Existing → {row.existingTargetSource}
@@ -100,6 +118,7 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                                                     onChange={e => updateRow(idx, { parsedAmount: e.target.value === '' ? null : parseFloat(e.target.value) })}
                                                     style={{ width: 110 }}
                                                 />
+                                                {fieldCaption(row.amountSource)}
                                             </td>
                                             <td>
                                                 <input
@@ -109,6 +128,7 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                                                     onChange={e => updateRow(idx, { parsedDate: e.target.value || null })}
                                                     style={{ width: 150 }}
                                                 />
+                                                {fieldCaption(row.dateSource)}
                                             </td>
                                             <td>
                                                 <span className={`pill pill-${row.confidence}`}>{row.confidence}</span>
