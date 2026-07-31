@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useLayoutEffect } from 'react';
 import Chart from 'react-apexcharts';
 import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
@@ -21,6 +21,9 @@ import type { TransactionDirection, YnabMacroCategory } from '../../types';
 // Household source a YNAB budget's income and expenses count as, when no
 // person is assigned to it.
 const FAMILY_SOURCE = 'family';
+
+// Breathing room left under the chart so it stops just short of the fold.
+const CHART_BOTTOM_GAP = 24;
 
 const ForecastView: React.FC = () => {
     // Scoped: the family/illiquid toggles decide what the forecast simulates
@@ -695,6 +698,32 @@ const ForecastView: React.FC = () => {
         }
     }, [startValue, finalResult.totalValue, insolvencyDetected, ruleBreachDetected, monteCarloData]);
 
+    // The chart keeps the height of the screen it is opened in: it must not grow
+    // with the (much taller) side columns. Its own document offset varies with the
+    // summary row above it (4 cards in Monte Carlo mode, 3 otherwise), so measure
+    // rather than subtract a fixed constant.
+    const chartCardRef = useRef<HTMLDivElement>(null);
+    const summaryRef = useRef<HTMLDivElement>(null);
+    const [chartHeight, setChartHeight] = useState<number | null>(null);
+
+    useLayoutEffect(() => {
+        const card = chartCardRef.current;
+        if (!card) return;
+        const measure = () => {
+            const top = card.getBoundingClientRect().top + window.scrollY;
+            setChartHeight(Math.max(320, window.innerHeight - top - CHART_BOTTOM_GAP));
+        };
+        measure();
+        window.addEventListener('resize', measure);
+        // the summary row changes height when Monte Carlo is toggled on/off
+        const observer = new ResizeObserver(measure);
+        if (summaryRef.current) observer.observe(summaryRef.current);
+        return () => {
+            window.removeEventListener('resize', measure);
+            observer.disconnect();
+        };
+    }, []);
+
     return (
         <div className="forecast-container" style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 320px) 1fr 280px', gap: '1.5rem', width: '100%', maxWidth: '100%' }}>
             {/* Sidebar Controls */}
@@ -1121,8 +1150,8 @@ const ForecastView: React.FC = () => {
             </div>
 
             {/* Results Area */}
-            <div className="forecast-results" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                <div className="summary-grid forecast-summary-grid" style={{ display: 'grid', gridTemplateColumns: monteCarloData ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', gap: '1rem' }}>
+            <div className="forecast-results" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', alignSelf: 'start', minWidth: 0 }}>
+                <div ref={summaryRef} className="summary-grid forecast-summary-grid" style={{ display: 'grid', gridTemplateColumns: monteCarloData ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)', gap: '1rem' }}>
                     <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', position: 'relative' }}>
                         <div style={{ position: 'absolute', top: '1rem', right: '1rem', color: sustainabilityStatus.color }} title={sustainabilityStatus.tooltip || sustainabilityStatus.label}>
                             {sustainabilityStatus.icon}
@@ -1206,7 +1235,7 @@ const ForecastView: React.FC = () => {
                     )}
                 </div>
 
-                <div className="card forecast-chart-card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', flex: 1, minHeight: '400px' }}>
+                <div ref={chartCardRef} className="card forecast-chart-card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', flex: 'none', height: chartHeight ?? 'calc(100vh - 280px)', minHeight: '320px' }}>
                     {monteCarloData ? (
                         <Chart
                             key="mc"

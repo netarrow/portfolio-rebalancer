@@ -184,6 +184,9 @@
     }
 
     .forecast-chart-card {
+        /* stacked layout: no side columns to stretch against, just keep it
+           screen-sized without eating the whole scroll */
+        height: 60vh !important;
         min-height: 300px !important;
     }
 }
