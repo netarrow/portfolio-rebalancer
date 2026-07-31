@@ -681,31 +681,46 @@ async function scrollAndShoot(page, base) {
     });
     await sleep(500);
   }
-  // Try to push the plan into risky/failed by inflating annual expense
+  // Push the plan into risky/failed by inflating the monthly expense. The field
+  // is disabled while the YNAB averages drive the cashflow, so untick those
+  // first — otherwise the typing is a no-op and both shots stay "Sustainable".
+  const averagesOff = await page.evaluate(() => {
+    const label = [...document.querySelectorAll('label')].find((l) => /use these averages/i.test(l.textContent));
+    const cb = label?.parentElement?.querySelector('input[type="checkbox"]');
+    if (!cb) return false;
+    if (cb.checked) cb.click();
+    return true;
+  });
+  if (!averagesOff) console.warn('  !! "Use these averages" toggle not found');
+  await sleep(600);
   const expenseInputs = await page.$$('input[type="number"]');
   if (expenseInputs.length) {
-    // Find an "expense" labeled input
     const idx = await page.evaluate(() => {
       const inputs = [...document.querySelectorAll('input[type="number"]')];
-      const i = inputs.findIndex((inp) => {
-        const label = inp.closest('label')?.textContent || inp.previousElementSibling?.textContent || '';
-        return /expense|spese|withdraw|annual/i.test(label);
-      });
-      return i;
+      return inputs.findIndex((inp) =>
+        /monthly expenses/i.test(inp.previousElementSibling?.textContent || '')
+      );
     });
     if (idx >= 0) {
+      // Tuned against the mock dataset: the fragile band is narrow, and past it
+      // the plan goes straight to insolvency.
       await expenseInputs[idx].click({ clickCount: 3 });
-      await expenseInputs[idx].type('50000');
-      await sleep(600);
+      await expenseInputs[idx].type('6660');
+      await sleep(800);
       await shot(page, 'forecast_riskyplan');
       await expenseInputs[idx].click({ clickCount: 3 });
-      await expenseInputs[idx].type('500000');
-      await sleep(600);
+      await expenseInputs[idx].type('9000');
+      await sleep(800);
       await shot(page, 'forecast_failed');
-      // restore
-      await expenseInputs[idx].click({ clickCount: 3 });
-      await expenseInputs[idx].type('15000');
+      // restore: hand the cashflow back to the YNAB averages
+      await page.evaluate(() => {
+        const label = [...document.querySelectorAll('label')].find((l) => /use these averages/i.test(l.textContent));
+        const cb = label?.parentElement?.querySelector('input[type="checkbox"]');
+        if (cb && !cb.checked) cb.click();
+      });
       await sleep(400);
+    } else {
+      console.warn('  !! Monthly Expenses input not found');
     }
   }
 
