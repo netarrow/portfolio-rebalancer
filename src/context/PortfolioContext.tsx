@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution, PriceSource } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
@@ -39,7 +39,7 @@ interface PortfolioContextType {
     addTransaction: (transaction: Transaction) => void;
     updateTransaction: (transaction: Transaction) => void;
     deleteTransaction: (id: string) => void;
-    updateAssetSettings: (ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
+    updateAssetSettings: (ticker: string, source?: PriceSource, label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     updatePortfolioAllocation: (portfolioId: string, ticker: string, percentage: number) => void;
     upsertAllocationGroup: (portfolioId: string, group: AllocationGroup) => void;
     deleteAllocationGroup: (portfolioId: string, groupId: string) => void;
@@ -179,7 +179,7 @@ interface PortfolioContextType {
     skipPacInstalment: (planId: string, dueDate: string) => void;
     unskipPacInstalment: (planId: string, dueDate: string) => void;
     undoPacInstalment: (planId: string, dueDate: string) => { ok: boolean };
-    backfillTickerHistory: (ticker: string, source: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', beginDate?: string) => Promise<{ ok: boolean; error?: string }>;
+    backfillTickerHistory: (ticker: string, source: PriceSource, beginDate?: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -1258,7 +1258,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const backfillTickerHistory = async (
         ticker: string,
-        source: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA',
+        source: PriceSource,
         beginDate?: string
     ): Promise<{ ok: boolean; error?: string }> => {
         try {
@@ -1278,7 +1278,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     };
 
-    const updateAssetSettings =(ticker: string, source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA', label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
+    const updateAssetSettings =(ticker: string, source?: PriceSource, label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => {
         setAssetSettings((prev) => {
             const exists = prev.find(t => t.ticker === ticker);
 

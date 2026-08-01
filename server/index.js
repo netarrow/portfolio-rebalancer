@@ -18,6 +18,7 @@ import {
 import { fetchHistoryForToken } from './history.js';
 import { scrapeBondMonitor, filterByMaturityWindow } from './bondMonitor.js';
 import { getIndexationCoefficient, computeTelQuel } from './btpItalia.js';
+import { fetchFtQuote } from './ftMarkets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -279,6 +280,26 @@ async function scrapeToken(page, isin, source = 'ETF') {
         let currency = 'EUR'; // Default
         let fetchedFromMIL = false;
         let indexationCoefficient = null;
+
+        if (source === 'FT') {
+            // markets.ft.com is plain HTTP: no navigation, and it publishes
+            // neither bid/ask nor volatility. Returning here keeps the shared
+            // page-based extraction below from running against a blank tab.
+            const quote = await fetchFtQuote(isin);
+            console.log(`[FT] ${isin} = ${quote.price} ${quote.currency} (${quote.date})`);
+            return {
+                isin,
+                success: true,
+                data: {
+                    currentPrice: quote.price,
+                    currency: quote.currency,
+                    lastUpdated: new Date().toISOString(),
+                    spreadPercent: null,
+                    volatility: null,
+                    indexationCoefficient: null,
+                },
+            };
+        }
 
         if (source === 'MOT') {
             url = `https://www.borsaitaliana.it/borsa/obbligazioni/mot/btp/scheda/${isin}.html?lang=it`;

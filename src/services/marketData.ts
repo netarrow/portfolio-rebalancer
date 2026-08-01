@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { PriceSource } from '../types';
 
 interface MarketData {
     currentPrice: number;
@@ -14,7 +15,7 @@ interface MarketData {
 
 export interface PriceRequestToken {
     isin: string;
-    source: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA';
+    source: PriceSource;
 }
 
 export interface PriceResult {
