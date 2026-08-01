@@ -261,7 +261,7 @@ Project net worth and liquidity over a configurable horizon.
 
 ![Forecast — sustainable](screenshots/forecast_ok.png)
 
-- **Inputs** — time horizon, monthly income/expenses, an annual-rebalance toggle, and **planned annual expenses** with their source goals and an *allow erosion of liquidity* control.
+- **Inputs** — time horizon, monthly income/expenses, an annual-rebalance toggle, and **planned annual expenses** with their source goals and an *allow erosion of liquidity* control. The funding sources stay editable after the expense is in the plan: click the goal list on any planned expense — manual or imported from YNAB — to re-pick which goals (and so which portfolios) it draws from. Edits to an imported expense survive until the next *Sync from YNAB Goals*, which rebuilds the list.
 - **Per-portfolio expected return** (annualised), derived from each portfolio's realised performance.
 - **Verdict** updates live: **Sustainable**, **Risky** (expenses covered but a liquidity threshold is breached) or **Failed** (insolvency before the horizon ends).
 
