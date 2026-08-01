@@ -122,7 +122,10 @@ const PerformanceView: React.FC = () => {
             background: 'transparent',
             toolbar: { show: false },
             animations: { enabled: false },
-            zoom: { enabled: true }
+            // The chart keeps its initial frame: no drag/wheel/trackpad-pinch
+            // zoom, so a scroll gesture over it scrolls the page instead.
+            zoom: { enabled: false, allowMouseWheelZoom: false },
+            selection: { enabled: false }
         },
         theme: { mode: 'dark' as const },
         colors: ['#3B82F6'],
