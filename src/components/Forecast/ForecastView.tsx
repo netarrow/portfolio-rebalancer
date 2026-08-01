@@ -455,7 +455,11 @@ const ForecastView: React.FC = () => {
             id: 'forecast-chart',
             stacked: true,
             background: 'transparent',
-            toolbar: { show: false }
+            toolbar: { show: false },
+            // The chart keeps its initial frame: no drag/wheel/trackpad-pinch
+            // zoom, so a scroll gesture over it scrolls the page instead.
+            zoom: { enabled: false, allowMouseWheelZoom: false },
+            selection: { enabled: false }
         },
         theme: { mode: 'dark' as 'dark' },
         xaxis: {
@@ -507,7 +511,10 @@ const ForecastView: React.FC = () => {
             id: 'forecast-mc-chart',
             background: 'transparent',
             toolbar: { show: false },
-            animations: { enabled: false }
+            animations: { enabled: false },
+            // Same as the deterministic chart: the frame stays put.
+            zoom: { enabled: false, allowMouseWheelZoom: false },
+            selection: { enabled: false }
         },
         theme: { mode: 'dark' as const },
         colors: ['#3B82F6', '#3B82F6', '#10B981'],
