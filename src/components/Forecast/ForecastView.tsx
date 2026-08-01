@@ -25,6 +25,44 @@ const FAMILY_SOURCE = 'family';
 // Breathing room left under the chart so it stops just short of the fold.
 const CHART_BOTTOM_GAP = 24;
 
+// Chip row picking which Goals — and so which portfolios — an expense may draw
+// from. Used both by the new-expense form and by the already-planned expenses.
+const AllowedGoalsChips: React.FC<{
+    goals: { id: string; title: string }[];
+    selected: string[];
+    onToggle: (goalId: string) => void;
+}> = ({ goals, selected, onToggle }) => (
+    <>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+            {goals.map(goal => (
+                <div
+                    key={goal.id}
+                    onClick={() => onToggle(goal.id)}
+                    style={{
+                        padding: '0.2rem 0.6rem',
+                        borderRadius: '12px',
+                        background: selected.includes(goal.id) ? 'var(--color-primary)' : 'var(--bg-card)',
+                        color: selected.includes(goal.id) ? 'white' : 'var(--text-secondary)',
+                        cursor: 'pointer',
+                        border: '1px solid var(--border-color)'
+                    }}
+                >
+                    {goal.title}
+                </div>
+            ))}
+        </div>
+        {goals.length === 0 ? (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
+                No goals defined — the expense can draw from all portfolios.
+            </div>
+        ) : selected.length === 0 && (
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
+                No goal selected — the expense can draw from all portfolios.
+            </div>
+        )}
+    </>
+);
+
 const ForecastView: React.FC = () => {
     // Scoped: the family/illiquid toggles decide what the forecast simulates
     const { portfolios, scopedBrokers: brokers, marketData, scopedTransactions: transactions, assetSettings, goals, priceHistory,
@@ -193,6 +231,27 @@ const ForecastView: React.FC = () => {
         } else {
             setNewExpAllowedGoalIds([...newExpAllowedGoalIds, goalId]);
         }
+    };
+
+    // Which already-planned expense has its funding sources open for editing
+    // (one at a time; ids are unique across the manual and YNAB lists).
+    const [editingSourcesFor, setEditingSourcesFor] = useState<string | null>(null);
+    const toggleSourcesEditor = (id: string) => setEditingSourcesFor(prev => prev === id ? null : id);
+
+    const toggleGoalIn = (allowedGoalIds: string[], goalId: string): string[] =>
+        allowedGoalIds.includes(goalId)
+            ? allowedGoalIds.filter(id => id !== goalId)
+            : [...allowedGoalIds, goalId];
+
+    // Funding sources stay editable after the expense has been planned
+    const toggleExpenseAllowedGoal = (expenseId: string, goalId: string) => {
+        setYearlyExpenses(prev => prev.map(e =>
+            e.id === expenseId ? { ...e, allowedGoalIds: toggleGoalIn(e.allowedGoalIds, goalId) } : e));
+    };
+
+    const toggleYnabExpenseAllowedGoal = (expenseId: string, goalId: string) => {
+        setPlannedForecastExpenses(prev => (prev ?? []).map(e =>
+            e.id === expenseId ? { ...e, allowedGoalIds: toggleGoalIn(e.allowedGoalIds, goalId) } : e));
     };
 
     // YNAB goal expenses (persisted in context; enabled ones join the simulation)
@@ -1009,33 +1068,7 @@ const ForecastView: React.FC = () => {
                             />
                         </div>
                         <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Allowed Goals (linked portfolios):</label>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            {sortedGoals.map(goal => (
-                                <div
-                                    key={goal.id}
-                                    onClick={() => toggleAllowedGoal(goal.id)}
-                                    style={{
-                                        padding: '0.2rem 0.6rem',
-                                        borderRadius: '12px',
-                                        background: newExpAllowedGoalIds.includes(goal.id) ? 'var(--color-primary)' : 'var(--bg-card)',
-                                        color: newExpAllowedGoalIds.includes(goal.id) ? 'white' : 'var(--text-secondary)',
-                                        cursor: 'pointer',
-                                        border: '1px solid var(--border-color)'
-                                    }}
-                                >
-                                    {goal.title}
-                                </div>
-                            ))}
-                        </div>
-                        {sortedGoals.length === 0 ? (
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
-                                No goals defined — the expense can draw from all portfolios.
-                            </div>
-                        ) : newExpAllowedGoalIds.length === 0 && (
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
-                                No goal selected — the expense can draw from all portfolios.
-                            </div>
-                        )}
+                        <AllowedGoalsChips goals={sortedGoals} selected={newExpAllowedGoalIds} onToggle={toggleAllowedGoal} />
                     </div>
 
                     <button
@@ -1061,17 +1094,32 @@ const ForecastView: React.FC = () => {
                                     </button>
                                 </div>
                                 {expense.description && <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>{expense.description}</div>}
-                                <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap', alignItems: 'center' }}>
                                     <span style={{ color: expense.erosionAllowed ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                                         {expense.erosionAllowed ? '⚠ Liquidity Eroded' : '🛡 Liquidity Safe'}
                                     </span>
                                     <span>|</span>
-                                    <span>
+                                    <button
+                                        onClick={() => toggleSourcesEditor(expense.id)}
+                                        title="Change which Goals (linked portfolios) fund this expense"
+                                        style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: '0.75rem', textAlign: 'left', textDecoration: 'underline dotted' }}
+                                    >
                                         {expense.allowedGoalIds.length === 0 || expense.allowedGoalIds.length === goals.length
                                             ? 'All Portfolios'
                                             : expense.allowedGoalIds.map(id => goalTitleById[id] || id).join(', ')}
-                                    </span>
+                                        {' ✏'}
+                                    </button>
                                 </div>
+                                {editingSourcesFor === expense.id && (
+                                    <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)' }}>
+                                        <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.35rem' }}>Allowed Goals (linked portfolios):</label>
+                                        <AllowedGoalsChips
+                                            goals={sortedGoals}
+                                            selected={expense.allowedGoalIds}
+                                            onToggle={goalId => toggleExpenseAllowedGoal(expense.id, goalId)}
+                                        />
+                                    </div>
+                                )}
                             </div>
                         ))}
                     </div>
@@ -1128,14 +1176,19 @@ const ForecastView: React.FC = () => {
                                         <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>
                                             {expense.description}
                                         </div>
-                                        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap' }}>
+                                        <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap', alignItems: 'center' }}>
                                             <span>🎯 {expense.targetDate}</span>
                                             <span>|</span>
-                                            <span>
+                                            <button
+                                                onClick={() => toggleSourcesEditor(expense.id)}
+                                                title="Change which Goals (linked portfolios) fund this expense. Syncing from YNAB Goals resets it."
+                                                style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: '0.75rem', textAlign: 'left', textDecoration: 'underline dotted' }}
+                                            >
                                                 {expense.allowedGoalIds.length === 0
                                                     ? 'All Portfolios'
                                                     : expense.allowedGoalIds.map(id => goalTitleById[id] || id).join(', ')}
-                                            </span>
+                                                {' ✏'}
+                                            </button>
                                             {beyondHorizon && (
                                                 <>
                                                     <span>|</span>
@@ -1143,6 +1196,16 @@ const ForecastView: React.FC = () => {
                                                 </>
                                             )}
                                         </div>
+                                        {editingSourcesFor === expense.id && (
+                                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)' }}>
+                                                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.35rem' }}>Allowed Goals (linked portfolios):</label>
+                                                <AllowedGoalsChips
+                                                    goals={sortedGoals}
+                                                    selected={expense.allowedGoalIds}
+                                                    onToggle={goalId => toggleYnabExpenseAllowedGoal(expense.id, goalId)}
+                                                />
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
