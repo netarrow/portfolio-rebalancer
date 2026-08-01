@@ -3,6 +3,8 @@
 // fetch — Puppeteer is only needed for COMETA, whose chart data lives in a
 // JS global on a WordPress page.
 
+import { fetchFtHistory } from './ftMarkets.js';
+
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
 
 const ISIN_REGEX = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
@@ -291,6 +293,13 @@ export async function fetchHistoryForToken(token, { withBrowserFn } = {}) {
             // the client never mixes it with tel-quel daily snapshots.
             const { points, currency } = await fetchBorsaItalianaHistory(isin, beginDate, endDate);
             return historyResult(isin, points, { granularity: 'D', priceBasis: 'clean', currency });
+        }
+
+        if (source === 'FT') {
+            // Daily closes/NAVs straight from markets.ft.com — no fallback, an
+            // asset is mapped to FT precisely because the other sources lack it.
+            const { points, currency } = await fetchFtHistory(isin, beginDate, endDate);
+            return historyResult(isin, points, { granularity: 'D', priceBasis: 'dirty', currency });
         }
 
         // ETF: Borsa Italiana first, JustETF fallback (mirrors the live scraper)

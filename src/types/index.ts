@@ -207,11 +207,16 @@ export interface TickerPriceHistory {
 
 export type PriceHistoryMap = Record<string, TickerPriceHistory>;
 
+// Where an asset's price and history are scraped from. 'FT' (markets.ft.com)
+// is the catch-all for instruments the other sources don't list — typically
+// Luxembourg-domiciled mutual funds, which publish no price on Borsa Italiana.
+export type PriceSource = 'ETF' | 'MOT' | 'CPRAM' | 'COMETA' | 'FT';
+
 // Formerly "Target", now acts as Asset Registry/Settings
 export interface AssetDefinition {
   ticker: string;
   label?: string;
-  source?: 'ETF' | 'MOT' | 'CPRAM' | 'COMETA';
+  source?: PriceSource;
   assetClass?: AssetClass;
   assetSubClass?: AssetSubClass;
 }

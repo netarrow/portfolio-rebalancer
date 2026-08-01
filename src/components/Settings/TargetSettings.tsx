@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import '../Transactions/Transactions.css'; // Reuse form styles
-import type { AssetClass, AssetSubClass, YnabBudgetRef } from '../../types';
+import type { AssetClass, AssetSubClass, PriceSource, YnabBudgetRef } from '../../types';
 import Swal from 'sweetalert2';
 import { testAzureConnection } from '../../services/azureSync';
 import { milliunitsToEur } from '../../services/ynabApi';
@@ -178,7 +178,7 @@ const TargetSettings: React.FC = () => {
     const handleUpdate = (ticker: string, field: 'source' | 'label' | 'assetClass' | 'assetSubClass', value: string) => {
         // ... (existing implementation)
         const current = getSetting(ticker);
-        const newSource = field === 'source' ? value as 'ETF' | 'MOT' | 'CPRAM' | 'COMETA' : (current.source || 'ETF');
+        const newSource = field === 'source' ? value as PriceSource : (current.source || 'ETF');
         const newLabel = field === 'label' ? value : current.label;
         const newClass = field === 'assetClass' ? value as AssetClass : (current.assetClass || 'Stock');
 
@@ -543,6 +543,7 @@ const TargetSettings: React.FC = () => {
                         <option value="MOT">MOT</option>
                         <option value="CPRAM">CPRAM</option>
                         <option value="COMETA">COMETA</option>
+                        <option value="FT">FT Markets</option>
                     </select>
                 </div>
             </div>
@@ -625,6 +626,9 @@ const TargetSettings: React.FC = () => {
                     "Update History" backfills each asset from its first purchase date. Notes: MOT bonds are
                     stored as clean price (corso secco, no accrued interest), COMETA has monthly NAV points,
                     CPRAM has no historical source and only accumulates from regular price updates.
+                    FT Markets serves daily closes/NAVs for instruments the other sources don't list, such as
+                    Luxembourg-domiciled funds; it publishes no bid/ask or volatility, so trade-cost estimates
+                    fall back to the broker commission alone.
                 </p>
                 <div className="data-management-buttons" style={{ display: 'flex', gap: '1rem', marginBottom: '3rem', flexWrap: 'wrap' }}>
                     <button

@@ -17,7 +17,7 @@ This is a **personal tool with deliberate simplifications**. Read these before u
 | **Single currency** | Everything is in **EUR**. There is no FX handling or multi-currency reporting. |
 | **Local-first storage** | All portfolio data lives in your browser's `localStorage`. There is **no account, no server-side database**. Clearing the browser, switching device or using incognito loses the data unless you back it up. |
 | **Backups are your job** | Export a JSON backup yourself, or enable the optional encrypted Azure Blob sync. Price history has its own separate backup. |
-| **Prices via scraping, not official APIs** | Quotes come from a small set of fixed public sources, not a licensed market-data feed: **JustETF** (standard ETFs), **Borsa Italiana / MOT** (Italian BTPs & bonds), **CPRAM** (some active funds). No other tickers are supported out of the box. |
+| **Prices via scraping, not official APIs** | Quotes come from a small set of fixed public sources, not a licensed market-data feed: **JustETF** (standard ETFs), **Borsa Italiana / MOT** (Italian BTPs & bonds), **CPRAM** (some active funds), **COMETA** (the pension fund's own NAV page) and **FT Markets** (anything the others don't list, e.g. Luxembourg-domiciled funds). No other tickers are supported out of the box. |
 | **Free vs Premium price tier** | Without a Premium key, *Update Price* runs on a **throttled free tier** (server-wide concurrency cap, prices cached up to ~24h). A Premium key unlocks unlimited, real-time updates. |
 | **Asset universe** | Designed around **ETFs and bonds**. No crypto, options or derivatives modelling. |
 | **Not financial advice** | Returns, forecasts and rebalancing suggestions are mechanical calculations on your own inputs. They are not advice. |
@@ -389,7 +389,7 @@ This reflects how the app actually handles data today.
 
 - **Optional cloud sync (Azure).** If you enable Azure Blob sync, the data is encrypted with **AES-256-GCM in the browser** using a passphrase you choose, and only the resulting **opaque ciphertext blob** is uploaded to your own Azure container via a SAS URL. The passphrase is never sent to Azure. **YNAB credentials and the Premium price key are intentionally excluded from the Azure payload**; price history is backed up separately.
 
-- **Data sent to price sources.** Price lookups send **only the ISIN and the chosen source** to the `/api/price` endpoint, which fetches the quote from the relevant public page (JustETF, Borsa Italiana/MOT, CPRAM). No personal identifiers, balances or portfolio data are transmitted. On the free tier, responses may be served from a short-lived server-side cache.
+- **Data sent to price sources.** Price lookups send **only the ISIN and the chosen source** to the `/api/price` endpoint, which fetches the quote from the relevant public page (JustETF, Borsa Italiana/MOT, CPRAM, COMETA, FT Markets). No personal identifiers, balances or portfolio data are transmitted. On the free tier, responses may be served from a short-lived server-side cache.
 
 - **Data sent to YNAB.** YNAB calls go **directly from your browser to YNAB** using your personal access token. The token is stored locally and is never synced to Azure.
 
