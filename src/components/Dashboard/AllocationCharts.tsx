@@ -8,6 +8,13 @@ import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
 import RiskMetricsRow from '../Performance/RiskMetrics';
 import { getPortfolioValueSeries, getCashFlowsByDate, computeReturnStats } from '../../utils/performanceCalculations';
+import {
+    buildPortfolioTree,
+    aggregateGroup,
+    targetClassSlices,
+    GROUP_MEMBER_COLORS,
+    type GroupAggregate,
+} from '../../utils/portfolioGroups';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import './Dashboard.css';
 
@@ -58,9 +65,12 @@ const ScopeRiskMetrics: React.FC<{
     priceHistory: PriceHistoryMap;
     range: RiskRangeKey;
     riskFreePct: number;
-    portfolioId?: string;
+    /** One portfolio, or every member of a group. */
+    portfolioId?: string | string[];
     brokerId?: string;
 }> = ({ transactions, priceHistory, range, riskFreePct, portfolioId, brokerId }) => {
+    // `portfolioId` may be an array (a parent/child group). Callers must pass a
+    // memoized array — a fresh literal would invalidate this memo every render.
     const stats = useMemo(() => {
         const from = riskRangeFrom(range);
         const scoped = brokerId ? transactions.filter(t => t.brokerId === brokerId) : transactions;
@@ -76,6 +86,10 @@ const ScopeRiskMetrics: React.FC<{
         </div>
     );
 };
+
+/** Same money formatting as the Allocations view's group header. */
+const fmtEur = (n: number) =>
+    n.toLocaleString('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
 
 const RADIAN = Math.PI / 180;
 const renderCustomizedLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) => {
@@ -114,30 +128,33 @@ interface DistributionRowProps {
     showCashToggle?: boolean;
     /** Optional risk-metrics strip rendered under the title (per-scope). */
     riskMetrics?: React.ReactNode;
+    /**
+     * Pre-computed Target (Class) slices, used by group rows whose target is the
+     * value-weighted blend of the members' allocations. Wins over `portfolio`.
+     */
+    targetSlices?: { name: string; value: number }[];
+    /** Extra header content (group composition bar + legend), under the title. */
+    headerExtra?: React.ReactNode;
+    /** Right-aligned header slot (e.g. the group total value). */
+    headerRight?: React.ReactNode;
 }
 
-const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfolio, assetSettings, showCashToggle, riskMetrics }) => {
+const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfolio, assetSettings, showCashToggle, riskMetrics, targetSlices, headerExtra, headerRight }) => {
     // Colors (consistent palette)
     const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'];
     const [includeCash, setIncludeCash] = useState(true);
 
-    // Target Calculation (By Class)
+    // Target Calculation (By Class). Shared resolver with the group rows, so a
+    // multi-asset allocation group (_GRP_…) or a virtual bond resolves to real
+    // classes instead of collapsing into "Other".
     const targetClassData = useMemo(() => {
+        if (targetSlices) return targetSlices;
         if (!portfolio || !portfolio.allocations || !assetSettings) return null;
-
-        const grouped: Record<string, number> = {};
-        Object.entries(portfolio.allocations).forEach(([ticker, percent]) => {
-            const cls = isCashTicker(ticker)
-                ? 'Cash'
-                : (assetSettings.find(s => s.ticker === ticker)?.assetClass || 'Other');
-            grouped[cls] = (grouped[cls] || 0) + percent;
+        return targetClassSlices(portfolio.allocations, assetSettings, {
+            groupSources: [portfolio],
+            valueByTicker: Object.fromEntries(assets.map(a => [a.ticker, a.currentValue])),
         });
-
-        // Normalize or just show as is (should sum to 100)
-        return Object.entries(grouped)
-            .map(([name, value]) => ({ name, value }))
-            .sort((a, b) => b.value - a.value);
-    }, [portfolio, assetSettings]);
+    }, [targetSlices, portfolio, assetSettings, assets]);
 
     // 1. Group by Asset Class
     const classData = useMemo(() => {
@@ -183,16 +200,21 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
             .sort((a, b) => b.value - a.value);
     }, [assets, includeCash]);
 
-    if (assets.length === 0 || assets.every(a => a.currentValue === 0)) {
+    const hasValue = assets.some(a => a.currentValue > 0);
+    const hasTargets = !!targetClassData && targetClassData.length > 0;
+    // A scope with targets but nothing invested yet is still worth showing: it
+    // renders its Target pie alone.
+    if (!hasValue && !hasTargets) {
         return null;
     }
 
     return (
         <div style={{ marginBottom: '3rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem', marginBottom: '1rem' }}>
                 <h3 className="section-title" style={{ fontSize: '1.2rem', color: 'var(--color-primary)', margin: 0, border: 'none', padding: 0 }}>
                     {title}
                 </h3>
+                {headerRight}
                 {showCashToggle && (
                     <button
                         onClick={() => setIncludeCash(v => !v)}
@@ -212,10 +234,11 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                     </button>
                 )}
             </div>
+            {headerExtra}
             {riskMetrics}
             <div className="charts-grid">
                 {/* Target By Class (Only if portfolio exists) */}
-                {targetClassData && targetClassData.length > 0 && (
+                {hasTargets && targetClassData && (
                     <div className="chart-card">
                         <h4>Target (Class)</h4>
                         <div style={{ width: '100%', height: 250 }}>
@@ -244,6 +267,7 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                 )}
 
                 {/* By Class */}
+                {classData.length > 0 && (
                 <div className="chart-card">
                     <h4>By Class</h4>
                     <div style={{ width: '100%', height: 250 }}>
@@ -269,8 +293,10 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                         </ResponsiveContainer>
                     </div>
                 </div>
+                )}
 
                 {/* By Subclass */}
+                {subClassData.length > 0 && (
                 <div className="chart-card">
                     <h4>By Subclass</h4>
                     <div style={{ width: '100%', height: 250 }}>
@@ -296,8 +322,10 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                         </ResponsiveContainer>
                     </div>
                 </div>
+                )}
 
                 {/* By Name */}
+                {nameData.length > 0 && (
                 <div className="chart-card">
                     <h4>By Asset</h4>
                     <div style={{ width: '100%', height: 250 }}>
@@ -323,7 +351,69 @@ const DistributionRow: React.FC<DistributionRowProps> = ({ title, assets, portfo
                         </ResponsiveContainer>
                     </div>
                 </div>
+                )}
             </div>
+        </div>
+    );
+};
+
+/**
+ * Group header for a parent/child row: the child portfolios, the group total and
+ * a composition bar showing how much of the group each member is worth.
+ */
+const GroupHeaderBar: React.FC<{ aggregate: GroupAggregate }> = ({ aggregate }) => {
+    const { group, memberCalcs, totalValue, equalWeightFallback } = aggregate;
+
+    return (
+        <div style={{ marginBottom: '1rem' }}>
+            {group.children.length > 0 && (
+                <div className="stats-group-tags">
+                    {group.children.map(c => (
+                        <span key={c.id} className="stats-group-tag">{c.name}</span>
+                    ))}
+                </div>
+            )}
+            {totalValue > 0 ? (
+                <>
+                    <div className="stats-group-bar">
+                        {memberCalcs.map((mc, i) => (
+                            <div
+                                key={mc.portfolio.id}
+                                className="stats-group-bar-segment"
+                                style={{
+                                    width: `${mc.weight * 100}%`,
+                                    backgroundColor: GROUP_MEMBER_COLORS[i % GROUP_MEMBER_COLORS.length],
+                                    minWidth: mc.weight > 0 ? '4px' : '0',
+                                }}
+                                title={`${mc.portfolio.name}: ${fmtEur(mc.totalValue)} (${(mc.weight * 100).toFixed(1)}%)`}
+                            />
+                        ))}
+                    </div>
+                    <div className="stats-group-legend">
+                        {memberCalcs.map((mc, i) => (
+                            <span key={mc.portfolio.id} className="stats-group-legend-item">
+                                <span
+                                    className="stats-group-legend-dot"
+                                    style={{ backgroundColor: GROUP_MEMBER_COLORS[i % GROUP_MEMBER_COLORS.length] }}
+                                />
+                                {mc.portfolio.id === group.parent.id ? <strong>{mc.portfolio.name}</strong> : mc.portfolio.name}
+                                {' '}
+                                <span className="stats-group-legend-pct">
+                                    {(mc.weight * 100).toFixed(1)}% · {fmtEur(mc.totalValue)}
+                                </span>
+                            </span>
+                        ))}
+                    </div>
+                </>
+            ) : (
+                <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.82rem' }}>
+                    No holdings yet — targets only
+                    {equalWeightFallback && ' (blended with equal member weights)'}
+                </p>
+            )}
+            <p style={{ margin: '0.4rem 0 0', color: 'var(--text-muted)', fontSize: '0.78rem' }}>
+                Parent + {group.children.length} sub-portfolio{group.children.length === 1 ? '' : 's'} — also listed individually below
+            </p>
         </div>
     );
 };
@@ -431,6 +521,9 @@ const AllocationCharts: React.FC = () => {
     // Scoped: respects the family/illiquid asset-scope toggles
     const { scopedTransactions: transactions, assetSettings, marketData, portfolios, scopedBrokers: brokers, goals, priceHistory } = usePortfolio();
     const [activeTab, setActiveTab] = useState<StatsTab>('global');
+    // Overview "Value by Portfolio" pie: one slice per portfolio, or one per
+    // parent/child group. View-only, so it isn't persisted.
+    const [portfolioPieMode, setPortfolioPieMode] = useState<'single' | 'grouped'>('single');
 
     // Risk metrics window + risk-free rate are shared with the Performance view
     // (same localStorage keys), so both readouts reconcile on the same range.
@@ -752,6 +845,44 @@ const AllocationCharts: React.FC = () => {
         [portfolioPyramidData]
     );
 
+    // Parent/child portfolio groups. Aggregated with the same conventions as the
+    // Allocations view (union holdings, per-broker cash merged once, targets
+    // blended by member value) so the two screens reconcile.
+    const { groups, standalones } = useMemo(() => buildPortfolioTree(portfolios), [portfolios]);
+
+    const groupAggregates = useMemo(() => groups.map(group => {
+        const aggregate = aggregateGroup(group, transactions, assetSettings, marketData, brokers);
+        return {
+            aggregate,
+            // Memoized so ScopeRiskMetrics' own memo isn't invalidated every render.
+            memberIds: aggregate.memberCalcs.map(mc => mc.portfolio.id),
+            targetSlices: targetClassSlices(aggregate.weightedTargets, assetSettings, {
+                groupSources: group.members,
+                valueByTicker: Object.fromEntries(aggregate.assets.map(a => [a.ticker, a.currentValue])),
+            }),
+        };
+    }), [groups, transactions, assetSettings, marketData, brokers]);
+
+    // Grouped variant of the Overview pie. Derived from portfolioContributionData
+    // rather than recomputed, so both modes add up to exactly the same total —
+    // and so this pie keeps excluding allocated broker cash, which the neighbouring
+    // "Invested vs Liquidity" pie already accounts for. (The By Portfolio tab uses
+    // the cash-inclusive convention instead: there it measures a member's real
+    // weight inside its group.)
+    const portfolioGroupContributionData = useMemo(() => {
+        const byId = new Map(portfolioContributionData.map(d => [d.id, d]));
+        return [
+            ...groups.map(g => ({
+                id: g.parent.id,
+                name: g.parent.name,
+                value: g.members.reduce((sum, m) => sum + (byId.get(m.id)?.value ?? 0), 0),
+            })),
+            ...standalones.flatMap(p => byId.get(p.id) ?? []),
+        ]
+            .filter(d => d.value > 0)
+            .sort((a, b) => b.value - a.value);
+    }, [groups, standalones, portfolioContributionData]);
+
     // Helper to get assets for a portfolio (including virtual cash assets)
     const getPortfolioAssets = (pid: string) => {
         const filteredTxs = transactions.filter(t => t.portfolioId === pid);
@@ -944,14 +1075,39 @@ const AllocationCharts: React.FC = () => {
                                 </div>
 
                                 {/* By Portfolio */}
-                                {portfolioContributionData.length > 0 && (
+                                {portfolioContributionData.length > 0 && (() => {
+                                    const grouped = portfolioPieMode === 'grouped';
+                                    const pieData = grouped ? portfolioGroupContributionData : portfolioContributionData;
+                                    return (
                                     <div className="chart-card">
-                                        <h4>Value by Portfolio</h4>
+                                        <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                                            <h4 style={{ alignSelf: 'auto' }}>Value by {grouped ? 'Group' : 'Portfolio'}</h4>
+                                            {/* Only meaningful when a parent/child group exists */}
+                                            {groups.length > 0 && (
+                                                <button
+                                                    onClick={() => setPortfolioPieMode(m => (m === 'grouped' ? 'single' : 'grouped'))}
+                                                    style={{
+                                                        fontSize: '0.72rem',
+                                                        padding: '0.2rem 0.6rem',
+                                                        borderRadius: '999px',
+                                                        border: '1px solid var(--border-color)',
+                                                        background: grouped ? 'var(--color-primary)' : 'transparent',
+                                                        color: grouped ? '#fff' : 'var(--text-muted)',
+                                                        cursor: 'pointer',
+                                                        transition: 'all 0.15s',
+                                                        whiteSpace: 'nowrap',
+                                                    }}
+                                                    title="Aggregate child portfolios into their parent"
+                                                >
+                                                    {grouped ? '⬡ Grouped' : '☰ Single'}
+                                                </button>
+                                            )}
+                                        </div>
                                         <div style={{ width: '100%', height: 250 }}>
                                             <ResponsiveContainer>
                                                 <PieChart>
                                                     <Pie
-                                                        data={portfolioContributionData}
+                                                        data={pieData}
                                                         cx="50%"
                                                         cy="50%"
                                                         labelLine={false}
@@ -960,7 +1116,7 @@ const AllocationCharts: React.FC = () => {
                                                         fill="#8884d8"
                                                         dataKey="value"
                                                     >
-                                                        {portfolioContributionData.map((_, index) => (
+                                                        {pieData.map((_, index) => (
                                                             <Cell key={`cell-${index}`} fill={['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6'][index % 7]} />
                                                         ))}
                                                     </Pie>
@@ -970,7 +1126,8 @@ const AllocationCharts: React.FC = () => {
                                             </ResponsiveContainer>
                                         </div>
                                     </div>
-                                )}
+                                    );
+                                })()}
 
                                 {/* By Broker */}
                                 {brokerContributionData.length > 0 && (
@@ -1016,9 +1173,36 @@ const AllocationCharts: React.FC = () => {
             {activeTab === 'portfolio' && (
                 <>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics per portafoglio — {RISK_RANGE_LABEL[riskRange]}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics per gruppo e portafoglio — {RISK_RANGE_LABEL[riskRange]}</span>
                         <RiskRangeButtons value={riskRange} onChange={setRiskRange} />
                     </div>
+
+                    {/* Groups first: parent + children as one virtual portfolio.
+                        Their members are still listed individually below. */}
+                    {groupAggregates.map(({ aggregate, memberIds, targetSlices }) => (
+                        <DistributionRow
+                            key={`group-${aggregate.group.parent.id}`}
+                            title={`Group: ${aggregate.group.parent.name}`}
+                            assets={aggregate.assets}
+                            assetSettings={assetSettings}
+                            targetSlices={targetSlices}
+                            headerRight={<span className="stats-group-total">{fmtEur(aggregate.totalValue)}</span>}
+                            headerExtra={<GroupHeaderBar aggregate={aggregate} />}
+                            riskMetrics={
+                                <ScopeRiskMetrics
+                                    transactions={transactions}
+                                    priceHistory={priceHistory}
+                                    range={riskRange}
+                                    riskFreePct={riskFreeRate}
+                                    portfolioId={memberIds}
+                                />
+                            }
+                        />
+                    ))}
+                    {groupAggregates.length > 0 && (
+                        <div style={{ margin: '2rem 0', borderTop: '1px solid var(--border-color)' }} />
+                    )}
+
                     {[...portfolios].sort((a, b) => a.order - b.order).map(p => {
                         const pAssets = getPortfolioAssets(p.id);
                         const hasAssets = pAssets.some(a => a.currentValue > 0);
