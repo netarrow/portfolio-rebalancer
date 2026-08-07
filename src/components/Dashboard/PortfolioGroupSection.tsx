@@ -5,6 +5,7 @@ import {
     isCashTicker,
     isGroupKey,
 } from '../../utils/portfolioCalculations';
+import { GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
 import {
     resolveGroups,
     distributeGroupDelta,
@@ -56,7 +57,8 @@ interface PortfolioCalc {
     transactions: Transaction[];
 }
 
-const PORTFOLIO_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EF4444', '#06B6D4'];
+// Shared with the Stats page's group legend so a member keeps its colour across views.
+const PORTFOLIO_COLORS = GROUP_MEMBER_COLORS;
 
 function getColorForClass(assetClass: string): string {
     switch (assetClass) {

@@ -13,15 +13,30 @@ export interface ValuePoint {
 
 type Timeline = Array<[string, number]>; // [date, cumulative quantity] ascending
 
+/**
+ * Which portfolios a computation is scoped to: one id, several (a parent/child
+ * group), or `undefined` for the whole account. An empty array scopes to
+ * nothing, which yields an empty series rather than the whole account.
+ */
+export type PortfolioScope = string | string[];
+
+/** null = no scoping at all (every transaction counts). */
+function scopeMatcher(scope?: PortfolioScope): ((portfolioId?: string) => boolean) | null {
+    if (scope === undefined) return null;
+    const ids = new Set(Array.isArray(scope) ? scope : [scope]);
+    return (portfolioId?: string) => !!portfolioId && ids.has(portfolioId);
+}
+
 /** Cumulative quantity per ticker over time (Buy/Sell only). */
 export function buildHoldingsTimeline(
     transactions: Transaction[],
-    portfolioId?: string
+    portfolioId?: PortfolioScope
 ): Map<string, Timeline> {
+    const inScope = scopeMatcher(portfolioId);
     const grouped = new Map<string, Transaction[]>();
     for (const tx of transactions) {
         if (isIncomeDirection(tx.direction || 'Buy')) continue;
-        if (portfolioId && tx.portfolioId !== portfolioId) continue;
+        if (inScope && !inScope(tx.portfolioId)) continue;
         const key = tx.ticker.toUpperCase();
         const list = grouped.get(key);
         if (list) list.push(tx); else grouped.set(key, [tx]);
@@ -87,7 +102,7 @@ function buildTxPriceTimeline(transactions: Transaction[], ticker: string): Time
 export function getPortfolioValueSeries(
     transactions: Transaction[],
     priceHistory: PriceHistoryMap,
-    opts: { portfolioId?: string; from?: string; to?: string } = {}
+    opts: { portfolioId?: PortfolioScope; from?: string; to?: string } = {}
 ): ValuePoint[] {
     const holdings = buildHoldingsTimeline(transactions, opts.portfolioId);
     if (holdings.size === 0) return [];
@@ -149,13 +164,14 @@ export function getPortfolioValueSeries(
  */
 export function getCashFlowsByDate(
     transactions: Transaction[],
-    portfolioId?: string,
+    portfolioId?: PortfolioScope,
     opts: { includeDistributions?: boolean } = {}
 ): Map<string, number> {
     const includeDistributions = opts.includeDistributions ?? true;
+    const inScope = scopeMatcher(portfolioId);
     const flows = new Map<string, number>();
     for (const tx of transactions) {
-        if (portfolioId && tx.portfolioId !== portfolioId) continue;
+        if (inScope && !inScope(tx.portfolioId)) continue;
         if (!includeDistributions && isIncomeDirection(tx.direction || 'Buy')) continue;
         const date = (tx.date || '').slice(0, 10);
         const cost = (Number(tx.amount) || 0) * (Number(tx.price) || 0);
@@ -423,11 +439,12 @@ export function computeRealizedVolatility(
  */
 export function getUninvestedProceedsTimeline(
     transactions: Transaction[],
-    portfolioId?: string
+    portfolioId?: PortfolioScope
 ): Timeline {
+    const inScope = scopeMatcher(portfolioId);
     const byDate = new Map<string, number>(); // +proceeds/income, -buy cost
     for (const tx of transactions) {
-        if (portfolioId && tx.portfolioId !== portfolioId) continue;
+        if (inScope && !inScope(tx.portfolioId)) continue;
         const date = (tx.date || '').slice(0, 10);
         const cost = (Number(tx.amount) || 0) * (Number(tx.price) || 0);
         const sign = (tx.direction || 'Buy') === 'Buy' ? -1 : 1; // Sell/Dividend/Coupon add cash
