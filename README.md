@@ -86,6 +86,7 @@ A composition deep-dive across portfolios and macro exposure.
 - **Portfolio Pyramid** — wealth distribution by goal category (Growth → Protection → Security → Liquidity).
 - **Macro Allocation** — aggregate exposure (Stocks, Bonds, Cash…) vs your configured targets.
 - **Per-portfolio breakdowns** with cost / value / return.
+- **Group breakdowns** — where a portfolio has sub-portfolios (see *Parent Portfolio* in the portfolio form), the *By Portfolio* tab shows the parent and its children aggregated into a single set of charts first — one composition bar for the members' weights, group-level risk metrics, and a target blended by member value — then each portfolio again on its own. The Overview's *Value by Portfolio* pie has a **Single / Grouped** switch that folds children into their parent's slice.
 
 ### Performance
 
