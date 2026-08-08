@@ -7,21 +7,21 @@ const maskKey = (key: string) => {
     return `${'•'.repeat(Math.max(4, key.length - 4))}${key.slice(-4)}`;
 };
 
-const PremiumPriceCard: React.FC = () => {
-    const { premiumPriceKey, setPremiumPriceKey } = usePortfolio();
+const PrivateTierPriceCard: React.FC = () => {
+    const { privateTierKey, setPrivateTierKey } = usePortfolio();
     const [draft, setDraft] = useState('');
     const [reveal, setReveal] = useState(false);
 
-    const active = premiumPriceKey.trim().length > 0;
+    const active = privateTierKey.trim().length > 0;
 
     const handleSave = async () => {
         const next = draft.trim();
         if (!next) return;
-        setPremiumPriceKey(next);
+        setPrivateTierKey(next);
         setDraft('');
         setReveal(false);
         await Swal.fire({
-            title: 'Premium key saved',
+            title: 'Private-tier key saved',
             text: 'Update Price will now run without limits.',
             icon: 'success',
             timer: 1800,
@@ -31,15 +31,15 @@ const PremiumPriceCard: React.FC = () => {
 
     const handleRemove = async () => {
         const r = await Swal.fire({
-            title: 'Remove Premium key?',
-            text: 'Update Price will fall back to the limited free tier (throttled, data up to a day old).',
+            title: 'Remove private-tier key?',
+            text: 'Update Price will fall back to the limited public tier (throttled, data up to a day old).',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
             confirmButtonText: 'Remove',
         });
         if (!r.isConfirmed) return;
-        setPremiumPriceKey('');
+        setPrivateTierKey('');
         setDraft('');
     };
 
@@ -48,18 +48,18 @@ const PremiumPriceCard: React.FC = () => {
             <header className="sle-card-head">
                 <div className="sle-card-icon" aria-hidden>⚡</div>
                 <div className="sle-card-titleblock">
-                    <h3 className="sle-card-title">Premium Update Price</h3>
+                    <h3 className="sle-card-title">Private Update Price</h3>
                     <span className={`sle-status ${active ? 'sle-status-on' : 'sle-status-off'}`}>
                         <i className="sle-status-dot" />
-                        {active ? 'Active' : 'Free tier'}
+                        {active ? 'Active' : 'Public tier'}
                     </span>
                 </div>
             </header>
 
             <p className="sle-card-desc">
-                Without a Premium key, <b>Update Price</b> runs on a strongly limited free tier: requests share a
-                server-wide concurrency cap and prices come from a cache that can be up to a day old. Enter a valid
-                Premium key to unlock unlimited, real-time updates. Your key is stored only in this browser and is
+                Without a private-tier key, <b>Update Price</b> runs on a strongly limited public tier: requests share
+                a server-wide concurrency cap and prices come from a cache that can be up to a day old. Enter a valid
+                private-tier key to unlock unlimited, real-time updates. Your key is stored only in this browser and is
                 never uploaded with your Azure backup.
             </p>
 
@@ -67,7 +67,7 @@ const PremiumPriceCard: React.FC = () => {
                 {active && (
                     <div className="ppk-current">
                         <span className="ppk-current-label">Current key</span>
-                        <code className="ppk-current-value">{maskKey(premiumPriceKey)}</code>
+                        <code className="ppk-current-value">{maskKey(privateTierKey)}</code>
                     </div>
                 )}
 
@@ -76,7 +76,7 @@ const PremiumPriceCard: React.FC = () => {
                         <input
                             type={reveal ? 'text' : 'password'}
                             value={draft}
-                            placeholder={active ? 'Enter a new key to replace' : 'Paste your Premium key'}
+                            placeholder={active ? 'Enter a new key to replace' : 'Paste your private-tier key'}
                             autoComplete="off"
                             spellCheck={false}
                             onChange={(e) => setDraft(e.target.value)}
@@ -177,4 +177,4 @@ const PremiumPriceCard: React.FC = () => {
     );
 };
 
-export default PremiumPriceCard;
+export default PrivateTierPriceCard;

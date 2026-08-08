@@ -7,7 +7,7 @@ import { testAzureConnection } from '../../services/azureSync';
 import { milliunitsToEur } from '../../services/ynabApi';
 import type { YnabBudgetSummary, YnabAccountSummary } from '../../services/ynabApi';
 import EncryptionSettingsCard from '../Security/EncryptionSettingsCard';
-import PremiumPriceCard from './PremiumPriceCard';
+import PrivateTierPriceCard from './PrivateTierPriceCard';
 import FreeCommissionCard from './FreeCommissionCard';
 import PeopleCard from './PeopleCard';
 const TargetSettings: React.FC = () => {
@@ -554,7 +554,7 @@ const TargetSettings: React.FC = () => {
 
     return (
         <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
-            <PremiumPriceCard />
+            <PrivateTierPriceCard />
 
             <EncryptionSettingsCard />
 

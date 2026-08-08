@@ -8,12 +8,12 @@ import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import {
-    acquireFreeSlot,
-    releaseFreeSlot,
-    waitWhilePremium,
-    beginFreeWork,
-    endFreeWork,
-    runExclusivePremium,
+    acquirePublicSlot,
+    releasePublicSlot,
+    waitWhilePrivate,
+    beginPublicWork,
+    endPublicWork,
+    runExclusivePrivate,
 } from './concurrency.js';
 import { fetchHistoryForToken } from './history.js';
 import { scrapeBondMonitor, filterByMaturityWindow } from './bondMonitor.js';
@@ -82,32 +82,32 @@ const MAX_TOKENS_PER_REQUEST = 50;
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
 
-// --- PREMIUM ACCESS ---------------------------------------------------------
-// Valid premium keys live ONLY in the Azure App Service configuration
-// (env var PREMIUM_KEYS, comma-separated). They must never be committed to the
-// repo or exposed to the client. A request that presents a valid key bypasses
-// the free-tier concurrency cap and the in-memory cache; an absent or unknown
-// key is treated as "free tier".
-const PREMIUM_KEYS = new Set(
-    (process.env.PREMIUM_KEYS || '')
+// --- PRIVATE TIER ACCESS ----------------------------------------------------
+// Valid private-tier keys live ONLY in the Azure App Service configuration
+// (env var PRIVATE_TIER_KEYS, comma-separated). They must never be committed to
+// the repo or exposed to the client. A request that presents a valid key
+// bypasses the public-tier concurrency cap and the in-memory cache; an absent
+// or unknown key is treated as "public tier".
+const PRIVATE_TIER_KEYS = new Set(
+    (process.env.PRIVATE_TIER_KEYS || process.env.PREMIUM_KEYS || '')
         .split(',')
         .map((k) => k.trim())
         .filter(Boolean)
 );
-if (PREMIUM_KEYS.size === 0) {
-    console.warn('[premium] No PREMIUM_KEYS configured — every request runs on the rate-limited free tier.');
+if (PRIVATE_TIER_KEYS.size === 0) {
+    console.warn('[private-tier] No PRIVATE_TIER_KEYS configured — every request runs on the rate-limited public tier.');
 }
 
-function isValidPremiumKey(key) {
-    return typeof key === 'string' && key.length > 0 && PREMIUM_KEYS.has(key.trim());
+function isValidPrivateTierKey(key) {
+    return typeof key === 'string' && key.length > 0 && PRIVATE_TIER_KEYS.has(key.trim());
 }
 
-// --- FREE-TIER PRICE CACHE --------------------------------------------------
+// --- PUBLIC-TIER PRICE CACHE ------------------------------------------------
 // Keyless requests for an ISIN are served from this in-memory cache for up to a
-// day, so repeated free-tier polling returns the previously scraped (possibly
+// day, so repeated public-tier polling returns the previously scraped (possibly
 // stale) value without ever launching Puppeteer. Entries auto-expire via a
-// timer; premium requests neither read nor write this cache.
-const FREE_CACHE_TTL_MS = Number(process.env.FREE_PRICE_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
+// timer; private-tier requests neither read nor write this cache.
+const PUBLIC_CACHE_TTL_MS = Number(process.env.PUBLIC_PRICE_CACHE_TTL_MS || process.env.FREE_PRICE_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const priceCache = new Map(); // `${source}:${isin}` -> { result, expiresAt, timer }
 
 function cacheKey(source, isin) {
@@ -129,9 +129,9 @@ function setCached(source, isin, result) {
     const key = cacheKey(source, isin);
     const existing = priceCache.get(key);
     if (existing?.timer) clearTimeout(existing.timer);
-    const timer = setTimeout(() => priceCache.delete(key), FREE_CACHE_TTL_MS);
+    const timer = setTimeout(() => priceCache.delete(key), PUBLIC_CACHE_TTL_MS);
     if (timer.unref) timer.unref();
-    priceCache.set(key, { result, expiresAt: Date.now() + FREE_CACHE_TTL_MS, timer });
+    priceCache.set(key, { result, expiresAt: Date.now() + PUBLIC_CACHE_TTL_MS, timer });
 }
 
 // Rate-limit the expensive Puppeteer-backed price endpoint per client IP.
@@ -605,20 +605,20 @@ io.on('connection', (socket) => {
 
     socket.on('request_price_update', async (payload) => {
         // Accept both the legacy bare-array payload and the new
-        // { tokens, premiumKey } envelope.
-        let tokens, premiumKey;
+        // { tokens, privateKey } envelope.
+        let tokens, privateKey;
         if (Array.isArray(payload)) {
             tokens = payload;
-            premiumKey = undefined;
+            privateKey = undefined;
         } else {
             tokens = payload?.tokens;
-            premiumKey = payload?.premiumKey;
+            privateKey = payload?.privateKey;
         }
 
-        const isPremium = isValidPremiumKey(premiumKey);
+        const isPrivateTier = isValidPrivateTierKey(privateKey);
 
-        // Per-socket sliding-window rate limit applies to free tier only.
-        if (!isPremium) {
+        // Per-socket sliding-window rate limit applies to the public tier only.
+        if (!isPrivateTier) {
             const now = Date.now();
             socketRequestTimestamps = socketRequestTimestamps.filter(t => now - t < SOCKET_RATE_WINDOW_MS);
             if (socketRequestTimestamps.length >= SOCKET_RATE_LIMIT) {
@@ -628,7 +628,7 @@ io.on('connection', (socket) => {
             socketRequestTimestamps.push(now);
         }
 
-        console.log(`Received socket price update request for ${tokens?.length} assets from ${socket.id} (${isPremium ? 'PREMIUM' : 'free'})`);
+        console.log(`Received socket price update request for ${tokens?.length} assets from ${socket.id} (${isPrivateTier ? 'PRIVATE' : 'public'})`);
 
         const validationError = validateTokens(tokens);
         if (validationError) {
@@ -637,10 +637,10 @@ io.on('connection', (socket) => {
         }
 
         try {
-            if (isPremium) {
-                // Premium: exclusive priority — one premium scrape at a time, and
-                // all free scrapes are held until it finishes. No cache, no cap.
-                await runExclusivePremium(() => withBrowser(async (page) => {
+            if (isPrivateTier) {
+                // Private tier: exclusive priority — one private scrape at a time, and
+                // all public scrapes are held until it finishes. No cache, no cap.
+                await runExclusivePrivate(() => withBrowser(async (page) => {
                     for (const token of tokens) {
                         const { isin, source = 'ETF' } = token;
                         socket.emit('price_update_progress', { isin, status: 'processing' });
@@ -649,7 +649,7 @@ io.on('connection', (socket) => {
                     }
                 }));
             } else {
-                // Free tier: serve cached ISINs immediately, scrape the rest under
+                // Public tier: serve cached ISINs immediately, scrape the rest under
                 // the global concurrency cap and refresh the cache.
                 const uncached = [];
                 for (const token of tokens) {
@@ -657,7 +657,7 @@ io.on('connection', (socket) => {
                     socket.emit('price_update_progress', { isin, status: 'processing' });
                     // In local development, always re-scrape so changes to the
                     // scraping logic can be verified without waiting out the
-                    // free-tier cache TTL.
+                    // public-tier cache TTL.
                     const cached = isProduction ? getCached(source, isin) : null;
                     if (cached) {
                         socket.emit('price_update_item', { ...cached, cached: true });
@@ -669,22 +669,22 @@ io.on('connection', (socket) => {
                 if (uncached.length > 0) {
                     let slotAcquired = false;
                     try {
-                        // Yield to any active/pending premium before opening a browser.
-                        await waitWhilePremium();
-                        await acquireFreeSlot();
+                        // Yield to any active/pending private run before opening a browser.
+                        await waitWhilePrivate();
+                        await acquirePublicSlot();
                         slotAcquired = true;
                         await withBrowser(async (page) => {
                             for (const token of uncached) {
                                 const { isin, source = 'ETF' } = token;
-                                // Park between ISINs if a premium wants the machine.
-                                await waitWhilePremium();
-                                beginFreeWork();
+                                // Park between ISINs if a private run wants the machine.
+                                await waitWhilePrivate();
+                                beginPublicWork();
                                 try {
                                     const result = await scrapeToken(page, isin, source);
                                     if (result.success && isProduction) setCached(source, isin, result);
                                     socket.emit('price_update_item', result);
                                 } finally {
-                                    endFreeWork();
+                                    endPublicWork();
                                 }
                             }
                         });
@@ -694,7 +694,7 @@ io.on('connection', (socket) => {
                             socket.emit('price_update_item', { isin: token.isin, success: false, error: slotErr.message });
                         }
                     } finally {
-                        if (slotAcquired) releaseFreeSlot();
+                        if (slotAcquired) releasePublicSlot();
                     }
                 }
             }
@@ -710,12 +710,12 @@ io.on('connection', (socket) => {
 
     socket.on('request_history_update', async (payload) => {
         const tokens = payload?.tokens;
-        const premiumKey = payload?.premiumKey;
-        const isPremium = isValidPremiumKey(premiumKey);
+        const privateKey = payload?.privateKey;
+        const isPrivateTier = isValidPrivateTierKey(privateKey);
 
         // Same per-socket sliding window as price updates: history fetches hit
         // external services too, just via fetch instead of Puppeteer.
-        if (!isPremium) {
+        if (!isPrivateTier) {
             const now = Date.now();
             socketRequestTimestamps = socketRequestTimestamps.filter(t => now - t < SOCKET_RATE_WINDOW_MS);
             if (socketRequestTimestamps.length >= SOCKET_RATE_LIMIT) {
@@ -725,7 +725,7 @@ io.on('connection', (socket) => {
             socketRequestTimestamps.push(now);
         }
 
-        console.log(`Received socket history request for ${tokens?.length} assets from ${socket.id} (${isPremium ? 'PREMIUM' : 'free'})`);
+        console.log(`Received socket history request for ${tokens?.length} assets from ${socket.id} (${isPrivateTier ? 'PRIVATE' : 'public'})`);
 
         const validationError = validateTokens(tokens);
         if (validationError) {
@@ -734,8 +734,8 @@ io.on('connection', (socket) => {
         }
 
         try {
-            if (isPremium) {
-                await runExclusivePremium(async () => {
+            if (isPrivateTier) {
+                await runExclusivePrivate(async () => {
                     for (const token of tokens) {
                         socket.emit('history_update_progress', { isin: token.isin, status: 'processing' });
                         const result = await fetchHistoryForToken(token, { withBrowserFn: withBrowser });
@@ -744,7 +744,7 @@ io.on('connection', (socket) => {
                 });
             } else {
                 // Serve cached histories immediately, fetch the rest under the
-                // free-tier discipline (browser opened lazily, only for COMETA).
+                // public-tier discipline (browser opened lazily, only for COMETA).
                 const uncached = [];
                 for (const token of tokens) {
                     const { isin, source = 'ETF', beginDate = '' } = token;
@@ -760,19 +760,19 @@ io.on('connection', (socket) => {
                 if (uncached.length > 0) {
                     let slotAcquired = false;
                     try {
-                        await waitWhilePremium();
-                        await acquireFreeSlot();
+                        await waitWhilePrivate();
+                        await acquirePublicSlot();
                         slotAcquired = true;
                         for (const token of uncached) {
                             const { isin, source = 'ETF', beginDate = '' } = token;
-                            await waitWhilePremium();
-                            beginFreeWork();
+                            await waitWhilePrivate();
+                            beginPublicWork();
                             try {
                                 const result = await fetchHistoryForToken(token, { withBrowserFn: withBrowser });
                                 if (result.success && isProduction) setCached(`hist:${beginDate}:${source}`, isin, result);
                                 socket.emit('history_update_item', result);
                             } finally {
-                                endFreeWork();
+                                endPublicWork();
                             }
                         }
                     } catch (slotErr) {
@@ -780,7 +780,7 @@ io.on('connection', (socket) => {
                             socket.emit('history_update_item', { isin: token.isin, success: false, error: slotErr.message });
                         }
                     } finally {
-                        if (slotAcquired) releaseFreeSlot();
+                        if (slotAcquired) releasePublicSlot();
                     }
                 }
             }
@@ -800,21 +800,21 @@ io.on('connection', (socket) => {
 
 // --- API ROUTES ---
 app.post('/api/price', priceLimiter, async (req, res) => {
-    const { tokens, premiumKey } = req.body;
+    const { tokens, privateKey } = req.body;
 
     const validationError = validateTokens(tokens);
     if (validationError) {
         return res.status(400).json({ error: validationError });
     }
 
-    const isPremium = isValidPremiumKey(premiumKey);
-    console.log(`Received bulk price request for ${tokens.length} assets (HTTP, ${isPremium ? 'PREMIUM' : 'free'})`);
+    const isPrivateTier = isValidPrivateTierKey(privateKey);
+    console.log(`Received bulk price request for ${tokens.length} assets (HTTP, ${isPrivateTier ? 'PRIVATE' : 'public'})`);
 
     const results = [];
     try {
-        if (isPremium) {
-            // Premium: exclusive priority, holds all free scrapes until done.
-            await runExclusivePremium(() => withBrowser(async (page) => {
+        if (isPrivateTier) {
+            // Private tier: exclusive priority, holds all public scrapes until done.
+            await runExclusivePrivate(() => withBrowser(async (page) => {
                 for (const token of tokens) {
                     const { isin, source = 'ETF' } = token;
                     results.push(await scrapeToken(page, isin, source));
@@ -835,29 +835,29 @@ app.post('/api/price', priceLimiter, async (req, res) => {
             if (uncached.length > 0) {
                 let slotAcquired = false;
                 try {
-                    // Yield to any active/pending premium before opening a browser.
-                    await waitWhilePremium();
-                    await acquireFreeSlot();
+                    // Yield to any active/pending private run before opening a browser.
+                    await waitWhilePrivate();
+                    await acquirePublicSlot();
                     slotAcquired = true;
                     await withBrowser(async (page) => {
                         for (const token of uncached) {
                             const { isin, source = 'ETF' } = token;
-                            // Park between ISINs if a premium wants the machine.
-                            await waitWhilePremium();
-                            beginFreeWork();
+                            // Park between ISINs if a private run wants the machine.
+                            await waitWhilePrivate();
+                            beginPublicWork();
                             try {
                                 const result = await scrapeToken(page, isin, source);
                                 if (result.success) setCached(source, isin, result);
                                 results.push(result);
                             } finally {
-                                endFreeWork();
+                                endPublicWork();
                             }
                         }
                     });
                 } catch (slotErr) {
                     return res.status(503).json({ error: slotErr.message });
                 } finally {
-                    if (slotAcquired) releaseFreeSlot();
+                    if (slotAcquired) releasePublicSlot();
                 }
             }
         }
@@ -869,20 +869,20 @@ app.post('/api/price', priceLimiter, async (req, res) => {
 });
 
 app.post('/api/history', priceLimiter, async (req, res) => {
-    const { tokens, premiumKey } = req.body;
+    const { tokens, privateKey } = req.body;
 
     const validationError = validateTokens(tokens);
     if (validationError) {
         return res.status(400).json({ error: validationError });
     }
 
-    const isPremium = isValidPremiumKey(premiumKey);
-    console.log(`Received bulk history request for ${tokens.length} assets (HTTP, ${isPremium ? 'PREMIUM' : 'free'})`);
+    const isPrivateTier = isValidPrivateTierKey(privateKey);
+    console.log(`Received bulk history request for ${tokens.length} assets (HTTP, ${isPrivateTier ? 'PRIVATE' : 'public'})`);
 
     const results = [];
     try {
-        if (isPremium) {
-            await runExclusivePremium(async () => {
+        if (isPrivateTier) {
+            await runExclusivePrivate(async () => {
                 for (const token of tokens) {
                     results.push(await fetchHistoryForToken(token, { withBrowserFn: withBrowser }));
                 }
@@ -902,25 +902,25 @@ app.post('/api/history', priceLimiter, async (req, res) => {
             if (uncached.length > 0) {
                 let slotAcquired = false;
                 try {
-                    await waitWhilePremium();
-                    await acquireFreeSlot();
+                    await waitWhilePrivate();
+                    await acquirePublicSlot();
                     slotAcquired = true;
                     for (const token of uncached) {
                         const { isin, source = 'ETF', beginDate = '' } = token;
-                        await waitWhilePremium();
-                        beginFreeWork();
+                        await waitWhilePrivate();
+                        beginPublicWork();
                         try {
                             const result = await fetchHistoryForToken(token, { withBrowserFn: withBrowser });
                             if (result.success) setCached(`hist:${beginDate}:${source}`, isin, result);
                             results.push(result);
                         } finally {
-                            endFreeWork();
+                            endPublicWork();
                         }
                     }
                 } catch (slotErr) {
                     return res.status(503).json({ error: slotErr.message });
                 } finally {
-                    if (slotAcquired) releaseFreeSlot();
+                    if (slotAcquired) releasePublicSlot();
                 }
             }
         }
