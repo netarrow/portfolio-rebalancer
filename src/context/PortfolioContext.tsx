@@ -231,16 +231,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // (benefits from SLE encryption when enabled) and intentionally excluded
     // from the Azure sync payload. The matching valid keys live in the server's
     // Azure env config; the client just forwards whatever the user typed.
-    const [privateTierKey, setPrivateTierKey] = useLocalStorage<string>('portfolio_private_tier_key', '');
-    // One-shot migration from the key's previous storage name, so an already
-    // configured key survives the public/private tier renaming.
-    const [legacyTierKey, setLegacyTierKey] = useLocalStorage<string>('portfolio_premium_price_key', '');
-    useEffect(() => {
-        if (!privateTierKey && legacyTierKey) {
-            setPrivateTierKey(legacyTierKey);
-            setLegacyTierKey('');
-        }
-    }, [privateTierKey, legacyTierKey, setPrivateTierKey, setLegacyTierKey]);
+    // The storage key keeps its original name so an already configured key
+    // survives the public/private tier renaming.
+    const [privateTierKey, setPrivateTierKey] = useLocalStorage<string>('portfolio_premium_price_key', '');
 
     // YNAB integration — apiKey + snapshot categorie SOLO LOCALI (non sincronizzati su Azure).
     // I mapping sono invece inclusi nel SyncPayload per propagarsi fra device.

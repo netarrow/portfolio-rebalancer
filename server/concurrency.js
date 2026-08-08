@@ -15,8 +15,9 @@
 //            with the rest. Private therefore never shares the machine with
 //            public traffic and never overlaps another private run.
 
-const MAX_PUBLIC_CONCURRENCY = Number(process.env.PUBLIC_PRICE_CONCURRENCY || process.env.FREE_PRICE_CONCURRENCY || 2);
-const MAX_PUBLIC_QUEUE = Number(process.env.PUBLIC_PRICE_QUEUE || process.env.FREE_PRICE_QUEUE || 30);
+// Both env vars keep their original names for deployment compatibility.
+const MAX_PUBLIC_CONCURRENCY = Number(process.env.FREE_PRICE_CONCURRENCY || 2);
+const MAX_PUBLIC_QUEUE = Number(process.env.FREE_PRICE_QUEUE || 30);
 
 // --- public-tier concurrency cap --------------------------------------------
 let publicSlots = 0;

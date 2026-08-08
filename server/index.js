@@ -84,18 +84,19 @@ const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/
 
 // --- PRIVATE TIER ACCESS ----------------------------------------------------
 // Valid private-tier keys live ONLY in the Azure App Service configuration
-// (env var PRIVATE_TIER_KEYS, comma-separated). They must never be committed to
-// the repo or exposed to the client. A request that presents a valid key
-// bypasses the public-tier concurrency cap and the in-memory cache; an absent
-// or unknown key is treated as "public tier".
+// (env var PREMIUM_KEYS, comma-separated — the variable keeps its original name
+// so the existing Azure configuration keeps working). They must never be
+// committed to the repo or exposed to the client. A request that presents a
+// valid key bypasses the public-tier concurrency cap and the in-memory cache;
+// an absent or unknown key is treated as "public tier".
 const PRIVATE_TIER_KEYS = new Set(
-    (process.env.PRIVATE_TIER_KEYS || process.env.PREMIUM_KEYS || '')
+    (process.env.PREMIUM_KEYS || '')
         .split(',')
         .map((k) => k.trim())
         .filter(Boolean)
 );
 if (PRIVATE_TIER_KEYS.size === 0) {
-    console.warn('[private-tier] No PRIVATE_TIER_KEYS configured — every request runs on the rate-limited public tier.');
+    console.warn('[private-tier] No PREMIUM_KEYS configured — every request runs on the rate-limited public tier.');
 }
 
 function isValidPrivateTierKey(key) {
@@ -106,8 +107,9 @@ function isValidPrivateTierKey(key) {
 // Keyless requests for an ISIN are served from this in-memory cache for up to a
 // day, so repeated public-tier polling returns the previously scraped (possibly
 // stale) value without ever launching Puppeteer. Entries auto-expire via a
-// timer; private-tier requests neither read nor write this cache.
-const PUBLIC_CACHE_TTL_MS = Number(process.env.PUBLIC_PRICE_CACHE_TTL_MS || process.env.FREE_PRICE_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
+// timer; private-tier requests neither read nor write this cache. The env var
+// keeps its original name for deployment compatibility.
+const PUBLIC_CACHE_TTL_MS = Number(process.env.FREE_PRICE_CACHE_TTL_MS || 24 * 60 * 60 * 1000);
 const priceCache = new Map(); // `${source}:${isin}` -> { result, expiresAt, timer }
 
 function cacheKey(source, isin) {

@@ -324,7 +324,7 @@ The control room for data, sync, price refresh and integrations.
 
 ![Settings — private tier & encryption](screenshots/settings_private_tier.png)
 
-- **Private Update Price** — paste a private-tier key to unlock unlimited real-time price updates; without it, *Update Price* uses the throttled, cached public tier. The key is not something you buy: it is configured by whoever runs the instance (server env var `PRIVATE_TIER_KEYS`) to reserve the scraper for their own use. It is stored only in this browser and is never uploaded with the Azure backup.
+- **Private Update Price** — paste a private-tier key to unlock unlimited real-time price updates; without it, *Update Price* uses the throttled, cached public tier. The key is not something you buy: it is configured by whoever runs the instance (server env var `PREMIUM_KEYS`, kept under its original name for deployment compatibility) to reserve the scraper for their own use. It is stored only in this browser and is never uploaded with the Azure backup.
 - **Local data encryption** — optional second-layer AES encryption for everything stored in this browser (transactions, portfolios, YNAB key, Azure passphrase…). When enabled, the app asks for your passphrase on every load. **If you forget it and have no Azure backup, the data is unrecoverable.**
 
 ![Settings — price history](screenshots/settings_price_history.png)
