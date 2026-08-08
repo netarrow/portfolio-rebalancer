@@ -51,9 +51,9 @@ interface PortfolioContextType {
     priceHistory: PriceHistoryMap;
     refreshHistory: () => Promise<void>;
     importPriceHistory: (history: PriceHistoryMap, mode: 'merge' | 'replace') => boolean;
-    // Premium "Update Price" unlock key (local-only, never synced to Azure).
-    premiumPriceKey: string;
-    setPremiumPriceKey: (key: string) => void;
+    // Private-tier "Update Price" unlock key (local-only, never synced to Azure).
+    privateTierKey: string;
+    setPrivateTierKey: (key: string) => void;
     resetPortfolio: () => void;
     loadMockData: () => void;
     marketData: Record<string, { price: number, lastUpdated: string, spreadPercent?: number | null, volatility?: number | null, indexationCoefficient?: number | null }>;
@@ -227,11 +227,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
     const [azureSyncing, setAzureSyncing] = useState(false);
 
-    // Premium "Update Price" key — entered by the user, stored locally only
+    // Private-tier "Update Price" key — entered by the user, stored locally only
     // (benefits from SLE encryption when enabled) and intentionally excluded
     // from the Azure sync payload. The matching valid keys live in the server's
     // Azure env config; the client just forwards whatever the user typed.
-    const [premiumPriceKey, setPremiumPriceKey] = useLocalStorage<string>('portfolio_premium_price_key', '');
+    // The storage key keeps its original name so an already configured key
+    // survives the public/private tier renaming.
+    const [privateTierKey, setPrivateTierKey] = useLocalStorage<string>('portfolio_premium_price_key', '');
 
     // YNAB integration — apiKey + snapshot categorie SOLO LOCALI (non sincronizzati su Azure).
     // I mapping sono invece inclusi nel SyncPayload per propagarsi fra device.
@@ -1262,7 +1264,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         beginDate?: string
     ): Promise<{ ok: boolean; error?: string }> => {
         try {
-            const results = await fetchAssetHistory([{ isin: ticker, source, beginDate }], premiumPriceKey.trim() || undefined);
+            const results = await fetchAssetHistory([{ isin: ticker, source, beginDate }], privateTierKey.trim() || undefined);
             const result = results[0];
             if (!result || !result.success || !result.data) {
                 return { ok: false, error: result?.error || 'No history available' };
@@ -1405,16 +1407,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return;
         }
 
-        const trimmedKey = premiumPriceKey.trim();
+        const trimmedKey = privateTierKey.trim();
 
-        // Without a Premium Key the update runs on the limited free tier
+        // Without a private-tier key the update runs on the limited public tier
         // (shared concurrency cap + up-to-one-day cached prices). Warn first.
         if (!trimmedKey) {
             const confirm = await Swal.fire({
-                title: 'Limited free update',
-                html: `<p style="text-align:left;font-size:0.9rem">You don't have a <b>Premium Update Price</b> key configured.</p>
-                       <p style="text-align:left;font-size:0.9rem;color:#b45309">This feature is strongly limited without it: prices are throttled and served from a shared cache, so the data you get back may be <b>delayed by up to a day</b>.</p>
-                       <p style="text-align:left;font-size:0.9rem">Add a Premium Key in Settings for unlimited, real-time updates.</p>`,
+                title: 'Limited public-tier update',
+                html: `<p style="text-align:left;font-size:0.9rem">You don't have a <b>Private Update Price</b> key configured.</p>
+                       <p style="text-align:left;font-size:0.9rem;color:#b45309">This feature is strongly limited on the public tier: prices are throttled and served from a shared cache, so the data you get back may be <b>delayed by up to a day</b>.</p>
+                       <p style="text-align:left;font-size:0.9rem">Add a private-tier key in Settings for unlimited, real-time updates.</p>`,
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonText: 'Update anyway',
@@ -1450,7 +1452,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         // Emit socket event
         if (socket) {
-            socket.emit('request_price_update', { tokens, premiumKey: trimmedKey || undefined });
+            socket.emit('request_price_update', { tokens, privateKey: trimmedKey || undefined });
         } else {
             console.error('Socket not connected');
             setPriceUpdateItems(prev => prev.map(t => ({ ...t, status: 'error', error: 'Socket disconnected' })));
@@ -1466,12 +1468,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return;
         }
 
-        const trimmedKey = premiumPriceKey.trim();
+        const trimmedKey = privateTierKey.trim();
         if (!trimmedKey) {
             const confirm = await Swal.fire({
-                title: 'Limited free update',
-                html: `<p style="text-align:left;font-size:0.9rem">You don't have a <b>Premium Update Price</b> key configured.</p>
-                       <p style="text-align:left;font-size:0.9rem;color:#b45309">Without it history requests are throttled and served from a shared cache, so the data may be <b>delayed by up to a day</b>.</p>`,
+                title: 'Limited public-tier update',
+                html: `<p style="text-align:left;font-size:0.9rem">You don't have a <b>Private Update Price</b> key configured.</p>
+                       <p style="text-align:left;font-size:0.9rem;color:#b45309">On the public tier history requests are throttled and served from a shared cache, so the data may be <b>delayed by up to a day</b>.</p>`,
                 icon: 'warning',
                 showCancelButton: true,
                 confirmButtonText: 'Update anyway',
@@ -1507,7 +1509,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsPriceModalOpen(true);
 
         if (socket) {
-            socket.emit('request_history_update', { tokens, premiumKey: trimmedKey || undefined });
+            socket.emit('request_history_update', { tokens, privateKey: trimmedKey || undefined });
         } else {
             console.error('Socket not connected');
             setPriceUpdateItems(prev => prev.map(t => ({ ...t, status: 'error', error: 'Socket disconnected' })));
@@ -3050,8 +3052,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         priceHistory,
         refreshHistory,
         importPriceHistory,
-        premiumPriceKey,
-        setPremiumPriceKey,
+        privateTierKey,
+        setPrivateTierKey,
         resetPortfolio,
         loadMockData,
         marketData: effectiveMarketData,

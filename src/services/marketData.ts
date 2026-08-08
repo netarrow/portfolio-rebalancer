@@ -25,9 +25,9 @@ export interface PriceResult {
     error?: string;
 }
 
-export const fetchAssetPrices = async (tokens: PriceRequestToken[], premiumKey?: string): Promise<PriceResult[]> => {
+export const fetchAssetPrices = async (tokens: PriceRequestToken[], privateKey?: string): Promise<PriceResult[]> => {
     try {
-        const response = await axios.post('/api/price', { tokens, premiumKey: premiumKey?.trim() || undefined });
+        const response = await axios.post('/api/price', { tokens, privateKey: privateKey?.trim() || undefined });
         return response.data.results;
     } catch (error: any) {
         console.error('Error fetching bulk prices:', error);
@@ -55,9 +55,9 @@ export interface HistoryResult {
 }
 
 /** HTTP (non-socket) targeted history fetch — used for on-demand PAC price backfill. */
-export const fetchAssetHistory = async (tokens: HistoryRequestToken[], premiumKey?: string): Promise<HistoryResult[]> => {
+export const fetchAssetHistory = async (tokens: HistoryRequestToken[], privateKey?: string): Promise<HistoryResult[]> => {
     try {
-        const response = await axios.post('/api/history', { tokens, premiumKey: premiumKey?.trim() || undefined });
+        const response = await axios.post('/api/history', { tokens, privateKey: privateKey?.trim() || undefined });
         return response.data.results;
     } catch (error: any) {
         console.error('Error fetching bulk history:', error);

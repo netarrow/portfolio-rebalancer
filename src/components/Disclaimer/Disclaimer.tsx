@@ -56,6 +56,10 @@ const Disclaimer: React.FC = () => {
                     This application is a <strong>Portfolio Management Experiment</strong> created for <strong>personal, non-commercial use</strong>.
                 </p>
                 <p style={{ lineHeight: '1.8', marginBottom: '1rem' }}>
+                    It is a <strong>personal utility tool, free of charge</strong>: nothing in it is sold, there is no paid plan, no subscription and no commercial offering.
+                    The <strong>public</strong> and <strong>private</strong> price-update tiers are only a load-management setting on the shared price scraper — the private-tier key is configured by whoever runs the instance, not purchased.
+                </p>
+                <p style={{ lineHeight: '1.8', marginBottom: '1rem' }}>
                     It is provided <strong>"as-is"</strong> without any warranty, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement.
                 </p>
                 <p style={{ lineHeight: '1.8', fontWeight: 500 }}>
