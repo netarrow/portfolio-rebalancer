@@ -291,14 +291,12 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'Stats');
   await sleep(700);
   await scrollAndShoot(page, 'stats');
-  // Try to switch tabs/sections if present (Allocations / Macro / Total)
+  // Switch through the stats tabs
   const statsTabs = await page.evaluate(() =>
-    [...document.querySelectorAll('button')]
-      .map((b) => b.textContent.trim())
-      .filter((t) => /allocation|macro|portfolio|total/i.test(t))
+    [...document.querySelectorAll('.stats-tab')].map((b) => b.textContent.trim())
   );
   console.log('  stats tabs found:', statsTabs);
-  for (const label of ['Allocations', 'Macro', 'Total Portfolios']) {
+  for (const label of ['Overview', 'By Portfolio', 'By Broker']) {
     const clicked = await page.evaluate((label) => {
       const btn = [...document.querySelectorAll('button,a')].find(
         (b) => b.textContent.trim().toLowerCase() === label.toLowerCase()

@@ -11,6 +11,7 @@ import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate,
 import { CASH_TICKER_PREFIX } from '../../types';
 import ConcretizeModal from '../modals/ConcretizeModal';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
+import { buildPortfolioTree } from '../../utils/portfolioGroups';
 import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
 import { CashFlowModal } from './CashFlowModal';
@@ -560,31 +561,9 @@ const AllocationOverview: React.FC = () => {
 
     const targetGoalAllocs = storedGoalModeTargets;
 
-    // Split portfolios into groups (parent + children) and standalones
-    const { groups, standalones } = useMemo(() => {
-        const parentPortfolios = portfolios.filter(
-            p => !p.parentId && portfolios.some(c => c.parentId === p.id)
-        ).sort((a, b) => a.order - b.order);
-        // Children whose parent exists
-        const validChildren = portfolios.filter(
-            p => p.parentId && portfolios.some(par => par.id === p.parentId)
-        );
-        // Orphan children (parentId set but parent doesn't exist) → render standalone
-        const orphans = portfolios.filter(
-            p => p.parentId && !portfolios.some(par => par.id === p.parentId)
-        );
-        // Portfolios with no parent and no children
-        const trueStandalones = portfolios.filter(
-            p => !p.parentId && !portfolios.some(c => c.parentId === p.id)
-        );
-
-        const groups = parentPortfolios.map(parent => ({
-            parent,
-            children: validChildren.filter(c => c.parentId === parent.id).sort((a, b) => a.order - b.order),
-        }));
-
-        return { groups, standalones: [...trueStandalones, ...orphans].sort((a, b) => a.order - b.order) };
-    }, [portfolios]);
+    // Split portfolios into groups (parent + children) and standalones. Shared
+    // with the Stats page, so both views resolve the hierarchy identically.
+    const { groups, standalones } = useMemo(() => buildPortfolioTree(portfolios), [portfolios]);
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>

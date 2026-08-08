@@ -130,6 +130,76 @@
     align-self: flex-start;
 }
 
+/* Stats — parent/child group rows.
+   Mirrors the Allocations view's group header, but with its own class names:
+   those rules live in a <style> block inside PortfolioGroupSection and are only
+   in the DOM while that view is mounted. */
+.stats-group-tags {
+    display: flex;
+    gap: var(--space-1);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-2);
+}
+
+.stats-group-tag {
+    font-size: 0.78rem;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-full);
+    padding: 2px 8px;
+    color: var(--text-secondary);
+}
+
+.stats-group-total {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-left: auto;
+    white-space: nowrap;
+}
+
+.stats-group-bar {
+    display: flex;
+    height: 8px;
+    border-radius: var(--radius-full);
+    overflow: hidden;
+    gap: 2px;
+    background: var(--bg-surface);
+}
+
+.stats-group-bar-segment {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+.stats-group-legend {
+    display: flex;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin-top: var(--space-2);
+}
+
+.stats-group-legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.stats-group-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.stats-group-legend-pct {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
 .custom-chart-tooltip {
     background-color: var(--bg-surface);
     border: 1px solid var(--border-color);
