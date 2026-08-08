@@ -809,15 +809,15 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'Settings');
   await sleep(700);
   await scrollAndShoot(page, 'settings');
-  // Premium Update Price card (free tier vs unlocked)
-  const premiumFound = await page.evaluate(() => {
-    const h = [...document.querySelectorAll('h3')].find((e) => /premium update price/i.test(e.textContent));
+  // Private Update Price card (public tier vs unlocked)
+  const privateTierFound = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h3')].find((e) => /private update price/i.test(e.textContent));
     if (h) { h.scrollIntoView({ block: 'center' }); return true; }
     return false;
   });
-  if (premiumFound) {
+  if (privateTierFound) {
     await sleep(400);
-    await shot(page, 'settings_premium');
+    await shot(page, 'settings_private_tier');
   }
   // Price History backup / Update History section
   const historyFound = await page.evaluate(() => {
@@ -915,19 +915,19 @@ async function scrollAndShoot(page, base) {
   });
   if (priceClicked) {
     await sleep(1200);
-    // Free tier: a "Limited free update" warning appears first — document it,
-    // then confirm to reach the live per-ISIN progress modal.
-    const freeTierWarning = await page.evaluate(() =>
+    // Public tier: a "Limited public-tier update" warning appears first —
+    // document it, then confirm to reach the live per-ISIN progress modal.
+    const publicTierWarning = await page.evaluate(() =>
       !!document.querySelector('.swal2-confirm')
     );
-    if (freeTierWarning) {
-      await shot(page, 'price_update_free_tier');
+    if (publicTierWarning) {
+      await shot(page, 'price_update_public_tier');
       await page.evaluate(() => document.querySelector('.swal2-confirm')?.click());
       await sleep(1800);
     }
     await shot(page, 'updating_prices');
     // Wait for the batch to finish and capture the completed state with the
-    // free-tier "cached · may be delayed" flags + spread/volatility extras.
+    // public-tier "cached · may be delayed" flags + spread/volatility extras.
     for (let i = 0; i < 30; i++) {
       const done = await page.evaluate(() =>
         [...document.querySelectorAll('button')].some((b) => b.textContent.trim() === 'Close')

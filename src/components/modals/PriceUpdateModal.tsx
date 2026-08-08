@@ -65,7 +65,7 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete,
                                     )}
                                     {item.error && <span style={{ fontSize: '0.8rem', color: 'var(--color-danger)' }}>{item.error}</span>}
                                     {item.cached && item.status === 'success' && (
-                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }} title="Served from the free-tier cache — may be up to a day old">
+                                        <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }} title="Served from the public-tier cache — may be up to a day old">
                                             cached · may be delayed
                                         </span>
                                     )}
