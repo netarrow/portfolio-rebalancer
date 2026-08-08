@@ -6,11 +6,13 @@ It answers the questions a buy-and-hold investor actually asks: *How is my net w
 
 Everything runs locally: a single Express server serves the API and the built React frontend, and all your data lives in your browser. Prices are refreshed on demand from public Italian/European market sources.
 
+**It is free and non-commercial.** This is a personal utility tool, built and shared **free of charge** for personal, non-commercial use. Nothing here is sold, no plan is paid, there is no subscription, no account and no telemetry — the *public* and *private* tiers below are only a load-management setting on the shared price scraper, not a price list.
+
 ---
 
 ## What it is — and what it is *not* (constraints)
 
-This is a **personal tool with deliberate simplifications**. Read these before using it:
+This is a **free, non-commercial personal utility tool with deliberate simplifications**. Read these before using it:
 
 | Constraint | Detail |
 |---|---|
@@ -18,7 +20,7 @@ This is a **personal tool with deliberate simplifications**. Read these before u
 | **Local-first storage** | All portfolio data lives in your browser's `localStorage`. There is **no account, no server-side database**. Clearing the browser, switching device or using incognito loses the data unless you back it up. |
 | **Backups are your job** | Export a JSON backup yourself, or enable the optional encrypted Azure Blob sync. Price history has its own separate backup. |
 | **Prices via scraping, not official APIs** | Quotes come from a small set of fixed public sources, not a licensed market-data feed: **JustETF** (standard ETFs), **Borsa Italiana / MOT** (Italian BTPs & bonds), **CPRAM** (some active funds), **COMETA** (the pension fund's own NAV page) and **FT Markets** (anything the others don't list, e.g. Luxembourg-domiciled funds). No other tickers are supported out of the box. |
-| **Free vs Premium price tier** | Without a Premium key, *Update Price* runs on a **throttled free tier** (server-wide concurrency cap, prices cached up to ~24h). A Premium key unlocks unlimited, real-time updates. |
+| **Public vs private price tier** | Without a private-tier key, *Update Price* runs on a **throttled public tier** (server-wide concurrency cap, prices cached up to ~24h). A private-tier key unlocks unlimited, real-time updates. Neither tier is sold: the key simply reserves the scraper for the instance owner. |
 | **Asset universe** | Designed around **ETFs and bonds**. No crypto, options or derivatives modelling. |
 | **Not financial advice** | Returns, forecasts and rebalancing suggestions are mechanical calculations on your own inputs. They are not advice. |
 
@@ -320,9 +322,9 @@ Sync a chosen "Investment Goals" YNAB category group and fund each goal from one
 
 The control room for data, sync, price refresh and integrations.
 
-![Settings — premium & encryption](screenshots/settings_premium.png)
+![Settings — private tier & encryption](screenshots/settings_private_tier.png)
 
-- **Premium Update Price** — paste a Premium key to unlock unlimited real-time price updates; without it, *Update Price* uses the throttled, cached free tier. The key is stored only in this browser and is never uploaded with the Azure backup.
+- **Private Update Price** — paste a private-tier key to unlock unlimited real-time price updates; without it, *Update Price* uses the throttled, cached public tier. The key is not something you buy: it is configured by whoever runs the instance (server env var `PRIVATE_TIER_KEYS`) to reserve the scraper for their own use. It is stored only in this browser and is never uploaded with the Azure backup.
 - **Local data encryption** — optional second-layer AES encryption for everything stored in this browser (transactions, portfolios, YNAB key, Azure passphrase…). When enabled, the app asks for your passphrase on every load. **If you forget it and have no Azure backup, the data is unrecoverable.**
 
 ![Settings — price history](screenshots/settings_price_history.png)
@@ -351,14 +353,14 @@ The saved lists are **broker-aware**: they pre-arm the free-buy toggle in the Da
 
 Real-time feedback during the multi-source refresh, over WebSockets.
 
-Without a Premium key, the update starts with the **free-tier notice** (throttled, shared-cache prices):
+Without a private-tier key, the update starts with the **public-tier notice** (throttled, shared-cache prices):
 
-![Free tier notice](screenshots/price_update_free_tier.png)
+![Public tier notice](screenshots/price_update_public_tier.png)
 
 ![Updating prices](screenshots/updating_prices.png)
 
 - Per-ISIN progress with success / error states; one failing asset never aborts the batch.
-- Where the source exposes it, the result also shows **bid/ask spread %** and **volatility %**; free-tier results are flagged *cached · may be delayed*:
+- Where the source exposes it, the result also shows **bid/ask spread %** and **volatility %**; public-tier results are flagged *cached · may be delayed*:
 
 ![Prices updated](screenshots/updating_prices_done.png)
 
@@ -388,9 +390,9 @@ This reflects how the app actually handles data today.
 
 - **Optional local encryption.** You may enable second-layer AES encryption so that everything above is encrypted at rest in the browser, gated by a passphrase requested on every load. The passphrase is never transmitted; if lost, encrypted local data cannot be recovered without an Azure backup.
 
-- **Optional cloud sync (Azure).** If you enable Azure Blob sync, the data is encrypted with **AES-256-GCM in the browser** using a passphrase you choose, and only the resulting **opaque ciphertext blob** is uploaded to your own Azure container via a SAS URL. The passphrase is never sent to Azure. **YNAB credentials and the Premium price key are intentionally excluded from the Azure payload**; price history is backed up separately.
+- **Optional cloud sync (Azure).** If you enable Azure Blob sync, the data is encrypted with **AES-256-GCM in the browser** using a passphrase you choose, and only the resulting **opaque ciphertext blob** is uploaded to your own Azure container via a SAS URL. The passphrase is never sent to Azure. **YNAB credentials and the private-tier price key are intentionally excluded from the Azure payload**; price history is backed up separately.
 
-- **Data sent to price sources.** Price lookups send **only the ISIN and the chosen source** to the `/api/price` endpoint, which fetches the quote from the relevant public page (JustETF, Borsa Italiana/MOT, CPRAM, COMETA, FT Markets). No personal identifiers, balances or portfolio data are transmitted. On the free tier, responses may be served from a short-lived server-side cache.
+- **Data sent to price sources.** Price lookups send **only the ISIN and the chosen source** to the `/api/price` endpoint, which fetches the quote from the relevant public page (JustETF, Borsa Italiana/MOT, CPRAM, COMETA, FT Markets). No personal identifiers, balances or portfolio data are transmitted. On the public tier, responses may be served from a short-lived server-side cache.
 
 - **Data sent to YNAB.** YNAB calls go **directly from your browser to YNAB** using your personal access token. The token is stored locally and is never synced to Azure.
 

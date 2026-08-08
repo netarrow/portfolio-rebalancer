@@ -2,129 +2,129 @@
 //
 // Two tiers share one server-wide scheduler:
 //
-//  • FREE  — keyless traffic. Capped to MAX_FREE_CONCURRENCY simultaneous
+//  • PUBLIC  — keyless traffic. Capped to MAX_PUBLIC_CONCURRENCY simultaneous
 //            scrapes (with a bounded wait queue). This is the overload guard:
 //            even if a client opens many sockets to dodge the per-socket rate
-//            limit, only this many free Puppeteer browsers ever run at once.
+//            limit, only this many public Puppeteer browsers ever run at once.
 //
-//  • PREMIUM — keyed traffic. Runs with EXCLUSIVE priority: at most one premium
-//            scrape executes at a time, and while a premium scrape is running
-//            (or waiting to run) every free scrape is held. Free requests yield
-//            at ISIN boundaries — an in-flight free scrape finishes its current
-//            ISIN, then parks until the premium work is done and resumes with
-//            the rest. Premium therefore never shares the machine with free
-//            traffic and never overlaps another premium.
+//  • PRIVATE — keyed traffic. Runs with EXCLUSIVE priority: at most one private
+//            scrape executes at a time, and while a private scrape is running
+//            (or waiting to run) every public scrape is held. Public requests
+//            yield at ISIN boundaries — an in-flight public scrape finishes its
+//            current ISIN, then parks until the private work is done and resumes
+//            with the rest. Private therefore never shares the machine with
+//            public traffic and never overlaps another private run.
 
-const MAX_FREE_CONCURRENCY = Number(process.env.FREE_PRICE_CONCURRENCY || 2);
-const MAX_FREE_QUEUE = Number(process.env.FREE_PRICE_QUEUE || 30);
+const MAX_PUBLIC_CONCURRENCY = Number(process.env.PUBLIC_PRICE_CONCURRENCY || process.env.FREE_PRICE_CONCURRENCY || 2);
+const MAX_PUBLIC_QUEUE = Number(process.env.PUBLIC_PRICE_QUEUE || process.env.FREE_PRICE_QUEUE || 30);
 
-// --- free-tier concurrency cap ---------------------------------------------
-let freeSlots = 0;
-const freeSlotQueue = [];
+// --- public-tier concurrency cap --------------------------------------------
+let publicSlots = 0;
+const publicSlotQueue = [];
 
-export function acquireFreeSlot() {
+export function acquirePublicSlot() {
     return new Promise((resolve, reject) => {
-        if (freeSlots < MAX_FREE_CONCURRENCY) {
-            freeSlots++;
+        if (publicSlots < MAX_PUBLIC_CONCURRENCY) {
+            publicSlots++;
             return resolve();
         }
-        if (freeSlotQueue.length >= MAX_FREE_QUEUE) {
-            return reject(new Error('Server busy with free-tier requests, please retry in a moment.'));
+        if (publicSlotQueue.length >= MAX_PUBLIC_QUEUE) {
+            return reject(new Error('Server busy with public-tier requests, please retry in a moment.'));
         }
-        freeSlotQueue.push(resolve);
+        publicSlotQueue.push(resolve);
     });
 }
 
-export function releaseFreeSlot() {
-    const next = freeSlotQueue.shift();
+export function releasePublicSlot() {
+    const next = publicSlotQueue.shift();
     if (next) {
-        // Hand the slot straight to the next waiter (freeSlots stays the same).
+        // Hand the slot straight to the next waiter (publicSlots stays the same).
         next();
     } else {
-        freeSlots = Math.max(0, freeSlots - 1);
+        publicSlots = Math.max(0, publicSlots - 1);
     }
 }
 
-// --- premium exclusivity gate ----------------------------------------------
-let premiumActive = false;       // a premium scrape is executing right now
-let premiumPending = 0;          // premium scrapes waiting to execute
-let premiumChainTail = Promise.resolve(); // serializes premium runs (one at a time)
+// --- private-tier exclusivity gate ------------------------------------------
+let privateActive = false;       // a private scrape is executing right now
+let privatePending = 0;          // private scrapes waiting to execute
+let privateChainTail = Promise.resolve(); // serializes private runs (one at a time)
 
-let freeRunning = 0;             // free scrapes touching an ISIN at this instant
-const freeGateWaiters = [];      // free requests parked until premium clears
-const freeDrainWaiters = [];     // premium runs waiting for freeRunning to hit 0
+let publicRunning = 0;           // public scrapes touching an ISIN at this instant
+const publicGateWaiters = [];    // public requests parked until private clears
+const publicDrainWaiters = [];   // private runs waiting for publicRunning to hit 0
 
-function premiumBlocking() {
-    return premiumActive || premiumPending > 0;
+function privateBlocking() {
+    return privateActive || privatePending > 0;
 }
 
-// Called by free requests before opening a browser and again before each ISIN.
-// Resolves immediately when no premium is active/pending, otherwise parks the
-// caller until the premium work clears.
-export function waitWhilePremium() {
-    if (!premiumBlocking()) return Promise.resolve();
-    return new Promise((resolve) => freeGateWaiters.push(resolve));
+// Called by public requests before opening a browser and again before each ISIN.
+// Resolves immediately when no private run is active/pending, otherwise parks
+// the caller until the private work clears.
+export function waitWhilePrivate() {
+    if (!privateBlocking()) return Promise.resolve();
+    return new Promise((resolve) => publicGateWaiters.push(resolve));
 }
 
-function wakeFreeWaiters() {
-    while (freeGateWaiters.length) freeGateWaiters.shift()();
+function wakePublicWaiters() {
+    while (publicGateWaiters.length) publicGateWaiters.shift()();
 }
 
-// Bracket the actual scrape of a single free ISIN, so a waiting premium can
-// tell when all in-flight free work has yielded.
-export function beginFreeWork() {
-    freeRunning++;
+// Bracket the actual scrape of a single public ISIN, so a waiting private run
+// can tell when all in-flight public work has yielded.
+export function beginPublicWork() {
+    publicRunning++;
 }
 
-export function endFreeWork() {
-    freeRunning = Math.max(0, freeRunning - 1);
-    if (freeRunning === 0) {
-        while (freeDrainWaiters.length) freeDrainWaiters.shift()();
+export function endPublicWork() {
+    publicRunning = Math.max(0, publicRunning - 1);
+    if (publicRunning === 0) {
+        while (publicDrainWaiters.length) publicDrainWaiters.shift()();
     }
 }
 
-function waitForFreeDrain() {
-    if (freeRunning === 0) return Promise.resolve();
-    return new Promise((resolve) => freeDrainWaiters.push(resolve));
+function waitForPublicDrain() {
+    if (publicRunning === 0) return Promise.resolve();
+    return new Promise((resolve) => publicDrainWaiters.push(resolve));
 }
 
-// Run `task` with exclusive premium priority. As soon as this is called, new
-// free scrapes are blocked; we then wait for any in-flight free ISIN to finish,
-// run the task alone, and finally release — resuming the next premium (if any)
-// or the parked free requests.
-export async function runExclusivePremium(task) {
-    premiumPending++;
+// Run `task` with exclusive private-tier priority. As soon as this is called,
+// new public scrapes are blocked; we then wait for any in-flight public ISIN to
+// finish, run the task alone, and finally release — resuming the next private
+// run (if any) or the parked public requests.
+export async function runExclusivePrivate(task) {
+    privatePending++;
 
-    // Serialize against other premium runs: take our place in the chain.
-    const previous = premiumChainTail;
+    // Serialize against other private runs: take our place in the chain.
+    const previous = privateChainTail;
     let releaseChain;
-    premiumChainTail = new Promise((r) => (releaseChain = r));
+    privateChainTail = new Promise((r) => (releaseChain = r));
     await previous;
 
-    premiumActive = true;
-    premiumPending--;
+    privateActive = true;
+    privatePending--;
 
-    // Let any free ISIN currently mid-scrape finish, then we own the machine.
-    await waitForFreeDrain();
+    // Let any public ISIN currently mid-scrape finish, then we own the machine.
+    await waitForPublicDrain();
 
     try {
         return await task();
     } finally {
-        premiumActive = false;
+        privateActive = false;
         releaseChain();
-        // Only release the free traffic when no premium remains queued/active.
-        if (!premiumBlocking()) wakeFreeWaiters();
+        // Only release the public traffic when no private run remains queued/active.
+        if (!privateBlocking()) wakePublicWaiters();
     }
 }
 
 // Inspection hook for tests.
 export function _stats() {
     return {
-        freeSlots,
-        freeSlotQueue: freeSlotQueue.length,
-        freeRunning,
-        premiumActive,
-        premiumPending,
-        freeGateWaiters: freeGateWaiters.length,
+        publicSlots,
+        publicSlotQueue: publicSlotQueue.length,
+        publicRunning,
+        privateActive,
+        privatePending,
+        publicGateWaiters: publicGateWaiters.length,
     };
 }
