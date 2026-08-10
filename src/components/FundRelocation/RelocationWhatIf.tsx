@@ -22,12 +22,20 @@ interface Row {
     hint?: string;
 }
 
+/**
+ * Before / after / change.
+ *
+ * Four columns fit a desktop table and nothing else, so phones get the same
+ * three numbers stacked as "before → after" with the delta on its own line —
+ * readable at 390px without the horizontal scroll that would hide the change,
+ * which is the only column anyone came for.
+ */
 const CompareTable: React.FC<{ title: string; rows: Row[]; format?: (v: number) => string; deltaFormat?: (v: number) => string }> = ({
     title, rows, format = eur0, deltaFormat = signedEur,
 }) => (
     <div className="reloc-card">
         <h3 className="reloc-section-title">{title}</h3>
-        <div className="reloc-table-wrap">
+        <div className="reloc-table-wrap desktop-only">
             <table className="reloc-table reloc-compare-table">
                 <thead>
                     <tr>
@@ -57,17 +65,44 @@ const CompareTable: React.FC<{ title: string; rows: Row[]; format?: (v: number) 
                 </tbody>
             </table>
         </div>
+
+        <div className="reloc-compare-list mobile-only">
+            {rows.map(r => {
+                const delta = r.after - r.before;
+                return (
+                    <div key={r.label} className="reloc-compare-item">
+                        <div className="reloc-compare-top">
+                            <span className="reloc-compare-label">{r.label}</span>
+                            <span className={r.neutral ? 'reloc-delta-zero' : deltaClass(delta)}>
+                                {Math.abs(delta) < 0.5 ? '—' : deltaFormat(delta)}
+                            </span>
+                        </div>
+                        <div className="reloc-compare-values">
+                            {format(r.before)}
+                            <span className="reloc-compare-arrow" aria-hidden="true">→</span>
+                            <strong>{format(r.after)}</strong>
+                        </div>
+                        {r.hint && <div className="reloc-compare-hint">{r.hint}</div>}
+                    </div>
+                );
+            })}
+        </div>
     </div>
 );
 
 interface RelocationWhatIfProps {
     before: PortfolioSnapshot;
     after: PortfolioSnapshot;
-    /** tax + commissions — should equal the net worth drop. */
+    /** tax + commissions across every move — should equal the net worth drop. */
     friction: number;
+    /** How many moves the "after" column includes. */
+    moveCount: number;
 }
 
-const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, friction }) => {
+const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, friction, moveCount }) => {
+    const plural = moveCount > 1;
+    const suffix = plural ? `after all ${moveCount} moves` : 'after the move';
+
     const headline: Row[] = [
         {
             label: 'Net worth',
@@ -84,7 +119,9 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
             before: before.realizedGain,
             after: after.realizedGain,
             neutral: true,
-            hint: 'the sale turns unrealized gain into realized — and taxed',
+            hint: plural
+                ? 'each sale turns unrealized gain into realized — and taxed'
+                : 'the sale turns unrealized gain into realized — and taxed',
         },
     ];
 
@@ -105,11 +142,11 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
 
     return (
         <>
-            <CompareTable title="How the numbers change" rows={headline} />
+            <CompareTable title={`How the numbers change — ${suffix}`} rows={headline} />
 
             <div className="reloc-card">
                 <h3 className="reloc-section-title">Macro allocation</h3>
-                <div className="reloc-table-wrap">
+                <div className="reloc-table-wrap desktop-only">
                     <table className="reloc-table reloc-compare-table">
                         <thead>
                             <tr>
@@ -145,6 +182,39 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
                         </tbody>
                     </table>
                 </div>
+
+                <div className="reloc-compare-list mobile-only">
+                    {macroRows.map(r => {
+                        const target = before.macro.find(m => m.name === r.label)?.targetPercent ?? 0;
+                        const gapBefore = target > 0 ? r.before - target : 0;
+                        const gapAfter = target > 0 ? r.after - target : 0;
+                        const closer = Math.abs(gapAfter) < Math.abs(gapBefore);
+                        return (
+                            <div key={r.label} className="reloc-compare-item">
+                                <div className="reloc-compare-top">
+                                    <span className="reloc-compare-label">{r.label}</span>
+                                    <span className={deltaClass(r.after - r.before)}>
+                                        {Math.abs(r.after - r.before) < 0.05 ? '—' : signedPct(r.after - r.before)}
+                                    </span>
+                                </div>
+                                <div className="reloc-compare-values">
+                                    {r.before.toFixed(1)}%
+                                    <span className="reloc-compare-arrow" aria-hidden="true">→</span>
+                                    <strong>{r.after.toFixed(1)}%</strong>
+                                </div>
+                                {target > 0 && (
+                                    <div className="reloc-compare-hint">
+                                        target {target.toFixed(1)}% ·{' '}
+                                        <span className={closer ? 'reloc-delta-positive' : 'reloc-delta-negative'}>
+                                            {signedPct(gapAfter)} vs target
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+
                 <p className="reloc-hint">
                     A pension fund is not a class of its own: its value counts 57% as equity and 43% as
                     bonds, exactly as on the Stats page.
@@ -191,10 +261,10 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
                     <h3 className="reloc-section-title">Goal pyramid</h3>
                     <div className="reloc-pyramids">
                         <GoalDistributionChart data={before.goalPyramid} total={before.goalPyramidTotal} title="Before" />
-                        <GoalDistributionChart data={after.goalPyramid} total={after.goalPyramidTotal} title="After" />
+                        <GoalDistributionChart data={after.goalPyramid} total={after.goalPyramidTotal} title={plural ? `After ${moveCount} moves` : 'After'} />
                     </div>
                     <p className="reloc-hint">
-                        The pyramid total is net worth: after the move it is{' '}
+                        The pyramid total is net worth: {suffix} it is{' '}
                         {eur0(before.goalPyramidTotal - after.goalPyramidTotal)} lower, which is exactly tax plus
                         commissions. That is the cost the ordinary views never show.
                     </p>

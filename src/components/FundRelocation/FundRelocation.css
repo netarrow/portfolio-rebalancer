@@ -9,12 +9,55 @@
     margin-bottom: var(--space-6);
 }
 
+/* A card nested inside another one (a sequence step's details): the outer card
+   already provides the surface, so this only needs separation, not chrome. */
+.reloc-subcard {
+    margin-bottom: var(--space-4);
+}
+
+.reloc-subcard:last-child {
+    margin-bottom: 0;
+}
+
 .reloc-section-title {
     font-size: 1.2rem;
     color: var(--color-primary);
     border-bottom: 1px solid var(--border-color);
     padding-bottom: var(--space-2);
     margin: 0 0 var(--space-4);
+}
+
+.reloc-subcard .reloc-section-title {
+    font-size: 1rem;
+}
+
+.reloc-section-title--flush {
+    border-bottom: none;
+    padding-bottom: 0;
+    margin-bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.reloc-page-title {
+    font-size: 1.5rem;
+    margin-bottom: var(--space-2);
+}
+
+.reloc-intro {
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-6);
+    max-width: 70ch;
+}
+
+.reloc-draft-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 0 0 var(--space-2);
 }
 
 /* ── Form ── */
@@ -144,6 +187,267 @@
     margin: var(--space-2) 0 0;
     font-size: 0.8rem;
     color: var(--text-muted);
+}
+
+/* ── Buttons ── */
+
+.reloc-btn {
+    border: 1px solid var(--border-color);
+    background-color: transparent;
+    color: var(--text-secondary);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    /* Touch target: 44px is the smallest reliably tappable control on iOS. */
+    min-height: 44px;
+    transition: all 0.15s;
+}
+
+.reloc-btn.primary {
+    background-color: var(--color-primary);
+    border-color: var(--color-primary);
+    color: #fff;
+}
+
+.reloc-btn.primary:hover:not(:disabled) {
+    background-color: var(--color-primary-hover);
+    border-color: var(--color-primary-hover);
+}
+
+/* The default border colour is --bg-card, which is exactly the card these
+   buttons sit on — invisible. Ghost buttons need an edge of their own. */
+.reloc-btn.ghost {
+    border-color: rgba(148, 163, 184, 0.35);
+}
+
+.reloc-btn.ghost:hover:not(:disabled) {
+    color: var(--text-primary);
+    background-color: var(--bg-surface);
+}
+
+.reloc-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.reloc-icon-btn {
+    width: 40px;
+    height: 40px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-app);
+    color: var(--text-secondary);
+    border-radius: var(--radius-sm);
+    font-size: 0.95rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.reloc-icon-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: var(--color-primary);
+}
+
+.reloc-icon-btn.danger:hover:not(:disabled) {
+    color: var(--color-danger);
+    border-color: var(--color-danger);
+}
+
+.reloc-icon-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* ── Form actions ── */
+
+.reloc-form-badge {
+    display: inline-block;
+    margin-bottom: var(--space-4);
+    padding: var(--space-1) var(--space-3);
+    border-radius: 999px;
+    background-color: rgba(99, 102, 241, 0.15);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    font-weight: 500;
+}
+
+.reloc-form-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+    margin-top: var(--space-4);
+    padding-top: var(--space-4);
+    border-top: 1px solid var(--border-color);
+}
+
+.reloc-form-actions-hint {
+    flex: 1 1 240px;
+    margin: 0;
+}
+
+/* ── Sequence ── */
+
+.reloc-sequence-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.reloc-count-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.6em;
+    padding: 0 0.4em;
+    border-radius: 999px;
+    background-color: var(--color-primary);
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
+.reloc-step-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.reloc-step {
+    background-color: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+}
+
+.reloc-step.is-open {
+    border-color: var(--color-primary);
+}
+
+.reloc-step-row {
+    display: flex;
+    align-items: stretch;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+}
+
+.reloc-step-head {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    background: transparent;
+    border: none;
+    padding: var(--space-2) 0;
+    color: inherit;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.reloc-step-index {
+    flex: 0 0 auto;
+    width: 26px;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.reloc-step-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: block;
+}
+
+.reloc-step-route {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.reloc-step-arrow {
+    color: var(--color-primary);
+}
+
+.reloc-step-sub {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.reloc-step-flag {
+    margin-left: var(--space-2);
+    color: var(--color-warning);
+    font-weight: 600;
+}
+
+.reloc-step-flag.critical {
+    color: var(--color-danger);
+}
+
+.reloc-step-side {
+    flex: 0 0 auto;
+    text-align: right;
+}
+
+.reloc-step-cost {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: var(--color-danger);
+}
+
+.reloc-step-chevron {
+    flex: 0 0 auto;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+}
+
+.reloc-step.is-open .reloc-step-chevron {
+    transform: rotate(90deg);
+}
+
+.reloc-step-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    flex: 0 0 auto;
+}
+
+.reloc-step-body {
+    border-top: 1px solid var(--border-color);
+    padding: var(--space-4) var(--space-3);
+}
+
+.reloc-step-body .reloc-stat {
+    background-color: var(--bg-app);
+}
+
+.reloc-sequence-totals {
+    margin-bottom: var(--space-2);
 }
 
 /* ── Warnings ── */
@@ -307,13 +611,93 @@
     gap: var(--space-4);
 }
 
+/* Phone rendering of a before/after table: the change is the reason the row
+   exists, so it stays on the first line next to the label, and the two values
+   read as one sentence underneath. */
+/* No `display` here on purpose: `.mobile-only` owns it, and a display of our
+   own would beat that rule (same specificity, later stylesheet) and leak the
+   phone list onto the desktop page next to the table. */
+.reloc-compare-item {
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.reloc-compare-item:last-child {
+    border-bottom: none;
+}
+
+.reloc-compare-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-3);
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.reloc-compare-label {
+    color: var(--text-primary);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.reloc-compare-values {
+    margin-top: 2px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.reloc-compare-values strong {
+    color: var(--text-primary);
+}
+
+.reloc-compare-arrow {
+    margin: 0 var(--space-2);
+    color: var(--color-primary);
+}
+
+.reloc-compare-hint {
+    margin-top: 2px;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.reloc-compare-list .reloc-delta-positive {
+    color: var(--color-success);
+}
+
+.reloc-compare-list .reloc-delta-negative {
+    color: var(--color-danger);
+}
+
+.reloc-compare-list .reloc-delta-zero {
+    color: var(--text-muted);
+}
+
+/* Totals for the phone lists, which have no <tfoot> of their own. */
+.reloc-mobile-totals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-color);
+}
+
+.reloc-mobile-total {
+    flex: 1 1 auto;
+}
+
 /* ── Before / after charts ── */
 
 /* Two columns at most: each card holds a pair of pies, and three across leaves
-   them too narrow for the in-slice percentages. */
+   them too narrow for the in-slice percentages. The min() keeps the track from
+   demanding 420px on a 390px phone, which would push the page into horizontal
+   scrolling instead of collapsing to one column. */
 .reloc-charts-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
     gap: var(--space-4);
 }
 
@@ -340,6 +724,17 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: var(--space-2);
+}
+
+/* min-width:0 lets the grid track shrink below the chart's intrinsic size,
+   which is what keeps the pair inside the card on a narrow screen. */
+.reloc-pie {
+    min-width: 0;
+}
+
+.reloc-pie-canvas {
+    width: 100%;
+    height: 210px;
 }
 
 .reloc-pie-caption {
@@ -406,6 +801,7 @@
 @media (max-width: 768px) {
     .reloc-form-grid {
         grid-template-columns: 1fr;
+        gap: var(--space-3);
     }
 
     .reloc-arrow {
@@ -424,5 +820,121 @@
 
     .reloc-legend-value {
         display: none;
+    }
+
+    /* The two pies stay side by side — the whole point is the comparison —
+       but they shrink with the card instead of overflowing it. */
+    .reloc-pie-canvas {
+        height: 150px;
+    }
+
+    .reloc-pie-pair {
+        gap: var(--space-1);
+    }
+
+    .reloc-form-actions .reloc-btn {
+        width: 100%;
+    }
+}
+
+/* ===== Phones ===== */
+@media (max-width: 480px) {
+    .reloc-container {
+        padding-top: var(--space-2);
+    }
+
+    .reloc-page-title {
+        font-size: 1.25rem;
+    }
+
+    .reloc-intro {
+        font-size: 0.85rem;
+        margin-bottom: var(--space-4);
+    }
+
+    .reloc-card {
+        padding: var(--space-3);
+        margin-bottom: var(--space-4);
+    }
+
+    .reloc-section-title {
+        font-size: 1.05rem;
+    }
+
+    /* Two stat tiles per row: one is a waste of a scroll, three is unreadable. */
+    .reloc-friction-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-2);
+    }
+
+    .reloc-stat {
+        padding: var(--space-3) var(--space-2);
+    }
+
+    .reloc-stat-label {
+        font-size: 0.68rem;
+    }
+
+    .reloc-stat-value {
+        font-size: 1.05rem;
+    }
+
+    .reloc-stat-sub {
+        font-size: 0.68rem;
+    }
+
+    /* Portfolio / Cash switch and the selects are primary touch targets. */
+    .reloc-kind-btn {
+        min-height: 44px;
+    }
+
+    .reloc-input,
+    .reloc-select {
+        min-height: 44px;
+    }
+
+    .reloc-checkbox {
+        padding: var(--space-2) 0;
+    }
+
+    .reloc-checkbox input[type="checkbox"] {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+    }
+
+    /* Sequence step: the tools drop under the summary so neither the route nor
+       the friction has to compete with three buttons for 390px of width. */
+    .reloc-step-row {
+        flex-wrap: wrap;
+        padding: var(--space-2);
+    }
+
+    .reloc-step-head {
+        flex: 1 1 100%;
+        gap: var(--space-2);
+    }
+
+    .reloc-step-route {
+        font-size: 0.85rem;
+        gap: var(--space-1);
+    }
+
+    .reloc-step-tools {
+        flex: 1 1 100%;
+        justify-content: flex-end;
+        border-top: 1px solid var(--border-color);
+        padding-top: var(--space-2);
+    }
+
+    .reloc-step-body {
+        padding: var(--space-3) var(--space-2);
+    }
+
+    /* When the title and the button no longer fit one line, the button keeps
+       to the right edge instead of restarting the next line on the left. */
+    .reloc-sequence-header .reloc-btn {
+        padding: var(--space-2) var(--space-3);
+        margin-left: auto;
     }
 }
