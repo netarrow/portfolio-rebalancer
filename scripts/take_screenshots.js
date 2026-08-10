@@ -340,6 +340,15 @@ async function scrollAndShoot(page, base) {
   await fillField(page, 'net amount to invest', '20000');
   await sleep(900);
   await scrollAndShoot(page, 'fund_relocation');
+  // The before/after Stats charts get their own shot: they are the point of the section.
+  await page.evaluate(() => {
+    const h = [...document.querySelectorAll('.reloc-section-title')].find((x) =>
+      x.textContent.includes('Stats charts')
+    );
+    if (h) h.scrollIntoView();
+  });
+  await sleep(600);
+  await shot(page, 'fund_relocation_charts');
 
   // ---------- PERFORMANCE ----------
   console.log('Performance');

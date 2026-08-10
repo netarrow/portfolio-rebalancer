@@ -307,6 +307,96 @@
     gap: var(--space-4);
 }
 
+/* ── Before / after charts ── */
+
+/* Two columns at most: each card holds a pair of pies, and three across leaves
+   them too narrow for the in-slice percentages. */
+.reloc-charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: var(--space-4);
+}
+
+@media (min-width: 1100px) {
+    .reloc-charts-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+
+.reloc-chart-card {
+    background-color: var(--bg-surface);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+}
+
+.reloc-chart-title {
+    margin: 0 0 var(--space-3);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.reloc-pie-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-2);
+}
+
+.reloc-pie-caption {
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.reloc-chart-legend {
+    margin-top: var(--space-3);
+    border-top: 1px solid var(--border-color);
+    padding-top: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.reloc-legend-row {
+    display: grid;
+    grid-template-columns: 10px 1fr auto auto;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: 0.78rem;
+}
+
+.reloc-legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.reloc-legend-name {
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.reloc-legend-value {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.reloc-legend-delta {
+    min-width: 5.5em;
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.reloc-legend-delta.up { color: var(--color-success); }
+.reloc-legend-delta.down { color: var(--color-danger); }
+.reloc-legend-delta.zero { color: var(--text-muted); }
+
 .reloc-empty {
     color: var(--text-muted);
     font-size: 0.9rem;
@@ -326,5 +416,13 @@
 
     .reloc-card {
         padding: var(--space-4);
+    }
+
+    .reloc-legend-row {
+        grid-template-columns: 10px 1fr auto;
+    }
+
+    .reloc-legend-value {
+        display: none;
     }
 }

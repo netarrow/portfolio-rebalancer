@@ -108,6 +108,10 @@ Portfolios here are logical containers over transactions, so relocating funds is
 
 ![Fund Relocation — before / after](screenshots/fund_relocation_middle.png)
 
+- **The Stats charts, drawn twice** — Asset Allocation, Invested vs Liquidity, Value by Portfolio and Value by Broker, each as it is now and as the plan would leave it, with the euro delta per slice under the pair. A category keeps its colour across the two pies, so a portfolio that changes rank is still easy to follow. The page counts what the Stats page counts: the family/illiquid/person scope chips apply here too.
+
+![Fund Relocation — the Stats charts before and after](screenshots/fund_relocation_charts.png)
+
 - **Macro allocation and the goal pyramid, side by side.** Both are measured with the same calculators the Stats page uses, so the "before" column is that page's own arithmetic rather than a second opinion — and the pyramid total, which is net worth, visibly shrinks by the tax and commissions.
 
 ![Fund Relocation — the pyramid before and after](screenshots/fund_relocation_bottom.png)
