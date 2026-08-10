@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation';
 
 interface LayoutProps {
   currentView: View;
@@ -23,6 +23,7 @@ const menuStructure = [
     label: '📊 Analysis',
     items: [
       { label: '📈 Stats', view: 'stats' as const },
+      { label: '🔀 Fund Relocation', view: 'fundRelocation' as const },
       { label: '📉 Performance', view: 'performance' as const },
       { label: '📋 Summary', view: 'summary' as const },
     ],

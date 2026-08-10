@@ -4,7 +4,7 @@ import { SecurityProvider } from './context/SecurityContext';
 import UnlockGate from './components/Security/UnlockGate';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -28,6 +28,7 @@ import SummaryAnalysisView from './components/SummaryAnalysis/SummaryAnalysisVie
 import PerformanceView from './components/Performance/PerformanceView';
 import AssetScopeToggles from './components/Layout/AssetScopeToggles';
 import PacView from './components/Pac/PacView';
+import FundRelocationView from './components/FundRelocation/FundRelocationView';
 
 // Placeholders for views
 const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
@@ -112,6 +113,7 @@ function App() {
       case 'summary': return <SummaryAnalysisView onNavigateToSettings={() => setCurrentView('settings')} />;
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
+      case 'fundRelocation': return <FundRelocationView />;
       case 'performance': return <PerformanceView />;
       case 'disclaimer': return <DisclaimerView />;
       case 'globalRebalancing': return <GlobalRebalancingPage />;

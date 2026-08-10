@@ -439,7 +439,7 @@ const GlobalRebalancingView: React.FC = () => {
                         </strong>
                     </div>
                     <div className="aa-metric">
-                        <span className="aa-metric-label">Portafogli configurati</span>
+                        <span className="aa-metric-label">Configured portfolios</span>
                         <strong>
                             {Object.keys(assetAllocationSettings.portfolioTargets).length} / {portfolios.length}
                         </strong>
@@ -481,7 +481,7 @@ const GlobalRebalancingView: React.FC = () => {
                                         checked={liquidityTarget.mode === 'percent'}
                                         onChange={() => handleLiquidityModeChange('percent')}
                                     />
-                                    <span>% del totale</span>
+                                    <span>% of total</span>
                                 </label>
                             </div>
                         </div>

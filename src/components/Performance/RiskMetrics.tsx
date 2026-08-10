@@ -46,29 +46,29 @@ const RiskMetricsRow: React.FC<RiskMetricsRowProps> = ({ stats, title, riskFreeP
                 </div>
             )}
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                <div style={cardStyle} title="Rendimento annualizzato composto (CAGR) del flusso di rendimenti al netto dei versamenti/prelievi.">
-                    <div style={labelStyle}>Rendimento (ann.)</div>
+                <div style={cardStyle} title="Compound annualised return (CAGR) of the return stream, net of deposits and withdrawals.">
+                    <div style={labelStyle}>Return (ann.)</div>
                     <div style={{ ...valueStyle, color: stats.annualizedReturnPct >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                         {stats.annualizedReturnPct >= 0 ? '+' : ''}{stats.annualizedReturnPct.toFixed(1)}%
                     </div>
                 </div>
                 {stats.annualizedVolatilityPct !== null && (
-                    <div style={cardStyle} title="Deviazione standard annualizzata dei rendimenti (i flussi di cassa esterni sono esclusi). Misura quanto oscilla il valore.">
-                        <div style={labelStyle}>Volatilità (ann.)</div>
+                    <div style={cardStyle} title="Annualised standard deviation of the returns (external cash flows excluded). Measures how much the value swings.">
+                        <div style={labelStyle}>Volatility (ann.)</div>
                         <div style={{ ...valueStyle, color: 'var(--text-primary)' }}>
                             {stats.annualizedVolatilityPct.toFixed(1)}%
                         </div>
                     </div>
                 )}
                 {stats.sharpe !== null && (
-                    <div style={cardStyle} title={`Rendimento annualizzato in eccesso (oltre il tasso privo di rischio ${riskFreePct}%) diviso per la volatilità. Più alto è, migliore è il rendimento corretto per il rischio.`}>
+                    <div style={cardStyle} title={`Annualised excess return (above the ${riskFreePct}% risk-free rate) divided by volatility. The higher it is, the better the risk-adjusted return.`}>
                         <div style={labelStyle}>Sharpe Ratio</div>
                         <div style={{ ...valueStyle, color: stats.sharpe >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                             {stats.sharpe.toFixed(2)}
                         </div>
                     </div>
                 )}
-                <div style={cardStyle} title="Massima perdita dal picco al minimo successivo, calcolata sull'indice dei rendimenti al netto dei flussi (un prelievo non conta come perdita).">
+                <div style={cardStyle} title="Largest peak-to-trough loss, measured on the flow-adjusted return index (a withdrawal does not count as a loss).">
                     <div style={labelStyle}>Max Drawdown</div>
                     <div style={{ ...valueStyle, color: stats.maxDrawdownPct < 0 ? 'var(--color-danger)' : 'var(--text-primary)' }}>
                         {stats.maxDrawdownPct.toFixed(1)}%
