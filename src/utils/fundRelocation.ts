@@ -143,6 +143,10 @@ export interface RelocationPlan {
 
 const EPSILON = 1e-9;
 
+/** Rounded euro amount for warning copy, in the app's usual en-IE formatting. */
+const eurLabel = (value: number): string =>
+    `€${Math.round(value).toLocaleString('en-IE')}`;
+
 const emptyPlan = (netRequested: number, warnings: RelocationWarning[] = []): RelocationPlan => ({
     sells: [], buys: [], grossSold: 0, cashDrawn: 0, tax: 0, sellCommission: 0, buyCommission: 0,
     friction: 0, spreadCost: 0, netDelivered: 0, netRequested, frictionPercent: 0, warnings,
@@ -477,8 +481,8 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
             warnings.push({
                 kind: from.ticker ? 'no-price' : 'source-shortfall',
                 message: from.ticker
-                    ? `Nessuna quota vendibile di ${from.ticker} in ${sourcePortfolio!.name} (posizione assente o prezzo mancante).`
-                    : `${sourcePortfolio!.name} non ha posizioni vendibili con un prezzo valido.`,
+                    ? `No sellable shares of ${from.ticker} in ${sourcePortfolio!.name} — the position is empty or has no price.`
+                    : `${sourcePortfolio!.name} holds nothing sellable with a valid price.`,
             });
         } else {
             const deliverable = to.kind === 'cash' ? netProceeds : netProceeds - buyCommission;
@@ -487,8 +491,8 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
                 warnings.push({
                     kind: 'source-shortfall',
                     message: from.ticker
-                        ? `La posizione in ${from.ticker} non basta: mancano €${Math.round(shortfall).toLocaleString('it-IT')} rispetto al netto richiesto.`
-                        : `${sourcePortfolio!.name} non copre l'intero importo: mancano €${Math.round(shortfall).toLocaleString('it-IT')}.`,
+                        ? `The ${from.ticker} position is too small: ${eurLabel(shortfall)} short of the requested net.`
+                        : `${sourcePortfolio!.name} cannot cover the whole amount: ${eurLabel(shortfall)} short.`,
                     amount: shortfall,
                 });
             }
@@ -501,15 +505,15 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
             warnings.push({
                 kind: 'no-target',
                 message: to.ticker
-                    ? `${to.ticker} non ha un prezzo utilizzabile: impossibile dimensionare l'acquisto.`
-                    : `${destPortfolio!.name} non ha asset sottopesati da comprare (o mancano i prezzi).`,
+                    ? `${to.ticker} has no usable price, so the buy cannot be sized.`
+                    : `${destPortfolio!.name} has nothing underweight to buy (or the prices are missing).`,
             });
         } else {
             const undeployed = budget - invested;
             if (undeployed > 1) {
                 warnings.push({
                     kind: 'buy-shortfall',
-                    message: `€${Math.round(undeployed).toLocaleString('it-IT')} restano liquidi: l'arrotondamento a quote intere non permette di investirli.`,
+                    message: `${eurLabel(undeployed)} stays in cash: rounding to whole shares leaves it undeployed.`,
                     amount: undeployed,
                 });
             }
@@ -524,7 +528,7 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
     if (crossBroker) {
         warnings.push({
             kind: 'cross-broker',
-            message: 'Vendite e acquisti avvengono su broker diversi: il contante va spostato fisicamente prima di poter comprare.',
+            message: 'Sales and purchases settle at different brokers: the cash has to physically move before the buys can clear.',
         });
     }
 
@@ -572,8 +576,8 @@ const cashSourceWarnings = (
         warnings.push({
             kind: 'cash-overdraft',
             message: broker
-                ? `La cassa di ${broker.name} non basta: mancano €${Math.round(-after).toLocaleString('it-IT')}.`
-                : `La liquidità totale non basta: mancano €${Math.round(-after).toLocaleString('it-IT')}.`,
+                ? `${broker.name} does not hold enough cash: ${eurLabel(-after)} short.`
+                : `Total liquidity is not enough: ${eurLabel(-after)} short.`,
             amount: -after,
         });
         return warnings;
@@ -588,7 +592,7 @@ const cashSourceWarnings = (
     if (earmarkedElsewhere > 0 && after < earmarkedElsewhere) {
         warnings.push({
             kind: 'cash-earmark',
-            message: `Restano €${Math.round(after).toLocaleString('it-IT')} contro €${Math.round(earmarkedElsewhere).toLocaleString('it-IT')} già destinati ad altri portafogli su ${broker.name}.`,
+            message: `${eurLabel(after)} would be left at ${broker.name} against ${eurLabel(earmarkedElsewhere)} already earmarked for other portfolios.`,
             amount: earmarkedElsewhere - after,
         });
     }
@@ -599,7 +603,7 @@ const cashSourceWarnings = (
     if (minLiquidity > 0 && after < minLiquidity) {
         warnings.push({
             kind: 'cash-min-liquidity',
-            message: `${broker.name} scenderebbe sotto la liquidità minima di €${Math.round(minLiquidity).toLocaleString('it-IT')}.`,
+            message: `${broker.name} would drop below its minimum liquidity of ${eurLabel(minLiquidity)}.`,
             amount: minLiquidity - after,
         });
     }
@@ -679,7 +683,7 @@ export const applyRelocationToState = (
         // Spending earmarked cash releases the earmark: the money stopped being
         // reserved the moment it bought something. Proceeds landing IN cash are
         // deliberately left unassigned instead — that is what puts them in the
-        // pyramid's "Liquidità" level rather than back inside a goal.
+        // pyramid's "Liquidity" level rather than back inside a goal.
         const allocations = { ...(b.liquidityAllocations || {}) };
         if (from.kind === 'cash' && from.brokerId === b.id && to.kind === 'portfolio') {
             const pid = to.portfolioId;

@@ -2,7 +2,7 @@ import React from 'react';
 import type { PortfolioSnapshot } from '../../utils/relocationSnapshot';
 import { GoalDistributionChart } from '../Dashboard/AllocationCharts';
 
-const eur0 = (v: number) => `€${Math.round(v).toLocaleString('it-IT')}`;
+const eur0 = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
 const signedEur = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${eur0(Math.abs(v))}`;
 const signedPct = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v).toFixed(1)} pp`;
 
@@ -30,10 +30,10 @@ const CompareTable: React.FC<{ title: string; rows: Row[]; format?: (v: number) 
             <table className="reloc-table reloc-compare-table">
                 <thead>
                     <tr>
-                        <th>Voce</th>
-                        <th>Prima</th>
-                        <th>Dopo</th>
-                        <th>Variazione</th>
+                        <th>Item</th>
+                        <th>Before</th>
+                        <th>After</th>
+                        <th>Change</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -69,21 +69,21 @@ interface RelocationWhatIfProps {
 const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, friction }) => {
     const headline: Row[] = [
         {
-            label: 'Patrimonio netto',
+            label: 'Net worth',
             before: before.netWorth,
             after: after.netWorth,
-            hint: friction > 0 ? `cala esattamente della frizione (${eur0(friction)})` : undefined,
+            hint: friction > 0 ? `falls by exactly the friction (${eur0(friction)})` : undefined,
         },
-        { label: 'Investito', before: before.invested, after: after.invested },
-        { label: 'Liquidità', before: before.liquidity, after: after.liquidity },
-        { label: 'Costo di carico', before: before.cost, after: after.cost, neutral: true },
-        { label: 'Plusvalenze non realizzate', before: before.unrealizedGain, after: after.unrealizedGain },
+        { label: 'Invested', before: before.invested, after: after.invested },
+        { label: 'Liquidity', before: before.liquidity, after: after.liquidity },
+        { label: 'Cost basis', before: before.cost, after: after.cost, neutral: true },
+        { label: 'Unrealized gains', before: before.unrealizedGain, after: after.unrealizedGain },
         {
-            label: 'Plusvalenze realizzate',
+            label: 'Realized gains',
             before: before.realizedGain,
             after: after.realizedGain,
             neutral: true,
-            hint: 'la vendita trasforma il non realizzato in realizzato (e tassato)',
+            hint: 'the sale turns unrealized gain into realized — and taxed',
         },
     ];
 
@@ -104,20 +104,20 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
 
     return (
         <>
-            <CompareTable title="Come cambiano i numeri" rows={headline} />
+            <CompareTable title="How the numbers change" rows={headline} />
 
             <div className="reloc-card">
-                <h3 className="reloc-section-title">Allocazione macro</h3>
+                <h3 className="reloc-section-title">Macro allocation</h3>
                 <div className="reloc-table-wrap">
                     <table className="reloc-table reloc-compare-table">
                         <thead>
                             <tr>
-                                <th>Classe</th>
-                                <th>Prima</th>
-                                <th>Dopo</th>
-                                <th>Variazione</th>
+                                <th>Class</th>
+                                <th>Before</th>
+                                <th>After</th>
+                                <th>Change</th>
                                 <th>Target</th>
-                                <th>Scostamento</th>
+                                <th>Gap vs target</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -145,26 +145,26 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
                     </table>
                 </div>
                 <p className="reloc-hint">
-                    Un fondo pensione non è una classe a sé: il suo valore entra per il 57% in azionario e
-                    per il 43% in obbligazionario, come nella pagina Stats.
+                    A pension fund is not a class of its own: its value counts 57% as equity and 43% as
+                    bonds, exactly as on the Stats page.
                 </p>
             </div>
 
             {portfolioRows.length > 0 && (
-                <CompareTable title="Valore per portafoglio" rows={portfolioRows} />
+                <CompareTable title="Value by portfolio" rows={portfolioRows} />
             )}
 
             {before.goalPyramid.length > 0 && (
                 <div className="reloc-card">
-                    <h3 className="reloc-section-title">Piramide degli obiettivi</h3>
+                    <h3 className="reloc-section-title">Goal pyramid</h3>
                     <div className="reloc-pyramids">
-                        <GoalDistributionChart data={before.goalPyramid} total={before.goalPyramidTotal} title="Prima" />
-                        <GoalDistributionChart data={after.goalPyramid} total={after.goalPyramidTotal} title="Dopo" />
+                        <GoalDistributionChart data={before.goalPyramid} total={before.goalPyramidTotal} title="Before" />
+                        <GoalDistributionChart data={after.goalPyramid} total={after.goalPyramidTotal} title="After" />
                     </div>
                     <p className="reloc-hint">
-                        Il totale della piramide è il patrimonio netto: dopo lo spostamento è più basso di{' '}
-                        {eur0(before.goalPyramidTotal - after.goalPyramidTotal)}, cioè esattamente imposte più
-                        commissioni. È questo il costo che le viste ordinarie non mostrano.
+                        The pyramid total is net worth: after the move it is{' '}
+                        {eur0(before.goalPyramidTotal - after.goalPyramidTotal)} lower, which is exactly tax plus
+                        commissions. That is the cost the ordinary views never show.
                     </p>
                 </div>
             )}

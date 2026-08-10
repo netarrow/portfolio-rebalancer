@@ -30,7 +30,7 @@ function riskRangeFrom(range: RiskRangeKey): string | undefined {
     return d.toISOString().slice(0, 10);
 }
 const RISK_RANGE_LABEL: Record<RiskRangeKey, string> = {
-    '1M': 'ultimo mese', '6M': 'ultimi 6 mesi', '1Y': 'ultimo anno', 'MAX': 'intera storia disponibile',
+    '1M': 'last month', '6M': 'last 6 months', '1Y': 'last year', 'MAX': 'full available history',
 };
 
 /** Shared 1M/6M/1Y/MAX toggle for the Risk Metrics sections. */
@@ -83,7 +83,7 @@ const ScopeRiskMetrics: React.FC<{
     if (!stats) return null;
     return (
         <div style={{ marginBottom: '1.25rem' }}>
-            <RiskMetricsRow stats={stats} title={`Rischio — ${RISK_RANGE_LABEL[range]}`} riskFreePct={riskFreePct} />
+            <RiskMetricsRow stats={stats} title={`Risk — ${RISK_RANGE_LABEL[range]}`} riskFreePct={riskFreePct} />
         </div>
     );
 };
@@ -1115,7 +1115,7 @@ const AllocationCharts: React.FC = () => {
             {activeTab === 'portfolio' && (
                 <>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics per gruppo e portafoglio — {RISK_RANGE_LABEL[riskRange]}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics by group and portfolio — {RISK_RANGE_LABEL[riskRange]}</span>
                         <RiskRangeButtons value={riskRange} onChange={setRiskRange} />
                     </div>
 
@@ -1178,7 +1178,7 @@ const AllocationCharts: React.FC = () => {
             {activeTab === 'broker' && (
                 <>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1.5rem' }}>
-                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics per broker — {RISK_RANGE_LABEL[riskRange]}</span>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Risk Metrics by broker — {RISK_RANGE_LABEL[riskRange]}</span>
                         <RiskRangeButtons value={riskRange} onChange={setRiskRange} />
                     </div>
                     {brokers.map(broker => {

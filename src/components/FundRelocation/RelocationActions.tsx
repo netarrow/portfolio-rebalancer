@@ -1,8 +1,8 @@
 import React from 'react';
 import type { RelocationPlan, RelocationWarning } from '../../utils/fundRelocation';
 
-const eur = (v: number) => `€${v.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const eur0 = (v: number) => `€${Math.round(v).toLocaleString('it-IT')}`;
+const eur = (v: number) => `€${v.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const eur0 = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
 const pct = (v: number) => `${v.toFixed(2)}%`;
 
 const CRITICAL: RelocationWarning['kind'][] = ['source-shortfall', 'cash-overdraft', 'no-price', 'no-target'];
@@ -29,41 +29,41 @@ export const RelocationWarnings: React.FC<{ warnings: RelocationWarning[] }> = (
  */
 const FrictionSummary: React.FC<{ plan: RelocationPlan }> = ({ plan }) => (
     <div className="reloc-card">
-        <h3 className="reloc-section-title">Costo dello spostamento</h3>
+        <h3 className="reloc-section-title">Cost of the move</h3>
         <div className="reloc-friction-grid">
             <div className="reloc-stat">
-                <div className="reloc-stat-label">{plan.grossSold > 0 ? 'Venduto (lordo)' : 'Cassa impiegata'}</div>
+                <div className="reloc-stat-label">{plan.grossSold > 0 ? 'Sold (gross)' : 'Cash used'}</div>
                 <div className="reloc-stat-value">{eur0(plan.grossSold > 0 ? plan.grossSold : plan.cashDrawn)}</div>
             </div>
             <div className="reloc-stat">
-                <div className="reloc-stat-label">Imposte</div>
+                <div className="reloc-stat-label">Tax</div>
                 <div className="reloc-stat-value negative">{plan.tax > 0 ? `−${eur0(plan.tax)}` : eur0(0)}</div>
-                <div className="reloc-stat-sub">capital gain sulla quota venduta</div>
+                <div className="reloc-stat-sub">capital gains on the sold portion</div>
             </div>
             <div className="reloc-stat">
-                <div className="reloc-stat-label">Commissioni</div>
+                <div className="reloc-stat-label">Commissions</div>
                 <div className="reloc-stat-value negative">
                     {plan.sellCommission + plan.buyCommission > 0 ? `−${eur(plan.sellCommission + plan.buyCommission)}` : eur0(0)}
                 </div>
                 <div className="reloc-stat-sub">
-                    vendita {eur(plan.sellCommission)} · acquisto {eur(plan.buyCommission)}
+                    sell {eur(plan.sellCommission)} · buy {eur(plan.buyCommission)}
                 </div>
             </div>
             <div className="reloc-stat">
-                <div className="reloc-stat-label">Frizione totale</div>
+                <div className="reloc-stat-label">Total friction</div>
                 <div className="reloc-stat-value negative">{plan.friction > 0 ? `−${eur0(plan.friction)}` : eur0(0)}</div>
-                <div className="reloc-stat-sub">{pct(plan.frictionPercent)} di quanto arriva</div>
+                <div className="reloc-stat-sub">{pct(plan.frictionPercent)} of what lands</div>
             </div>
             <div className="reloc-stat">
-                <div className="reloc-stat-label">Arriva a destinazione</div>
+                <div className="reloc-stat-label">Lands in the destination</div>
                 <div className="reloc-stat-value positive">{eur0(plan.netDelivered)}</div>
-                <div className="reloc-stat-sub">richiesti {eur0(plan.netRequested)}</div>
+                <div className="reloc-stat-sub">{eur0(plan.netRequested)} requested</div>
             </div>
             {plan.spreadCost > 0 && (
                 <div className="reloc-stat">
-                    <div className="reloc-stat-label">Costo implicito</div>
+                    <div className="reloc-stat-label">Implicit cost</div>
                     <div className="reloc-stat-value">{eur(plan.spreadCost)}</div>
-                    <div className="reloc-stat-sub">metà spread, non dedotto</div>
+                    <div className="reloc-stat-sub">half spread, not deducted</div>
                 </div>
             )}
         </div>
@@ -74,21 +74,21 @@ const SellTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
     if (plan.sells.length === 0) return null;
     return (
         <div className="reloc-card">
-            <h3 className="reloc-section-title">Vendite</h3>
+            <h3 className="reloc-section-title">Sells</h3>
             <div className="reloc-table-wrap">
                 <table className="reloc-table">
                     <thead>
                         <tr>
                             <th>Asset</th>
-                            <th>Quote</th>
-                            <th>Prezzo</th>
-                            <th>PMC</th>
-                            <th>Lordo</th>
-                            <th>Plus. tassabile</th>
-                            <th>Imposta</th>
-                            <th>Commiss.</th>
-                            <th>Netto</th>
-                            <th>Quote residue</th>
+                            <th>Shares</th>
+                            <th>Price</th>
+                            <th>Avg cost</th>
+                            <th>Gross</th>
+                            <th>Taxable gain</th>
+                            <th>Tax</th>
+                            <th>Fee</th>
+                            <th>Net</th>
+                            <th>Shares left</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -96,11 +96,11 @@ const SellTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
                             <tr key={s.ticker}>
                                 <td>
                                     <span className="reloc-ticker">{s.ticker}</span>
-                                    <span className="reloc-badge sell">VENDI</span>
+                                    <span className="reloc-badge sell">SELL</span>
                                     {s.label && <span className="reloc-ticker-label">{s.label}</span>}
                                     {s.brokerName && <span className="reloc-ticker-label">{s.brokerName}</span>}
                                 </td>
-                                <td>{s.shares.toLocaleString('it-IT')}</td>
+                                <td>{s.shares.toLocaleString('en-IE')}</td>
                                 <td>{eur(s.price)}</td>
                                 <td>{eur(s.averagePrice)}</td>
                                 <td>{eur0(s.gross)}</td>
@@ -111,13 +111,13 @@ const SellTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
                                 </td>
                                 <td>{s.commission > 0 ? eur(s.commission) : '—'}</td>
                                 <td>{eur0(s.net)}</td>
-                                <td>{s.remainingShares.toLocaleString('it-IT')}</td>
+                                <td>{s.remainingShares.toLocaleString('en-IE')}</td>
                             </tr>
                         ))}
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td>Totale</td>
+                            <td>Total</td>
                             <td colSpan={3} />
                             <td>{eur0(plan.grossSold)}</td>
                             <td>{eur0(plan.sells.reduce((s, l) => s + l.gain, 0))}</td>
@@ -130,9 +130,9 @@ const SellTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
                 </table>
             </div>
             <p className="reloc-hint">
-                L&apos;imposta colpisce solo la porzione venduta (quote × (prezzo − PMC)). Una gamba in
-                perdita è tassata 0 e la minusvalenza <strong>non</strong> compensa le plusvalenze delle
-                altre: servirebbe lo zainetto fiscale, che l&apos;app non modella, quindi la stima resta prudenziale.
+                Tax hits only the sold portion (shares × (price − average cost)). A leg sold at a loss is
+                taxed 0 and its loss does <strong>not</strong> offset the gains of the other legs: netting
+                would need the tax-credit balance the app does not model, so the estimate stays conservative.
             </p>
         </div>
     );
@@ -142,17 +142,17 @@ const BuyTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
     if (plan.buys.length === 0) return null;
     return (
         <div className="reloc-card">
-            <h3 className="reloc-section-title">Acquisti</h3>
+            <h3 className="reloc-section-title">Buys</h3>
             <div className="reloc-table-wrap">
                 <table className="reloc-table">
                     <thead>
                         <tr>
                             <th>Asset</th>
-                            <th>Quote</th>
-                            <th>Prezzo</th>
-                            <th>Controvalore</th>
-                            <th>Commiss.</th>
-                            <th>Quote finali</th>
+                            <th>Shares</th>
+                            <th>Price</th>
+                            <th>Value</th>
+                            <th>Fee</th>
+                            <th>Final shares</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -160,22 +160,22 @@ const BuyTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
                             <tr key={b.ticker}>
                                 <td>
                                     <span className="reloc-ticker">{b.ticker}</span>
-                                    <span className="reloc-badge buy">COMPRA</span>
+                                    <span className="reloc-badge buy">BUY</span>
                                     {b.freeCommission && <span className="reloc-badge free">FREE</span>}
                                     {b.label && <span className="reloc-ticker-label">{b.label}</span>}
                                     {b.brokerName && <span className="reloc-ticker-label">{b.brokerName}</span>}
                                 </td>
-                                <td>{b.shares.toLocaleString('it-IT')}</td>
+                                <td>{b.shares.toLocaleString('en-IE')}</td>
                                 <td>{eur(b.price)}</td>
                                 <td>{eur0(b.gross)}</td>
                                 <td>{b.commission > 0 ? eur(b.commission) : '—'}</td>
-                                <td>{b.resultingShares.toLocaleString('it-IT')}</td>
+                                <td>{b.resultingShares.toLocaleString('en-IE')}</td>
                             </tr>
                         ))}
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td>Totale</td>
+                            <td>Total</td>
                             <td colSpan={2} />
                             <td>{eur0(plan.buys.reduce((s, b) => s + b.gross, 0))}</td>
                             <td>{eur(plan.buyCommission)}</td>

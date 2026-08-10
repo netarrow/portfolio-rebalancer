@@ -92,7 +92,7 @@ const FundRelocationView: React.FC = () => {
             <div className="reloc-container">
                 <div className="reloc-card">
                     <p className="reloc-empty">
-                        Serve almeno un portafoglio per simulare uno spostamento. Creane uno dalla pagina Portfolios.
+                        You need at least one portfolio to simulate a move. Create one from the Portfolios page.
                     </p>
                 </div>
             </div>
@@ -105,10 +105,10 @@ const FundRelocationView: React.FC = () => {
                 Fund Relocation
             </h2>
             <p style={{ color: 'var(--text-secondary)', marginTop: 0, marginBottom: 'var(--space-6)', maxWidth: '70ch' }}>
-                I portafogli sono contenitori logici sulle transazioni: spostare fondi significa
-                <strong> vendere di là e ricomprare di qua</strong>, e per strada si lasciano imposte e
-                commissioni. Qui vedi le azioni esatte, quanto costa davvero il passaggio e come
-                resterebbero statistiche e piramide.
+                Portfolios are logical containers over transactions, so moving funds means
+                <strong> selling there and buying back here</strong> — and the round trip leaves tax and
+                commissions behind. This page shows the exact actions, what the move really costs, and how
+                the stats and the pyramid would end up.
             </p>
 
             <RelocationForm
@@ -129,13 +129,13 @@ const FundRelocationView: React.FC = () => {
             {sameEndpoint && (
                 <div className="reloc-warning critical">
                     <span aria-hidden="true">⛔</span>
-                    <span>Origine e destinazione coincidono: scegli due estremi diversi.</span>
+                    <span>Source and destination are the same: pick two different endpoints.</span>
                 </div>
             )}
 
             {!sameEndpoint && netAmount <= 0 && (
                 <div className="reloc-card">
-                    <p className="reloc-empty">Indica l&apos;importo netto da spostare per vedere il piano.</p>
+                    <p className="reloc-empty">Enter the net amount to move to see the plan.</p>
                 </div>
             )}
 
