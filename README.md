@@ -105,6 +105,7 @@ Portfolios here are logical containers over transactions, so relocating funds is
 - **Sell and buy tables** list every leg: shares, price, PMC, gross, the taxable portion, the rate applied (26% / 12.5% / 20% by asset class), commissions and the net. Tax hits only the sold portion — shares × (price − PMC) — and a leg sold at a loss is taxed 0 without offsetting the other legs' gains, since netting would need the *zainetto fiscale* the app does not model.
 - **Warnings, not silent assumptions** — cash left undeployed by whole-share rounding, sales and purchases landing at different brokers (the cash has to physically move first), and, for a cash source, the same three floors the rebalancer respects: overdraft, cash earmarked for other portfolios, and the broker's minimum liquidity.
 - **Before / after** for net worth, invested, liquidity, cost basis, and the realized/unrealized split — a sale converts unrealized gain into realized, and taxed. Net worth falls by *exactly* the friction.
+- **Chain several moves and see where you land.** *Add this move to the sequence* queues it and the form starts a new move **on top of the previous state** — the dropdowns offer the positions the earlier moves created, and the plan spends the cash they raised. This is not several independent what-ifs side by side: selling in step 3 what step 1 bought pays the commission twice and is taxed on the average cost step 1 produced, so a chain costs strictly more than its parts priced in isolation. Each step lists its own actions and friction when expanded, can be reordered or removed (the whole chain is re-priced), and the comparison at the bottom of the page always measures **today against the end of the sequence** — including the move still being edited.
 
 ![Fund Relocation — before / after](screenshots/fund_relocation_middle.png)
 
@@ -392,7 +393,7 @@ Without a private-tier key, the update starts with the **public-tier notice** (t
 
 ### Mobile
 
-Every list view has a **dense expandable layout** on small screens — compact rows with the essentials (ticker, side, amount, fee, warnings), tap to expand:
+Every list view has a **dense expandable layout** on small screens — compact rows with the essentials (ticker, side, amount, fee, warnings), tap to expand. Wide tables are never left to horizontal scrolling, which would hide the column the page exists for: the *Fund Relocation* sell/buy tables become the same expandable rows, and its before/after tables become one line per item reading `before → after` with the change kept in view. The Dashboard's KPI cards pair up two per row instead of stacking ten deep, the before/after pies scale with the card, and no page scrolls sideways down to a 320px screen:
 
 <p>
   <img src="screenshots/mobile_dashboard.png" width="30%" alt="Mobile dashboard" />

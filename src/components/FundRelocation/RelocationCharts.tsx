@@ -89,14 +89,16 @@ const SinglePie: React.FC<{ caption: string; data: SliceLine[]; colors: Record<s
     return (
         <div className="reloc-pie">
             <div className="reloc-pie-caption">{caption}</div>
-            <div style={{ width: '100%', height: 210 }}>
+            {/* Height and radius are relative so the pair survives a 390px
+                screen: a fixed 78px radius overflows a half-card that narrow. */}
+            <div className="reloc-pie-canvas">
                 <ResponsiveContainer>
                     <PieChart>
                         <Pie
                             data={data}
                             cx="50%"
                             cy="50%"
-                            outerRadius={78}
+                            outerRadius="88%"
                             dataKey="value"
                             labelLine={false}
                             label={renderSliceLabel}
