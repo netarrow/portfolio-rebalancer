@@ -337,7 +337,7 @@ async function scrollAndShoot(page, base) {
     setSelect(to, values[2] ?? values.find((v) => v !== values[0]) ?? values[0]);
   });
   await sleep(400);
-  await fillField(page, 'importo netto', '20000');
+  await fillField(page, 'net amount to invest', '20000');
   await sleep(900);
   await scrollAndShoot(page, 'fund_relocation');
 

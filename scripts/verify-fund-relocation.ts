@@ -286,10 +286,10 @@ const ctxOf = (over: Partial<RelocationContext>): RelocationContext => ({
     assertEq('8 Security gains the invested amount', level(after, 'g-security') - level(before, 'g-security'), plan.netDelivered, 1e-6);
     assertEq('8 Growth loses the gross sold', level(before, 'g-growth') - level(after, 'g-growth'), plan.grossSold, 1e-6);
     // Whole-share rounding leaves a remainder; it is not lost, it stays as
-    // unassigned cash and shows up in the pyramid's Liquidità level.
+    // unassigned cash and shows up in the pyramid's Liquidity level.
     const undeployed = plan.warnings.find(w => w.kind === 'buy-shortfall')?.amount ?? 0;
     assertTrue('8 rounding leaves a remainder', undeployed > 0);
-    assertEq('8 the remainder lands in Liquidità',
+    assertEq('8 the remainder lands in Liquidity',
         level(after, UNASSIGNED_LIQUIDITY_ID) - level(before, UNASSIGNED_LIQUIDITY_ID), undeployed, 1e-6);
 
     // The pyramid total IS net worth, so it must shrink by exactly the friction

@@ -62,7 +62,7 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
                     className={`reloc-kind-btn${isPortfolio ? ' active' : ''}`}
                     onClick={selectPortfolio}
                 >
-                    Portafoglio
+                    Portfolio
                 </button>
                 <button
                     type="button"
@@ -76,7 +76,7 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
             {isPortfolio ? (
                 <>
                     <div className="reloc-field">
-                        <label className="reloc-label">Portafoglio</label>
+                        <label className="reloc-label">Portfolio</label>
                         <select
                             className="reloc-select"
                             value={value.portfolioId}
@@ -90,7 +90,7 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
 
                     <div className="reloc-field">
                         <label className="reloc-label">
-                            Asset esatto <span style={{ color: 'var(--text-muted)' }}>(opzionale)</span>
+                            Exact asset <span style={{ color: 'var(--text-muted)' }}>(optional)</span>
                         </label>
                         <select
                             className="reloc-select"
@@ -102,7 +102,7 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
                             })}
                         >
                             <option value="">
-                                {side === 'from' ? 'Scegli tu cosa vendere' : 'Scegli tu cosa comprare'}
+                                {side === 'from' ? 'Let the solver choose what to sell' : 'Let the solver choose what to buy'}
                             </option>
                             {assetOptions.map(a => (
                                 <option key={a.ticker} value={a.ticker}>
@@ -120,17 +120,17 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
                         value={value.brokerId ?? ''}
                         onChange={e => onChange({ kind: 'cash', brokerId: e.target.value || undefined })}
                     >
-                        <option value="">Liquidità complessiva</option>
+                        <option value="">Total liquidity</option>
                         {brokers.map(b => (
                             <option key={b.id} value={b.id}>
-                                {b.name} — €{Math.round(b.currentLiquidity ?? 0).toLocaleString('it-IT')}
+                                {b.name} — €{Math.round(b.currentLiquidity ?? 0).toLocaleString('en-IE')}
                             </option>
                         ))}
                     </select>
                     <p className="reloc-hint">
                         {side === 'from'
-                            ? 'Nessuna vendita, quindi nessuna imposta: si paga solo la commissione di acquisto.'
-                            : 'Il ricavato netto resta liquidità, senza essere reinvestito.'}
+                            ? 'No sale, so no tax: only the buy commission is charged.'
+                            : 'The net proceeds stay in cash instead of being reinvested.'}
                     </p>
                 </div>
             )}
@@ -161,7 +161,7 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
     <div className="reloc-card">
         <div className="reloc-form-grid">
             <EndpointPicker
-                title="Da"
+                title="From"
                 side="from"
                 value={from}
                 onChange={onFromChange}
@@ -171,7 +171,7 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
             />
             <div className="reloc-arrow" aria-hidden="true">→</div>
             <EndpointPicker
-                title="A"
+                title="To"
                 side="to"
                 value={to}
                 onChange={onToChange}
@@ -185,8 +185,8 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
             <div className="reloc-amount-field">
                 <label className="reloc-label">
                     {to.kind === 'cash'
-                        ? 'Liquidità netta da ottenere (€)'
-                        : 'Importo netto da investire in destinazione (€)'}
+                        ? 'Net cash to raise (€)'
+                        : 'Net amount to invest in the destination (€)'}
                 </label>
                 <input
                     type="number"
@@ -194,7 +194,7 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
                     value={netAmount || ''}
                     min={0}
                     step={100}
-                    placeholder="es. 10000"
+                    placeholder="e.g. 10000"
                     onChange={e => onNetAmountChange(Math.max(0, Number(e.target.value) || 0))}
                 />
             </div>
@@ -205,13 +205,13 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
                     checked={applyFreeBuyPromo}
                     onChange={e => onFreeBuyPromoChange(e.target.checked)}
                 />
-                Applica le promo &ldquo;acquisto gratuito&rdquo; di questo mese
+                Apply this month&rsquo;s free-buy promotions
             </label>
         </div>
 
         <p className="reloc-hint">
-            L&apos;importo è quello che deve <strong>arrivare a destinazione</strong>: le vendite
-            vengono dimensionate a ritroso perché imposte e commissioni siano già coperte.
+            The amount is what must <strong>land in the destination</strong>: the sales are sized
+            backwards from it, so tax and commissions are already covered.
         </p>
     </div>
 );
