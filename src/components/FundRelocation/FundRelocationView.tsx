@@ -12,6 +12,7 @@ import { buildSnapshot, type SnapshotInput } from '../../utils/relocationSnapsho
 import RelocationForm from './RelocationForm';
 import RelocationActions from './RelocationActions';
 import RelocationWhatIf from './RelocationWhatIf';
+import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import './FundRelocation.css';
 
 /**
@@ -25,8 +26,14 @@ import './FundRelocation.css';
  */
 const FundRelocationView: React.FC = () => {
     const {
-        portfolios, brokers, transactions, assetSettings, marketData,
-        macroAllocations, goalAllocations, goals, freeCommissionPeriods,
+        portfolios, goals, marketData, macroAllocations, goalAllocations, freeCommissionPeriods,
+        // Scoped + effective, so this page counts exactly what the Stats page
+        // counts: the family/illiquid/person toggles apply here too, and
+        // unresolved virtual bonds carry their synthetic Bond definition
+        // instead of falling back to the Stock default.
+        scopedTransactions: transactions,
+        scopedBrokers: brokers,
+        effectiveAssetSettings: assetSettings,
     } = usePortfolio();
 
     const [from, setFrom] = useState<RelocationEndpoint>({ kind: 'portfolio', portfolioId: '' });
@@ -101,6 +108,7 @@ const FundRelocationView: React.FC = () => {
 
     return (
         <div className="reloc-container">
+            <AssetScopeToggles style={{ marginBottom: '0.75rem' }} />
             <h2 className="section-title" style={{ fontSize: '1.5rem', marginBottom: 'var(--space-2)' }}>
                 Fund Relocation
             </h2>

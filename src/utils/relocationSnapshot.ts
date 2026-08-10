@@ -26,6 +26,16 @@ export interface PortfolioLine {
     value: number;
 }
 
+/**
+ * A single pie slice. Declared as a type alias rather than an interface on
+ * purpose: Recharts' `data` prop requires an implicit index signature, which
+ * TypeScript gives to object type aliases but not to interfaces.
+ */
+export type SliceLine = {
+    name: string;
+    value: number;
+};
+
 export interface PortfolioSnapshot {
     /** Market value of all holdings, cash excluded. */
     invested: number;
@@ -43,6 +53,12 @@ export interface PortfolioSnapshot {
     goalPyramid: GoalSegment[];
     goalPyramidTotal: number;
     byPortfolio: PortfolioLine[];
+    /** Invested value per broker — the Stats "By Broker" pie, cash excluded. */
+    byBroker: SliceLine[];
+    /** The Stats "Invested vs Liquidity" pie. */
+    investedVsLiquidity: SliceLine[];
+    /** Macro classes with a non-zero value — the Stats asset-allocation pie. */
+    assetClassSlices: SliceLine[];
     aggregation: MacroAggregation;
 }
 
@@ -90,6 +106,29 @@ export const buildSnapshot = (input: SnapshotInput): PortfolioSnapshot => {
         })
         .sort((a, b) => b.value - a.value);
 
+    // Invested value per broker, cash excluded — matches the Stats "By Broker"
+    // pie, which measures where the holdings sit rather than where cash sits.
+    const byBroker: SliceLine[] = brokers
+        .map(b => {
+            const { assets: bAssets } = calculateAssets(
+                transactions.filter(t => t.brokerId === b.id),
+                assetSettings,
+                marketData
+            );
+            return { name: b.name, value: bAssets.reduce((s, a) => s + a.currentValue, 0) };
+        })
+        .filter(d => d.value > 0)
+        .sort((a, b) => b.value - a.value);
+
+    const investedVsLiquidity: SliceLine[] = [
+        { name: 'Invested', value: aggregation.totalInvested },
+        { name: 'Liquidity', value: liquidity },
+    ].filter(d => d.value > 0);
+
+    const assetClassSlices: SliceLine[] = macro
+        .filter(m => m.value > 0)
+        .map(m => ({ name: m.name, value: m.value }));
+
     const { totalRealized } = calculateRealizedGains(transactions, brokers, assetSettings);
 
     return {
@@ -103,6 +142,9 @@ export const buildSnapshot = (input: SnapshotInput): PortfolioSnapshot => {
         goalPyramid,
         goalPyramidTotal: goalDistributionTotal(goalPyramid),
         byPortfolio,
+        byBroker,
+        investedVsLiquidity,
+        assetClassSlices,
         aggregation,
     };
 };

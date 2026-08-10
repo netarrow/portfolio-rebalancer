@@ -1,6 +1,7 @@
 import React from 'react';
 import type { PortfolioSnapshot } from '../../utils/relocationSnapshot';
 import { GoalDistributionChart } from '../Dashboard/AllocationCharts';
+import { ComparisonPie } from './RelocationCharts';
 
 const eur0 = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
 const signedEur = (v: number) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${eur0(Math.abs(v))}`;
@@ -147,6 +148,37 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
                 <p className="reloc-hint">
                     A pension fund is not a class of its own: its value counts 57% as equity and 43% as
                     bonds, exactly as on the Stats page.
+                </p>
+            </div>
+
+            <div className="reloc-card">
+                <h3 className="reloc-section-title">Stats charts, before and after</h3>
+                <div className="reloc-charts-grid">
+                    <ComparisonPie
+                        title="Asset Allocation"
+                        before={before.assetClassSlices}
+                        after={after.assetClassSlices}
+                    />
+                    <ComparisonPie
+                        title="Invested vs Liquidity"
+                        before={before.investedVsLiquidity}
+                        after={after.investedVsLiquidity}
+                    />
+                    <ComparisonPie
+                        title="Value by Portfolio"
+                        before={before.byPortfolio.map(p => ({ name: p.name, value: p.value }))}
+                        after={after.byPortfolio.map(p => ({ name: p.name, value: p.value }))}
+                    />
+                    <ComparisonPie
+                        title="Value by Broker"
+                        before={before.byBroker}
+                        after={after.byBroker}
+                        hint="Holdings only — a move between portfolios at the same broker leaves this chart untouched."
+                    />
+                </div>
+                <p className="reloc-hint">
+                    The same charts the Stats page draws, on the state the plan would produce. A slice keeps
+                    its colour across the two pies, so a category that changes rank is still easy to follow.
                 </p>
             </div>
 
