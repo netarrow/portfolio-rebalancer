@@ -314,6 +314,33 @@ async function scrollAndShoot(page, base) {
     }
   }
 
+  // ---------- FUND RELOCATION ----------
+  console.log('Fund Relocation');
+  await navTo(page, 'Fund Relocation');
+  await sleep(700);
+  // Move money between two different portfolios so the shots show a real plan
+  // (sell/buy legs, friction, before/after) instead of an empty form.
+  await page.evaluate(() => {
+    const setSelect = (el, value) => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, value);
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    const endpoints = [...document.querySelectorAll('.reloc-endpoint')];
+    if (endpoints.length < 2) return;
+    const from = endpoints[0].querySelector('select');
+    const to = endpoints[1].querySelector('select');
+    const values = [...from.options].map((o) => o.value);
+    setSelect(from, values[0]);
+    // Aim at a portfolio under a DIFFERENT goal (mock: Main Strategy → Bond
+    // Allocation), otherwise the before/after pyramid barely moves and the
+    // screenshot fails to show what the page is for.
+    setSelect(to, values[2] ?? values.find((v) => v !== values[0]) ?? values[0]);
+  });
+  await sleep(400);
+  await fillField(page, 'importo netto', '20000');
+  await sleep(900);
+  await scrollAndShoot(page, 'fund_relocation');
+
   // ---------- PERFORMANCE ----------
   console.log('Performance');
   await navTo(page, 'Performance');

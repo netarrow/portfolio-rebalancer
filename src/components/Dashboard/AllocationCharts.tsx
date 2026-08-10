@@ -3,6 +3,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recha
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
+import { buildGoalDistribution, goalDistributionTotal, type GoalSegment } from '../../utils/goalDistribution';
 import type { Asset, Transaction, PriceHistoryMap } from '../../types';
 import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
@@ -418,15 +419,12 @@ const GroupHeaderBar: React.FC<{ aggregate: GroupAggregate }> = ({ aggregate }) 
     );
 };
 
-interface GoalSegment {
-    id: string;
-    name: string;
-    value: number;
-    color: string;
-    breakdown: { label: string; value: number }[];
-}
-
-const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number }> = ({ data, total }) => {
+/**
+ * The goal pyramid, drawn as a single proportional bar. Exported so the Fund
+ * Relocation what-if can render the very same bar for the before and after
+ * states instead of growing a second look-alike chart.
+ */
+export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number; title?: string }> = ({ data, total, title = 'Goal Distribution' }) => {
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const hoveredGoal = data.find(g => g.id === hoveredId);
     const visible = data.filter(g => g.value > 0);
@@ -440,7 +438,7 @@ const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number }> = 
                 paddingBottom: '0.5rem',
                 marginBottom: '1rem'
             }}>
-                Goal Distribution
+                {title}
             </h3>
             <div className="chart-card" style={{ padding: '1.5rem' }}>
                 {/* Bar */}
@@ -913,68 +911,12 @@ const AllocationCharts: React.FC = () => {
         return assets;
     };
 
-    const GOAL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6', '#F97316'];
-
-    // Liquidità non assegnata ad alcun portafoglio (livello 0 della Goal Distribution):
-    // totale cash dei broker meno la somma di tutte le liquidityAllocations.
-    const unassignedLiquidity = useMemo(() => {
-        const total = brokers.reduce((s, b) => s + (b.currentLiquidity || 0), 0);
-        const assigned = brokers.reduce(
-            (s, b) => s + Object.values(b.liquidityAllocations || {}).reduce((a, v) => a + v, 0),
-            0
-        );
-        return Math.max(0, total - assigned);
-    }, [brokers]);
-
-    const goalChartData = useMemo(() => {
-        const sortedGoals = [...goals].sort((a, b) => a.order - b.order);
-
-        const goalSegments = sortedGoals.map((goal, idx) => {
-            const linkedPortfolios = portfolios.filter(p => p.goalId === goal.id);
-
-            const classBreakdown: Record<string, number> = {};
-            let totalValue = 0;
-
-            linkedPortfolios.forEach(p => {
-                const pAssets = getPortfolioAssets(p.id);
-                pAssets.forEach(asset => {
-                    if (asset.currentValue <= 0) return;
-                    const cls = asset.assetClass || 'Other';
-                    classBreakdown[cls] = (classBreakdown[cls] || 0) + asset.currentValue;
-                    totalValue += asset.currentValue;
-                });
-            });
-
-            return {
-                id: goal.id,
-                name: goal.title,
-                value: totalValue,
-                color: GOAL_COLORS[idx % GOAL_COLORS.length],
-                breakdown: Object.entries(classBreakdown)
-                    .map(([cls, val]) => ({ label: cls, value: val }))
-                    .sort((a, b) => b.value - a.value)
-            };
-        });
-
-        // Livello 0 di default: liquidità non assegnata a portafogli.
-        const liquiditySegment = {
-            id: '__liquidity__',
-            name: 'Liquidità',
-            value: unassignedLiquidity,
-            color: '#6B7280',
-            breakdown: unassignedLiquidity > 0
-                ? [{ label: 'Non assegnata a portafogli', value: unassignedLiquidity }]
-                : []
-        };
-
-        if (goalSegments.length === 0 && unassignedLiquidity <= 0) return [];
-        return [liquiditySegment, ...goalSegments];
-    }, [goals, portfolios, transactions, assetSettings, marketData, brokers, unassignedLiquidity]);
-
-    const goalChartTotal = useMemo(() =>
-        goalChartData.reduce((sum, g) => sum + g.value, 0),
-        [goalChartData]
+    const goalChartData = useMemo(
+        () => buildGoalDistribution({ goals, portfolios, transactions, brokers, assetSettings, marketData }),
+        [goals, portfolios, transactions, brokers, assetSettings, marketData]
     );
+
+    const goalChartTotal = useMemo(() => goalDistributionTotal(goalChartData), [goalChartData]);
 
     const hasBrokerData = brokers.some(b => {
         const bAssets = getBrokerAssets(b.id);
