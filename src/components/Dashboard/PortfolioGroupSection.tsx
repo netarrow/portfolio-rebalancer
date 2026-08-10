@@ -32,9 +32,16 @@ import {
 } from '../../utils/rebalanceCosts';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { computeGroupRebalance, type GroupRebalancePlan } from '../../utils/groupRebalance';
+import {
+    mergedRatio,
+    buildMergedGroup,
+    routeOrder,
+    isMergedPortfolioId,
+    type MemberValue,
+} from '../../utils/mergedGroup';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { WithdrawalModal } from './WithdrawalModal';
-import { PortfolioAllocationTable, SellFrictionNote, BrokerPicker } from './AllocationOverview';
+import { PortfolioAllocationTable, SellFrictionNote, BrokerPicker, type MergedTableContext } from './AllocationOverview';
 import type { Portfolio, Transaction, AssetDefinition, Broker, Asset } from '../../types';
 
 interface Props {
@@ -295,7 +302,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
     onUpdatePortfolio,
     onAddTransactions,
 }) => {
-    const [viewMode, setViewMode] = useState<'grouped' | 'individual'>('individual');
+    const [viewMode, setViewMode] = useState<'grouped' | 'individual' | 'merged'>('individual');
     const allPortfolios = useMemo(() => [parent, ...children], [parent, children]);
     // Global Rebalancing settings + full portfolio list, needed to resolve the
     // group members' configured proportions (e.g. Core 80% / Bond Buffer 20%).
@@ -402,6 +409,80 @@ const PortfolioGroupSection: React.FC<Props> = ({
             .map(pc => pc.portfolio.name);
         return { ...plan, uncovered };
     }, [portfolioCalcs, storedPortfolios, allTransactions, assetSettings, marketData, brokers, assetAllocationSettings]);
+
+    /**
+     * The group rendered as ONE virtual portfolio (Merged view).
+     *
+     * Each member's target vector is normalized to 100 and scaled by its share
+     * of the group, so the merged targets of a member's own assets sum to
+     * `share × 100`: rebalancing against them closes the member's internal
+     * allocation AND the parent/child ratio in a single plan, with no
+     * inter-portfolio transfer to price. See utils/mergedGroup.ts.
+     */
+    const merged = useMemo(() => {
+        const memberValues: MemberValue[] = portfolioCalcs.map(pc => {
+            const valueByTicker: Record<string, number> = {};
+            const quantityByTicker: Record<string, number> = {};
+            pc.assets.forEach(a => {
+                if (isCashTicker(a.ticker)) return;
+                valueByTicker[a.ticker] = (valueByTicker[a.ticker] || 0) + a.currentValue;
+                quantityByTicker[a.ticker] = (quantityByTicker[a.ticker] || 0) + a.quantity;
+            });
+            return { portfolio: pc.portfolio, totalValue: pc.totalValue, valueByTicker, quantityByTicker };
+        });
+
+        const { members: ratio, ratioSource } = mergedRatio(memberValues, groupRebalance);
+        const group = buildMergedGroup({
+            members: memberValues,
+            ratio,
+            ratioSource,
+            transactions: allTransactions,
+            brokers,
+            existingPortfolioIds: storedPortfolios.map(p => p.id),
+        });
+
+        const quantityOf = (portfolioId: string, ticker: string): number => {
+            const mv = memberValues.find(m => m.portfolio.id === portfolioId);
+            if (!mv) return 0;
+            const upper = ticker.toUpperCase();
+            const key = Object.keys(mv.quantityByTicker).find(t => t.toUpperCase() === upper);
+            return key ? mv.quantityByTicker[key] : 0;
+        };
+
+        const context: MergedTableContext = {
+            members: ratio,
+            ratioSource,
+            nameById: Object.fromEntries(memberValues.map(m => [m.portfolio.id, m.portfolio.name])),
+            route: (unitKey, ticker, shares) => {
+                const holdingsByMember: Record<string, number> = {};
+                memberValues.forEach(m => {
+                    const qty = quantityOf(m.portfolio.id, ticker);
+                    if (qty > 0) holdingsByMember[m.portfolio.id] = qty;
+                });
+                return routeOrder({
+                    unitKey,
+                    ticker,
+                    shares,
+                    ownerByUnit: group.ownerByUnit,
+                    holdingsByMember,
+                    fallbackPortfolioId: parent.id,
+                });
+            },
+        };
+
+        return { group, context };
+    }, [portfolioCalcs, groupRebalance, allTransactions, brokers, storedPortfolios, parent.id]);
+
+    /**
+     * The merged portfolio is synthesized per render and has no row in storage,
+     * so it must never reach `updatePortfolio`. The Merged table already swaps
+     * its editors for a read-only strip; this is the belt-and-braces guard so no
+     * future edit there can silently persist a portfolio that doesn't exist.
+     */
+    const guardedUpdatePortfolio = (p: Portfolio) => {
+        if (isMergedPortfolioId(p.id)) return;
+        onUpdatePortfolio(p);
+    };
 
     const groupAssets = useMemo((): Asset[] => {
         const groupTxs = allTransactions.filter(t =>
@@ -619,6 +700,11 @@ const PortfolioGroupSection: React.FC<Props> = ({
                             title="Single portfolio view"
                         >☰ Single</button>
                         <button
+                            className={viewMode === 'merged' ? 'group-toggle-active' : 'group-toggle-btn'}
+                            onClick={() => setViewMode('merged')}
+                            title="The whole group as one portfolio, targets blended by the parent/child ratio"
+                        >⧉ Merged</button>
+                        <button
                             className={viewMode === 'grouped' ? 'group-toggle-active' : 'group-toggle-btn'}
                             onClick={() => setViewMode('grouped')}
                             title="Group comparative view"
@@ -781,6 +867,20 @@ const PortfolioGroupSection: React.FC<Props> = ({
                         );
                     })}
                 </div>
+            )}
+
+            {/* Merged view — the whole group as one portfolio */}
+            {viewMode === 'merged' && (
+                <PortfolioAllocationTable
+                    portfolio={merged.group.portfolio}
+                    allTransactions={merged.group.transactions}
+                    assetSettings={assetSettings}
+                    marketData={marketData}
+                    brokers={merged.group.brokers}
+                    onUpdatePortfolio={guardedUpdatePortfolio}
+                    onAddTransactions={onAddTransactions}
+                    merged={merged.context}
+                />
             )}
 
             {/* Comparison table + action bars */}
