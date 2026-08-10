@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { getAssetGoal } from '../../utils/goalCalculations';
 import type { FinancialGoal } from '../../utils/goalCalculations';
+import { aggregateMacroValues, PENSION_FUND_BOND_SHARE, PENSION_FUND_EQUITY_SHARE } from '../../utils/macroAggregation';
 
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
@@ -12,55 +12,19 @@ const fmt = (v: number) => `€${Math.round(v).toLocaleString('it-IT')}`;
 
 const MacroStats: React.FC = () => {
     // Scoped: respects the family/illiquid asset-scope toggles
-    const { scopedAssets: assets, scopedBrokers: brokers, macroAllocations, goalAllocations, assetSettings } = usePortfolio();
+    const { scopedAssets: assets, scopedBrokers: brokers, macroAllocations, goalAllocations } = usePortfolio();
 
     const [simulatedValues, setSimulatedValues] = useState<Record<string, number> | null>(null);
     const [includeCash, setIncludeCash] = useState(true);
 
     const stats = useMemo(() => {
-        const totalInvested = assets.reduce((sum, a) => sum + (a.currentValue || 0), 0);
         // Broker cash only — single source of truth for liquidity, same composition
         // as the Net Worth card. Per-portfolio liquidity is not summed here.
         const currentLiquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
-        const totalValue = totalInvested + currentLiquidity;
+        const { totalInvested, totalValue, macroValues, goalValues, subclassValues } =
+            aggregateMacroValues(assets, currentLiquidity);
 
         if (totalValue === 0) return null;
-
-        // Build subclass-level EUR values (always include cash/liquidity in euros)
-        const subclassValues: Record<string, number> = {};
-        const macroValues: Record<string, number> = { Stock: 0, Bond: 0, Commodity: 0, Crypto: 0, Cash: 0 };
-        const goalValues: Record<string, number> = { Growth: 0, Protection: 0, Security: 0 };
-
-        assets.forEach(asset => {
-            if (!asset.currentValue) return;
-
-            const cls = asset.assetClass;
-            const sub = asset.assetSubClass || '';
-
-            if (cls === 'PensionFund') {
-                const key = 'PensionFund:Balanced';
-                subclassValues[key] = (subclassValues[key] || 0) + asset.currentValue;
-                macroValues['Stock'] += asset.currentValue * 0.57;
-                macroValues['Bond'] += asset.currentValue * 0.43;
-            } else if (cls === 'Crypto') {
-                subclassValues['Crypto'] = (subclassValues['Crypto'] || 0) + asset.currentValue;
-                macroValues['Crypto'] += asset.currentValue;
-            } else if (cls === 'Cash') {
-                subclassValues['Cash'] = (subclassValues['Cash'] || 0) + asset.currentValue;
-                macroValues['Cash'] += asset.currentValue;
-            } else if (macroValues[cls] !== undefined) {
-                const key = sub ? `${cls}:${sub}` : cls;
-                subclassValues[key] = (subclassValues[key] || 0) + asset.currentValue;
-                macroValues[cls] += asset.currentValue;
-            }
-
-            const goal = getAssetGoal(cls, sub);
-            if (goalValues[goal] !== undefined) goalValues[goal] += asset.currentValue;
-        });
-
-        subclassValues['Cash'] = (subclassValues['Cash'] || 0) + currentLiquidity;
-        macroValues['Cash'] = (macroValues['Cash'] || 0) + currentLiquidity;
-        goalValues['Protection'] += currentLiquidity;
 
         const macros = Object.entries(macroValues).map(([key, value]) => {
             const target = (macroAllocations as any)[key] || 0;
@@ -80,7 +44,7 @@ const MacroStats: React.FC = () => {
         const stepSize = Math.max(10, Math.round(totalValue / 1000 / 10) * 10);
 
         return { totalInvested, totalValue, currentLiquidity, macros, goals, goalProjected, subclassValues, stepSize };
-    }, [assets, brokers, macroAllocations, goalAllocations, assetSettings]);
+    }, [assets, brokers, macroAllocations, goalAllocations]);
 
     // Effective EUR values per subclass (simulated or actual)
     const effectiveValues = useMemo(() => {
@@ -117,7 +81,7 @@ const MacroStats: React.FC = () => {
         Object.entries(effectiveValues).forEach(([key, value]) => {
             if (key === 'Cash') { macroMap['Cash'] += value; return; }
             if (key === 'Crypto') { macroMap['Crypto'] += value; return; }
-            if (key.startsWith('PensionFund')) { macroMap['Stock'] += value * 0.57; macroMap['Bond'] += value * 0.43; return; }
+            if (key.startsWith('PensionFund')) { macroMap['Stock'] += value * PENSION_FUND_EQUITY_SHARE; macroMap['Bond'] += value * PENSION_FUND_BOND_SHARE; return; }
             const [cls] = key.split(':');
             if (macroMap[cls] !== undefined) macroMap[cls] += value;
         });
@@ -125,7 +89,7 @@ const MacroStats: React.FC = () => {
         Object.entries(stats.subclassValues).forEach(([key, value]) => {
             if (key === 'Cash') { actualMap['Cash'] += value; return; }
             if (key === 'Crypto') { actualMap['Crypto'] += value; return; }
-            if (key.startsWith('PensionFund')) { actualMap['Stock'] += value * 0.57; actualMap['Bond'] += value * 0.43; return; }
+            if (key.startsWith('PensionFund')) { actualMap['Stock'] += value * PENSION_FUND_EQUITY_SHARE; actualMap['Bond'] += value * PENSION_FUND_BOND_SHARE; return; }
             const [cls] = key.split(':');
             if (actualMap[cls] !== undefined) actualMap[cls] += value;
         });

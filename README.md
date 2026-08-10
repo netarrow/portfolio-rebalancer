@@ -91,6 +91,31 @@ A composition deep-dive across portfolios and macro exposure.
 - **Per-portfolio breakdowns** with cost / value / return.
 - **Group breakdowns** — where a portfolio has sub-portfolios (see *Parent Portfolio* in the portfolio form), the *By Portfolio* tab shows the parent and its children aggregated into a single set of charts first — one composition bar for the members' weights, group-level risk metrics, and a target blended by member value — then each portfolio again on its own. The Overview's *Value by Portfolio* pie has a **Single / Grouped** switch that folds children into their parent's slice. The rebalancing tables have their own **Single / Merged / Group** switch — see [Dashboard](#dashboard).
 
+### Fund Relocation
+
+A what-if for moving money between buckets, with the friction included.
+
+Portfolios here are logical containers over transactions, so relocating funds is not a bookkeeping edit: it is **sell there, buy here**, and the round trip permanently leaks capital-gains tax and two sets of commissions. Every other view would show the money simply arriving; this one shows what it costs to get there.
+
+![Fund Relocation — form and cost](screenshots/fund_relocation_top.png)
+
+- **Source and destination are the same kind of thing** — either a **portfolio** or **cash**. That one switch covers a divestment (portfolio → cash), an investment (cash → portfolio, so no sale and no tax) and the full round trip (portfolio → portfolio).
+- **The exact asset is optional on each side, independently.** Pin nothing and the solver picks: it sells whatever is most overweight against the source's targets — so a relocation leaves the source *closer* to its allocation, not skewed — and buys the destination's most underweight units, routing an allocation group's order to the same member the Dashboard's *Buy Only* column would. Pin one side to sell (or buy) only that ticker; pin both for a straight X → Y swap.
+- **The amount is what must land, not what leaves.** Enter the net you want working in the destination and the sales are sized backwards from it, including a second pass so the sale also covers the *buy* commission. Whole-share rounding means the plan can only overshoot, never under-deliver silently; when the source genuinely cannot raise the amount, it says so with the shortfall in euro.
+- **Sell and buy tables** list every leg: shares, price, PMC, gross, the taxable portion, the rate applied (26% / 12.5% / 20% by asset class), commissions and the net. Tax hits only the sold portion — shares × (price − PMC) — and a leg sold at a loss is taxed 0 without offsetting the other legs' gains, since netting would need the *zainetto fiscale* the app does not model.
+- **Warnings, not silent assumptions** — cash left undeployed by whole-share rounding, sales and purchases landing at different brokers (the cash has to physically move first), and, for a cash source, the same three floors the rebalancer respects: overdraft, cash earmarked for other portfolios, and the broker's minimum liquidity.
+- **Before / after** for net worth, invested, liquidity, cost basis, and the realized/unrealized split — a sale converts unrealized gain into realized, and taxed. Net worth falls by *exactly* the friction.
+
+![Fund Relocation — before / after](screenshots/fund_relocation_middle.png)
+
+- **The Stats charts, drawn twice** — Asset Allocation, Invested vs Liquidity, Value by Portfolio and Value by Broker, each as it is now and as the plan would leave it, with the euro delta per slice under the pair. A category keeps its colour across the two pies, so a portfolio that changes rank is still easy to follow. The page counts what the Stats page counts: the family/illiquid/person scope chips apply here too.
+
+![Fund Relocation — the Stats charts before and after](screenshots/fund_relocation_charts.png)
+
+- **Macro allocation and the goal pyramid, side by side.** Both are measured with the same calculators the Stats page uses, so the "before" column is that page's own arithmetic rather than a second opinion — and the pyramid total, which is net worth, visibly shrinks by the tax and commissions.
+
+![Fund Relocation — the pyramid before and after](screenshots/fund_relocation_bottom.png)
+
 ### Performance
 
 Historical net-worth and price charts, powered by the **daily price history** the app accumulates (see *Settings → Price History*).
