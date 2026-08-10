@@ -469,6 +469,18 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
             width: 100%;
           }
 
+          /* The brand is nowrap, so on a 320px phone it pushed the whole
+             navbar — and with it the page — into horizontal scrolling.
+             Scaling it with the viewport keeps the title on one line without
+             widening the header. */
+          .navbar-brand {
+            min-width: 0;
+          }
+
+          .navbar-brand h1 {
+            font-size: clamp(0.95rem, 4.6vw, 1.25rem);
+          }
+
           .hamburger-btn {
             display: block;
           }
