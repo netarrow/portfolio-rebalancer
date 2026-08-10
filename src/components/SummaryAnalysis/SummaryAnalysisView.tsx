@@ -269,7 +269,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                     {/* Macro breakdown */}
                     <div style={cardStyle}>
                         <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Spending by macro category</h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: '1rem' }}>
                             {MACRO_ORDER.map(macro => {
                                 const m = analysis.macros[macro];
                                 return (
