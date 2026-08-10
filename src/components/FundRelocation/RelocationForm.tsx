@@ -151,14 +151,26 @@ interface RelocationFormProps {
     brokers: Broker[];
     sourceAssets: Asset[];
     destAssets: Asset[];
+    /** Moves already queued — this form always edits the one after them. */
+    queuedCount: number;
+    /** Pin the current move to the sequence and start a new one. */
+    onAddToSequence: () => void;
+    canAddToSequence: boolean;
 }
 
 const RelocationForm: React.FC<RelocationFormProps> = ({
     from, to, netAmount, applyFreeBuyPromo,
     onFromChange, onToChange, onNetAmountChange, onFreeBuyPromoChange,
     portfolios, brokers, sourceAssets, destAssets,
+    queuedCount, onAddToSequence, canAddToSequence,
 }) => (
     <div className="reloc-card">
+        {queuedCount > 0 && (
+            <div className="reloc-form-badge">
+                Move {queuedCount + 1} — planned on the state the {queuedCount === 1 ? 'first move leaves' : `first ${queuedCount} moves leave`} behind
+            </div>
+        )}
+
         <div className="reloc-form-grid">
             <EndpointPicker
                 title="From"
@@ -207,6 +219,20 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
                 />
                 Apply this month&rsquo;s free-buy promotions
             </label>
+        </div>
+
+        <div className="reloc-form-actions">
+            <button
+                type="button"
+                className="reloc-btn primary"
+                onClick={onAddToSequence}
+                disabled={!canAddToSequence}
+            >
+                + Add this move to the sequence
+            </button>
+            <span className="reloc-hint reloc-form-actions-hint">
+                Queue it and plan the next one on top of it, to see what a chain of moves does to the stats.
+            </span>
         </div>
 
         <p className="reloc-hint">

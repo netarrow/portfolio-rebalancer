@@ -52,6 +52,16 @@ export interface RelocationRequest {
     applyFreeBuyPromo?: boolean;
 }
 
+/**
+ * Two endpoints that would make the move a no-op. Cash is treated as one pot
+ * regardless of broker, exactly as the planner does: a broker-to-broker cash
+ * transfer changes no position and costs nothing, so it is not a relocation.
+ */
+export const isSameEndpoint = (a: RelocationEndpoint, b: RelocationEndpoint): boolean =>
+    a.kind === 'portfolio' && b.kind === 'portfolio'
+        ? a.portfolioId === b.portfolioId
+        : a.kind === 'cash' && b.kind === 'cash';
+
 export interface RelocationContext {
     portfolios: Portfolio[];
     brokers: Broker[];
@@ -626,7 +636,9 @@ export const applyRelocationToState = (
     transactions: Transaction[],
     brokers: Broker[],
     request: RelocationRequest,
-    plan: RelocationPlan
+    plan: RelocationPlan,
+    /** Namespace for the synthetic ids, so chained moves never collide. */
+    idPrefix = '__reloc'
 ): { transactions: Transaction[]; brokers: Broker[] } => {
     const { from, to } = request;
     const date = new Date().toISOString().slice(0, 10);
@@ -634,7 +646,7 @@ export const applyRelocationToState = (
 
     plan.sells.forEach((s, i) => {
         synthetic.push({
-            id: `__reloc_sell_${i}`,
+            id: `${idPrefix}_sell_${i}`,
             ticker: s.ticker,
             amount: s.shares,
             price: s.price,
@@ -647,7 +659,7 @@ export const applyRelocationToState = (
 
     plan.buys.forEach((b, i) => {
         synthetic.push({
-            id: `__reloc_buy_${i}`,
+            id: `${idPrefix}_buy_${i}`,
             ticker: b.ticker,
             amount: b.shares,
             price: b.price,
@@ -703,4 +715,101 @@ export const applyRelocationToState = (
     });
 
     return { transactions: [...transactions, ...synthetic], brokers: nextBrokers };
+};
+
+// ── Sequences ────────────────────────────────────────────────────────────────
+
+/**
+ * One move of a chain, together with the state it leaves behind.
+ *
+ * `ctx` is the input of the NEXT step, which is what makes a sequence more than
+ * a list of independent simulations: move #2 sells shares move #1 just bought,
+ * spends the cash move #1 raised, and pays tax on the average cost move #1
+ * produced.
+ */
+export interface RelocationStep {
+    request: RelocationRequest;
+    plan: RelocationPlan;
+    /** Context AFTER this step — the one the next step is planned against. */
+    ctx: RelocationContext;
+}
+
+/** Cumulative cost of a chain. Per-step figures are summed, never re-derived. */
+export interface RelocationSequenceTotals {
+    grossSold: number;
+    cashDrawn: number;
+    tax: number;
+    sellCommission: number;
+    buyCommission: number;
+    friction: number;
+    spreadCost: number;
+    /** Sum of what each step delivers. Chained moves can hand the same euro on. */
+    netDelivered: number;
+    netRequested: number;
+    /** friction / netRequested, as a %. */
+    frictionPercent: number;
+}
+
+export interface RelocationSequence {
+    steps: RelocationStep[];
+    /** Context after the last step — `ctx` unchanged when there are no steps. */
+    ctx: RelocationContext;
+    totals: RelocationSequenceTotals;
+}
+
+/** Whether a plan actually changes the state — an empty one is a no-op to skip. */
+export const planHasEffect = (plan: RelocationPlan): boolean =>
+    plan.sells.length > 0 || plan.buys.length > 0 || plan.cashDrawn > 0;
+
+const sumTotals = (plans: RelocationPlan[]): RelocationSequenceTotals => {
+    const sum = (pick: (p: RelocationPlan) => number) => plans.reduce((s, p) => s + pick(p), 0);
+    const friction = sum(p => p.friction);
+    const netRequested = sum(p => p.netRequested);
+    return {
+        grossSold: sum(p => p.grossSold),
+        cashDrawn: sum(p => p.cashDrawn),
+        tax: sum(p => p.tax),
+        sellCommission: sum(p => p.sellCommission),
+        buyCommission: sum(p => p.buyCommission),
+        friction,
+        spreadCost: sum(p => p.spreadCost),
+        netDelivered: sum(p => p.netDelivered),
+        netRequested,
+        frictionPercent: netRequested > 0 ? (friction / netRequested) * 100 : 0,
+    };
+};
+
+/**
+ * Prices a chain of moves executed in order.
+ *
+ * Each step is planned against the state the previous ones produced, so the
+ * friction compounds honestly: selling in step #2 what step #1 just bought pays
+ * commission twice and taxes a gain measured from the new average cost, and a
+ * step can legitimately warn about a shortfall that only exists because an
+ * earlier step drained the source.
+ *
+ * A step whose plan is empty still occupies its slot — dropping it would
+ * renumber the chain the user built and hide the warning that says why.
+ */
+export const planRelocationSequence = (
+    requests: RelocationRequest[],
+    ctx: RelocationContext
+): RelocationSequence => {
+    const steps: RelocationStep[] = [];
+    let current = ctx;
+
+    requests.forEach((request, i) => {
+        const plan = planFundRelocation(request, current);
+        const { transactions, brokers } = applyRelocationToState(
+            current.transactions,
+            current.brokers,
+            request,
+            plan,
+            `__reloc_${i}`
+        );
+        current = { ...current, transactions, brokers };
+        steps.push({ request, plan, ctx: current });
+    });
+
+    return { steps, ctx: current, totals: sumTotals(steps.map(s => s.plan)) };
 };

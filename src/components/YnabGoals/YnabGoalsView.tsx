@@ -345,7 +345,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
 
                 .ynab-goals-grid {
                     display: grid;
-                    grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+                    grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
                     gap: var(--space-6);
                 }
 

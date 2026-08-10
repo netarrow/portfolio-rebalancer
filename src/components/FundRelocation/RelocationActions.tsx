@@ -1,5 +1,5 @@
 import React from 'react';
-import type { RelocationPlan, RelocationWarning } from '../../utils/fundRelocation';
+import type { BuyAction, RelocationPlan, RelocationWarning, SellAction } from '../../utils/fundRelocation';
 
 const eur = (v: number) => `€${v.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const eur0 = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
@@ -27,8 +27,8 @@ export const RelocationWarnings: React.FC<{ warnings: RelocationWarning[] }> = (
  * commissions, so the money that arrives is strictly less than the money that
  * left.
  */
-const FrictionSummary: React.FC<{ plan: RelocationPlan }> = ({ plan }) => (
-    <div className="reloc-card">
+const FrictionSummary: React.FC<{ plan: RelocationPlan; cardClass: string }> = ({ plan, cardClass }) => (
+    <div className={cardClass}>
         <h3 className="reloc-section-title">Cost of the move</h3>
         <div className="reloc-friction-grid">
             <div className="reloc-stat">
@@ -70,12 +70,142 @@ const FrictionSummary: React.FC<{ plan: RelocationPlan }> = ({ plan }) => (
     </div>
 );
 
-const SellTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
+/**
+ * Phone rendering of one sell leg (mrow pattern, styles/mobile-list.css).
+ *
+ * Ten columns cannot be read on a 390px screen, and a horizontally scrolled
+ * table hides the very numbers this page exists for. Collapsed the row shows
+ * what is sold and what it nets; expanded, every column of the desktop table.
+ */
+const SellCard: React.FC<{ sell: SellAction }> = ({ sell }) => {
+    const [open, setOpen] = React.useState(false);
+    return (
+        <div className={`mrow ${open ? 'is-open' : ''}`}>
+            <div className="mrow-head" onClick={() => setOpen(v => !v)}>
+                <span className="mrow-chevron">▶</span>
+                <div className="mrow-main">
+                    <div className="mrow-line1">
+                        <span className="mrow-title">{sell.ticker}</span>
+                        <span className="reloc-badge sell">SELL</span>
+                    </div>
+                    <div className="mrow-line2">
+                        <span>{sell.shares.toLocaleString('en-IE')} × {eur(sell.price)}</span>
+                        {sell.brokerName && <span>{sell.brokerName}</span>}
+                    </div>
+                </div>
+                <div className="mrow-side">
+                    <div className="mrow-side-primary">{eur0(sell.net)}</div>
+                    <div className="mrow-side-secondary" style={{ color: sell.tax > 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
+                        {sell.tax > 0 ? `−${eur0(sell.tax)} tax` : 'no tax'}
+                    </div>
+                </div>
+            </div>
+            {open && (
+                <div className="mrow-details">
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Avg cost</span>
+                        <span className="mrow-value">{eur(sell.averagePrice)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Gross</span>
+                        <span className="mrow-value">{eur0(sell.gross)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Taxable gain</span>
+                        <span className="mrow-value">{sell.gain > 0 ? eur0(sell.gain) : '—'}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Tax {sell.gain > 0 ? `(${(sell.taxRate * 100).toFixed(1)}%)` : ''}</span>
+                        <span className="mrow-value">{sell.tax > 0 ? eur(sell.tax) : '—'}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Fee</span>
+                        <span className="mrow-value">{sell.commission > 0 ? eur(sell.commission) : '—'}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Shares left</span>
+                        <span className="mrow-value">{sell.remainingShares.toLocaleString('en-IE')}</span>
+                    </div>
+                    {sell.label && (
+                        <div className="mrow-detail mrow-detail--wide">
+                            <span className="mrow-label">Asset</span>
+                            <span className="mrow-value">{sell.label}</span>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+const BuyCard: React.FC<{ buy: BuyAction }> = ({ buy }) => {
+    const [open, setOpen] = React.useState(false);
+    return (
+        <div className={`mrow ${open ? 'is-open' : ''}`}>
+            <div className="mrow-head" onClick={() => setOpen(v => !v)}>
+                <span className="mrow-chevron">▶</span>
+                <div className="mrow-main">
+                    <div className="mrow-line1">
+                        <span className="mrow-title">{buy.ticker}</span>
+                        <span className="reloc-badge buy">BUY</span>
+                        {buy.freeCommission && <span className="reloc-badge free">FREE</span>}
+                    </div>
+                    <div className="mrow-line2">
+                        <span>{buy.shares.toLocaleString('en-IE')} × {eur(buy.price)}</span>
+                        {buy.brokerName && <span>{buy.brokerName}</span>}
+                    </div>
+                </div>
+                <div className="mrow-side">
+                    <div className="mrow-side-primary">{eur0(buy.gross)}</div>
+                    <div className="mrow-side-secondary" style={{ color: 'var(--text-muted)' }}>
+                        {buy.commission > 0 ? `${eur(buy.commission)} fee` : 'no fee'}
+                    </div>
+                </div>
+            </div>
+            {open && (
+                <div className="mrow-details">
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Price</span>
+                        <span className="mrow-value">{eur(buy.price)}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Fee</span>
+                        <span className="mrow-value">{buy.commission > 0 ? eur(buy.commission) : '—'}</span>
+                    </div>
+                    <div className="mrow-detail">
+                        <span className="mrow-label">Final shares</span>
+                        <span className="mrow-value">{buy.resultingShares.toLocaleString('en-IE')}</span>
+                    </div>
+                    {buy.label && (
+                        <div className="mrow-detail mrow-detail--wide">
+                            <span className="mrow-label">Asset</span>
+                            <span className="mrow-value">{buy.label}</span>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+/** Totals line for the phone lists, which have no <tfoot> to carry them. */
+const MobileTotals: React.FC<{ items: { label: string; value: string }[] }> = ({ items }) => (
+    <div className="reloc-mobile-totals">
+        {items.map(i => (
+            <div key={i.label} className="reloc-mobile-total">
+                <span className="mrow-label">{i.label}</span>
+                <span className="mrow-value">{i.value}</span>
+            </div>
+        ))}
+    </div>
+);
+
+const SellTable: React.FC<{ plan: RelocationPlan; cardClass: string; compact: boolean }> = ({ plan, cardClass, compact }) => {
     if (plan.sells.length === 0) return null;
     return (
-        <div className="reloc-card">
+        <div className={cardClass}>
             <h3 className="reloc-section-title">Sells</h3>
-            <div className="reloc-table-wrap">
+            <div className="reloc-table-wrap desktop-only">
                 <table className="reloc-table">
                     <thead>
                         <tr>
@@ -129,21 +259,38 @@ const SellTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
                     </tfoot>
                 </table>
             </div>
-            <p className="reloc-hint">
-                Tax hits only the sold portion (shares × (price − average cost)). A leg sold at a loss is
-                taxed 0 and its loss does <strong>not</strong> offset the gains of the other legs: netting
-                would need the tax-credit balance the app does not model, so the estimate stays conservative.
-            </p>
+
+            <div className="mobile-only">
+                <div className="mrow-list">
+                    {plan.sells.map(s => <SellCard key={s.ticker} sell={s} />)}
+                </div>
+                <MobileTotals
+                    items={[
+                        { label: 'Gross', value: eur0(plan.grossSold) },
+                        { label: 'Tax', value: eur0(plan.tax) },
+                        { label: 'Fees', value: eur0(plan.sellCommission) },
+                        { label: 'Net', value: eur0(plan.grossSold - plan.tax - plan.sellCommission) },
+                    ]}
+                />
+            </div>
+
+            {!compact && (
+                <p className="reloc-hint">
+                    Tax hits only the sold portion (shares × (price − average cost)). A leg sold at a loss is
+                    taxed 0 and its loss does <strong>not</strong> offset the gains of the other legs: netting
+                    would need the tax-credit balance the app does not model, so the estimate stays conservative.
+                </p>
+            )}
         </div>
     );
 };
 
-const BuyTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
+const BuyTable: React.FC<{ plan: RelocationPlan; cardClass: string }> = ({ plan, cardClass }) => {
     if (plan.buys.length === 0) return null;
     return (
-        <div className="reloc-card">
+        <div className={cardClass}>
             <h3 className="reloc-section-title">Buys</h3>
-            <div className="reloc-table-wrap">
+            <div className="reloc-table-wrap desktop-only">
                 <table className="reloc-table">
                     <thead>
                         <tr>
@@ -184,17 +331,38 @@ const BuyTable: React.FC<{ plan: RelocationPlan }> = ({ plan }) => {
                     </tfoot>
                 </table>
             </div>
+
+            <div className="mobile-only">
+                <div className="mrow-list">
+                    {plan.buys.map(b => <BuyCard key={b.ticker} buy={b} />)}
+                </div>
+                <MobileTotals
+                    items={[
+                        { label: 'Invested', value: eur0(plan.buys.reduce((s, b) => s + b.gross, 0)) },
+                        { label: 'Fees', value: eur0(plan.buyCommission) },
+                    ]}
+                />
+            </div>
         </div>
     );
 };
 
-const RelocationActions: React.FC<{ plan: RelocationPlan }> = ({ plan }) => (
-    <>
-        <RelocationWarnings warnings={plan.warnings} />
-        <FrictionSummary plan={plan} />
-        <SellTable plan={plan} />
-        <BuyTable plan={plan} />
-    </>
-);
+interface RelocationActionsProps {
+    plan: RelocationPlan;
+    /** Rendered inside a step of the sequence: flatter cards, no long hints. */
+    compact?: boolean;
+}
+
+const RelocationActions: React.FC<RelocationActionsProps> = ({ plan, compact = false }) => {
+    const cardClass = compact ? 'reloc-subcard' : 'reloc-card';
+    return (
+        <>
+            <RelocationWarnings warnings={plan.warnings} />
+            <FrictionSummary plan={plan} cardClass={cardClass} />
+            <SellTable plan={plan} cardClass={cardClass} compact={compact} />
+            <BuyTable plan={plan} cardClass={cardClass} />
+        </>
+    );
+};
 
 export default RelocationActions;

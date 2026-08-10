@@ -63,9 +63,12 @@
     gap: var(--space-4);
 }
 
+/* min() so the track can never demand more than the container: on a narrow
+   phone a bare minmax(280px, …) keeps a 280px column and pushes the page into
+   horizontal scrolling instead of collapsing to one column. */
 .charts-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
     gap: var(--space-4);
 }
 
