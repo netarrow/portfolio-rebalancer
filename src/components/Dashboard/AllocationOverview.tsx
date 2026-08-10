@@ -11,7 +11,8 @@ import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate,
 import { CASH_TICKER_PREFIX } from '../../types';
 import ConcretizeModal from '../modals/ConcretizeModal';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
-import { buildPortfolioTree } from '../../utils/portfolioGroups';
+import { buildPortfolioTree, GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
+import type { MergedMemberRatio } from '../../utils/mergedGroup';
 import { WithdrawalModal } from './WithdrawalModal';
 import { RealizedGainsModal } from './RealizedGainsModal';
 import { CashFlowModal } from './CashFlowModal';
@@ -1821,6 +1822,53 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
     );
 };
 
+/**
+ * Set when the table renders a synthesized merged parent/child portfolio
+ * (see utils/mergedGroup.ts). The portfolio it is given does not exist in
+ * storage, so the editable controls are swapped for a read-only strip and the
+ * generated orders are routed back onto the real member portfolios.
+ */
+export interface MergedTableContext {
+    members: MergedMemberRatio[];
+    ratioSource: 'global' | 'value';
+    /** Splits one whole-share order across the real member portfolios. */
+    route: (unitKey: string, ticker: string, shares: number) => { portfolioId: string; shares: number }[];
+    /** Member name by id, for the confirm dialog's breakdown. */
+    nameById: Record<string, string>;
+}
+
+/**
+ * Read-only stand-in for the Broker picker and Liquidity input of a merged
+ * table: the members behind the virtual portfolio, their shares, the pooled
+ * Buy-Only budget, and where the shares came from.
+ */
+const MergedControlsStrip: React.FC<{ merged: MergedTableContext; liquidity: number }> = ({ merged, liquidity }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            {merged.members.map((m, i) => (
+                <span key={m.portfolioId} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <span
+                        style={{
+                            width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                            backgroundColor: GROUP_MEMBER_COLORS[i % GROUP_MEMBER_COLORS.length],
+                        }}
+                    />
+                    <span style={{ color: 'var(--text-secondary)' }}>{m.name}</span>
+                    <span>{(m.share * 100).toFixed(1)}%</span>
+                </span>
+            ))}
+        </span>
+        <span title="Pooled per-portfolio liquidity of every member, deployed by Buy Only">
+            Liquidity: <strong style={{ color: 'var(--text-secondary)' }}>{eur0(liquidity)}</strong> (pooled)
+        </span>
+        <span>
+            {merged.ratioSource === 'global'
+                ? 'targets blended by the configured global parent/child ratio'
+                : 'no global targets — blended by current value'}
+        </span>
+    </div>
+);
+
 interface AllocationTableProps {
     portfolio: import('../../types').Portfolio;
     allTransactions: import('../../types').Transaction[];
@@ -1829,9 +1877,10 @@ interface AllocationTableProps {
     brokers: import('../../types').Broker[];
     onUpdatePortfolio: (portfolio: import('../../types').Portfolio) => void;
     onAddTransactions: (transactions: import('../../types').Transaction[]) => void;
+    merged?: MergedTableContext;
 }
 
-export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions }) => {
+export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions, merged }) => {
     const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = React.useState(false);
     const [expandedGroupRows, setExpandedGroupRows] = React.useState<Record<string, boolean>>({});
 
@@ -2106,12 +2155,12 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
 
         const transactionsToCreate: import('../../types').Transaction[] = [];
 
-        const pushTx = (ticker: string, shares: number, price: number) => {
+        const pushLeg = (portfolioId: string, ticker: string, shares: number, price: number) => {
             if (shares === 0 || price <= 0) return;
-            const lastTx = allTransactions.filter(t => t.ticker === ticker && t.portfolioId === portfolio.id).pop();
+            const lastTx = allTransactions.filter(t => t.ticker === ticker && t.portfolioId === portfolioId).pop();
             transactionsToCreate.push({
                 id: `auto-rebal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-                portfolioId: portfolio.id,
+                portfolioId,
                 ticker,
                 date: new Date().toISOString().split('T')[0],
                 amount: Math.abs(shares),
@@ -2121,6 +2170,19 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 // check, so the recorded trade has to hit the same account.
                 brokerId: preferredBroker?.id ?? lastTx?.brokerId,
             });
+        };
+
+        // In merged mode the portfolio is virtual: every order is split back onto
+        // the real members that own the asset, so nothing is booked against an id
+        // that doesn't exist. `unitKey` is the table's row key — the ticker for a
+        // standalone row, the group id for an allocation-group member.
+        const pushTx = (unitKey: string, ticker: string, shares: number, price: number) => {
+            if (!merged) {
+                pushLeg(portfolio.id, ticker, shares, price);
+                return;
+            }
+            merged.route(unitKey, ticker, shares)
+                .forEach(leg => pushLeg(leg.portfolioId, ticker, leg.shares, price));
         };
 
         // Standalone tickers
@@ -2141,7 +2203,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                 const buyOnlyAmountIdeal = buyOnly.byUnit[ticker] || 0;
                 if (currentPrice > 0) shares = Math.round(buyOnlyAmountIdeal / currentPrice);
             }
-            pushTx(ticker, shares, currentPrice);
+            pushTx(ticker, ticker, shares, currentPrice);
         });
 
         // Group members
@@ -2153,7 +2215,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                     .filter((a): a is MemberAction => !!a);
             actions.forEach(a => {
                 const price = gc.memberInfo[a.ticker.toUpperCase()]?.price || 0;
-                pushTx(a.ticker, a.shares, price);
+                pushTx(gc.group.id, a.ticker, a.shares, price);
             });
         });
 
@@ -2169,9 +2231,24 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
 
         const modeLabel = mode === 'Full' ? 'Full Rebalance' : 'Buy Only Rebalance';
 
+        // Merged mode books into several real portfolios at once — say which,
+        // so nothing lands somewhere the user didn't expect.
+        let breakdown = '';
+        if (merged) {
+            const countById = new Map<string, number>();
+            transactionsToCreate.forEach(t => {
+                const id = t.portfolioId || '';
+                countById.set(id, (countById.get(id) || 0) + 1);
+            });
+            breakdown = Array.from(countById.entries())
+                .map(([id, n]) => `${n} → <b>${merged.nameById[id] || id}</b>`)
+                .join(', ') + '<br/><br/>';
+        }
+
         const result = await Swal.fire({
             title: `Execute ${modeLabel}?`,
             html: `This will create <b>${transactionsToCreate.length}</b> transactions based on current market prices.<br/><br/>` +
+                breakdown +
                 `<small style="color:var(--text-muted)">Ensure prices are displayed correctly! Transactions will be created at the current dashboard price.</small>`,
             icon: 'question',
             showCancelButton: true,
@@ -2386,6 +2463,13 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                     />
                 </h3>
                 <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+                    {merged ? (
+                        // The merged portfolio is synthesized per render and has no row in
+                        // storage, so broker and liquidity are reported, not edited: both
+                        // editors write back through onUpdatePortfolio, which could only
+                        // persist a portfolio that doesn't exist.
+                        <MergedControlsStrip merged={merged} liquidity={portfolio.liquidity || 0} />
+                    ) : (<>
                     <BrokerPicker portfolio={portfolio} brokers={brokers} onUpdatePortfolio={onUpdatePortfolio} />
                     {/* Kept as one flex unit so the label never wraps away from its input. */}
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
@@ -2435,6 +2519,7 @@ export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portf
                         );
                     })()}
                     </span>
+                    </>)}
                 </div>
             </div>
 
