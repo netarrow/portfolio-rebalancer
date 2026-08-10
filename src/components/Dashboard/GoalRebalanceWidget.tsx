@@ -205,8 +205,9 @@ const GoalRebalanceWidget: React.FC<GoalRebalanceWidgetProps> = ({
                 </div>
             </div>
 
-            {/* Gap cards */}
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(${goals.length}, 1fr)`, gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+            {/* Gap cards. The class is the hook mobile.css uses to drop them to
+                two per row — four columns of euro figures do not fit a phone. */}
+            <div className="goal-gap-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${goals.length}, 1fr)`, gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
                 {goals.map(g => {
                     const targetEur = ((targetAllocs[g.id] ?? 0) / 100) * totalCurrentValue;
                     const gapEur = targetEur - (currentGoalValues[g.id] ?? 0);

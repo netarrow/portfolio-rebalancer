@@ -34,12 +34,46 @@
         gap: var(--space-3) !important;
     }
 
+    /* The KPI cards (label + one figure) go two per row: ten stacked
+       full-width cards pushed everything else on the Dashboard three screens
+       down. Only this variant — the Broker Performance cards share
+       .summary-grid but hold whole label/value tables that need the width. */
+    .summary-grid--kpi {
+        grid-template-columns: 1fr 1fr !important;
+        gap: var(--space-2) !important;
+    }
+
     .summary-card {
         padding: var(--space-3) !important;
+        gap: var(--space-1) !important;
+        min-width: 0 !important;
+    }
+
+    .card-label {
+        font-size: 0.75rem !important;
     }
 
     .card-value {
-        font-size: 1.4rem !important;
+        font-size: 1.05rem !important;
+        overflow-wrap: anywhere;
+    }
+
+    .card-trend {
+        font-size: 0.78rem !important;
+    }
+}
+
+/* ===== DASHBOARD: Goal Allocation gap cards ===== */
+@media (max-width: 480px) {
+    /* One column per goal means ~80px each on a phone, and the euro figures
+       inside overflow it. Two per row keeps every number readable. */
+    .goal-gap-grid {
+        grid-template-columns: 1fr 1fr !important;
+        gap: var(--space-2) !important;
+    }
+
+    .goal-gap-grid > div {
+        min-width: 0 !important;
     }
 }
 
