@@ -364,6 +364,18 @@ const TradeCostInfo: React.FC<{
 const eur0 = (n: number) => `€${n.toLocaleString('en-IE', { maximumFractionDigits: 0 })}`;
 
 /**
+ * Target percentages used to be whole numbers typed by hand, so they were
+ * interpolated raw. They no longer always are — a Merged parent/child table
+ * blends its members' targets, and nothing stops a user typing 33.333 — and an
+ * unrounded 38.074387% bursts the 80px column. Whole numbers stay bare so the
+ * common case reads as before; anything else is trimmed to two decimals.
+ */
+const fmtPerc = (n: number): string => {
+    const rounded = Math.round(n * 100) / 100;
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
+};
+
+/**
  * Picks the broker a portfolio trades through. "Multi broker" (the default, and
  * the only behaviour before this existed) keeps the per-ticker last-transaction
  * heuristic and disables the cash check — the right choice for a portfolio whose
@@ -2861,7 +2873,7 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                 )}
 
                 <div style={{ width: '80px', textAlign: 'center', color: hideTarget ? 'var(--text-muted)' : undefined }}>
-                    {hideTarget ? '—' : `${targetPerc}%`}
+                    {hideTarget ? '—' : `${fmtPerc(targetPerc)}%`}
                 </div>
 
                 <div style={{ width: '80px', textAlign: 'center' }}>
@@ -2947,7 +2959,7 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                                 </span>
                             )}
                             <span>
-                                {currentPerc.toFixed(1)}%{!hideTarget && ` / T ${targetPerc}%`}
+                                {currentPerc.toFixed(1)}%{!hideTarget && ` / T ${fmtPerc(targetPerc)}%`}
                                 {!hideTarget && (
                                     <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px' }}>
                                         ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
@@ -3000,7 +3012,7 @@ const AllocationRow: React.FC<RowProps> = ({ ticker, label, assetClass, isCash, 
                         </div>
                         <div className="mrow-detail">
                             <span className="mrow-label">Target</span>
-                            <span className="mrow-value">{hideTarget ? '—' : `${targetPerc}%`}</span>
+                            <span className="mrow-value">{hideTarget ? '—' : `${fmtPerc(targetPerc)}%`}</span>
                         </div>
                         <div className="mrow-detail">
                             <span className="mrow-label">Actual</span>
@@ -3251,7 +3263,7 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
                     </div>
                 </div>
 
-                <div style={{ width: '80px', textAlign: 'center' }}>{targetPerc}%</div>
+                <div style={{ width: '80px', textAlign: 'center' }}>{fmtPerc(targetPerc)}%</div>
 
                 <div style={{ width: '80px', textAlign: 'center' }}>
                     <div className="allocation-perc">{currentPerc.toFixed(1)}%</div>
@@ -3297,7 +3309,7 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
                                 {gain >= 0 ? '+' : ''}€{Math.abs(gain).toFixed(0)}
                             </span>
                             <span>
-                                {currentPerc.toFixed(1)}% / T {targetPerc}%
+                                {currentPerc.toFixed(1)}% / T {fmtPerc(targetPerc)}%
                                 <span className={`allocation-diff ${diff > 0 ? 'diff-positive' : diff < 0 ? 'diff-negative' : 'diff-neutral'}`} style={{ marginLeft: '4px' }}>
                                     ({diff > 0 ? '+' : ''}{diff.toFixed(1)}%)
                                 </span>
@@ -3318,7 +3330,7 @@ const GroupSummaryRow: React.FC<GroupSummaryRowProps> = ({
                         </div>
                         <div className="mrow-detail">
                             <span className="mrow-label">Target</span>
-                            <span className="mrow-value">{targetPerc}%</span>
+                            <span className="mrow-value">{fmtPerc(targetPerc)}%</span>
                         </div>
                         <div className="mrow-detail">
                             <span className="mrow-label">Actual</span>
