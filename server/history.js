@@ -4,6 +4,9 @@
 // JS global on a WordPress page.
 
 import { fetchFtHistory } from './ftMarkets.js';
+import { fetchAlifondHistory, compartoFromTicker } from './alifond.js';
+import { NON_ISIN_SOURCES } from './sources.js';
+import { seriesToEur } from './fx.js';
 
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36';
 
@@ -265,7 +268,7 @@ export async function fetchHistoryForToken(token, { withBrowserFn } = {}) {
     const { isin, source = 'ETF' } = token;
     let { beginDate } = token;
 
-    if (source !== 'COMETA' && !ISIN_REGEX.test(isin)) {
+    if (!NON_ISIN_SOURCES.has(source) && !ISIN_REGEX.test(isin)) {
         return { isin, success: false, error: 'Invalid ISIN format' };
     }
     if (!DATE_REGEX.test(beginDate || '')) beginDate = oneYearAgoISO();
@@ -283,7 +286,16 @@ export async function fetchHistoryForToken(token, { withBrowserFn } = {}) {
         if (source === 'COMETA') {
             if (!withBrowserFn) throw new Error('Browser required for COMETA history');
             const { points, currency } = await withBrowserFn((page) => fetchCometaHistory(page));
-            return historyResult(isin, points.filter(p => p.date >= beginDate), {
+            return await historyResult(isin, points.filter(p => p.date >= beginDate), {
+                granularity: 'M', priceBasis: 'dirty', currency,
+            });
+        }
+
+        if (source === 'ALIFOND') {
+            // The same page the live scraper reads carries every month since the
+            // fund's inception, so the whole series comes for free — no browser.
+            const { points, currency } = await fetchAlifondHistory(compartoFromTicker(isin));
+            return await historyResult(isin, points.filter(p => p.date >= beginDate), {
                 granularity: 'M', priceBasis: 'dirty', currency,
             });
         }
@@ -292,24 +304,24 @@ export async function fetchHistoryForToken(token, { withBrowserFn } = {}) {
             // Chart API returns corso secco only — mark the series as clean so
             // the client never mixes it with tel-quel daily snapshots.
             const { points, currency } = await fetchBorsaItalianaHistory(isin, beginDate, endDate);
-            return historyResult(isin, points, { granularity: 'D', priceBasis: 'clean', currency });
+            return await historyResult(isin, points, { granularity: 'D', priceBasis: 'clean', currency });
         }
 
         if (source === 'FT') {
             // Daily closes/NAVs straight from markets.ft.com — no fallback, an
             // asset is mapped to FT precisely because the other sources lack it.
             const { points, currency } = await fetchFtHistory(isin, beginDate, endDate);
-            return historyResult(isin, points, { granularity: 'D', priceBasis: 'dirty', currency });
+            return await historyResult(isin, points, { granularity: 'D', priceBasis: 'dirty', currency });
         }
 
         // ETF: Borsa Italiana first, JustETF fallback (mirrors the live scraper)
         try {
             const { points, currency } = await fetchBorsaItalianaHistory(isin, beginDate, endDate);
-            return historyResult(isin, points, { granularity: 'D', priceBasis: 'dirty', currency });
+            return await historyResult(isin, points, { granularity: 'D', priceBasis: 'dirty', currency });
         } catch (biErr) {
             console.log(`[history] ${isin} not on Borsa Italiana (${biErr.message}), falling back to JustETF`);
             const { points, currency } = await fetchJustEtfHistory(isin, beginDate, endDate);
-            return historyResult(isin, points, { granularity: 'D', priceBasis: 'dirty', currency });
+            return await historyResult(isin, points, { granularity: 'D', priceBasis: 'dirty', currency });
         }
     } catch (err) {
         console.warn(`Error fetching history for ${isin}: ${err.message}`);
@@ -317,10 +329,26 @@ export async function fetchHistoryForToken(token, { withBrowserFn } = {}) {
     }
 }
 
-function historyResult(isin, points, { granularity, priceBasis, currency }) {
+async function historyResult(isin, points, { granularity, priceBasis, currency }) {
     if (!points || points.length === 0) {
         return { isin, success: false, error: 'No history points in requested range' };
     }
+
+    // Same rule as the live scraper: the client keeps one euro series per ticker,
+    // so a foreign-currency series must not be appended to it as-is. Each point
+    // is converted at the rate of its own day, which makes the old points the
+    // real euro value of the time — and matches the daily snapshots the client
+    // appends from regular price updates, which use that day's spot rate too.
+    // If the rate history is unreachable the series is rebased at today's rate
+    // instead (returns stay exact, levels shift); if even that fails the series
+    // keeps its own currency and the client's check keeps it out of the history.
+    const fx = await seriesToEur(isin, points, currency);
+    points = fx.points;
+    currency = fx.currency;
+    if (fx.converted) {
+        console.log(`[fx] ${isin}: ${points.length} history points ${fx.sourceCurrency} → EUR (${fx.fxBasis} rates)`);
+    }
+
     return {
         isin,
         success: true,
@@ -329,6 +357,9 @@ function historyResult(isin, points, { granularity, priceBasis, currency }) {
             granularity,
             priceBasis,
             currency,
+            sourceCurrency: fx.sourceCurrency,
+            fxRate: fx.fxRate,
+            fxBasis: fx.fxBasis,
             lastUpdated: new Date().toISOString(),
         },
     };
