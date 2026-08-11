@@ -674,15 +674,36 @@ export const applyRelocationToState = (
     // Cash movements, netted per broker. Sales credit their broker net of tax and
     // commission; purchases debit theirs. A cash endpoint moves its own balance.
     const cashDelta: Record<string, number> = {};
+
+    // A leg whose broker cannot be resolved (a transaction with no brokerId, or a
+    // broker excluded by the scope toggles) would otherwise lose its cash movement
+    // entirely and make the proceeds evaporate from net worth. Fall back to the
+    // broker the other leg settles at: liquidity is modelled per broker, so there
+    // is no "no broker" pot to park it in.
+    const fallbackBrokerId =
+        plan.sells.find(s => s.brokerId)?.brokerId
+        ?? plan.buys.find(b => b.brokerId)?.brokerId
+        ?? (from.kind === 'cash' ? from.brokerId : undefined)
+        ?? brokers[0]?.id;
+
     const bump = (brokerId: string | undefined, amount: number) => {
-        if (!brokerId) return;
-        cashDelta[brokerId] = (cashDelta[brokerId] || 0) + amount;
+        const id = brokerId ?? fallbackBrokerId;
+        if (!id) return;
+        cashDelta[id] = (cashDelta[id] || 0) + amount;
     };
 
     plan.sells.forEach(s => bump(s.brokerId, s.net));
-    plan.buys.forEach(b => bump(b.brokerId, -(b.gross + b.commission)));
 
-    if (from.kind === 'cash' && from.brokerId) bump(from.brokerId, -plan.cashDrawn);
+    // A CASH source is the single debit of the whole round trip: `cashDrawn` already
+    // covers the buy outlay AND its commission, so letting the buy legs debit as well
+    // would take the money out twice. With no broker pinned the outlay falls back to
+    // the brokers the buys settle at — same total, against an unassigned cash pot.
+    if (from.kind === 'cash' && (from.brokerId || plan.buys.length === 0)) {
+        bump(from.brokerId, -plan.cashDrawn);
+    } else {
+        plan.buys.forEach(b => bump(b.brokerId, -(b.gross + b.commission)));
+    }
+
     // A sale already credits the broker it settled at, so a cash DESTINATION
     // needs no second credit — only a pure cash→cash transfer does.
     if (to.kind === 'cash' && to.brokerId && from.kind === 'cash') bump(to.brokerId, plan.netDelivered);
