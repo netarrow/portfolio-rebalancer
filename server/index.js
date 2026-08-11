@@ -19,6 +19,9 @@ import { fetchHistoryForToken } from './history.js';
 import { scrapeBondMonitor, filterByMaturityWindow } from './bondMonitor.js';
 import { getIndexationCoefficient, computeTelQuel } from './btpItalia.js';
 import { fetchFtQuote } from './ftMarkets.js';
+import { fetchAlifondQuote, compartoFromTicker } from './alifond.js';
+import { NON_ISIN_SOURCES } from './sources.js';
+import { amountToEur } from './fx.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -268,10 +271,28 @@ async function extractSpreadAndVolatility(page, currentPrice) {
     return { spreadPercent, volatility };
 }
 
+// Every price leaves this server in euro: the client stores prices as bare
+// numbers and formats every total as EUR, so a USD quote (common on FT Markets)
+// would corrupt the portfolio silently. If the rate can't be fetched we keep the
+// original amount AND its currency rather than mislabel it — the price-update
+// modal then shows the foreign currency instead of a wrong euro figure.
+async function toEurPrice(isin, price, currency) {
+    const result = await amountToEur(isin, price, currency);
+    if (result.converted) {
+        console.log(`[fx] ${isin}: ${price} ${currency} → ${result.amount.toFixed(4)} EUR (rate ${result.fxRate})`);
+    }
+    return {
+        price: result.amount,
+        currency: result.currency,
+        sourceCurrency: result.sourceCurrency,
+        fxRate: result.fxRate,
+    };
+}
+
 async function scrapeToken(page, isin, source = 'ETF') {
     // Re-validate per ISIN
     const isinRegex = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
-    if (source !== 'COMETA' && !isinRegex.test(isin)) {
+    if (!NON_ISIN_SOURCES.has(source) && !isinRegex.test(isin)) {
         return { isin, success: false, error: 'Invalid ISIN format' };
     }
 
@@ -289,12 +310,37 @@ async function scrapeToken(page, isin, source = 'ETF') {
             // page-based extraction below from running against a blank tab.
             const quote = await fetchFtQuote(isin);
             console.log(`[FT] ${isin} = ${quote.price} ${quote.currency} (${quote.date})`);
+            const eur = await toEurPrice(isin, quote.price, quote.currency);
+            return {
+                isin,
+                success: true,
+                data: {
+                    currentPrice: eur.price,
+                    currency: eur.currency,
+                    sourceCurrency: eur.sourceCurrency,
+                    fxRate: eur.fxRate,
+                    lastUpdated: new Date().toISOString(),
+                    spreadPercent: null,
+                    volatility: null,
+                    indexationCoefficient: null,
+                },
+            };
+        }
+
+        if (source === 'ALIFOND') {
+            // Server-rendered page parsed over plain HTTP (see alifond.js): like
+            // FT there is no navigation, and a pension fund publishes neither
+            // bid/ask nor volatility — only a monthly NAV.
+            const quote = await fetchAlifondQuote(compartoFromTicker(isin));
+            console.log(`[ALIFOND] ${isin} (${quote.comparto}) = ${quote.price} EUR (${quote.date})`);
             return {
                 isin,
                 success: true,
                 data: {
                     currentPrice: quote.price,
                     currency: quote.currency,
+                    sourceCurrency: null,
+                    fxRate: null,
                     lastUpdated: new Date().toISOString(),
                     spreadPercent: null,
                     volatility: null,
@@ -564,12 +610,20 @@ async function scrapeToken(page, isin, source = 'ETF') {
             }
         }
 
+        // JustETF quotes an ETF in its listing currency (USD/GBP/CHF for some
+        // XETRA/gettex lines), so the conversion belongs here, after the price
+        // is parsed and before it reaches the client. Spread and volatility are
+        // percentages and stay as they are.
+        const eur = await toEurPrice(isin, finalPrice, currency);
+
         return {
             isin,
             success: true,
             data: {
-                currentPrice: finalPrice,
-                currency: currency,
+                currentPrice: eur.price,
+                currency: eur.currency,
+                sourceCurrency: eur.sourceCurrency,
+                fxRate: eur.fxRate,
                 lastUpdated: new Date().toISOString(),
                 spreadPercent,
                 volatility,

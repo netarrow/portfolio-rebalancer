@@ -394,24 +394,34 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
 
         socket.on('price_update_item', ({ isin, success, data, error, cached }) => {
+            // The server converts every foreign quote to EUR; a non-EUR currency
+            // here means that conversion failed, and storing the number would
+            // silently mix currencies in a portfolio valued entirely in euro.
+            const wrongCurrency = success && !!data?.currency && data.currency !== 'EUR';
+            const usable = success && !wrongCurrency;
+
             setPriceUpdateItems(prev => prev.map(item => {
                 if (item.isin === isin) {
                     return {
                         ...item,
-                        status: success ? 'success' : 'error',
+                        status: usable ? 'success' : 'error',
                         price: data?.currentPrice,
                         currency: data?.currency,
+                        sourceCurrency: data?.sourceCurrency,
+                        fxRate: data?.fxRate,
                         spreadPercent: data?.spreadPercent,
                         volatility: data?.volatility,
                         indexationCoefficient: data?.indexationCoefficient,
-                        error: error,
+                        error: wrongCurrency
+                            ? `Price is in ${data.currency} and could not be converted to EUR`
+                            : error,
                         cached: !!cached
                     };
                 }
                 return item;
             }));
 
-            if (success && data && data.currentPrice) {
+            if (usable && data && data.currentPrice) {
                 updateMarketData(isin, data.currentPrice, data.lastUpdated, { spreadPercent: data.spreadPercent, volatility: data.volatility, indexationCoefficient: data.indexationCoefficient });
                 // Accumulate today's point so every regular price update also
                 // grows the local history (CPRAM only ever grows this way).
@@ -447,23 +457,33 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
 
         socket.on('history_update_item', ({ isin, success, data, error, cached }) => {
+            // Same currency guard as price updates: a series the server couldn't
+            // convert must not be merged into the ticker's euro history.
+            const wrongCurrency = success && !!data?.currency && data.currency !== 'EUR';
+            const usable = success && !wrongCurrency;
+
             setPriceUpdateItems(prev => prev.map(item => {
                 if (item.isin === isin) {
                     const lastPoint = data?.points?.[data.points.length - 1];
                     return {
                         ...item,
-                        status: success ? 'success' : 'error',
+                        status: usable ? 'success' : 'error',
                         price: lastPoint?.price,
                         currency: data?.currency,
+                        sourceCurrency: data?.sourceCurrency,
+                        fxRate: data?.fxRate,
+                        fxBasis: data?.fxBasis,
                         pointsCount: data?.points?.length,
-                        error: error,
+                        error: wrongCurrency
+                            ? `History is in ${data.currency} and could not be converted to EUR`
+                            : error,
                         cached: !!cached
                     };
                 }
                 return item;
             }));
 
-            if (success && Array.isArray(data?.points) && data.points.length > 0) {
+            if (usable && Array.isArray(data?.points) && data.points.length > 0) {
                 historyBufferRef.current.push({
                     isin,
                     points: data.points.map((p: { date: string; price: number }) => [p.date, p.price] as PricePoint),
@@ -1268,6 +1288,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const result = results[0];
             if (!result || !result.success || !result.data) {
                 return { ok: false, error: result?.error || 'No history available' };
+            }
+            // Only euro series belong in the local history (see the socket handler).
+            if (result.data.currency && result.data.currency !== 'EUR') {
+                return { ok: false, error: `History is in ${result.data.currency} and could not be converted to EUR` };
             }
             const points: PricePoint[] = result.data.points.map(p => [p.date, p.price]);
             setPriceHistory(prev => upsertTickerHistory(prev, ticker, points, {

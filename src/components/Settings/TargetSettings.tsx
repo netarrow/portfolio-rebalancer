@@ -543,6 +543,7 @@ const TargetSettings: React.FC = () => {
                         <option value="MOT">MOT</option>
                         <option value="CPRAM">CPRAM</option>
                         <option value="COMETA">COMETA</option>
+                        <option value="ALIFOND">ALIFOND (Dinamico)</option>
                         <option value="FT">FT Markets</option>
                     </select>
                 </div>
@@ -624,11 +625,17 @@ const TargetSettings: React.FC = () => {
                 </p>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '1rem' }}>
                     "Update History" backfills each asset from its first purchase date. Notes: MOT bonds are
-                    stored as clean price (corso secco, no accrued interest), COMETA has monthly NAV points,
-                    CPRAM has no historical source and only accumulates from regular price updates.
+                    stored as clean price (corso secco, no accrued interest), COMETA and ALIFOND have monthly
+                    NAV points, CPRAM has no historical source and only accumulates from regular price updates.
                     FT Markets serves daily closes/NAVs for instruments the other sources don't list, such as
                     Luxembourg-domiciled funds; it publishes no bid/ask or volatility, so trade-cost estimates
                     fall back to the broker commission alone.
+                    ALIFOND reads the fund's own "andamento valore quota" page: the ticker picks the comparto
+                    (a ticker containing BILANCIATO or GARANTITO selects that one, anything else DINAMICO).
+                    Prices quoted in another currency (USD is common on FT Markets) are converted to EUR with the
+                    current xe.com rate, and historical series with the xe.com rate of each point's own day, so
+                    old points keep the euro value they really had. If the daily rates can't be fetched the
+                    series falls back to today's rate for every point.
                 </p>
                 <div className="data-management-buttons" style={{ display: 'flex', gap: '1rem', marginBottom: '3rem', flexWrap: 'wrap' }}>
                     <button

@@ -7,6 +7,11 @@ export interface PriceUpdateItem {
     status: 'pending' | 'processing' | 'success' | 'error';
     price?: number;
     currency?: string;
+    // Set when the server converted a foreign quote to EUR (e.g. USD from FT).
+    sourceCurrency?: string | null;
+    fxRate?: number | null;
+    // History only: 'historical' = per-day rates, 'spot' = one rate for the series.
+    fxBasis?: 'historical' | 'spot' | null;
     spreadPercent?: number | null;
     volatility?: number | null;
     // Inflation-linked bonds only: principal revaluation coefficient already
@@ -72,6 +77,17 @@ const PriceUpdateModal: React.FC<Props> = ({ isOpen, onClose, items, isComplete,
                                     {item.status === 'success' && item.pointsCount != null && (
                                         <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
                                             {item.pointsCount} points
+                                        </span>
+                                    )}
+                                    {item.status === 'success' && item.sourceCurrency && item.fxRate != null && (
+                                        <span
+                                            style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}
+                                            title={item.fxBasis === 'historical'
+                                                ? 'Quoted in a foreign currency: every point converted at the xe.com rate of its own day'
+                                                : 'Quoted in a foreign currency and converted to EUR at the current xe.com rate'}
+                                        >
+                                            converted from {item.sourceCurrency} @ {item.fxRate.toFixed(4)}
+                                            {item.fxBasis === 'historical' && ' · daily rates'}
                                         </span>
                                     )}
                                     {item.status === 'success' && (item.spreadPercent != null || item.volatility != null || item.indexationCoefficient != null) && (

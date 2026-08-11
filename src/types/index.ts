@@ -210,7 +210,9 @@ export type PriceHistoryMap = Record<string, TickerPriceHistory>;
 // Where an asset's price and history are scraped from. 'FT' (markets.ft.com)
 // is the catch-all for instruments the other sources don't list — typically
 // Luxembourg-domiciled mutual funds, which publish no price on Borsa Italiana.
-export type PriceSource = 'ETF' | 'MOT' | 'CPRAM' | 'COMETA' | 'FT';
+// 'COMETA' and 'ALIFOND' are pension funds keyed by a free-text ticker instead
+// of an ISIN; for ALIFOND the ticker also picks the comparto (default DINAMICO).
+export type PriceSource = 'ETF' | 'MOT' | 'CPRAM' | 'COMETA' | 'FT' | 'ALIFOND';
 
 // Formerly "Target", now acts as Asset Registry/Settings
 export interface AssetDefinition {
