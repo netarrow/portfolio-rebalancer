@@ -5,6 +5,8 @@
 import {
     planFundRelocation,
     applyRelocationToState,
+    planRelocationSequence,
+    planHasEffect,
     type RelocationContext,
     type RelocationRequest,
 } from '../src/utils/fundRelocation';
@@ -80,6 +82,27 @@ const ctxOf = (over: Partial<RelocationContext>): RelocationContext => ({
     assertEq('1 shares bought', plan.buys[0].shares, 200);
     assertEq('1 net delivered', plan.netDelivered, 10_000);
     assertEq('1 cash drawn covers the fee too', plan.cashDrawn, 10_005);
+
+    // Pricing the plan is only half the job: the what-if reads the state the plan
+    // PRODUCES, and a cash source used to be debited twice there — once as
+    // `cashDrawn` and again by the buy legs — so the table showed net worth
+    // collapsing by the whole amount moved instead of by the fee.
+    const request: RelocationRequest = {
+        from: { kind: 'cash', brokerId: 'b1' },
+        to: { kind: 'portfolio', portfolioId: 'p2', ticker: 'AGGH' },
+        netAmount: 10_000,
+    };
+    const snapshotInput = {
+        transactions: ctx.transactions, brokers, portfolios: ctx.portfolios, goals: [] as Goal[],
+        assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+    };
+    const before = buildSnapshot(snapshotInput);
+    const moved = applyRelocationToState(ctx.transactions, brokers, request, plan);
+    const after = buildSnapshot({ ...snapshotInput, transactions: moved.transactions, brokers: moved.brokers });
+
+    assertEq('1 net worth drops by exactly the friction', before.netWorth - after.netWorth, plan.friction, 1e-6);
+    assertEq('1 liquidity falls by the cash drawn ONCE', before.liquidity - after.liquidity, plan.cashDrawn, 1e-6);
+    assertEq('1 invested rises by what landed', after.invested - before.invested, plan.netDelivered, 1e-6);
 }
 
 // ── 2. Portfolio → cash: net = gross − tax − commission ──────────────────────
@@ -323,6 +346,107 @@ const ctxOf = (over: Partial<RelocationContext>): RelocationContext => ({
         ctx
     );
     assertTrue('9 flags the overdraft', over.warnings.some(w => w.kind === 'cash-overdraft'));
+}
+
+// ── 10. Net worth falls by the friction on EVERY endpoint combination ────────
+{
+    // The invariant the what-if table states in words ("falls by exactly the
+    // friction") held for portfolio sources but not for cash ones, and one broken
+    // branch is invisible when the others are checked. So check the whole matrix.
+    const goals: Goal[] = [];
+    const fixture = () => {
+        const brokers = [fixedBroker('b1', 5, 50_000), fixedBroker('b2', 5, 20_000)];
+        const transactions = [buy('SWDA', 200, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b1')];
+        return { brokers, transactions };
+    };
+
+    const check = (label: string, request: RelocationRequest) => {
+        const { brokers, transactions } = fixture();
+        const ctx = ctxOf({ brokers, transactions });
+        const plan = planFundRelocation(request, ctx);
+        const snapshotInput = {
+            transactions, brokers, portfolios: ctx.portfolios, goals,
+            assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+        };
+        const before = buildSnapshot(snapshotInput);
+        const moved = applyRelocationToState(transactions, brokers, request, plan);
+        const after = buildSnapshot({ ...snapshotInput, transactions: moved.transactions, brokers: moved.brokers });
+        assertEq(`10 ${label}`, before.netWorth - after.netWorth, plan.friction, 1e-6);
+    };
+
+    const p2 = { kind: 'portfolio', portfolioId: 'p2', ticker: 'AGGH' } as const;
+    check('cash(b1) → portfolio', { from: { kind: 'cash', brokerId: 'b1' }, to: p2, netAmount: 10_000 });
+    check('cash(unpinned) → portfolio', { from: { kind: 'cash' }, to: p2, netAmount: 10_000 });
+    check('cash(b2) → portfolio at b1', { from: { kind: 'cash', brokerId: 'b2' }, to: p2, netAmount: 10_000 });
+    check('portfolio → cash', { from: { kind: 'portfolio', portfolioId: 'p1' }, to: { kind: 'cash', brokerId: 'b1' }, netAmount: 5_000 });
+    check('portfolio → portfolio', { from: { kind: 'portfolio', portfolioId: 'p1' }, to: { kind: 'portfolio', portfolioId: 'p2' }, netAmount: 5_000 });
+    check('cash(b1) → cash(b2)', { from: { kind: 'cash', brokerId: 'b1' }, to: { kind: 'cash', brokerId: 'b2' }, netAmount: 5_000 });
+    check('cash(unpinned) → cash(b2)', { from: { kind: 'cash' }, to: { kind: 'cash', brokerId: 'b2' }, netAmount: 5_000 });
+}
+
+// ── 11. A chain holds the same invariant, cash leg included ──────────────────
+{
+    // What the "after all 3 moves" table actually compares: today against the end
+    // of the whole chain. A single mispriced cash leg used to throw off the total.
+    const brokers = [fixedBroker('b1', 5, 50_000)];
+    const transactions = [buy('SWDA', 300, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b1')];
+    const ctx = ctxOf({ brokers, transactions });
+
+    const queue: RelocationRequest[] = [
+        { from: { kind: 'portfolio', portfolioId: 'p1' }, to: { kind: 'portfolio', portfolioId: 'p2' }, netAmount: 3_000 },
+        { from: { kind: 'cash', brokerId: 'b1' }, to: { kind: 'portfolio', portfolioId: 'p2', ticker: 'AGGH' }, netAmount: 4_000 },
+        { from: { kind: 'portfolio', portfolioId: 'p2' }, to: { kind: 'portfolio', portfolioId: 'p1' }, netAmount: 2_000 },
+    ];
+    const sequence = planRelocationSequence(queue, ctx);
+
+    // The pyramid only totals to net worth when the portfolios have goals to sit
+    // in — otherwise their value is simply absent from every level.
+    const goals: Goal[] = [
+        { id: 'g-growth', title: 'Growth', order: 0 },
+        { id: 'g-security', title: 'Security', order: 1 },
+    ];
+    const snapshotInput = {
+        transactions, brokers, portfolios: ctx.portfolios, goals,
+        assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+    };
+    const before = buildSnapshot(snapshotInput);
+    const after = buildSnapshot({ ...snapshotInput, transactions: sequence.ctx.transactions, brokers: sequence.ctx.brokers });
+
+    assertEq('11 three moves priced', sequence.steps.length, 3);
+    assertTrue('11 every step does something', sequence.steps.every(s => planHasEffect(s.plan)));
+    assertEq('11 net worth falls by the chain friction', before.netWorth - after.netWorth, sequence.totals.friction, 1e-6);
+    assertEq('11 the pyramid total agrees', before.goalPyramidTotal - after.goalPyramidTotal, sequence.totals.friction, 1e-6);
+}
+
+// ── 12. A leg with no resolvable broker still moves its cash ─────────────────
+{
+    // No brokerId on the transaction and no preferred broker on the portfolio: the
+    // proceeds used to be dropped on the floor, so net worth fell by the whole
+    // gross sold instead of by the friction.
+    const brokers = [fixedBroker('b1', 5, 1_000)];
+    const transactions = [
+        ({ id: 'x1', ticker: 'SWDA', amount: 300, price: 80, date: '2020-01-01', direction: 'Buy', portfolioId: 'p1' }) as Transaction,
+        buy('AGGH', 100, 40, 'p2', 'b1'),
+    ];
+    const ctx = ctxOf({ brokers, transactions });
+    const request: RelocationRequest = {
+        from: { kind: 'portfolio', portfolioId: 'p1' },
+        to: { kind: 'portfolio', portfolioId: 'p2' },
+        netAmount: 3_000,
+    };
+    const plan = planFundRelocation(request, ctx);
+
+    assertTrue('12 the sell leg has no broker', plan.sells.every(s => s.brokerId === undefined));
+
+    const snapshotInput = {
+        transactions, brokers, portfolios: ctx.portfolios, goals: [] as Goal[],
+        assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+    };
+    const before = buildSnapshot(snapshotInput);
+    const moved = applyRelocationToState(transactions, brokers, request, plan);
+    const after = buildSnapshot({ ...snapshotInput, transactions: moved.transactions, brokers: moved.brokers });
+
+    assertEq('12 net worth still falls by exactly the friction', before.netWorth - after.netWorth, plan.friction, 1e-6);
 }
 
 console.log('\nAll fund-relocation checks passed.');
