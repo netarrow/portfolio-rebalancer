@@ -14,6 +14,8 @@ export interface GoalBarItem {
     title: string;
     color: string;
     currentValue: number;
+    /** Floor this segment cannot be dragged below. Defaults to MIN_PCT. */
+    minPercent?: number;
 }
 
 export interface GoalAllocationBarProps {
@@ -25,6 +27,8 @@ export interface GoalAllocationBarProps {
     total: number;
 }
 
+// A goal is a bucket you keep something in; cash is one you are allowed to
+// empty, so the floor is per-segment rather than global.
 const MIN_PCT = 5;
 // en-IE, like every other euro figure on this page: the it-IT dot separator
 // reads as a decimal point next to them and turns €46.093 into forty-six euros.
@@ -46,6 +50,14 @@ const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllo
         e.preventDefault();
         endDragRef.current?.();
         dragRef.current = { startX: e.clientX, startAllocs: goals.map(g => targetAllocs[g.id] ?? 0) };
+        const floor = (i: number) => goals[i].minPercent ?? MIN_PCT;
+        // The floor stops a segment being shrunk past it — it must never freeze
+        // one that is ALREADY below it (targets seeded from today's split can
+        // start under 5%), or the whole bar becomes undraggable: the last
+        // segment is re-derived on every drag, so its check fires even when the
+        // drag never touched it.
+        const blocked = (i: number, next: number, start: number) =>
+            next < floor(i) && next < start - 0.001;
 
         const onMove = (ev: PointerEvent) => {
             const drag = dragRef.current;
@@ -59,7 +71,8 @@ const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllo
             // only: every other goal keeps the share the user already chose.
             const newLeft = drag.startAllocs[handleIdx] + delta;
             const newRight = drag.startAllocs[handleIdx + 1] - delta;
-            if (newLeft < MIN_PCT || newRight < MIN_PCT) return;
+            if (blocked(handleIdx, newLeft, drag.startAllocs[handleIdx])) return;
+            if (blocked(handleIdx + 1, newRight, drag.startAllocs[handleIdx + 1])) return;
 
             const next = [...drag.startAllocs];
             next[handleIdx] = newLeft;
@@ -67,7 +80,8 @@ const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllo
             // Re-enforce total = 100 by adjusting last segment
             const sumExceptLast = next.reduce((s, v, i) => (i !== goals.length - 1 ? s + v : s), 0);
             next[goals.length - 1] = 100 - sumExceptLast;
-            if (next[goals.length - 1] < MIN_PCT) return;
+            const last = goals.length - 1;
+            if (blocked(last, next[last], drag.startAllocs[last])) return;
 
             const result: Record<string, number> = {};
             goals.forEach((g, i) => { result[g.id] = next[i]; });
@@ -202,7 +216,7 @@ const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllo
 
             {/* Gap cards. The class is the hook mobile.css uses to drop them to
                 two per row — four columns of euro figures do not fit a phone. */}
-            <div className="goal-gap-grid" style={{ display: 'grid', gridTemplateColumns: `repeat(${goals.length}, 1fr)`, gap: 'var(--space-3)' }}>
+            <div className="goal-gap-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-3)' }}>
                 {goals.map(g => {
                     const targetEur = ((targetAllocs[g.id] ?? 0) / 100) * total;
                     const gapEur = targetEur - g.currentValue;

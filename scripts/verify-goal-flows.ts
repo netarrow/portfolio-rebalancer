@@ -1,8 +1,8 @@
-// Known-answer checks for the goal-flow planner: the split of wealth across
-// goals, and the whole-portfolio moves that would close the gap between where
-// it sits and where the target bar says it should sit.
+// Known-answer checks for the goal-flow planner: the split of wealth across the
+// pyramid — the cash level plus the goals — and the moves that would close the
+// gap between where it sits and where the target bar says it should sit.
 // Run with: npx esbuild scripts/verify-goal-flows.ts --bundle --format=esm | node --input-type=module
-import { buildGoalFlowPlan, DEFAULT_MIN_MOVE } from '../src/utils/goalFlows';
+import { buildGoalFlowPlan, DEFAULT_MIN_MOVE, LIQUIDITY_LEVEL_ID } from '../src/utils/goalFlows';
 import type { AssetDefinition, Broker, Goal, Portfolio, Transaction } from '../src/types';
 
 const assertEq = (label: string, actual: number, expected: number, tol = 1e-6) => {
@@ -51,21 +51,26 @@ const brokers: Broker[] = [{ id: 'b1', name: 'Broker', currentLiquidity: 0 } as 
 const planWith = (targets: Record<string, number>, over: Partial<Parameters<typeof buildGoalFlowPlan>[0]> = {}) =>
     buildGoalFlowPlan({ goals, portfolios, transactions, brokers, assetSettings, marketData, targets, ...over });
 
+/** plan.goals[0] is always the cash level, so the goals start at index 1. */
+const CASH = 0, GROWTH = 1, SECURITY = 2;
+
 // ── 1. The split, and a gap closed out of both portfolios of the donor goal ──
 {
     const plan = planWith({ 'g-growth': 50, 'g-security': 50 });
 
-    assertEq('1 total is the goals only', plan.total, 100_000);
-    assertEq('1 growth today', plan.goals[0].currentValue, 60_000);
-    assertEq('1 security today', plan.goals[1].currentValue, 40_000);
-    assertEq('1 growth must shrink', plan.goals[0].gap, -10_000);
+    assertEq('1 total is the whole pyramid', plan.total, 100_000);
+    assertTrue('1 the cash level comes first', plan.goals[CASH].id === LIQUIDITY_LEVEL_ID);
+    assertEq('1 no unearmarked cash', plan.goals[CASH].currentValue, 0);
+    assertEq('1 growth today', plan.goals[GROWTH].currentValue, 60_000);
+    assertEq('1 security today', plan.goals[SECURITY].currentValue, 40_000);
+    assertEq('1 growth must shrink', plan.goals[GROWTH].gap, -10_000);
 
     // Growth is drained proportionally to what each of its portfolios holds
     // (45k / 15k = 3:1), so the mix inside the goal survives the move.
     assertEq('1 two moves', plan.moves.length, 2);
     assertEq('1 core gives 3/4', plan.moves[0].amount, 7_500);
     assertEq('1 tilt gives 1/4', plan.moves[1].amount, 2_500);
-    assertTrue('1 both land in the receiving goal', plan.moves.every(m => m.toPortfolioId === 'p3'));
+    assertTrue('1 both land in the receiving goal', plan.moves.every(m => m.to.portfolioId === 'p3'));
     assertEq('1 moved total closes the gap', plan.moves.reduce((s, m) => s + m.amount, 0), 10_000);
 }
 
@@ -73,7 +78,7 @@ const planWith = (targets: Record<string, number>, over: Partial<Parameters<type
 {
     const plan = planWith({ 'g-growth': 60, 'g-security': 40 });
     assertEq('2 no moves', plan.moves.length, 0);
-    assertEq('2 no gap', plan.goals[0].gap, 0);
+    assertEq('2 no gap', plan.goals[GROWTH].gap, 0);
 }
 
 // ── 3. Legs under the minimum are dropped, and said so ───────────────────────
@@ -100,7 +105,7 @@ const planWith = (targets: Record<string, number>, over: Partial<Parameters<type
     assertEq('4 the whole share is stranded', issue?.amount ?? 0, 10_000);
     // The donors are still matched with the receivers that DO exist: Growth
     // (−10k) into Security, which is the only goal that can take it.
-    assertTrue('4 nothing is routed to the empty goal', plan.moves.every(m => m.toGoalId !== 'g-house'));
+    assertTrue('4 nothing is routed to the empty goal', plan.moves.every(m => m.to.goalId !== 'g-house'));
 }
 
 // ── 5. Portfolios outside every goal stay outside the arithmetic ─────────────
@@ -117,23 +122,70 @@ const planWith = (targets: Record<string, number>, over: Partial<Parameters<type
     assertEq('5 the loose portfolio is not in the base', plan.total, 100_000);
     assertEq('5 it is listed as outside', plan.orphanPortfolios.length, 1);
     assertEq('5 with its value', plan.orphanPortfolios[0].value, 10_000);
-    assertTrue('5 and never moved', plan.moves.every(m => m.fromPortfolioId !== 'p9' && m.toPortfolioId !== 'p9'));
+    assertTrue('5 and never moved', plan.moves.every(m => m.from.portfolioId !== 'p9' && m.to.portfolioId !== 'p9'));
 }
 
-// ── 6. Earmarked broker cash counts inside its portfolio's goal ──────────────
+// ── 6. Earmarked cash counts inside its goal, the rest is the cash level ─────
 {
     // €5k of broker cash reserved for the Security portfolio: the goal levels
     // count it, exactly as the pyramid does, so it is part of what can move.
+    // The other €7k is earmarked to nobody — level 0, and movable in its own
+    // right.
     const withCash: Broker[] = [
         { id: 'b1', name: 'Broker', currentLiquidity: 12_000, liquidityAllocations: { p3: 5_000 } } as Broker,
     ];
-    const plan = planWith({ 'g-growth': 50, 'g-security': 50 }, { brokers: withCash });
+    const plan = planWith({ [LIQUIDITY_LEVEL_ID]: 0, 'g-growth': 50, 'g-security': 50 }, { brokers: withCash });
 
-    assertEq('6 security counts its earmark', plan.goals[1].currentValue, 45_000);
-    assertEq('6 total grows by the earmark only', plan.total, 105_000);
-    // Unassigned cash (12k − 5k) is level 0 of the pyramid, below every goal:
-    // it must not inflate the base the percentages apply to.
-    assertEq('6 growth gap', plan.goals[0].gap, 52_500 - 60_000);
+    assertEq('6 security counts its earmark', plan.goals[SECURITY].currentValue, 45_000);
+    assertEq('6 the cash level holds what is left', plan.goals[CASH].currentValue, 7_000);
+    assertEq('6 total is the whole net worth', plan.total, 112_000);
+    assertEq('6 growth gap', plan.goals[GROWTH].gap, 56_000 - 60_000);
+}
+
+// ── 7. Cash asked to empty is deployed, never sold ───────────────────────────
+{
+    const withCash: Broker[] = [{ id: 'b1', name: 'Broker', currentLiquidity: 10_000 } as Broker];
+    // 110k pyramid: cash to zero, the goals keeping their 60/40 shares of it.
+    const plan = planWith({ [LIQUIDITY_LEVEL_ID]: 0, 'g-growth': 60, 'g-security': 40 }, { brokers: withCash });
+
+    assertEq('7 total includes the cash', plan.total, 110_000);
+    assertEq('7 the cash level must empty', plan.goals[CASH].gap, -10_000);
+    assertTrue('7 every move leaves cash', plan.moves.every(m => m.from.kind === 'cash'));
+    assertTrue('7 and none of them sells', plan.moves.every(m => m.to.kind === 'portfolio'));
+    assertEq('7 the whole pot is deployed', plan.moves.reduce((s, m) => s + m.amount, 0), 10_000);
+    // 66k target vs 60k held, and 44k vs 40k: proportional to what each goal is short.
+    assertEq('7 growth takes its share', plan.moves.filter(m => m.to.goalId === 'g-growth').reduce((s, m) => s + m.amount, 0), 6_000);
+    assertEq('7 security takes the rest', plan.moves.filter(m => m.to.goalId === 'g-security').reduce((s, m) => s + m.amount, 0), 4_000);
+}
+
+// ── 8. Cash asked to grow is raised by selling into it ───────────────────────
+{
+    // 10% of a €100k pyramid in cash, from nothing: the goals give it up.
+    const plan = planWith({ [LIQUIDITY_LEVEL_ID]: 10, 'g-growth': 54, 'g-security': 36 });
+
+    assertEq('8 the cash level must grow', plan.goals[CASH].gap, 10_000);
+    assertTrue('8 every leg lands in cash', plan.moves.every(m => m.to.kind === 'cash'));
+    assertTrue('8 and starts in a portfolio', plan.moves.every(m => m.from.kind === 'portfolio'));
+    assertEq('8 raised in full', plan.moves.reduce((s, m) => s + m.amount, 0), 10_000);
+}
+
+// ── 9. Cash cannot give what is earmarked elsewhere ──────────────────────────
+{
+    // €4k of the €5k is reserved for p3, so level 0 holds €1k: a target that
+    // asks for €5k out of it is short by €4k, and says so instead of promising
+    // a move that no cash exists for.
+    const withCash: Broker[] = [
+        { id: 'b1', name: 'Broker', currentLiquidity: 5_000, liquidityAllocations: { p3: 4_000 } } as Broker,
+    ];
+    const plan = buildGoalFlowPlan({
+        goals, portfolios, transactions, brokers: withCash, assetSettings, marketData,
+        // 105k pyramid, cash level €1k: asking for −4k more than it has.
+        targets: { [LIQUIDITY_LEVEL_ID]: 0, 'g-growth': 100 * (60_000 / 105_000), 'g-security': 100 * (45_000 / 105_000) },
+    });
+
+    assertEq('9 the cash level holds only what is free', plan.goals[CASH].currentValue, 1_000);
+    assertEq('9 nothing beyond the free cash is promised', plan.moves.reduce((s, m) => s + m.amount, 0), 1_000);
+    assertTrue('9 no move drains more than the pot', plan.moves.every(m => m.from.kind !== 'cash' || m.amount <= 1_000));
 }
 
 console.log('\nAll goal-flow checks passed.');
