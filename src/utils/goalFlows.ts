@@ -1,9 +1,10 @@
 import type { AssetDefinition, Broker, Goal, Portfolio, Transaction } from '../types';
+import { LIQUIDITY_COLOR, UNASSIGNED_LIQUIDITY_ID, unassignedLiquidityOf } from './goalDistribution';
 import { calculateAssets, injectCashAssets } from './portfolioCalculations';
 
 /**
- * Goal-level flows: what has to move BETWEEN WHOLE PORTFOLIOS for the wealth
- * split across goals to hit its targets.
+ * Goal-level flows: what has to move for the wealth split across the pyramid to
+ * hit its targets.
  *
  * This is deliberately not an asset-level rebalance. Portfolios are attached to
  * a goal (`Portfolio.goalId`), so a goal only grows if a portfolio attached to
@@ -12,16 +13,24 @@ import { calculateAssets, injectCashAssets } from './portfolioCalculations';
  * portfolios is the relocation planner's job, not this one's: here the unit is
  * the portfolio, and the answer is "move € from portfolio A to portfolio B".
  *
- * The base the targets apply to is the sum of the goal levels only. Cash not
- * earmarked to any portfolio is level 0 of the pyramid, outside every goal, so
- * counting it would produce gaps that no portfolio-to-portfolio move can close.
- * Deploying that cash is a Cash → Portfolio move in the form above.
+ * The one level that is not a goal is level 0: the cash NOT earmarked to any
+ * portfolio, which sits below every goal in the pyramid exactly as it does on
+ * the Stats page. It is a full participant here — draining it is a cash →
+ * portfolio move (an investment, no sale, no tax) and feeding it a portfolio →
+ * cash one (a divestment) — which is why the targets apply to the whole net
+ * worth rather than to the goals alone. Cash earmarked to a portfolio is folded
+ * into that portfolio by `injectCashAssets`, so it counts inside its own goal
+ * and never twice.
  */
 
 export const GOAL_FLOW_COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899', '#6366F1', '#14B8A6', '#F97316'];
 
 /** Moves smaller than this are noise once tax and commissions are priced in. */
 export const DEFAULT_MIN_MOVE = 100;
+
+/** The cash level's id and label — the same ones the Stats pyramid uses. */
+export const LIQUIDITY_LEVEL_ID = UNASSIGNED_LIQUIDITY_ID;
+export const LIQUIDITY_LEVEL_TITLE = 'Liquidity';
 
 export interface GoalFlowPortfolio {
     id: string;
@@ -33,6 +42,8 @@ export interface GoalFlowGoal {
     id: string;
     title: string;
     color: string;
+    /** 'cash' marks level 0 — the pot, not a goal: it has no portfolios. */
+    kind: 'goal' | 'cash';
     currentValue: number;
     currentPercent: number;
     targetPercent: number;
@@ -42,20 +53,26 @@ export interface GoalFlowGoal {
     portfolios: GoalFlowPortfolio[];
 }
 
+/** One end of a move: a portfolio, or the unearmarked cash pot. */
+export interface GoalFlowEndpoint {
+    kind: 'portfolio' | 'cash';
+    /** Empty string on the cash pot, which is not a portfolio. */
+    portfolioId: string;
+    name: string;
+    /** The pyramid level this end belongs to (a goal id, or the cash level). */
+    goalId: string;
+}
+
 export interface GoalFlowMove {
-    fromPortfolioId: string;
-    fromPortfolioName: string;
-    fromGoalId: string;
-    toPortfolioId: string;
-    toPortfolioName: string;
-    toGoalId: string;
+    from: GoalFlowEndpoint;
+    to: GoalFlowEndpoint;
     amount: number;
 }
 
 export type GoalFlowIssueKind =
     /** A goal must grow but has no portfolio attached to receive the money. */
     | 'no-destination'
-    /** A goal must shrink but its portfolios hold less than the gap asks for. */
+    /** A level must shrink but holds less than the gap asks for. */
     | 'not-enough-to-drain'
     /** Moves dropped for being too small to be worth their friction. */
     | 'below-minimum';
@@ -69,12 +86,11 @@ export interface GoalFlowIssue {
 
 export interface GoalFlowPlan {
     goals: GoalFlowGoal[];
-    /** Sum of the goal levels — the base the target percentages apply to. */
+    /** Net worth inside the pyramid — the base the target percentages apply to. */
     total: number;
     moves: GoalFlowMove[];
     /** Portfolios not attached to any goal: outside the split entirely. */
     orphanPortfolios: GoalFlowPortfolio[];
-    /** Cash not earmarked to a portfolio is outside the goals — shown, not moved. */
     issues: GoalFlowIssue[];
 }
 
@@ -140,14 +156,22 @@ const spread = (
     return out;
 };
 
+/** The cash pot as an endpoint: one pot, no broker picked — the planner chooses. */
+const cashEndpoint = (): GoalFlowEndpoint => ({
+    kind: 'cash',
+    portfolioId: '',
+    name: LIQUIDITY_LEVEL_TITLE,
+    goalId: LIQUIDITY_LEVEL_ID,
+});
+
 /**
- * Builds the goal split and the portfolio-to-portfolio moves that would close
- * it. Donors and receivers are matched largest-first, which keeps the number of
- * moves at donors + receivers − 1 at worst: every extra move is another sell →
- * buy round trip, and each one leaks tax and two commissions.
+ * Builds the pyramid split and the moves that would close it. Donors and
+ * receivers are matched largest-first, which keeps the number of moves at
+ * donors + receivers − 1 at worst: every extra move is another sell → buy round
+ * trip, and each one leaks tax and two commissions.
  */
 export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
-    const { goals, portfolios, targets } = input;
+    const { goals, portfolios, brokers, targets } = input;
     const minMove = input.minMove ?? DEFAULT_MIN_MOVE;
 
     const valueById: Record<string, number> = {};
@@ -161,25 +185,40 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
             .map(p => ({ id: p.id, name: p.name, value: valueById[p.id] ?? 0 }))
             .sort((a, b) => b.value - a.value);
 
-    const base = sortedGoals.map((goal, idx) => {
-        const linked = goalPortfolios(goal.id);
-        return {
-            goal,
-            linked,
-            currentValue: linked.reduce((s, p) => s + p.value, 0),
-            color: GOAL_FLOW_COLORS[idx % GOAL_FLOW_COLORS.length],
-        };
-    });
+    // Level 0 first, then the goals in their own order — the pyramid from the
+    // ground up, so cash always sits before the first goal.
+    const base: { id: string; title: string; kind: 'goal' | 'cash'; linked: GoalFlowPortfolio[]; currentValue: number; color: string }[] = [
+        {
+            id: LIQUIDITY_LEVEL_ID,
+            title: LIQUIDITY_LEVEL_TITLE,
+            kind: 'cash',
+            linked: [],
+            currentValue: unassignedLiquidityOf(brokers),
+            color: LIQUIDITY_COLOR,
+        },
+        ...sortedGoals.map((goal, idx) => {
+            const linked = goalPortfolios(goal.id);
+            return {
+                id: goal.id,
+                title: goal.title,
+                kind: 'goal' as const,
+                linked,
+                currentValue: linked.reduce((s, p) => s + p.value, 0),
+                color: GOAL_FLOW_COLORS[idx % GOAL_FLOW_COLORS.length],
+            };
+        }),
+    ];
 
     const total = base.reduce((s, g) => s + g.currentValue, 0);
 
-    const flowGoals: GoalFlowGoal[] = base.map(({ goal, linked, currentValue, color }) => {
-        const targetPercent = targets[goal.id] ?? 0;
+    const flowGoals: GoalFlowGoal[] = base.map(({ id, title, kind, linked, currentValue, color }) => {
+        const targetPercent = targets[id] ?? 0;
         const targetValue = (targetPercent / 100) * total;
         return {
-            id: goal.id,
-            title: goal.title,
+            id,
+            title,
             color,
+            kind,
             currentValue,
             currentPercent: total > 0 ? (currentValue / total) * 100 : 0,
             targetPercent,
@@ -191,14 +230,25 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
 
     const issues: GoalFlowIssue[] = [];
 
-    // Donors: goals over target, drained proportionally to what each of their
-    // portfolios holds, so the mix inside the goal survives the move.
-    const donors: { portfolioId: string; name: string; goalId: string; amount: number }[] = [];
-    const receivers: { portfolioId: string; name: string; goalId: string; amount: number }[] = [];
+    // Donors: levels over target. A goal is drained proportionally to what each
+    // of its portfolios holds, so the mix inside the goal survives the move;
+    // the cash level is one pot and simply gives.
+    const donors: { endpoint: GoalFlowEndpoint; amount: number }[] = [];
+    const receivers: { endpoint: GoalFlowEndpoint; amount: number }[] = [];
 
     flowGoals.forEach(g => {
         if (g.gap < -0.5) {
             const need = -g.gap;
+            if (g.kind === 'cash') {
+                // Never promise more cash than is actually unearmarked: the rest
+                // of the gap has to be closed by lowering the target.
+                if (g.currentValue + 0.5 < need) {
+                    issues.push({ kind: 'not-enough-to-drain', goalId: g.id, goalTitle: g.title, amount: need - g.currentValue });
+                }
+                const give = Math.min(need, g.currentValue);
+                if (give > 0.5) donors.push({ endpoint: cashEndpoint(), amount: give });
+                return;
+            }
             const capacity = g.portfolios.reduce((s, p) => s + p.value, 0);
             if (capacity + 0.5 < need) {
                 issues.push({ kind: 'not-enough-to-drain', goalId: g.id, goalTitle: g.title, amount: need - capacity });
@@ -206,9 +256,16 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
             const per = spread(Math.min(need, capacity), g.portfolios.map(p => ({ id: p.id, weight: p.value, max: p.value })));
             g.portfolios.forEach(p => {
                 const amount = per[p.id] ?? 0;
-                if (amount > 0.5) donors.push({ portfolioId: p.id, name: p.name, goalId: g.id, amount });
+                if (amount > 0.5) {
+                    donors.push({ endpoint: { kind: 'portfolio', portfolioId: p.id, name: p.name, goalId: g.id }, amount });
+                }
             });
         } else if (g.gap > 0.5) {
+            if (g.kind === 'cash') {
+                // Cash can always receive: raising it is selling into the pot.
+                receivers.push({ endpoint: cashEndpoint(), amount: g.gap });
+                return;
+            }
             if (g.portfolios.length === 0) {
                 issues.push({ kind: 'no-destination', goalId: g.id, goalTitle: g.title, amount: g.gap });
                 return;
@@ -219,7 +276,9 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
             const per = spread(g.gap, g.portfolios.map(p => ({ id: p.id, weight: anyValue ? p.value : 1 })));
             g.portfolios.forEach(p => {
                 const amount = per[p.id] ?? 0;
-                if (amount > 0.5) receivers.push({ portfolioId: p.id, name: p.name, goalId: g.id, amount });
+                if (amount > 0.5) {
+                    receivers.push({ endpoint: { kind: 'portfolio', portfolioId: p.id, name: p.name, goalId: g.id }, amount });
+                }
             });
         }
     });
@@ -236,15 +295,7 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
         const receiver = receivers[ri];
         const amount = Math.round(Math.min(donor.amount, receiver.amount));
         if (amount >= minMove) {
-            moves.push({
-                fromPortfolioId: donor.portfolioId,
-                fromPortfolioName: donor.name,
-                fromGoalId: donor.goalId,
-                toPortfolioId: receiver.portfolioId,
-                toPortfolioName: receiver.name,
-                toGoalId: receiver.goalId,
-                amount,
-            });
+            moves.push({ from: donor.endpoint, to: receiver.endpoint, amount });
         } else if (amount > 0) {
             dropped += amount;
         }

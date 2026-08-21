@@ -13,7 +13,7 @@ import { calculateAssets, injectCashAssets } from './portfolioCalculations';
  */
 
 const GOAL_COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#EC4899', '#6366F1', '#14B8A6', '#F97316'];
-const LIQUIDITY_COLOR = '#6B7280';
+export const LIQUIDITY_COLOR = '#6B7280';
 
 /** Id of the synthetic level holding cash not earmarked to any portfolio. */
 export const UNASSIGNED_LIQUIDITY_ID = '__liquidity__';
