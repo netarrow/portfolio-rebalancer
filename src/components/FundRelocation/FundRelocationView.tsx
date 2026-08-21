@@ -16,6 +16,9 @@ import RelocationForm from './RelocationForm';
 import RelocationActions from './RelocationActions';
 import RelocationSequenceView from './RelocationSequence';
 import RelocationWhatIf from './RelocationWhatIf';
+import GoalFlowPlanner from './GoalFlowPlanner';
+import RelocationExecution from './RelocationExecution';
+import { buildExecutionCommit, buildExecutionMoves } from '../../utils/relocationExecution';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import './FundRelocation.css';
 
@@ -38,6 +41,7 @@ import './FundRelocation.css';
 const FundRelocationView: React.FC = () => {
     const {
         portfolios, goals, marketData, macroAllocations, goalAllocations, freeCommissionPeriods,
+        goalModeTargets, setGoalModeTargets, addTransactionsBulk, adjustBrokerLiquidity,
         // Scoped + effective, so this page counts exactly what the Stats page
         // counts: the family/illiquid/person toggles apply here too, and
         // unresolved virtual bonds carry their synthetic Bond definition
@@ -130,6 +134,77 @@ const FundRelocationView: React.FC = () => {
 
     const totalFriction = sequence.totals.friction + (plan?.friction ?? 0);
 
+    /** The queue as ordered actions: sell here, wire there, buy at the other end. */
+    const executionMoves = useMemo(
+        () => buildExecutionMoves(sequence.steps.filter(s => planHasEffect(s.plan)), portfolios),
+        [sequence.steps, portfolios]
+    );
+
+    const [executing, setExecuting] = useState(false);
+
+    /**
+     * Records what was done. The trades become transactions; the wires never do
+     * — they only move broker cash, together with the tax and the fees, which
+     * is why the generic per-trade cash sync is switched off here: this page
+     * knows the exact figures, having priced them.
+     */
+    const executeQueue = useCallback(async () => {
+        const commit = buildExecutionCommit(
+            executionMoves,
+            new Date().toISOString().slice(0, 10),
+            `reloc-${Date.now()}`
+        );
+        if (commit.transactions.length === 0 && Object.keys(commit.liquidityDeltas).length === 0) return;
+
+        const Swal = (await import('sweetalert2')).default;
+        const cashLines = Object.entries(commit.liquidityDeltas)
+            .map(([brokerId, delta]) => {
+                const name = brokers.find(b => b.id === brokerId)?.name ?? brokerId;
+                const sign = delta >= 0 ? '+' : '−';
+                return `<div>${name}: <b>${sign}€${Math.abs(delta).toLocaleString('en-IE', { maximumFractionDigits: 0 })}</b></div>`;
+            })
+            .join('');
+
+        const result = await Swal.fire({
+            title: 'Mark these actions as executed?',
+            html:
+                `This records <b>${commit.counts.sells}</b> sell${commit.counts.sells === 1 ? '' : 's'} and ` +
+                `<b>${commit.counts.buys}</b> buy${commit.counts.buys === 1 ? '' : 's'} as transactions` +
+                (commit.counts.transfers > 0
+                    ? `, and moves the cash for <b>${commit.counts.transfers}</b> transfer${commit.counts.transfers === 1 ? '' : 's'} between brokers (never written to the ledger).`
+                    : '.') +
+                '<br/><br/><div style="text-align:left;display:inline-block">' + cashLines + '</div>' +
+                '<br/><small style="color:var(--text-muted)">Broker liquidity is updated with tax and commissions included. Re-align it by hand afterwards if your statement disagrees.</small>',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Yes, I did all of this',
+            cancelButtonText: 'Not yet',
+            confirmButtonColor: '#10B981',
+            background: 'var(--bg-card)',
+            color: 'var(--text-primary)',
+        });
+        if (!result.isConfirmed) return;
+
+        setExecuting(true);
+        // Cash first: the trades are what the user will look at, so they should
+        // land last and leave the page on a consistent state either way.
+        adjustBrokerLiquidity(commit.liquidityDeltas);
+        addTransactionsBulk(commit.transactions, { skipCashSync: true });
+        setQueue([]);
+        setNetAmount(0);
+        setExecuting(false);
+
+        Swal.fire({
+            title: 'Recorded',
+            text: `${commit.transactions.length} transaction${commit.transactions.length === 1 ? '' : 's'} created and broker cash updated.`,
+            icon: 'success',
+            timer: 2200,
+            showConfirmButton: false,
+            background: 'var(--bg-card)',
+            color: 'var(--text-primary)',
+        });
+    }, [executionMoves, brokers, addTransactionsBulk, adjustBrokerLiquidity]);
+
     const addToSequence = useCallback(() => {
         if (!plan) return;
         setQueue(prev => [...prev, request]);
@@ -137,6 +212,12 @@ const FundRelocationView: React.FC = () => {
         // the next move, and leaving them alone keeps the form where the eye is.
         setNetAmount(0);
     }, [plan, request]);
+
+    /** The goal planner hands over whole moves; they queue like any other. */
+    const queueMoves = useCallback((requests: RelocationRequest[]) => {
+        if (requests.length === 0) return;
+        setQueue(prev => [...prev, ...requests]);
+    }, []);
 
     const removeStep = useCallback((index: number) => {
         setQueue(prev => prev.filter((_, i) => i !== index));
@@ -173,8 +254,21 @@ const FundRelocationView: React.FC = () => {
                 <strong> selling there and buying back here</strong> — and the round trip leaves tax and
                 commissions behind. This page shows the exact actions, what the move really costs, and how
                 the stats and the pyramid would end up. Queue several moves and the chain is priced in
-                order, each one on the state the previous left behind.
+                order, each one on the state the previous left behind. Start from the goal split below to
+                let the gaps between your goals propose the moves.
             </p>
+
+            <GoalFlowPlanner
+                goals={goals}
+                portfolios={portfolios}
+                transactions={transactions}
+                brokers={brokers}
+                assetSettings={assetSettings}
+                marketData={marketData}
+                targets={goalModeTargets}
+                onTargetsChange={setGoalModeTargets}
+                onQueueMoves={queueMoves}
+            />
 
             <RelocationForm
                 from={resolvedFrom}
@@ -204,6 +298,8 @@ const FundRelocationView: React.FC = () => {
                 onReorder={reorderStep}
                 onClear={() => setQueue([])}
             />
+
+            <RelocationExecution moves={executionMoves} onExecute={executeQueue} busy={executing} />
 
             {sameEndpoint && (
                 <div className="reloc-warning critical">

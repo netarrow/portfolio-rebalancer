@@ -8,7 +8,6 @@ import { getVirtualBondId } from '../../types';
 import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipientOf, memberInfoFromAssets, groupWeightConfig, isFullyFrozen, type BuyOnlyCandidate, type MemberAction, type GroupBlockReason } from '../../utils/allocationGroups';
 import { isFreeBuyIsin, currentMonthKey } from '../../utils/freeCommissions';
 import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate, resolveAssetClass, projectBrokerCash, type CashProjection, type SellFriction, type SellLeg } from '../../utils/rebalanceCosts';
-import { CASH_TICKER_PREFIX } from '../../types';
 import ConcretizeModal from '../modals/ConcretizeModal';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { buildPortfolioTree, GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
@@ -18,13 +17,7 @@ import { RealizedGainsModal } from './RealizedGainsModal';
 import { CashFlowModal } from './CashFlowModal';
 import PortfolioGroupSection from './PortfolioGroupSection';
 import BrokerAllocationSection from './BrokerAllocationSection';
-import GoalRebalanceWidget from './GoalRebalanceWidget';
-import type { GoalItem } from './GoalRebalanceWidget';
 import './Dashboard.css';
-
-// Palette used to assign colors to user-defined goals by order
-const GOAL_COLOR_PALETTE = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EC4899', '#6366F1'];
-
 
 
 const fmtEur = (n: number, dp = 2) =>
@@ -437,9 +430,7 @@ export const SellFrictionNote: React.FC<{
     scale: number;
     /** null in multi-broker mode: the legs may settle at different brokers */
     cash: CashProjection | null;
-    /** false for the aggregate view, which spans portfolios and has no picker */
-    canPickBroker?: boolean;
-}> = ({ friction, grossBuyTotal, netBuyTotal, scale, cash, canPickBroker = true }) => {
+}> = ({ friction, grossBuyTotal, netBuyTotal, scale, cash }) => {
     const hasFriction = !!friction && friction.total > 0;
     const hasCash = !!cash && (cash.buyGross > 0 || (friction?.gross ?? 0) > 0);
     if (!hasFriction && !hasCash) return null;
@@ -500,9 +491,7 @@ export const SellFrictionNote: React.FC<{
                 Tax is estimated on the sold portion only (26% stocks/crypto/gold, 12.5% bonds/monetary, 20% pension funds); losses are not offset against gains.
                 {cash
                     ? ' Buy commissions are counted in the cash projection but deliberately do not shrink the orders; free-buy promotions are ignored.'
-                    : canPickBroker
-                        ? ' Multi-broker portfolio: commissions use each ticker\'s last-transaction broker and no cash check is possible — pick a broker above to enable it.'
-                        : ' Commissions use each ticker\'s last-transaction broker: this view spans every portfolio, so the legs can settle at different brokers and no single cash balance applies.'}
+                    : ' Multi-broker portfolio: commissions use each ticker\'s last-transaction broker and no cash check is possible — pick a broker above to enable it.'}
             </div>
         </div>
     );
@@ -513,7 +502,7 @@ const REBAL_MODE_KEY = 'dashboard_rebalance_mode_v1';
 type RebalanceMode = 'portfolio' | 'broker';
 
 const AllocationOverview: React.FC = () => {
-    const { portfolios, scopedBrokers: brokers, scopedTransactions: transactions, assetSettings, effectiveAssetSettings, marketData, updatePortfolio, addTransactionsBulk, goals: rawGoals, goalModeTargets: storedGoalModeTargets, setGoalModeTargets } = usePortfolio();
+    const { portfolios, scopedBrokers: brokers, scopedTransactions: transactions, effectiveAssetSettings, marketData, updatePortfolio, addTransactionsBulk } = usePortfolio();
 
     const [rebalanceMode, setRebalanceMode] = useState<RebalanceMode>(
         () => localStorage.getItem(REBAL_MODE_KEY) === 'broker' ? 'broker' : 'portfolio'
@@ -522,57 +511,6 @@ const AllocationOverview: React.FC = () => {
         setRebalanceMode(m);
         localStorage.setItem(REBAL_MODE_KEY, m);
     };
-
-    // Goals sorted by order, with assigned colors
-    const goalItems = useMemo<GoalItem[]>(() => {
-        return [...rawGoals]
-            .sort((a, b) => a.order - b.order)
-            .map((g, i) => ({ id: g.id, title: g.title, color: GOAL_COLOR_PALETTE[i % GOAL_COLOR_PALETTE.length] }));
-    }, [rawGoals]);
-
-    /**
-     * Current goal values — portfolio-based, fully consistent with aggregateTotalValue.
-     * Each portfolio contributes: invested assets + broker cash allocations (liquidityAllocations).
-     * Per-portfolio liquidity (portfolio.liquidity) is rebalancing-only and is NOT
-     * summed here, so these totals match exactly what the Aggregate table counts.
-     */
-    const currentGoalValues = useMemo<Record<string, number>>(() => {
-        const vals: Record<string, number> = {};
-        rawGoals.forEach(g => { vals[g.id] = 0; });
-
-        portfolios.forEach(p => {
-            if (!p.goalId) return;
-            const pTxs = transactions.filter(t => t.portfolioId === p.id);
-            const { assets: pRawAssets, summary } = calculateAssets(pTxs, assetSettings, marketData);
-            const pCash = injectCashAssets(pRawAssets, brokers, p.id)
-                .filter(a => isCashTicker(a.ticker))
-                .reduce((s, a) => s + a.currentValue, 0);
-            vals[p.goalId] = (vals[p.goalId] ?? 0) + summary.totalValue + pCash;
-        });
-
-        return vals;
-    }, [portfolios, transactions, assetSettings, marketData, rawGoals, brokers]);
-
-    const goalsTotalValue = useMemo(
-        () => Object.values(currentGoalValues).reduce((s, v) => s + v, 0),
-        [currentGoalValues]
-    );
-
-    // Target allocations: persisted via context (localStorage + Azure sync).
-    // If goals change and stored targets are missing/incomplete, reinitialise to equal split.
-    useEffect(() => {
-        const hasAll = goalItems.length > 0 && goalItems.every(g => g.id in storedGoalModeTargets);
-        if (hasAll) return;
-        if (goalItems.length === 0) return;
-        const equalPct = parseFloat((100 / goalItems.length).toFixed(2));
-        const allocs: Record<string, number> = {};
-        goalItems.forEach((g, i) => {
-            allocs[g.id] = i < goalItems.length - 1 ? equalPct : 100 - equalPct * (goalItems.length - 1);
-        });
-        setGoalModeTargets(allocs);
-    }, [goalItems, storedGoalModeTargets, setGoalModeTargets]);
-
-    const targetGoalAllocs = storedGoalModeTargets;
 
     // Split portfolios into groups (parent + children) and standalones. Shared
     // with the Stats page, so both views resolve the hierarchy identically.
@@ -645,18 +583,7 @@ const AllocationOverview: React.FC = () => {
                             onAddTransactions={addTransactionsBulk}
                         />
                     ))}
-                    {goalItems.length > 0 && (
-                        <GoalRebalanceWidget
-                            goals={goalItems}
-                            targetAllocs={targetGoalAllocs}
-                            onTargetChange={setGoalModeTargets}
-                            currentGoalValues={currentGoalValues}
-                            totalCurrentValue={goalsTotalValue}
-                        />
-                    )}
-                    <AggregateAllocationSection
-                        goalModeTargets={targetGoalAllocs}
-                    />
+                    <AggregateAllocationSection />
                     </>}
                 </>
             )}
@@ -664,17 +591,20 @@ const AllocationOverview: React.FC = () => {
     );
 };
 
-interface AggregateAllocationSectionProps {
-    goalModeTargets: Record<string, number>;  // goalId → target %
-}
-
-const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({ goalModeTargets }) => {
+/**
+ * ∑ Aggregate — every holding across every portfolio, as a readout.
+ *
+ * Deliberately NOT a rebalancer: the global picture has no single owner to act
+ * on (an order here would have to be split across portfolios that answer to
+ * different goals), so it shows what is held and what weight it carries, and
+ * leaves the acting to the per-portfolio tables above and to Fund Relocation.
+ */
+const AggregateAllocationSection: React.FC = () => {
     const { portfolios, scopedBrokers: brokers, scopedTransactions: transactions, assetSettings, effectiveAssetSettings, marketData, assetAllocationSettings, aggregateExcludedTickers: excludedTickers, setAggregateExcludedTickers: setExcludedTickers, virtualBonds, concretizeVirtualBond, parkVirtualBond } = usePortfolio();
     const [concretizingVBond, setConcretizingVBond] = useState<VirtualBond | null>(null);
     const [isEditing, setIsEditing] = useState(false);
-    const [additionalLiquidity, setAdditionalLiquidity] = useState<number | undefined>(undefined);
 
-    const { assets: rawAggregateAssets, summary } = useMemo(
+    const { assets: rawAggregateAssets } = useMemo(
         () => calculateAssets(transactions, effectiveAssetSettings, marketData),
         [transactions, effectiveAssetSettings, marketData]
     );
@@ -760,10 +690,6 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
         [includedAssets]
     );
 
-    // Total value including the additional liquidity input
-    const liq = additionalLiquidity ?? 0;
-    const calcTotalValue = aggregateTotalValue + liq;
-
     // Realized + distributions
     const { totalRealized, details: realizedDetails, totalCommissions: realizedCommissions, totalTax: realizedTax } = useMemo(
         () => calculateRealizedGains(transactions, brokers, assetSettings),
@@ -789,33 +715,6 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
         }
         return assetSettings.find(s => s.ticker === ticker)?.label || ticker;
     };
-
-    // ticker → broker to simulate trade commission against: the broker of the most
-    // recent transaction for that ticker; falls back to the only broker if there's one.
-    const tickerToBroker = useMemo<Record<string, import('../../types').Broker | undefined>>(() => {
-        const lastBrokerId: Record<string, string | undefined> = {};
-        [...transactions]
-            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
-            .forEach(t => { if (t.brokerId) lastBrokerId[t.ticker.toUpperCase()] = t.brokerId; });
-        const map: Record<string, import('../../types').Broker | undefined> = {};
-        Object.entries(lastBrokerId).forEach(([ticker, bid]) => {
-            map[ticker] = brokers.find(b => b.id === bid) ?? (brokers.length === 1 ? brokers[0] : undefined);
-        });
-        return map;
-    }, [transactions, brokers]);
-
-    // ticker → months since first buy (for the break-even hold estimate in the popover)
-    const tickerToMonthsHeld = useMemo<Record<string, number>>(() => {
-        const firstBuy: Record<string, string> = {};
-        transactions.forEach(t => {
-            if ((t.direction ?? 'Buy') !== 'Buy') return;
-            const k = t.ticker.toUpperCase();
-            if (!firstBuy[k] || t.date < firstBuy[k]) firstBuy[k] = t.date;
-        });
-        const map: Record<string, number> = {};
-        Object.entries(firstBuy).forEach(([k, d]) => { map[k] = monthsSince(d); });
-        return map;
-    }, [transactions]);
 
     const toggleExcluded = (ticker: string) => {
         setExcludedTickers(prev =>
@@ -843,386 +742,7 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
         return result;
     }, [allVisibleAssets, portfolioCalcs, portfolioTargetWeightById, totalConfiguredWeight]);
 
-    // Buy-only allocations (largest remainder method on included non-cash assets)
-    const aggregateBuyOnlyAllocations = useMemo(() => {
-        if (liq <= 0) return {} as Record<string, number>;
-
-        const candidates = includedAssets
-            .filter(a => !isCashTicker(a.ticker))
-            .map(a => {
-                const tgt = weightedTargets[a.ticker] || 0;
-                const targetValue = calcTotalValue * (tgt / 100);
-                const gap = targetValue - a.currentValue;
-                const price = a.currentPrice || 0;
-                return { ticker: a.ticker, gap, price };
-            })
-            .filter(c => c.gap > 0 && c.price > 0);
-
-        const totalGap = candidates.reduce((s, c) => s + c.gap, 0);
-        if (totalGap <= 0) return {} as Record<string, number>;
-
-        const distribution = candidates.map(c => {
-            const rawAlloc = (c.gap / totalGap) * liq;
-            const idealShares = rawAlloc / c.price;
-            const flooredShares = Math.floor(idealShares);
-            return { ...c, shares: flooredShares, fraction: idealShares - flooredShares, cost: flooredShares * c.price };
-        });
-
-        let remaining = liq - distribution.reduce((s, d) => s + d.cost, 0);
-        const sortedIdx = distribution.map((_, i) => i).sort((a, b) => distribution[b].fraction - distribution[a].fraction);
-        for (const idx of sortedIdx) {
-            if (remaining >= distribution[idx].price) {
-                distribution[idx].shares += 1;
-                distribution[idx].cost += distribution[idx].price;
-                remaining -= distribution[idx].price;
-            }
-        }
-
-        const result: Record<string, number> = {};
-        distribution.forEach(d => { if (d.shares > 0) result[d.ticker] = d.shares * d.price; });
-        return result;
-    }, [includedAssets, liq, calcTotalValue, weightedTargets]);
-
-    /**
-     * Full-rebalance actions (Action column), netted for sell-side friction.
-     *
-     * Pass 1 sizes every leg on its gross gap to target. Pass 2 prices what the
-     * sells actually settle for — gross proceeds minus capital-gains tax (on the
-     * sold portion only) minus the broker's sell commission — and re-sizes the
-     * BUY legs on that net pot. Without this the buys are funded with money the
-     * broker never credits and the account goes short at settlement.
-     *
-     * Sell legs are never re-sized: the target allocation decides what has to go,
-     * and shrinking a sale would only shrink the cash it raises.
-     */
-    const fullRebalance = useMemo(() => {
-        const empty = {
-            byTicker: {} as Record<string, { shares: number; amount: number }>,
-            friction: null as SellFriction | null,
-            scale: 1,
-            grossBuyTotal: 0,
-            netBuyTotal: 0,
-            postTotal: calcTotalValue,
-        };
-        if (calcTotalValue <= 0) return empty;
-
-        // Pass 1 — gross gap per asset, in whole shares.
-        const legs = includedAssets.flatMap(asset => {
-            if (isCashTicker(asset.ticker)) return [];
-            const price = asset.currentPrice || 0;
-            if (price <= 0) return [];
-            const targetValue = calcTotalValue * ((weightedTargets[asset.ticker] ?? 0) / 100);
-            const shares = Math.round((targetValue - asset.currentValue) / price);
-            return shares === 0 ? [] : [{ asset, price, shares }];
-        });
-        if (legs.length === 0) return empty;
-
-        // Pass 2 — what the sells net out at, and how much of the buys survives.
-        const sellLegs: SellLeg[] = legs
-            .filter(l => l.shares < 0)
-            .map(l => ({
-                ticker: l.asset.ticker,
-                shares: -l.shares,
-                price: l.price,
-                averagePrice: l.asset.averagePrice,
-                assetClass: resolveAssetClass(l.asset, assetSettings),
-                broker: tickerToBroker[l.asset.ticker.toUpperCase()],
-            }));
-        const friction = computeSellFriction(sellLegs);
-        const grossBuyTotal = legs.filter(l => l.shares > 0).reduce((s, l) => s + l.shares * l.price, 0);
-        const scale = buyBudgetScale(grossBuyTotal, friction.total);
-
-        const byTicker: Record<string, { shares: number; amount: number }> = {};
-        legs.forEach(l => {
-            const shares = l.shares > 0 ? scaledBuyShares(l.shares, scale) : l.shares;
-            if (shares === 0) return;
-            byTicker[l.asset.ticker] = { shares, amount: shares * l.price };
-        });
-        const netBuyTotal = Object.values(byTicker)
-            .filter(a => a.shares > 0)
-            .reduce((s, a) => s + a.amount, 0);
-
-        // Tax and fees leave the portfolio for good, so the post-action base shrinks.
-        return { byTicker, friction, scale, grossBuyTotal, netBuyTotal, postTotal: calcTotalValue - friction.total };
-    }, [includedAssets, calcTotalValue, weightedTargets, tickerToBroker, assetSettings]);
-
     const excludedCount = excludedTickers.filter(t => allVisibleAssets.some(a => a.ticker === t)).length;
-
-    // Current goal values for goal-rebalance calculation — portfolio-based (robust against any goal title)
-    const currentGoalValuesInAggregate = useMemo<Record<string, number>>(() => {
-        const vals: Record<string, number> = {};
-        // Use totalValue (invested + broker cash allocations) so that
-        // sum(vals) ≈ aggregateTotalValue and gaps are accurate.
-        portfolioCalcs.forEach(pc => {
-            const gid = pc.portfolio.goalId;
-            if (!gid) return;
-            vals[gid] = (vals[gid] ?? 0) + pc.totalValue;
-        });
-        return vals;
-    }, [portfolioCalcs]);
-
-    /**
-     * ticker → goalId via portfolio membership (robust against any goal title).
-     * If a ticker appears in portfolios with different goals, use the goal of the
-     * portfolio where it has the highest current value.
-     */
-    const tickerToGoalId = useMemo<Record<string, string>>(() => {
-        const map: Record<string, { goalId: string; value: number }> = {};
-        portfolioCalcs.forEach(pc => {
-            const gid = pc.portfolio.goalId;
-            if (!gid) return;
-            pc.assets.filter(a => !isCashTicker(a.ticker) && a.quantity > 0).forEach(a => {
-                const existing = map[a.ticker];
-                if (!existing || a.currentValue > existing.value) {
-                    map[a.ticker] = { goalId: gid, value: a.currentValue };
-                }
-            });
-        });
-        const result: Record<string, string> = {};
-        Object.entries(map).forEach(([ticker, { goalId }]) => { result[ticker] = goalId; });
-        return result;
-    }, [portfolioCalcs]);
-
-    /**
-     * Portfolio ids configured as 'locked' or 'excluded' in Asset Allocation settings.
-     * These portfolios are off-limits for both buy and sell suggestions.
-     */
-    const lockedPortfolioIds = useMemo<Set<string>>(() => {
-        const ids = new Set<string>();
-        Object.entries(assetAllocationSettings?.portfolioTargets ?? {}).forEach(([pid, t]) => {
-            if (t.mode === 'locked' || t.mode === 'excluded') ids.add(pid);
-        });
-        return ids;
-    }, [assetAllocationSettings]);
-
-    /**
-     * Tickers frozen by Asset Allocation constraints: assets belonging exclusively
-     * to locked/excluded portfolios. Off-limits for BOTH buy and sell suggestions.
-     */
-    const frozenTickers = useMemo<Set<string>>(() => {
-        if (lockedPortfolioIds.size === 0) return new Set();
-        const tickers = new Set<string>();
-        portfolioCalcs.forEach(pc => {
-            if (!lockedPortfolioIds.has(pc.portfolio.id)) return;
-            pc.assets.filter(a => !isCashTicker(a.ticker) && a.quantity > 0).forEach(a => {
-                const appearsElsewhere = portfolioCalcs.some(
-                    other => !lockedPortfolioIds.has(other.portfolio.id) &&
-                             other.assets.some(oa => oa.ticker === a.ticker && oa.quantity > 0)
-                );
-                if (!appearsElsewhere) tickers.add(a.ticker);
-            });
-        });
-        return tickers;
-    }, [portfolioCalcs, lockedPortfolioIds]);
-
-    /**
-     * Cash assets grouped by goalId. Cash is fungible: 'lock at current' /
-     * 'excluded' portfolio modes apply to non-cash assets, not to liquidity,
-     * so cash from those portfolios is still drainable for goal rebalance.
-     * Only user-excluded cash tickers are filtered out.
-     */
-    const cashByGoal = useMemo<Record<string, { ticker: string; value: number }[]>>(() => {
-        const map: Record<string, Record<string, number>> = {};
-        portfolioCalcs.forEach(pc => {
-            const gid = pc.portfolio.goalId;
-            if (!gid) return;
-            pc.assets
-                .filter(a => isCashTicker(a.ticker) && a.currentValue > 0 && !excludedTickers.includes(a.ticker))
-                .forEach(a => {
-                    if (!map[gid]) map[gid] = {};
-                    map[gid][a.ticker] = (map[gid][a.ticker] ?? 0) + a.currentValue;
-                });
-        });
-        const result: Record<string, { ticker: string; value: number }[]> = {};
-        Object.entries(map).forEach(([gid, byTicker]) => {
-            result[gid] = Object.entries(byTicker).map(([ticker, value]) => ({ ticker, value }));
-        });
-        return result;
-    }, [portfolioCalcs, excludedTickers]);
-
-    /**
-     * Non-cash value actually held within each goal (per-portfolio aware).
-     * goalId → ticker → € summed across non-locked portfolios that belong to
-     * the goal. A ticker can appear under multiple goals when it's held in
-     * portfolios with different goalIds — each goal only sees its own slice.
-     * Frozen and user-excluded tickers are filtered out.
-     */
-    const nonCashValueByGoal = useMemo<Record<string, Record<string, number>>>(() => {
-        const map: Record<string, Record<string, number>> = {};
-        portfolioCalcs.forEach(pc => {
-            if (lockedPortfolioIds.has(pc.portfolio.id)) return;
-            const gid = pc.portfolio.goalId;
-            if (!gid) return;
-            pc.assets
-                .filter(a => !isCashTicker(a.ticker) && a.quantity > 0
-                    && !excludedTickers.includes(a.ticker)
-                    && !frozenTickers.has(a.ticker))
-                .forEach(a => {
-                    if (!map[gid]) map[gid] = {};
-                    map[gid][a.ticker] = (map[gid][a.ticker] ?? 0) + a.currentValue;
-                });
-        });
-        return map;
-    }, [portfolioCalcs, lockedPortfolioIds, excludedTickers, frozenTickers]);
-
-    /**
-     * Goal-Rebalance allocations.
-     *
-     * postTotal = aggregateTotalValue + liq
-     * gap_per_goal = target€ − current€  →  Σ gaps = liq
-     *
-     * For each goal with gap < 0 (must shrink): drain own-goal cash FIRST, then
-     * (only if needed) sell own-goal non-cash proportional to currentValue.
-     * For each goal with gap > 0 (must grow): buy non-frozen assets of that goal
-     * proportional to weightedTargets.
-     *
-     * Frozen tickers (assets exclusively in locked/excluded portfolios) and cash
-     * sitting in locked portfolios are completely off-limits.
-     *
-     * Returns: ticker → € signed (positive = buy, negative = sell).
-     */
-    const goalRebalanceAllocations = useMemo<Record<string, number>>(() => {
-        const goalIds = Object.keys(goalModeTargets);
-        if (goalIds.length === 0) return {};
-
-        const postTotal = aggregateTotalValue + liq;
-
-        const goalGaps: Record<string, number> = {};
-        goalIds.forEach(gid => {
-            const targetEur = ((goalModeTargets[gid] ?? 0) / 100) * postTotal;
-            const currentEur = currentGoalValuesInAggregate[gid] ?? 0;
-            goalGaps[gid] = targetEur - currentEur;
-        });
-
-        const result: Record<string, number> = {};
-        const addToResult = (ticker: string, eur: number) => {
-            if (!Number.isFinite(eur) || eur === 0) return;
-            result[ticker] = (result[ticker] ?? 0) + eur;
-        };
-
-        // Largest-remainder distribution: split |target| € across items in integer
-        // shares, then redistribute leftover € to the items with the highest
-        // fractional residue. Guarantees Σ shares*price ≈ |target| (loss ≤ price).
-        type LRMItem = { ticker: string; weight: number; price: number };
-        const distributeLRM = (signedTarget: number, items: LRMItem[]) => {
-            const filtered = items.filter(i => i.price > 0);
-            if (filtered.length === 0 || Math.abs(signedTarget) < 0.5) return;
-            const sign = signedTarget > 0 ? 1 : -1;
-            const absTarget = Math.abs(signedTarget);
-            const totalWeight = filtered.reduce((s, i) => s + i.weight, 0);
-            const useEqual = totalWeight <= 0;
-
-            const dist = filtered.map(i => {
-                const ideal = useEqual ? absTarget / filtered.length : absTarget * (i.weight / totalWeight);
-                const idealShares = ideal / i.price;
-                const flooredShares = Math.floor(idealShares);
-                return { ticker: i.ticker, price: i.price, shares: flooredShares, fraction: idealShares - flooredShares };
-            });
-
-            let remaining = absTarget - dist.reduce((s, d) => s + d.shares * d.price, 0);
-            const sortedIdx = dist.map((_, i) => i).sort((a, b) => dist[b].fraction - dist[a].fraction);
-            for (const idx of sortedIdx) {
-                if (remaining >= dist[idx].price) {
-                    dist[idx].shares += 1;
-                    remaining -= dist[idx].price;
-                }
-            }
-            dist.forEach(d => {
-                if (d.shares > 0) addToResult(d.ticker, sign * d.shares * d.price);
-            });
-        };
-
-        goalIds.forEach(gid => {
-            const gap = goalGaps[gid] ?? 0;
-            if (Math.abs(gap) < 1) return;
-
-            // Per-goal non-cash slice: each ticker appears with the € value held
-            // by this goal's portfolios only (non-locked, non-frozen).
-            const goalNonCash = nonCashValueByGoal[gid] ?? {};
-            const assets = Object.entries(goalNonCash).map(([ticker, valueInGoal]) => {
-                const a = includedAssets.find(x => x.ticker === ticker);
-                return { ticker, valueInGoal, price: a?.currentPrice || 0 };
-            }).filter(a => a.price > 0);
-
-            if (gap > 0) {
-                // Buy: LRM proportional to current value held in the goal.
-                // Asset Allocation target % is intentionally NOT used here — the
-                // goal % targets take priority; only lock/excluded constraints
-                // (already filtered into `assets`) are respected.
-                distributeLRM(gap, assets.map(a => ({
-                    ticker: a.ticker, weight: a.valueInGoal, price: a.price,
-                })));
-            } else {
-                // Sell: drain own-goal cash first (cash is fungible, exact €)
-                let remaining = -gap;
-                const cashAssets = cashByGoal[gid] ?? [];
-                const totalCashInGoal = cashAssets.reduce((s, c) => s + c.value, 0);
-                if (totalCashInGoal > 0) {
-                    const cashSell = Math.min(remaining, totalCashInGoal);
-                    cashAssets.forEach(c => {
-                        const amt = cashSell * (c.value / totalCashInGoal);
-                        addToResult(c.ticker, -Math.round(amt));
-                    });
-                    remaining -= cashSell;
-                }
-                // Residual: sell own-goal non-cash via LRM proportional to value-in-goal
-                if (remaining > 0.5) {
-                    distributeLRM(-remaining, assets.map(a => ({
-                        ticker: a.ticker, weight: a.valueInGoal, price: a.price,
-                    })));
-                }
-            }
-        });
-
-        // Drop sub-€ noise
-        const cleaned: Record<string, number> = {};
-        Object.entries(result).forEach(([ticker, eur]) => {
-            if (Math.abs(eur) >= 1) cleaned[ticker] = eur;
-        });
-        return cleaned;
-    }, [goalModeTargets, aggregateTotalValue, liq, currentGoalValuesInAggregate,
-        includedAssets, cashByGoal, nonCashValueByGoal]);
-
-    /**
-     * Min‑liquidity warnings for the goal rebalance: this section ignores broker
-     * minimal liquidity when computing buys/sells, but flags any broker whose
-     * post‑rebalance cash would fall below its configured threshold.
-     */
-    const brokerLiquidityWarnings = useMemo<{
-        brokerId: string; brokerName: string; postCash: number; threshold: number; deficit: number;
-    }[]>(() => {
-        // brokerId → drained € (negative) from goalRebalanceAllocations cash entries
-        const drainByBroker: Record<string, number> = {};
-        Object.entries(goalRebalanceAllocations).forEach(([ticker, eur]) => {
-            if (!ticker.startsWith(CASH_TICKER_PREFIX)) return;
-            const brokerId = ticker.slice(CASH_TICKER_PREFIX.length);
-            drainByBroker[brokerId] = (drainByBroker[brokerId] ?? 0) + eur;
-        });
-
-        const warnings: { brokerId: string; brokerName: string; postCash: number; threshold: number; deficit: number }[] = [];
-        brokers.forEach(b => {
-            const drain = drainByBroker[b.id] ?? 0;
-            if (drain >= 0) return; // only flag drains
-            const currentBrokerCash = Object.values(b.liquidityAllocations || {}).reduce((s, v) => s + (v || 0), 0);
-            const postCash = currentBrokerCash + drain;
-            let threshold = 0;
-            if (b.minLiquidityType === 'fixed') {
-                threshold = b.minLiquidityAmount || 0;
-            } else if (b.minLiquidityType === 'percent') {
-                threshold = currentBrokerCash * ((b.minLiquidityPercentage || 0) / 100);
-            }
-            if (threshold > 0 && postCash < threshold) {
-                warnings.push({
-                    brokerId: b.id,
-                    brokerName: b.name,
-                    postCash,
-                    threshold,
-                    deficit: threshold - postCash,
-                });
-            }
-        });
-        return warnings;
-    }, [goalRebalanceAllocations, brokers]);
 
     return (
         <div className="allocation-card" style={{ border: '1.5px dashed rgba(148,163,184,0.45)', background: 'var(--bg-surface)' }}>
@@ -1256,16 +776,6 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                     <CashFlowModal isOpen={showCashFlowModal} onClose={() => setShowCashFlowModal(false)} details={cashFlowDetails} totalDividends={totalDividends} totalCoupons={totalCoupons} totalIncome={totalIncome} getLabel={getLabel} />
                 </h3>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-                    <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                        <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Liquidity:</label>
-                        <input
-                            type="number"
-                            placeholder="0.00"
-                            value={additionalLiquidity !== undefined ? additionalLiquidity : ''}
-                            onChange={e => setAdditionalLiquidity(e.target.value === '' ? undefined : parseFloat(e.target.value))}
-                            style={{ borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-color)', width: '100px', textAlign: 'right' }}
-                        />
-                    </div>
                     <button
                         onClick={() => setIsEditing(e => !e)}
                         style={{
@@ -1282,39 +792,6 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                 </div>
             </div>
 
-            {brokerLiquidityWarnings.length > 0 && (
-                <div style={{
-                    marginBottom: 'var(--space-3)',
-                    padding: 'var(--space-2) var(--space-3)',
-                    border: '1px solid rgba(245,158,11,0.45)',
-                    background: 'rgba(245,158,11,0.08)',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '0.82rem',
-                    color: 'var(--text-primary)',
-                }}>
-                    <div style={{ fontWeight: 600, marginBottom: '4px', color: '#B45309' }}>
-                        ⚠ Goal rebalance: some brokers would fall below min liquidity
-                    </div>
-                    {brokerLiquidityWarnings.map(w => (
-                        <div key={w.brokerId} style={{ lineHeight: 1.5 }}>
-                            <strong>{w.brokerName}</strong>: post-rebalance cash €{w.postCash.toLocaleString('en-IE', { maximumFractionDigits: 0 })} &lt; min required €{w.threshold.toLocaleString('en-IE', { maximumFractionDigits: 0 })} (Δ −€{w.deficit.toLocaleString('en-IE', { maximumFractionDigits: 0 })})
-                        </div>
-                    ))}
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
-                        Buy/sell orders are calculated regardless, ignoring the constraint.
-                    </div>
-                </div>
-            )}
-
-            <SellFrictionNote
-                friction={fullRebalance.friction}
-                grossBuyTotal={fullRebalance.grossBuyTotal}
-                netBuyTotal={fullRebalance.netBuyTotal}
-                scale={fullRebalance.scale}
-                cash={null}
-                canPickBroker={false}
-            />
-
             <div className="allocation-details" style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
                 <div className="allocation-row desktop-only" style={{ fontWeight: 600, color: 'var(--text-muted)', border: 'none' }}>
                     {isEditing && <div style={{ width: '36px' }} />}
@@ -1326,12 +803,6 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                     <div style={{ width: '110px', textAlign: 'center' }}>Gain</div>
                     <div style={{ width: '80px', textAlign: 'center' }}>Target (w)</div>
                     <div style={{ width: '80px', textAlign: 'center' }}>Actual</div>
-                    <div style={{ width: '130px', textAlign: 'center' }}>Action</div>
-                    <div style={{ width: '80px', textAlign: 'center' }}>Post Act %</div>
-                    <div style={{ width: '130px', textAlign: 'center' }}>Buy Only</div>
-                    <div style={{ width: '80px', textAlign: 'center' }}>Post Buy %</div>
-                    <div style={{ width: '130px', textAlign: 'center', color: '#8B5CF6' }}>Goal Rebalance</div>
-                    <div style={{ width: '80px', textAlign: 'center', color: '#8B5CF6' }}>Post Goal %</div>
                 </div>
 
                 {allVisibleAssets.length === 0 ? (
@@ -1346,63 +817,8 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                         const assetClass = isCash ? 'Cash' : isVBond ? 'Bond' : (setting?.assetClass || asset.assetClass || 'Stock');
                         const label = isCash ? (asset.label || asset.ticker) : isVBond ? (vb?.label || asset.ticker) : (setting?.label || asset.label || asset.ticker);
 
-                        // Use calcTotalValue (includes additional liquidity) for % calcs
-                        const currentPerc = calcTotalValue > 0 ? (asset.currentValue / calcTotalValue) * 100 : 0;
+                        const currentPerc = aggregateTotalValue > 0 ? (asset.currentValue / aggregateTotalValue) * 100 : 0;
                         const targetPerc = isCash ? 0 : (weightedTargets[asset.ticker] ?? 0);
-
-                        // Rebalance (full) — only for included, non-cash assets. Amounts
-                        // come from the netted plan, so buys already reflect the tax and
-                        // commissions the sell leg has to pay first.
-                        let rebalanceShares = 0;
-                        let rebalanceAmount = 0;
-                        let postRebalancePerc = currentPerc;
-
-                        if (!isCash && !isExcluded && calcTotalValue > 0) {
-                            const action = fullRebalance.byTicker[asset.ticker];
-                            rebalanceShares = action?.shares ?? 0;
-                            rebalanceAmount = action?.amount ?? 0;
-                            const postValue = asset.currentValue + rebalanceAmount;
-                            postRebalancePerc = fullRebalance.postTotal > 0
-                                ? (postValue / fullRebalance.postTotal) * 100
-                                : 0;
-                        }
-
-                        // Buy-only — only for included, non-cash assets
-                        const buyOnlyAmountRaw = (!isCash && !isExcluded) ? (aggregateBuyOnlyAllocations[asset.ticker] || 0) : 0;
-                        let buyOnlyShares = 0;
-                        let buyOnlyAmount = 0;
-                        let projectedPerc = currentPerc;
-
-                        if (buyOnlyAmountRaw > 0) {
-                            const price = asset.currentPrice || 0;
-                            if (price > 0) {
-                                buyOnlyShares = Math.round(buyOnlyAmountRaw / price);
-                                buyOnlyAmount = buyOnlyAmountRaw;
-                            }
-                            const postBuyValue = asset.currentValue + buyOnlyAmount;
-                            projectedPerc = calcTotalValue > 0 ? (postBuyValue / calcTotalValue) * 100 : 0;
-                        }
-
-                        // Goal rebalance — buy/sell with no new money. Cash rows show
-                        // the € drained (negative) when their goal must shrink — no shares.
-                        const goalRebalanceRaw = !isExcluded ? (goalRebalanceAllocations[asset.ticker] ?? 0) : 0;
-                        let goalModeShares = 0;
-                        let goalModeEur = 0;
-                        let postGoalPerc = currentPerc;
-
-                        if (goalRebalanceRaw !== 0) {
-                            goalModeEur = goalRebalanceRaw;
-                            if (!isCash) {
-                                const price = asset.currentPrice || 0;
-                                if (price > 0) {
-                                    goalModeShares = Math.round(goalRebalanceRaw / price);
-                                }
-                            }
-                            // Post-rebalance total = aggregateTotalValue + liq (liquidity deployed)
-                            const postGoalValue = asset.currentValue + goalModeEur;
-                            const postTotal = aggregateTotalValue + liq;
-                            postGoalPerc = postTotal > 0 ? (postGoalValue / postTotal) * 100 : 0;
-                        }
 
                         return (
                             <AggregateRow
@@ -1421,19 +837,6 @@ const AggregateAllocationSection: React.FC<AggregateAllocationSectionProps> = ({
                                 gainPerc={asset.gainPercentage || 0}
                                 currentPerc={currentPerc}
                                 targetPerc={targetPerc}
-                                rebalanceAmount={rebalanceAmount}
-                                rebalanceShares={rebalanceShares}
-                                buyOnlyAmount={buyOnlyAmount}
-                                buyOnlyShares={buyOnlyShares}
-                                postRebalancePerc={postRebalancePerc}
-                                projectedPerc={projectedPerc}
-                                goalModeEur={goalModeEur}
-                                goalModeShares={goalModeShares}
-                                postGoalPerc={postGoalPerc}
-                                spreadPercent={marketData[asset.ticker.toUpperCase()]?.spreadPercent ?? marketData[asset.ticker]?.spreadPercent ?? null}
-                                brokers={brokers}
-                                tradeBroker={tickerToBroker[asset.ticker.toUpperCase()]}
-                                monthsHeld={tickerToMonthsHeld[asset.ticker.toUpperCase()]}
                                 isEditing={isEditing}
                                 isExcluded={isExcluded}
                                 onToggleExclude={() => toggleExcluded(asset.ticker)}
@@ -1475,19 +878,6 @@ interface AggregateRowProps {
     gainPerc: number;
     currentPerc: number;
     targetPerc: number;
-    rebalanceAmount: number;
-    rebalanceShares: number;
-    buyOnlyAmount: number;
-    buyOnlyShares: number;
-    postRebalancePerc: number;
-    projectedPerc: number;
-    goalModeEur: number;
-    goalModeShares: number;
-    postGoalPerc: number;
-    spreadPercent?: number | null;
-    brokers: Broker[];
-    tradeBroker?: Broker;
-    monthsHeld?: number;
     isEditing: boolean;
     isExcluded: boolean;
     onToggleExclude: () => void;
@@ -1497,13 +887,9 @@ interface AggregateRowProps {
 const AggregateRow: React.FC<AggregateRowProps> = ({
     ticker, label, assetClass, isCash, isVBond, vbondMaturity, quantity, averagePrice, currentPrice, currentValue,
     gain, gainPerc, currentPerc, targetPerc,
-    rebalanceAmount, rebalanceShares, buyOnlyAmount, buyOnlyShares, postRebalancePerc, projectedPerc,
-    goalModeEur, goalModeShares, postGoalPerc,
-    spreadPercent, brokers, tradeBroker, monthsHeld,
     isEditing, isExcluded, onToggleExclude, onConcretize,
 }) => {
     const [mExpanded, setMExpanded] = React.useState(false);
-    const taxRate = capitalGainsRate(assetClass);
     const diff = currentPerc - targetPerc;
     const colorMap: Record<string, string> = {
         'Stock': 'dot-etf',
@@ -1578,90 +964,9 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                         </div>
                     )}
                 </div>
-                {/* Action (full rebalance) */}
-                <div style={{ width: '130px', textAlign: 'center' }}>
-                    {(isCash || isExcluded) ? (
-                        <span style={{ color: 'var(--text-muted)' }}>-</span>
-                    ) : (
-                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                            {rebalanceShares === 0 ? (
-                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                    <span className="trend-neutral">OK</span>
-                                </TradeCostInfo>
-                            ) : (
-                                <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                        <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                        </span>
-                                    </div>
-                                </TradeCostInfo>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <div style={{ width: '80px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    {(isCash || isExcluded) ? '-' : `${postRebalancePerc.toFixed(1)}%`}
-                </div>
-                {/* Buy Only */}
-                <div style={{ width: '130px', textAlign: 'center' }}>
-                    {(isCash || isExcluded) ? (
-                        <span style={{ color: 'var(--text-muted)' }}>-</span>
-                    ) : (
-                        <div style={{ fontWeight: 600, color: buyOnlyAmount > 0 ? 'var(--color-success)' : 'var(--text-muted)' }}>
-                            {buyOnlyShares === 0 ? (
-                                <TradeCostInfo shares={0} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                    <span className="trend-neutral">-</span>
-                                </TradeCostInfo>
-                            ) : (
-                                <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                        <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                        <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                            €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                        </span>
-                                    </div>
-                                </TradeCostInfo>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <div style={{ width: '80px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    {(isCash || isExcluded) ? '-' : `${projectedPerc.toFixed(1)}%`}
-                </div>
-                {/* Goal Rebalance */}
-                <div style={{ width: '130px', textAlign: 'center' }}>
-                    {isExcluded ? (
-                        <span style={{ color: 'var(--text-muted)' }}>-</span>
-                    ) : (
-                        <div style={{ fontWeight: 600, color: goalModeEur > 0 ? '#8B5CF6' : goalModeEur < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                            {goalModeEur === 0 ? (
-                                <span className="trend-neutral">-</span>
-                            ) : isCash ? (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                    <span>{goalModeEur > 0 ? 'Add' : 'Sell'}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        −€{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', lineHeight: '1.2' }}>
-                                    <span>{goalModeShares > 0 ? 'Buy' : 'Sell'} {Math.abs(goalModeShares)}</span>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                        €{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-                <div style={{ width: '80px', textAlign: 'center', color: 'var(--text-muted)' }}>
-                    {isExcluded ? '-' : goalModeEur !== 0 ? `${postGoalPerc.toFixed(1)}%` : '-'}
-                </div>
             </div>
 
-            {/* Mobile dense expandable row (mrow pattern) — all 14 desktop columns. */}
+            {/* Mobile dense expandable row (mrow pattern) — all desktop columns. */}
             <div className={`mobile-only mrow ${mExpanded ? 'is-open' : ''}`} style={{ opacity: rowOpacity, transition: 'opacity 0.15s' }}>
                 <div className="mrow-head" onClick={() => setMExpanded(v => !v)}>
                     {isEditing && (
@@ -1703,13 +1008,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                     </div>
                     <div className="mrow-side">
                         <div className="mrow-side-primary">€{currentValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</div>
-                        {!isCash && !isExcluded && (
-                            <div className="mrow-side-secondary" style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : rebalanceAmount < 0 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                                {rebalanceShares === 0
-                                    ? 'OK'
-                                    : `${rebalanceShares > 0 ? 'Buy' : 'Sell'} ${Math.abs(rebalanceShares)} · €${Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}`}
-                            </div>
-                        )}
+                        <div className="mrow-side-secondary">{currentPerc.toFixed(1)}%</div>
                     </div>
                 </div>
 
@@ -1750,18 +1049,6 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                                 )}
                             </span>
                         </div>
-                        <div className="mrow-detail">
-                            <span className="mrow-label">Post Act %</span>
-                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{(isCash || isExcluded) ? '-' : `${postRebalancePerc.toFixed(1)}%`}</span>
-                        </div>
-                        <div className="mrow-detail">
-                            <span className="mrow-label">Post Buy %</span>
-                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{(isCash || isExcluded) ? '-' : `${projectedPerc.toFixed(1)}%`}</span>
-                        </div>
-                        <div className="mrow-detail">
-                            <span className="mrow-label">Post Goal %</span>
-                            <span className="mrow-value" style={{ color: 'var(--text-muted)' }}>{(isExcluded || goalModeEur === 0) ? '-' : `${postGoalPerc.toFixed(1)}%`}</span>
-                        </div>
                         {isVBond && vbondMaturity && (
                             <div className="mrow-detail">
                                 <span className="mrow-label">Maturity</span>
@@ -1774,57 +1061,6 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
                                     onClick={e => { e.stopPropagation(); onConcretize(); }}
                                     style={{ fontSize: '0.75rem', background: '#8B5CF6', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 10px', cursor: 'pointer' }}
                                 >Concretizza</button>
-                            </div>
-                        )}
-                        {!isExcluded && (rebalanceShares !== 0 || buyOnlyShares !== 0 || goalModeEur !== 0) && (
-                            <div className="mrow-actions">
-                                {!isCash && rebalanceShares !== 0 && (
-                                    <div className="mrow-action-box">
-                                        <span className="mrow-label">Rebalance</span>
-                                        <div style={{ fontWeight: 600, color: rebalanceAmount > 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
-                                            <TradeCostInfo shares={rebalanceShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                                    <span>{rebalanceShares > 0 ? 'Buy' : 'Sell'} {Math.abs(rebalanceShares)}</span>
-                                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                                        €{Math.abs(rebalanceAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                                    </span>
-                                                </div>
-                                            </TradeCostInfo>
-                                        </div>
-                                    </div>
-                                )}
-                                {!isCash && buyOnlyShares !== 0 && (
-                                    <div className="mrow-action-box">
-                                        <span className="mrow-label">Buy Only</span>
-                                        <div style={{ fontWeight: 600, color: 'var(--color-success)' }}>
-                                            <TradeCostInfo shares={buyOnlyShares} price={currentPrice} spreadPercent={spreadPercent} brokers={brokers} defaultBrokerId={tradeBroker?.id} gainPercent={gainPerc} monthsHeld={monthsHeld} taxRate={taxRate} ticker={ticker}>
-                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                                    <span>Buy {Math.abs(buyOnlyShares)}</span>
-                                                    <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                                        €{Math.abs(buyOnlyAmount).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                                    </span>
-                                                </div>
-                                            </TradeCostInfo>
-                                        </div>
-                                    </div>
-                                )}
-                                {goalModeEur !== 0 && (
-                                    <div className="mrow-action-box">
-                                        <span className="mrow-label" style={{ color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>Goal Rebalance</span>
-                                        <div style={{ fontWeight: 600, color: goalModeEur > 0 ? '#8B5CF6' : 'var(--color-danger)' }}>
-                                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                                {isCash ? (
-                                                    <span>{goalModeEur > 0 ? 'Add' : 'Sell'}</span>
-                                                ) : (
-                                                    <span>{goalModeShares > 0 ? 'Buy' : 'Sell'} {Math.abs(goalModeShares)}</span>
-                                                )}
-                                                <span style={{ fontSize: '0.75rem', fontWeight: 'normal' }}>
-                                                    {isCash && goalModeEur < 0 ? '−' : ''}€{Math.abs(goalModeEur).toLocaleString('en-IE', { maximumFractionDigits: 0 })}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                         )}
                     </div>

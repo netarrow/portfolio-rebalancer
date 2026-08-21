@@ -449,4 +449,92 @@ const ctxOf = (over: Partial<RelocationContext>): RelocationContext => ({
     assertEq('12 net worth still falls by exactly the friction', before.netWorth - after.netWorth, plan.friction, 1e-6);
 }
 
+// ── 13. Cross-broker: the wire is listed, and the after-state honours it ─────
+{
+    // p1 is held at b1, p2 at b2, and b2 holds far less cash than the buy costs
+    // — with an earmark on top. The proceeds have to be wired from b1 to b2.
+    const brokers = [
+        ({ id: 'b1', name: 'Degiro', commissionType: 'fixed', commissionFixed: 5, currentLiquidity: 1_000 }) as Broker,
+        ({ id: 'b2', name: 'Directa', commissionType: 'fixed', commissionFixed: 5, currentLiquidity: 2_000, liquidityAllocations: { p2: 1_500 } }) as Broker,
+    ];
+    const transactions = [buy('SWDA', 300, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b2')];
+    const ctx = ctxOf({ brokers, transactions });
+    const request: RelocationRequest = {
+        from: { kind: 'portfolio', portfolioId: 'p1' },
+        to: { kind: 'portfolio', portfolioId: 'p2' },
+        netAmount: 20_000,
+    };
+    const plan = planFundRelocation(request, ctx);
+
+    assertEq('13 one wire', plan.transfers.length, 1);
+    assertEq('13 out of the selling broker', plan.transfers[0].fromBrokerId === 'b1' ? 1 : 0, 1);
+    assertEq('13 into the buying broker', plan.transfers[0].toBrokerId === 'b2' ? 1 : 0, 1);
+    assertTrue('13 the buys cannot clear without it', plan.transfers[0].required);
+    // It carries the buy outlay: b2 pays gross + commission and holds nothing
+    // like that much of its own.
+    const outlay = plan.buys.reduce((s, b) => s + b.gross + b.commission, 0);
+    assertEq('13 the wire carries the outlay', plan.transfers[0].amount, Math.min(outlay, plan.sells.reduce((s, l) => s + l.net, 0)), 1e-6);
+    assertTrue('13 and it is flagged', plan.warnings.some(w => w.kind === 'cross-broker'));
+
+    const goals: Goal[] = [
+        { id: 'g-growth', title: 'Growth', order: 0 },
+        { id: 'g-security', title: 'Security', order: 1 },
+    ];
+    const snapshotInput = {
+        transactions, brokers, portfolios: ctx.portfolios, goals,
+        assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+    };
+    const before = buildSnapshot(snapshotInput);
+    const moved = applyRelocationToState(transactions, brokers, request, plan);
+    const after = buildSnapshot({ ...snapshotInput, transactions: moved.transactions, brokers: moved.brokers });
+
+    // The regression this pins down: without the wire, b2 went €18k negative,
+    // its earmark was rescaled by a NEGATIVE factor, and the pyramid's Liquidity
+    // level grew by the whole amount moved — net worth and the pyramid total
+    // disagreeing by €18k on a move that only costs its friction.
+    assertTrue('13 no broker is driven negative', moved.brokers.every(b => (b.currentLiquidity ?? 0) >= 0));
+    assertTrue('13 no earmark goes negative', moved.brokers.every(b =>
+        Object.values(b.liquidityAllocations || {}).every(v => (v || 0) >= 0)));
+    assertEq('13 net worth falls by exactly the friction', before.netWorth - after.netWorth, plan.friction, 1e-6);
+    assertEq('13 the pyramid total agrees', before.goalPyramidTotal - after.goalPyramidTotal, plan.friction, 1e-6);
+    // The only cash that appears out of the move is what whole-share rounding
+    // could not deploy — it used to be the whole amount wired.
+    const undeployed = plan.warnings.find(w => w.kind === 'buy-shortfall')?.amount ?? 0;
+    assertEq('13 unassigned liquidity only grows by what stayed undeployed', after.liquidity - before.liquidity, undeployed, 1e-6);
+}
+
+// ── 14. Same broker on both legs: nothing to wire ────────────────────────────
+{
+    const brokers = [fixedBroker('b1', 5, 1_000)];
+    const transactions = [buy('SWDA', 300, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b1')];
+    const ctx = ctxOf({ brokers, transactions });
+    const plan = planFundRelocation(
+        { from: { kind: 'portfolio', portfolioId: 'p1' }, to: { kind: 'portfolio', portfolioId: 'p2' }, netAmount: 5_000 },
+        ctx
+    );
+    assertEq('14 no wire needed', plan.transfers.length, 0);
+    assertTrue('14 and nothing is flagged', !plan.warnings.some(w => w.kind === 'cross-broker'));
+}
+
+// ── 15. A destination that can pay its own way: a wire, but not a blocking one ─
+{
+    // Same crossing as 13, except b2 is sitting on enough cash to clear the buys
+    // by itself: the money still belongs at b2, so the wire is listed — but it
+    // does not stop anything, so it must not be flagged as a warning.
+    const brokers = [
+        ({ id: 'b1', name: 'Degiro', commissionType: 'fixed', commissionFixed: 5, currentLiquidity: 1_000 }) as Broker,
+        ({ id: 'b2', name: 'Directa', commissionType: 'fixed', commissionFixed: 5, currentLiquidity: 80_000 }) as Broker,
+    ];
+    const transactions = [buy('SWDA', 300, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b2')];
+    const ctx = ctxOf({ brokers, transactions });
+    const plan = planFundRelocation(
+        { from: { kind: 'portfolio', portfolioId: 'p1' }, to: { kind: 'portfolio', portfolioId: 'p2' }, netAmount: 20_000 },
+        ctx
+    );
+
+    assertEq('15 the wire is still listed', plan.transfers.length, 1);
+    assertTrue('15 but nothing is blocked', !plan.transfers[0].required);
+    assertTrue('15 so no warning', !plan.warnings.some(w => w.kind === 'cross-broker'));
+}
+
 console.log('\nAll fund-relocation checks passed.');
