@@ -188,4 +188,54 @@ const CASH = 0, GROWTH = 1, SECURITY = 2;
     assertTrue('9 no move drains more than the pot', plan.moves.every(m => m.from.kind !== 'cash' || m.amount <= 1_000));
 }
 
+// ── 10. A frozen portfolio still counts, but never gives ─────────────────────
+{
+    // Growth must give up €10k. The Tilt is frozen, so the whole leg comes out
+    // of Core — and the goal's value is unchanged, because freezing says what
+    // may MOVE, not what the wealth is.
+    const plan = planWith({ 'g-growth': 50, 'g-security': 50 }, { portfolioStates: { p2: 'frozen' } });
+
+    assertEq('10 the frozen portfolio still counts', plan.goals[GROWTH].currentValue, 60_000);
+    assertEq('10 the base is unchanged', plan.total, 100_000);
+    assertEq('10 one move only', plan.moves.length, 1);
+    assertEq('10 all of it out of the free portfolio', plan.moves[0].amount, 10_000);
+    assertTrue('10 and never out of the frozen one', plan.moves.every(m => m.from.portfolioId !== 'p2'));
+}
+
+// ── 11. Freezing more than the gap is reported, not silently re-routed ───────
+{
+    // Both of Growth's portfolios frozen: the €10k gap has nothing to come out
+    // of, and that is said out loud rather than taken from another goal.
+    const plan = planWith({ 'g-growth': 50, 'g-security': 50 }, { portfolioStates: { p1: 'frozen', p2: 'frozen' } });
+
+    assertEq('11 nothing can move', plan.moves.length, 0);
+    const short = plan.issues.find(i => i.kind === 'not-enough-to-drain');
+    assertTrue('11 the shortfall is reported', !!short);
+    assertEq('11 the whole gap is stranded', short?.amount ?? 0, 10_000);
+}
+
+// ── 12. An excluded portfolio leaves the base as well as the moves ───────────
+{
+    const plan = planWith({ 'g-growth': 50, 'g-security': 50 }, { portfolioStates: { p2: 'excluded' } });
+
+    assertEq('12 out of its goal', plan.goals[GROWTH].currentValue, 45_000);
+    assertEq('12 out of the base', plan.total, 85_000);
+    assertEq('12 it is listed as skipped', plan.excludedPortfolios.length, 1);
+    assertTrue('12 with the goal it belongs to', plan.excludedPortfolios[0].goalId === 'g-growth');
+    // 42.5k target against 45k held: only the 2.5k of drift is left to move.
+    assertEq('12 the gap is measured without it', plan.moves.reduce((s, m) => s + m.amount, 0), 2_500);
+    assertTrue('12 and it is never moved', plan.moves.every(m => m.from.portfolioId !== 'p2' && m.to.portfolioId !== 'p2'));
+}
+
+// ── 13. A goal whose portfolios are all frozen cannot receive ────────────────
+{
+    const plan = planWith({ 'g-growth': 50, 'g-security': 50 }, { portfolioStates: { p3: 'frozen' } });
+
+    const issue = plan.issues.find(i => i.kind === 'no-destination');
+    assertTrue('13 the dead end is reported', !!issue);
+    assertTrue('13 as a frozen one, not an unattached one', issue?.reason === 'none-active');
+    assertEq('13 the whole share is stranded', issue?.amount ?? 0, 10_000);
+    assertEq('13 nothing is moved', plan.moves.length, 0);
+}
+
 console.log('\nAll goal-flow checks passed.');

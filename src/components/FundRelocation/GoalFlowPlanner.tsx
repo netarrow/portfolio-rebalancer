@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
-import type { AssetDefinition, Broker, Goal, Portfolio, Transaction } from '../../types';
+import type { AssetDefinition, Broker, Goal, GoalFlowPortfolioState, Portfolio, Transaction } from '../../types';
 import {
     buildGoalFlowPlan,
     DEFAULT_MIN_MOVE,
@@ -25,7 +25,18 @@ import GoalAllocationBar, { type GoalBarItem } from './GoalAllocationBar';
  * it down and the moves deploy the cash, drag it up and they raise it by
  * selling. It is the only level whose target may go to zero, since an empty
  * cash pot is a legitimate destination for the plan.
+ *
+ * Each portfolio can also be taken out of the planner's hands here — frozen
+ * (still counted, never touched) or skipped (out of the split altogether) —
+ * which is a statement about what may MOVE, not about what the wealth is: the
+ * choice lives on this page and no other view reads it.
  */
+
+const PORTFOLIO_STATES: { state: GoalFlowPortfolioState; label: string; title: string }[] = [
+    { state: 'active', label: 'Move', title: 'Counts in the goal, and the plan may sell from or buy into it.' },
+    { state: 'frozen', label: 'Freeze', title: 'Counts in the goal, but no move ever touches it — the other portfolios have to close the gap.' },
+    { state: 'excluded', label: 'Skip', title: 'Out of the split entirely: neither counted in the percentages nor moved.' },
+];
 
 const eur0 = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
 
@@ -38,6 +49,8 @@ export interface GoalFlowPlannerProps {
     marketData: Record<string, { price: number; lastUpdated: string }>;
     targets: Record<string, number>;
     onTargetsChange: (targets: Record<string, number>) => void;
+    portfolioStates: Record<string, GoalFlowPortfolioState>;
+    onPortfolioStateChange: (portfolioId: string, state: GoalFlowPortfolioState) => void;
     onQueueMoves: (requests: RelocationRequest[]) => void;
 }
 
@@ -53,11 +66,11 @@ const toRequest = (move: GoalFlowMove): RelocationRequest => ({
 
 const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
     goals, portfolios, transactions, brokers, assetSettings, marketData,
-    targets, onTargetsChange, onQueueMoves,
+    targets, onTargetsChange, portfolioStates, onPortfolioStateChange, onQueueMoves,
 }) => {
     const plan = useMemo(
-        () => buildGoalFlowPlan({ goals, portfolios, transactions, brokers, assetSettings, marketData, targets }),
-        [goals, portfolios, transactions, brokers, assetSettings, marketData, targets]
+        () => buildGoalFlowPlan({ goals, portfolios, transactions, brokers, assetSettings, marketData, targets, portfolioStates }),
+        [goals, portfolios, transactions, brokers, assetSettings, marketData, targets, portfolioStates]
     );
 
     // Targets are persisted (and synced), but a new or deleted level leaves them
@@ -118,6 +131,13 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
         [plan.goals]
     );
 
+    // Only the goal levels own portfolios: the cash pot is one indivisible pot,
+    // and a goal with nothing attached has nothing to offer here.
+    const scopeGoals = useMemo(
+        () => plan.goals.filter(g => g.kind === 'goal' && g.portfolios.length > 0),
+        [plan.goals]
+    );
+
     const movedTotal = plan.moves.reduce((s, m) => s + m.amount, 0);
 
     // The cash level exists even with no goals configured, and a bar with a
@@ -152,6 +172,54 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
                 onTargetChange={onTargetsChange}
                 total={plan.total}
             />
+
+            {scopeGoals.length > 0 && (
+                <div className="reloc-scope">
+                    <div className="reloc-scope-head">
+                        <h4 className="reloc-flow-title">Portfolios in play</h4>
+                        <span className="reloc-scope-hint">
+                            This page only — every other view keeps counting all of them.
+                        </span>
+                    </div>
+                    {scopeGoals.map(g => (
+                        <div className="reloc-scope-goal" key={g.id}>
+                            <div className="reloc-scope-goal-name">
+                                <span className="reloc-flow-dot" style={{ background: g.color }} />
+                                {g.title}
+                            </div>
+                            <div className="reloc-scope-chips">
+                                {g.portfolios.map(p => (
+                                    <div className={`reloc-scope-chip state-${p.state}`} key={p.id}>
+                                        <div className="reloc-scope-chip-main">
+                                            <span className="reloc-scope-chip-name">{p.name}</span>
+                                            <span className="reloc-scope-chip-value">{eur0(p.value)}</span>
+                                        </div>
+                                        <div className="reloc-scope-seg" role="group" aria-label={`How ${p.name} takes part`}>
+                                            {PORTFOLIO_STATES.map(o => (
+                                                <button
+                                                    key={o.state}
+                                                    type="button"
+                                                    className={p.state === o.state ? 'active' : ''}
+                                                    aria-pressed={p.state === o.state}
+                                                    title={o.title}
+                                                    onClick={() => onPortfolioStateChange(p.id, o.state)}
+                                                >
+                                                    {o.label}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))}
+                    <p className="reloc-flow-note" style={{ marginTop: 'var(--space-2)' }}>
+                        <strong>Move</strong> takes part in full · <strong>Freeze</strong> still counts toward its
+                        goal but is never sold or bought · <strong>Skip</strong> leaves the split altogether, so the
+                        percentages are recomputed without it.
+                    </p>
+                </div>
+            )}
 
             <div className="reloc-flow-head">
                 <h4 className="reloc-flow-title">
@@ -212,14 +280,17 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
                 <div className="reloc-warning" key={`${issue.kind}-${i}`}>
                     <span aria-hidden="true">⚠️</span>
                     <span>
-                        {issue.kind === 'no-destination' && (
+                        {issue.kind === 'no-destination' && issue.reason === 'none-active' && (
+                            <>“{issue.goalTitle}” needs {eur0(issue.amount)} but every portfolio attached to it is frozen or skipped — set one back to “Move” to let the money land.</>
+                        )}
+                        {issue.kind === 'no-destination' && issue.reason !== 'none-active' && (
                             <>“{issue.goalTitle}” needs {eur0(issue.amount)} but has no portfolio attached to receive it — attach one from the Portfolios page.</>
                         )}
                         {issue.kind === 'not-enough-to-drain' && issue.goalId === LIQUIDITY_LEVEL_ID && (
                             <>Cash is {eur0(issue.amount)} short of the drop you asked for: the rest of the liquidity is earmarked to portfolios, so it already counts inside their goals.</>
                         )}
                         {issue.kind === 'not-enough-to-drain' && issue.goalId !== LIQUIDITY_LEVEL_ID && (
-                            <>“{issue.goalTitle}” is {eur0(issue.amount)} short of what its own portfolios can give up: the rest has to come from new money or from cash.</>
+                            <>“{issue.goalTitle}” is {eur0(issue.amount)} short of what its portfolios are free to give up: unfreeze one, or take the rest from new money or from cash.</>
                         )}
                         {issue.kind === 'below-minimum' && (
                             <>{eur0(issue.amount)} was left unmoved: the remaining legs are under {eur0(DEFAULT_MIN_MOVE)} and would lose more to tax and commissions than the drift costs.</>
@@ -227,6 +298,13 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
                     </span>
                 </div>
             ))}
+
+            {plan.excludedPortfolios.length > 0 && (
+                <p className="reloc-flow-note">
+                    Skipped by you: {plan.excludedPortfolios.map(p => `${p.name} (${eur0(p.value)}, ${p.goalTitle})`).join(', ')} —
+                    left out of the percentages and of the moves on this page only.
+                </p>
+            )}
 
             {plan.orphanPortfolios.length > 0 && (
                 <p className="reloc-flow-note">

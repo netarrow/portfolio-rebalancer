@@ -86,6 +86,18 @@ export interface Goal {
   order: number;
 }
 
+/**
+ * How a portfolio takes part in the Fund Relocation pyramid:
+ *  - 'active'   counts toward its goal and may be sold from / bought into;
+ *  - 'frozen'   counts toward its goal but no move ever touches it;
+ *  - 'excluded' does not count at all — out of the base and out of the moves.
+ *
+ * Fund Relocation only. The Stats pyramid, the Dashboard and every other
+ * readout keep counting every portfolio: this says what the PLANNER may do,
+ * not what the wealth IS. Use the counting-scope flags for the latter.
+ */
+export type GoalFlowPortfolioState = 'active' | 'frozen' | 'excluded';
+
 // Per-member rule inside an allocation group.
 export interface AllocationMemberRule {
   noBuy?: boolean;   // never add to this member (e.g. a promo that ended)

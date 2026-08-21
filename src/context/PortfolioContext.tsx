@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution, PriceSource } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
@@ -83,7 +83,9 @@ interface PortfolioContextType {
     setAggregateExcludedTickers: (tickers: string[] | ((prev: string[]) => string[])) => void;
     // Goal rebalance widget targets (persisted and synced with Azure)
     goalModeTargets: Record<string, number>;
+    goalFlowPortfolioStates: Record<string, GoalFlowPortfolioState>;
     setGoalModeTargets: (targets: Record<string, number> | ((prev: Record<string, number>) => Record<string, number>)) => void;
+    setGoalFlowPortfolioStates: (states: Record<string, GoalFlowPortfolioState> | ((prev: Record<string, GoalFlowPortfolioState>) => Record<string, GoalFlowPortfolioState>)) => void;
     // Azure sync
     azureConfig: AzureConfig;
     setAzureConfig: (config: AzureConfig | ((prev: AzureConfig) => AzureConfig)) => void;
@@ -222,6 +224,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Aggregate section UI preferences (persisted and synced with Azure)
     const [aggregateExcludedTickers, setAggregateExcludedTickers] = useLocalStorage<string[]>('aggregate-excluded-tickers', []);
     const [goalModeTargets, setGoalModeTargets] = useLocalStorage<Record<string, number>>('goal_mode_targets', {});
+    // Which portfolios the Fund Relocation pyramid may move, freeze or ignore.
+    // A planner setting, not a counting one: no other view reads it.
+    const [goalFlowPortfolioStates, setGoalFlowPortfolioStates] =
+        useLocalStorage<Record<string, GoalFlowPortfolioState>>('goal_flow_portfolio_states', {});
 
     // Azure sync config — excluded from backup, restore and sync payload by design
     const [azureConfig, setAzureConfig] = useLocalStorage<AzureConfig>('portfolio_azure_config', {
@@ -815,7 +821,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 transactions, assetSettings, portfolios, brokers, marketData,
                 assetAllocationSettings: storedAssetAllocationSettings,
                 macroAllocations, goalAllocations, goals,
-                aggregateExcludedTickers, goalModeTargets,
+                aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
                 ynabMappings,
                 ynabAccountMappings,
                 ynabGoals,
@@ -852,7 +858,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
-        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, ynabMappings, ynabAccountMappings,
+        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates, ynabMappings, ynabAccountMappings,
         ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
 
     // On mount: check if Azure has newer data and offer restore
@@ -871,7 +877,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         transactions, assetSettings, portfolios, brokers, marketData,
                         assetAllocationSettings: storedAssetAllocationSettings,
                         macroAllocations, goalAllocations, goals,
-                        aggregateExcludedTickers, goalModeTargets,
+                        aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
                         ynabMappings,
                         ynabAccountMappings,
                         ynabGoals,
@@ -2360,6 +2366,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const goals = data.goals || [];
             const aggregateExcludedTickers = Array.isArray(data.aggregateExcludedTickers) ? data.aggregateExcludedTickers : [];
             const goalModeTargets = (data.goalModeTargets && typeof data.goalModeTargets === 'object') ? data.goalModeTargets : {};
+            const goalFlowPortfolioStates = (data.goalFlowPortfolioStates && typeof data.goalFlowPortfolioStates === 'object') ? data.goalFlowPortfolioStates : {};
             const importedYnabMappings: YnabCategoryMapping[] = Array.isArray(data.ynabMappings) ? data.ynabMappings : [];
             const importedYnabGoals: YnabGoal[] = Array.isArray(data.ynabGoals) ? data.ynabGoals : [];
             const importedYnabGoalAllocations: YnabGoalAllocation[] = Array.isArray(data.ynabGoalAllocations) ? data.ynabGoalAllocations : [];
@@ -2410,6 +2417,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_targets_v2', JSON.stringify([]));
             localStorage.setItem('aggregate-excluded-tickers', JSON.stringify(aggregateExcludedTickers));
             localStorage.setItem('goal_mode_targets', JSON.stringify(goalModeTargets));
+            localStorage.setItem('goal_flow_portfolio_states', JSON.stringify(goalFlowPortfolioStates));
             localStorage.setItem('portfolio_ynab_mappings', JSON.stringify(importedYnabMappings));
             localStorage.setItem('portfolio_ynab_goals', JSON.stringify(importedYnabGoals));
             localStorage.setItem('portfolio_ynab_goal_allocations', JSON.stringify(importedYnabGoalAllocations));
@@ -2437,6 +2445,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setOldTargets([]);
             setAggregateExcludedTickers(aggregateExcludedTickers);
             setGoalModeTargets(goalModeTargets);
+            setGoalFlowPortfolioStates(goalFlowPortfolioStates);
             setYnabMappings(importedYnabMappings);
             setYnabGoals(importedYnabGoals);
             setYnabGoalAllocations(importedYnabGoalAllocations);
@@ -2480,7 +2489,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 transactions, assetSettings, portfolios, brokers, marketData,
                 assetAllocationSettings: storedAssetAllocationSettings,
                 macroAllocations, goalAllocations, goals,
-                aggregateExcludedTickers, goalModeTargets,
+                aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
                 ynabMappings,
                 ynabAccountMappings,
                 ynabGoals,
@@ -3132,6 +3141,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         aggregateExcludedTickers,
         setAggregateExcludedTickers,
         goalModeTargets,
+        goalFlowPortfolioStates,
+        setGoalFlowPortfolioStates,
         setGoalModeTargets,
         azureConfig,
         setAzureConfig,

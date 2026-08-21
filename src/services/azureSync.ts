@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -21,6 +21,9 @@ export interface SyncPayload {
     goals: Goal[];
     aggregateExcludedTickers?: string[];
     goalModeTargets?: Record<string, number>;
+    // Which portfolios the Fund Relocation pyramid may move / freeze / ignore.
+    // A planner preference, not a counting one — no other view reads it.
+    goalFlowPortfolioStates?: Record<string, GoalFlowPortfolioState>;
     ynabMappings?: YnabCategoryMapping[];
     // brokerId -> { budgetId, accountId }: a mapping, not a credential, so it
     // travels. Older payloads hold a bare account id and are normalized on read.
