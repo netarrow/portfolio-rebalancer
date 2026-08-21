@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
+import type { GoalFlowPortfolioState } from '../../types';
 import {
     applyRelocationToState,
     isSameEndpoint,
@@ -41,7 +42,8 @@ import './FundRelocation.css';
 const FundRelocationView: React.FC = () => {
     const {
         portfolios, goals, marketData, macroAllocations, goalAllocations, freeCommissionPeriods,
-        goalModeTargets, setGoalModeTargets, addTransactionsBulk, adjustBrokerLiquidity,
+        goalModeTargets, setGoalModeTargets, goalFlowPortfolioStates, setGoalFlowPortfolioStates,
+        addTransactionsBulk, adjustBrokerLiquidity,
         // Scoped + effective, so this page counts exactly what the Stats page
         // counts: the family/illiquid/person toggles apply here too, and
         // unresolved virtual bonds carry their synthetic Bond definition
@@ -214,6 +216,20 @@ const FundRelocationView: React.FC = () => {
     }, [plan, request]);
 
     /** The goal planner hands over whole moves; they queue like any other. */
+    /**
+     * 'active' is the default, so it is stored as the ABSENCE of an entry: the
+     * map only ever holds the portfolios the user took out of the planner's
+     * hands, and a deleted portfolio leaves nothing behind.
+     */
+    const setPortfolioState = useCallback((portfolioId: string, state: GoalFlowPortfolioState) => {
+        setGoalFlowPortfolioStates(prev => {
+            const next = { ...prev };
+            if (state === 'active') delete next[portfolioId];
+            else next[portfolioId] = state;
+            return next;
+        });
+    }, [setGoalFlowPortfolioStates]);
+
     const queueMoves = useCallback((requests: RelocationRequest[]) => {
         if (requests.length === 0) return;
         setQueue(prev => [...prev, ...requests]);
@@ -267,6 +283,8 @@ const FundRelocationView: React.FC = () => {
                 marketData={marketData}
                 targets={goalModeTargets}
                 onTargetsChange={setGoalModeTargets}
+                portfolioStates={goalFlowPortfolioStates}
+                onPortfolioStateChange={setPortfolioState}
                 onQueueMoves={queueMoves}
             />
 

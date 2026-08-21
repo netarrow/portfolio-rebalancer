@@ -1,4 +1,4 @@
-import type { AssetDefinition, Broker, Goal, Portfolio, Transaction } from '../types';
+import type { AssetDefinition, Broker, Goal, GoalFlowPortfolioState, Portfolio, Transaction } from '../types';
 import { LIQUIDITY_COLOR, UNASSIGNED_LIQUIDITY_ID, unassignedLiquidityOf } from './goalDistribution';
 import { calculateAssets, injectCashAssets } from './portfolioCalculations';
 
@@ -12,6 +12,12 @@ import { calculateAssets, injectCashAssets } from './portfolioCalculations';
  * that is over target. What each move then sells and buys inside those two
  * portfolios is the relocation planner's job, not this one's: here the unit is
  * the portfolio, and the answer is "move € from portfolio A to portfolio B".
+ *
+ * Each portfolio can be taken out of the planner's hands without leaving the
+ * pyramid: 'frozen' keeps it in its goal's value but bars every move from
+ * touching it (a pension fund, a PAC you will not interrupt), 'excluded' drops
+ * it from the base entirely (money you would rather not think about here). The
+ * flag is Fund Relocation's alone — every other readout keeps counting the lot.
  *
  * The one level that is not a goal is level 0: the cash NOT earmarked to any
  * portfolio, which sits below every goal in the pyramid exactly as it does on
@@ -36,6 +42,7 @@ export interface GoalFlowPortfolio {
     id: string;
     name: string;
     value: number;
+    state: GoalFlowPortfolioState;
 }
 
 export interface GoalFlowGoal {
@@ -50,6 +57,9 @@ export interface GoalFlowGoal {
     targetValue: number;
     /** target − current: positive = must grow, negative = must shrink. */
     gap: number;
+    /** Every portfolio attached to the level, whatever its state — the UI
+     *  needs the excluded ones too, to offer them back. `currentValue` counts
+     *  the active and frozen ones only. */
     portfolios: GoalFlowPortfolio[];
 }
 
@@ -70,7 +80,7 @@ export interface GoalFlowMove {
 }
 
 export type GoalFlowIssueKind =
-    /** A goal must grow but has no portfolio attached to receive the money. */
+    /** A goal must grow but has no portfolio free to receive the money. */
     | 'no-destination'
     /** A level must shrink but holds less than the gap asks for. */
     | 'not-enough-to-drain'
@@ -82,6 +92,8 @@ export interface GoalFlowIssue {
     goalId?: string;
     goalTitle?: string;
     amount: number;
+    /** 'no-destination' only: nothing is attached, or nothing is left active. */
+    reason?: 'unattached' | 'none-active';
 }
 
 export interface GoalFlowPlan {
@@ -91,6 +103,8 @@ export interface GoalFlowPlan {
     moves: GoalFlowMove[];
     /** Portfolios not attached to any goal: outside the split entirely. */
     orphanPortfolios: GoalFlowPortfolio[];
+    /** Portfolios the user took out of the split, with the goal they belong to. */
+    excludedPortfolios: (GoalFlowPortfolio & { goalId: string; goalTitle: string })[];
     issues: GoalFlowIssue[];
 }
 
@@ -103,6 +117,8 @@ export interface GoalFlowInput {
     marketData: Record<string, { price: number; lastUpdated: string }>;
     /** goalId → target %, summing to 100. */
     targets: Record<string, number>;
+    /** portfolioId → state; absent = 'active'. */
+    portfolioStates?: Record<string, GoalFlowPortfolioState>;
     minMove?: number;
 }
 
@@ -177,12 +193,18 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
     const valueById: Record<string, number> = {};
     portfolios.forEach(p => { valueById[p.id] = portfolioValue(p, input); });
 
+    const stateOf = (id: string): GoalFlowPortfolioState => input.portfolioStates?.[id] ?? 'active';
+    /** Counted in its goal: everything the user has not taken out of the split. */
+    const counts = (p: GoalFlowPortfolio) => p.state !== 'excluded';
+    /** Free to be sold from or bought into. */
+    const movable = (p: GoalFlowPortfolio) => p.state === 'active';
+
     const sortedGoals = [...goals].sort((a, b) => a.order - b.order);
 
     const goalPortfolios = (goalId: string): GoalFlowPortfolio[] =>
         portfolios
             .filter(p => p.goalId === goalId)
-            .map(p => ({ id: p.id, name: p.name, value: valueById[p.id] ?? 0 }))
+            .map(p => ({ id: p.id, name: p.name, value: valueById[p.id] ?? 0, state: stateOf(p.id) }))
             .sort((a, b) => b.value - a.value);
 
     // Level 0 first, then the goals in their own order — the pyramid from the
@@ -203,7 +225,7 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
                 title: goal.title,
                 kind: 'goal' as const,
                 linked,
-                currentValue: linked.reduce((s, p) => s + p.value, 0),
+                currentValue: linked.filter(counts).reduce((s, p) => s + p.value, 0),
                 color: GOAL_FLOW_COLORS[idx % GOAL_FLOW_COLORS.length],
             };
         }),
@@ -249,12 +271,15 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
                 if (give > 0.5) donors.push({ endpoint: cashEndpoint(), amount: give });
                 return;
             }
-            const capacity = g.portfolios.reduce((s, p) => s + p.value, 0);
+            // Frozen and excluded portfolios cannot give: the shortfall they
+            // leave is reported rather than silently taken from elsewhere.
+            const free = g.portfolios.filter(movable);
+            const capacity = free.reduce((s, p) => s + p.value, 0);
             if (capacity + 0.5 < need) {
                 issues.push({ kind: 'not-enough-to-drain', goalId: g.id, goalTitle: g.title, amount: need - capacity });
             }
-            const per = spread(Math.min(need, capacity), g.portfolios.map(p => ({ id: p.id, weight: p.value, max: p.value })));
-            g.portfolios.forEach(p => {
+            const per = spread(Math.min(need, capacity), free.map(p => ({ id: p.id, weight: p.value, max: p.value })));
+            free.forEach(p => {
                 const amount = per[p.id] ?? 0;
                 if (amount > 0.5) {
                     donors.push({ endpoint: { kind: 'portfolio', portfolioId: p.id, name: p.name, goalId: g.id }, amount });
@@ -266,15 +291,19 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
                 receivers.push({ endpoint: cashEndpoint(), amount: g.gap });
                 return;
             }
-            if (g.portfolios.length === 0) {
-                issues.push({ kind: 'no-destination', goalId: g.id, goalTitle: g.title, amount: g.gap });
+            const free = g.portfolios.filter(movable);
+            if (free.length === 0) {
+                issues.push({
+                    kind: 'no-destination', goalId: g.id, goalTitle: g.title, amount: g.gap,
+                    reason: g.portfolios.length === 0 ? 'unattached' : 'none-active',
+                });
                 return;
             }
             // A goal held entirely in cash-less brand new portfolios has no
             // weights to go by, so the gap is split evenly instead.
-            const anyValue = g.portfolios.some(p => p.value > 0);
-            const per = spread(g.gap, g.portfolios.map(p => ({ id: p.id, weight: anyValue ? p.value : 1 })));
-            g.portfolios.forEach(p => {
+            const anyValue = free.some(p => p.value > 0);
+            const per = spread(g.gap, free.map(p => ({ id: p.id, weight: anyValue ? p.value : 1 })));
+            free.forEach(p => {
                 const amount = per[p.id] ?? 0;
                 if (amount > 0.5) {
                     receivers.push({ endpoint: { kind: 'portfolio', portfolioId: p.id, name: p.name, goalId: g.id }, amount });
@@ -310,9 +339,15 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
 
     const orphanPortfolios = portfolios
         .filter(p => !p.goalId || !goals.some(g => g.id === p.goalId))
-        .map(p => ({ id: p.id, name: p.name, value: valueById[p.id] ?? 0 }))
+        .map(p => ({ id: p.id, name: p.name, value: valueById[p.id] ?? 0, state: stateOf(p.id) }))
         .filter(p => p.value > 0)
         .sort((a, b) => b.value - a.value);
 
-    return { goals: flowGoals, total, moves, orphanPortfolios, issues };
+    const excludedPortfolios = flowGoals
+        .flatMap(g => g.portfolios
+            .filter(p => p.state === 'excluded')
+            .map(p => ({ ...p, goalId: g.id, goalTitle: g.title })))
+        .sort((a, b) => b.value - a.value);
+
+    return { goals: flowGoals, total, moves, orphanPortfolios, excludedPortfolios, issues };
 };
