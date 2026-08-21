@@ -112,6 +112,28 @@ export interface BuyAction {
     resultingShares: number;
 }
 
+/**
+ * Cash that has to be wired from one broker to another for the plan to settle.
+ *
+ * It is NOT a transaction: nothing is bought, sold or earned, and the ledger
+ * this app keeps is a ledger of positions. It is an action the user has to
+ * perform at the bank — so it is reported here, and applied to the projected
+ * broker balances, without ever becoming a `Transaction`.
+ */
+export interface CashTransfer {
+    fromBrokerId: string;
+    fromBrokerName: string;
+    toBrokerId: string;
+    toBrokerName: string;
+    amount: number;
+    /**
+     * True when the destination cannot clear its buys without this money:
+     * its own cash would go negative. False means the transfer only puts the
+     * proceeds back where they were meant to end up — the buys clear either way.
+     */
+    required: boolean;
+}
+
 export type RelocationWarningKind =
     | 'source-shortfall'      // the source cannot raise the requested amount
     | 'buy-shortfall'         // whole-share rounding left budget undeployed
@@ -148,6 +170,8 @@ export interface RelocationPlan {
     netRequested: number;
     /** friction / netDelivered, as a %. */
     frictionPercent: number;
+    /** Bank transfers the plan needs, when the legs settle at different brokers. */
+    transfers: CashTransfer[];
     warnings: RelocationWarning[];
 }
 
@@ -159,7 +183,7 @@ const eurLabel = (value: number): string =>
 
 const emptyPlan = (netRequested: number, warnings: RelocationWarning[] = []): RelocationPlan => ({
     sells: [], buys: [], grossSold: 0, cashDrawn: 0, tax: 0, sellCommission: 0, buyCommission: 0,
-    friction: 0, spreadCost: 0, netDelivered: 0, netRequested, frictionPercent: 0, warnings,
+    friction: 0, spreadCost: 0, netDelivered: 0, netRequested, frictionPercent: 0, transfers: [], warnings,
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -414,6 +438,96 @@ const portfolioOf = (id: string, ctx: RelocationContext) => ctx.portfolios.find(
  * than the amount moved, so it converges immediately; the iteration cap keeps a
  * pathological commission plan from spinning.
  */
+
+/**
+ * The bank transfers a plan needs before it can settle.
+ *
+ * Money is modelled per broker, so a sale at Degiro cannot pay for a purchase at
+ * Directa: the euro has to be wired first. That wire is not a transaction — no
+ * position changes and no gain is realised — so it never enters the ledger; it
+ * is surfaced as an action to perform, and applied to the projected balances so
+ * the after-state does not show a broker holding cash it never received.
+ *
+ * Supply is what each broker ends up holding (sale proceeds, or the cash a cash
+ * source hands over); demand is what each has to pay out (buy outlay, or the
+ * cash a pinned cash destination is supposed to receive). Money that never
+ * leaves its own broker is netted out first — only what actually crosses is a
+ * transfer — and the rest is matched largest-first, so the plan asks for as few
+ * wires as possible.
+ */
+const planCashTransfers = (
+    sells: SellAction[],
+    buys: BuyAction[],
+    cashDrawn: number,
+    netDelivered: number,
+    request: RelocationRequest,
+    ctx: RelocationContext
+): CashTransfer[] => {
+    const { from, to } = request;
+    const add = (map: Record<string, number>, id: string | undefined, amount: number) => {
+        if (!id || !(amount > 0)) return;
+        map[id] = (map[id] ?? 0) + amount;
+    };
+
+    const supply: Record<string, number> = {};
+    const demand: Record<string, number> = {};
+    sells.forEach(s => add(supply, s.brokerId, s.net));
+    if (from.kind === 'cash') add(supply, from.brokerId, cashDrawn);
+    buys.forEach(b => add(demand, b.brokerId, b.gross + b.commission));
+    if (to.kind === 'cash') add(demand, to.brokerId, netDelivered);
+
+    // A broker whose cash would go negative needs its wire to clear the buys;
+    // one that can pay from its own balance only needs it to end up with the
+    // money where it was meant to be. Measured before the netting below, which
+    // destroys the raw per-broker figures.
+    const deficitOf = (brokerId: string): number => {
+        const cash = ctx.brokers.find(b => b.id === brokerId)?.currentLiquidity ?? 0;
+        const projected = cash + (supply[brokerId] ?? 0) - (demand[brokerId] ?? 0);
+        return projected < 0 ? -projected : 0;
+    };
+    const deficits: Record<string, number> = {};
+    Object.keys(demand).forEach(id => { deficits[id] = deficitOf(id); });
+
+    Object.keys(demand).forEach(id => {
+        const stays = Math.min(demand[id], supply[id] ?? 0);
+        if (stays > 0) { demand[id] -= stays; supply[id] -= stays; }
+    });
+
+    const nameOf = (brokerId: string) => ctx.brokers.find(b => b.id === brokerId)?.name ?? 'Broker';
+    const sources = Object.entries(supply).filter(([, v]) => v > 1).sort((a, b) => b[1] - a[1]);
+    const sinks = Object.entries(demand).filter(([, v]) => v > 1).sort((a, b) => b[1] - a[1]);
+
+    const transfers: CashTransfer[] = [];
+    let si = 0;
+    for (const [sinkId, needed] of sinks) {
+        let remaining = needed;
+        // A cash destination the user pinned IS the point of the move, so its
+        // wire is required even though no buy could ever go short.
+        const pinnedCashDestination = to.kind === 'cash' && to.brokerId === sinkId;
+        let deficit = pinnedCashDestination ? needed : (deficits[sinkId] ?? 0);
+
+        while (remaining > 1 && si < sources.length) {
+            const [sourceId, available] = sources[si];
+            const amount = Math.min(remaining, available);
+            if (amount > 1) {
+                transfers.push({
+                    fromBrokerId: sourceId,
+                    fromBrokerName: nameOf(sourceId),
+                    toBrokerId: sinkId,
+                    toBrokerName: nameOf(sinkId),
+                    amount,
+                    required: deficit > 0.5,
+                });
+                deficit -= amount;
+            }
+            sources[si][1] -= amount;
+            remaining -= amount;
+            if (sources[si][1] <= 1) si++;
+        }
+    }
+    return transfers;
+};
+
 export const planFundRelocation = (request: RelocationRequest, ctx: RelocationContext): RelocationPlan => {
     const { from, to, netAmount, applyFreeBuyPromo = false } = request;
     const warnings: RelocationWarning[] = [];
@@ -530,15 +644,16 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
         }
     }
 
-    const sellBrokerIds = new Set(sells.map(s => s.brokerId).filter(Boolean));
-    const buyBrokerIds = new Set(buys.map(b => b.brokerId).filter(Boolean));
-    const cashSourceId = from.kind === 'cash' ? from.brokerId : undefined;
-    if (cashSourceId) sellBrokerIds.add(cashSourceId);
-    const crossBroker = [...buyBrokerIds].some(id => sellBrokerIds.size > 0 && !sellBrokerIds.has(id));
-    if (crossBroker) {
+    // Legs settling at different brokers are not a warning by themselves — they
+    // are an action, listed as transfers. Only the wires the buys cannot clear
+    // without are worth flagging, and then with the euro figure.
+    const transfers = planCashTransfers(sells, buys, cashDrawn, netDelivered, request, ctx);
+    const requiredTransfer = transfers.filter(t => t.required).reduce((s, t) => s + t.amount, 0);
+    if (requiredTransfer > 1) {
         warnings.push({
             kind: 'cross-broker',
-            message: 'Sales and purchases settle at different brokers: the cash has to physically move before the buys can clear.',
+            message: `Sales and purchases settle at different brokers: ${eurLabel(requiredTransfer)} has to be wired first, or the buys cannot clear.`,
+            amount: requiredTransfer,
         });
     }
 
@@ -558,6 +673,7 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
         spreadCost,
         netDelivered,
         netRequested: netAmount,
+        transfers,
         frictionPercent: netDelivered > 0 ? (friction / netDelivered) * 100 : 0,
         warnings,
     };
@@ -694,19 +810,26 @@ export const applyRelocationToState = (
 
     plan.sells.forEach(s => bump(s.brokerId, s.net));
 
-    // A CASH source is the single debit of the whole round trip: `cashDrawn` already
-    // covers the buy outlay AND its commission, so letting the buy legs debit as well
-    // would take the money out twice. With no broker pinned the outlay falls back to
-    // the brokers the buys settle at — same total, against an unassigned cash pot.
-    if (from.kind === 'cash' && (from.brokerId || plan.buys.length === 0)) {
+    // Every leg debits the broker it settles at, and the plan's transfers carry
+    // the cash between brokers — so a buy at Directa funded by a sale at Degiro
+    // no longer drives Directa's balance negative. `cashDrawn` is exactly the
+    // buy outlay plus its commission, so debiting the buys covers a cash source
+    // too: debiting it again here would take the money out twice.
+    plan.buys.forEach(b => bump(b.brokerId, -(b.gross + b.commission)));
+
+    // Nothing was bought and no wire was planned: a cash→cash move whose source
+    // is the unassigned pot has no broker to wire FROM, so it stays what it
+    // always was — a debit against the fallback broker and a matching credit.
+    if (from.kind === 'cash' && plan.buys.length === 0 && plan.transfers.length === 0) {
         bump(from.brokerId, -plan.cashDrawn);
-    } else {
-        plan.buys.forEach(b => bump(b.brokerId, -(b.gross + b.commission)));
+        if (to.kind === 'cash' && to.brokerId) bump(to.brokerId, plan.netDelivered);
     }
 
-    // A sale already credits the broker it settled at, so a cash DESTINATION
-    // needs no second credit — only a pure cash→cash transfer does.
-    if (to.kind === 'cash' && to.brokerId && from.kind === 'cash') bump(to.brokerId, plan.netDelivered);
+    // The wires themselves: not transactions, just cash changing hands.
+    plan.transfers.forEach(t => {
+        bump(t.fromBrokerId, -t.amount);
+        bump(t.toBrokerId, t.amount);
+    });
 
     const nextBrokers = brokers.map(b => {
         const delta = cashDelta[b.id];
@@ -725,10 +848,14 @@ export const applyRelocationToState = (
             }
         }
 
+        // Earmarks can never exceed the cash that is actually there, and never
+        // go negative: a broker driven below zero used to flip the whole map's
+        // sign, which made `unassignedLiquidityOf` report cash that does not
+        // exist and inflated the goal pyramid by the amount moved.
         const cash = next.currentLiquidity ?? 0;
         const assigned = Object.values(allocations).reduce((s, v) => s + (v || 0), 0);
         if (assigned > cash && assigned > 0) {
-            const scale = cash / assigned;
+            const scale = Math.max(0, cash) / assigned;
             Object.keys(allocations).forEach(pid => { allocations[pid] = (allocations[pid] || 0) * scale; });
         }
         next.liquidityAllocations = allocations;

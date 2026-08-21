@@ -347,6 +347,47 @@ const BuyTable: React.FC<{ plan: RelocationPlan; cardClass: string }> = ({ plan,
     );
 };
 
+/**
+ * The bank transfers the plan needs — an action, not a transaction.
+ *
+ * Cash is held per broker, so a sale at one and a purchase at another do not
+ * settle against each other: the euro has to be wired. Nothing about it belongs
+ * in the ledger (no position changes, no gain is realised), so it is listed
+ * here as a step to perform, sitting between the sells and the buys exactly
+ * where it happens.
+ */
+const TransferTable: React.FC<{ plan: RelocationPlan; cardClass: string }> = ({ plan, cardClass }) => {
+    if (plan.transfers.length === 0) return null;
+    const blocking = plan.transfers.some(t => t.required);
+    return (
+        <div className={cardClass}>
+            <h3 className="reloc-section-title">Transfer between brokers</h3>
+            <div className="reloc-transfer-list">
+                {plan.transfers.map((t, i) => (
+                    <div className={`reloc-transfer${t.required ? ' required' : ''}`} key={`${t.fromBrokerId}-${t.toBrokerId}-${i}`}>
+                        <span className="reloc-transfer-icon" aria-hidden="true">{t.required ? '⚠️' : '↔'}</span>
+                        <span className="reloc-transfer-route">
+                            {t.fromBrokerName}
+                            <span className="reloc-transfer-arrow" aria-hidden="true">→</span>
+                            {t.toBrokerName}
+                        </span>
+                        <span className="reloc-transfer-amount">{eur0(t.amount)}</span>
+                        <span className="reloc-transfer-tag">
+                            {t.required ? 'before the buys can clear' : 'to settle where the money belongs'}
+                        </span>
+                    </div>
+                ))}
+            </div>
+            <p className="reloc-transfer-note">
+                {blocking
+                    ? 'The buys are booked at a broker that does not hold the cash for them: wire it first, then place the orders. '
+                    : 'The buying broker can cover the orders from its own cash, so nothing is blocked — the wire only puts the proceeds back where they were meant to sit. '}
+                This is not a transaction and is never written to the ledger: no position changes and no gain is realised. It is only counted in the projected broker balances below.
+            </p>
+        </div>
+    );
+};
+
 interface RelocationActionsProps {
     plan: RelocationPlan;
     /** Rendered inside a step of the sequence: flatter cards, no long hints. */
@@ -360,6 +401,7 @@ const RelocationActions: React.FC<RelocationActionsProps> = ({ plan, compact = f
             <RelocationWarnings warnings={plan.warnings} />
             <FrictionSummary plan={plan} cardClass={cardClass} />
             <SellTable plan={plan} cardClass={cardClass} compact={compact} />
+            <TransferTable plan={plan} cardClass={cardClass} />
             <BuyTable plan={plan} cardClass={cardClass} />
         </>
     );

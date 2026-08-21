@@ -293,6 +293,281 @@
     margin: 0;
 }
 
+/* ── Execution checklist ── */
+
+/* Reads as a to-do list, not a table: every line is one thing to go and do, in
+   the only order the money can travel in. */
+.reloc-exec-move {
+    margin-top: var(--space-4);
+}
+
+.reloc-exec-move-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin-bottom: var(--space-2);
+}
+
+.reloc-exec-move-amount {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.reloc-exec-step {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-surface);
+    margin-bottom: var(--space-2);
+}
+
+.reloc-exec-step.transfer.required {
+    border-color: rgba(245, 158, 11, 0.45);
+    background-color: rgba(245, 158, 11, 0.08);
+}
+
+.reloc-exec-num {
+    flex: 0 0 auto;
+    width: 1.6rem;
+    height: 1.6rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: var(--bg-input);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+}
+
+.reloc-exec-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.reloc-exec-title {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+}
+
+.reloc-exec-qty {
+    font-weight: 400;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+
+.reloc-exec-arrow {
+    color: var(--color-primary);
+}
+
+.reloc-exec-sub {
+    margin-top: 2px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    overflow-wrap: anywhere;
+}
+
+.reloc-exec-amount {
+    flex: 0 0 auto;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.reloc-exec-note {
+    margin: var(--space-4) 0 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    max-width: 80ch;
+}
+
+/* ── Broker transfers ── */
+
+/* An action the user performs at the bank, not a row of the ledger: it reads as
+   a step, so it gets the same shape as a queued move rather than a table row. */
+.reloc-transfer-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.reloc-transfer {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-surface);
+}
+
+/* Blocking wires carry the same amber as the warnings they replace. */
+.reloc-transfer.required {
+    border-color: rgba(245, 158, 11, 0.45);
+    background-color: rgba(245, 158, 11, 0.08);
+}
+
+.reloc-transfer-icon {
+    flex-shrink: 0;
+}
+
+.reloc-transfer-route {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.reloc-transfer-arrow {
+    color: var(--color-primary);
+}
+
+.reloc-transfer-amount {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.reloc-transfer-tag {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    margin-left: auto;
+}
+
+.reloc-transfer-note {
+    margin: var(--space-3) 0 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    max-width: 80ch;
+}
+
+/* ── Goal flows ── */
+
+/* The proposed moves sit under the editable bar: the bar states the intent, the
+   list is what it costs to get there, so they must read as one block. */
+.reloc-flow-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-top: var(--space-6);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.reloc-flow-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.reloc-flow-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.reloc-flow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--bg-surface);
+}
+
+.reloc-flow-main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.reloc-flow-route {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.reloc-flow-endpoint {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+/* Goal colour, so a move reads as "out of this level of the pyramid, into that
+   one" without having to look the portfolio up. */
+.reloc-flow-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.reloc-flow-arrow {
+    color: var(--color-primary);
+}
+
+.reloc-flow-sub {
+    margin-top: 2px;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.reloc-flow-amount {
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.reloc-flow-note {
+    margin: var(--space-3) 0 0;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+    max-width: 80ch;
+}
+
 /* ── Sequence ── */
 
 .reloc-sequence-header {
@@ -549,6 +824,13 @@
     color: #a5b4fc;
 }
 
+/* The wire: amber, like the warning it replaces — it is the step that blocks
+   the other two when the buying broker has no cash of its own. */
+.reloc-badge.transfer {
+    background-color: rgba(245, 158, 11, 0.2);
+    color: #fcd34d;
+}
+
 /* ── Friction summary ── */
 
 .reloc-friction-grid {
@@ -799,6 +1081,33 @@
 }
 
 @media (max-width: 768px) {
+    /* On a phone the amount goes under the description instead of beside it. */
+    .reloc-exec-step {
+        flex-wrap: wrap;
+    }
+
+    .reloc-exec-amount {
+        margin-left: auto;
+    }
+
+    /* The explanatory tag has no room next to the amount on a phone. */
+    .reloc-transfer-tag {
+        margin-left: 0;
+        flex: 1 1 100%;
+    }
+
+    .reloc-flow {
+        flex-wrap: wrap;
+    }
+
+    .reloc-flow-main {
+        flex: 1 1 100%;
+    }
+
+    .reloc-flow-amount {
+        flex: 1 1 auto;
+    }
+
     .reloc-form-grid {
         grid-template-columns: 1fr;
         gap: var(--space-3);

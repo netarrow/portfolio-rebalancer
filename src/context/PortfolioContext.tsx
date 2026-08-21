@@ -75,7 +75,9 @@ interface PortfolioContextType {
     targets: AssetDefinition[];
     importData: (data: any) => Promise<boolean>;
     updateMarketData: (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null; indexationCoefficient?: number | null }) => void;
-    addTransactionsBulk: (newTransactions: Transaction[]) => void;
+    addTransactionsBulk: (newTransactions: Transaction[], opts?: { skipCashSync?: boolean }) => void;
+    /** brokerId → € added to currentLiquidity. Delta-based, so it composes. */
+    adjustBrokerLiquidity: (deltas: Record<string, number>) => void;
     // Aggregate section UI preferences (synced)
     aggregateExcludedTickers: string[];
     setAggregateExcludedTickers: (tickers: string[] | ((prev: string[]) => string[])) => void;
@@ -1150,9 +1152,33 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setTransactions((prev) => prev.filter((t) => t.id !== id));
     };
 
-    const addTransactionsBulk = (newTransactions: Transaction[]) => {
+    /**
+     * `skipCashSync` is for callers that know the cash effect better than the
+     * per-trade rule does — Fund Relocation prices the tax, the commissions and
+     * the wire between brokers, and applies the exact figures itself through
+     * `adjustBrokerLiquidity`. Letting the gross sync run as well would move the
+     * money twice.
+     */
+    const addTransactionsBulk = (newTransactions: Transaction[], opts?: { skipCashSync?: boolean }) => {
         setTransactions((prev) => [...prev, ...newTransactions]);
-        applyTradeCashToBrokers(newTransactions);
+        if (!opts?.skipCashSync) applyTradeCashToBrokers(newTransactions);
+    };
+
+    /**
+     * Moves cash in or out of brokers by delta. Used for the movements no single
+     * trade explains: the capital-gains tax and the fees a sale leaves behind,
+     * and a transfer between two brokers — which is cash changing hands and
+     * never a transaction.
+     */
+    const adjustBrokerLiquidity = (deltas: Record<string, number>) => {
+        const entries = Object.entries(deltas).filter(([, v]) => Number.isFinite(v) && v !== 0);
+        if (entries.length === 0) return;
+        const byId = new Map(entries);
+        setBrokers(prev => prev.map(b => {
+            const delta = byId.get(b.id);
+            if (!delta) return b;
+            return { ...b, currentLiquidity: Math.round(((b.currentLiquidity || 0) + delta) * 100) / 100 };
+        }));
     };
 
     // ── PAC (piano di accumulo) auto-tracking ───────────────────────────
@@ -3102,6 +3128,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         importData,
         updateMarketData,
         addTransactionsBulk,
+        adjustBrokerLiquidity,
         aggregateExcludedTickers,
         setAggregateExcludedTickers,
         goalModeTargets,
