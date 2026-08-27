@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import { calculateForecastWithState, runMonteCarloForecast, getAssetVolatility } from '../../utils/forecastCalculations';
+import type { ForecastResult } from '../../utils/forecastCalculations';
 import { forecastYearForDate } from '../../utils/plannedForecastExpenses';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import {
@@ -490,6 +491,32 @@ const ForecastView: React.FC = () => {
         );
     }, [portfolios, currentPortfolioValues, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, rebalanceAnnually]);
 
+    // Year 0 — the money as it stands today, before the first simulated month
+    // runs. It is the very state the engine starts from, so plotting it makes
+    // the first step of the chart show what the nearest expenses actually cost
+    // instead of hiding them inside the opening data point.
+    const year0Point = useMemo<ForecastResult>(() => {
+        const portfolioValues: Record<string, number> = {};
+        let invested = 0;
+        portfolios.forEach(p => {
+            const value = currentPortfolioValues[p.id] || 0;
+            portfolioValues[p.id] = value;
+            invested += value;
+        });
+        const liquidity = brokers.reduce((sum, b) => sum + (b.currentLiquidity || 0), 0);
+        return {
+            month: 0,
+            totalValue: invested + liquidity,
+            investedValue: invested,
+            liquidityValue: liquidity,
+            portfolios: portfolioValues,
+            cashflow: 0,
+        };
+    }, [portfolios, currentPortfolioValues, brokers]);
+
+    // What the charts plot: the simulation with today prepended.
+    const chartData = useMemo(() => [year0Point, ...forecastData], [year0Point, forecastData]);
+
     // Effective volatility per portfolio (manual override wins over the estimate)
     const effectiveVolatilities = useMemo(() => {
         const vols: Record<string, number> = {};
@@ -561,7 +588,7 @@ const ForecastView: React.FC = () => {
         },
         theme: { mode: 'dark' as 'dark' },
         xaxis: {
-            categories: forecastData.map(d => `Year ${Math.ceil(d.month / 12)}`),
+            categories: chartData.map(d => (d.month === 0 ? 'Year 0' : `Year ${Math.ceil(d.month / 12)}`)),
             tickAmount: 10,
             labels: { style: { colors: '#9ca3af' } }
         },
@@ -579,11 +606,16 @@ const ForecastView: React.FC = () => {
             theme: 'dark',
             x: {
                 formatter: (val: string, opts: any) => {
-                    const data = forecastData[opts.dataPointIndex];
+                    const data = chartData[opts.dataPointIndex];
                     if (!data) return val;
+                    // The axis label repeats per month, so name the point from
+                    // the month itself — and call the anchor what it is.
+                    const label = data.month === 0
+                        ? 'Year 0 — today, before any expense'
+                        : `Year ${Math.ceil(data.month / 12)}, Month ${((data.month - 1) % 12) + 1}`;
                     const flow = Math.round(data.cashflow);
                     const flowStr = flow >= 0 ? `+€${flow.toLocaleString()}` : `-€${Math.abs(flow).toLocaleString()}`;
-                    return `${val} | Total: €${Math.round(data.totalValue).toLocaleString()} | Flow: ${flowStr}`;
+                    return `${label} | Total: €${Math.round(data.totalValue).toLocaleString()} | Flow: ${flowStr}`;
                 }
             },
             y: {
@@ -595,11 +627,11 @@ const ForecastView: React.FC = () => {
     const chartSeries = [
         {
             name: 'Total Liquidity',
-            data: forecastData.map(d => Math.round(d.liquidityValue))
+            data: chartData.map(d => Math.round(d.liquidityValue))
         },
         ...portfolios.map(p => ({
             name: p.name,
-            data: forecastData.map(d => Math.round(d.portfolios[p.id] || 0))
+            data: chartData.map(d => Math.round(d.portfolios[p.id] || 0))
         }))
     ];
 
@@ -639,6 +671,7 @@ const ForecastView: React.FC = () => {
             shared: true,
             x: {
                 formatter: (val: number) => {
+                    if (val === 0) return 'Year 0 — today, before any expense';
                     const year = Math.ceil(val / 12);
                     const monthInYear = ((val - 1) % 12) + 1;
                     return `Year ${year}, Month ${monthInYear}`;
@@ -650,35 +683,40 @@ const ForecastView: React.FC = () => {
         }
     };
 
+    // Every simulated path leaves from the same place, so the bands start as a
+    // single point at Year 0 rather than opening a year in.
+    const mcYear0 = Math.round(year0Point.totalValue);
+
     const mcChartSeries = monteCarloData ? [
         {
             type: 'rangeArea',
             name: '10th–90th percentile',
-            data: monteCarloData.months.map((m, i) => ({
+            data: [{ x: 0, y: [mcYear0, mcYear0] }, ...monteCarloData.months.map((m, i) => ({
                 x: m,
                 y: [Math.round(monteCarloData.p10[i]), Math.round(monteCarloData.p90[i])]
-            }))
+            }))]
         },
         {
             type: 'rangeArea',
             name: '25th–75th percentile',
-            data: monteCarloData.months.map((m, i) => ({
+            data: [{ x: 0, y: [mcYear0, mcYear0] }, ...monteCarloData.months.map((m, i) => ({
                 x: m,
                 y: [Math.round(monteCarloData.p25[i]), Math.round(monteCarloData.p75[i])]
-            }))
+            }))]
         },
         {
             type: 'line',
             name: 'Median',
-            data: monteCarloData.months.map((m, i) => ({
+            data: [{ x: 0, y: mcYear0 }, ...monteCarloData.months.map((m, i) => ({
                 x: m,
                 y: Math.round(monteCarloData.p50[i])
-            }))
+            }))]
         }
     ] : [];
 
     const finalResult = forecastData[forecastData.length - 1] || { totalValue: 0, investedValue: 0, liquidityValue: 0, insolvent: false, ruleBreach: false, failureReason: '' };
-    const startValue = forecastData[0]?.totalValue || 0;
+    // Growth is measured from today, so the first year's expenses count against it.
+    const startValue = year0Point.totalValue;
 
     // Find first occurrence of issues
     const insolvencyDetected = forecastData.find(d => d.insolvent);
@@ -1285,6 +1323,9 @@ const ForecastView: React.FC = () => {
                         <div style={{ fontSize: '0.8rem', color: sustainabilityStatus.color, marginTop: '0.25rem', fontWeight: 500 }}>
                             {sustainabilityStatus.label}
                         </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }} title="Net worth as it stands today, before the simulation spends anything">
+                            Year 0: €{Math.round(year0Point.totalValue).toLocaleString()}
+                        </div>
                     </div>
                     {monteCarloData ? (
                         <>
@@ -1344,11 +1385,17 @@ const ForecastView: React.FC = () => {
                                 <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--color-accent)' }}>
                                     €{Math.round(finalResult.investedValue).toLocaleString()}
                                 </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }} title="Invested today, before the simulation spends anything">
+                                    Year 0: €{Math.round(year0Point.investedValue).toLocaleString()}
+                                </div>
                             </div>
                             <div className="card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                                 <h4 style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Liquidity Total</h4>
                                 <div style={{ fontSize: '1.5rem', fontWeight: 700, color: '#10b981' }}>
                                     €{Math.round(finalResult.liquidityValue).toLocaleString()}
+                                </div>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.25rem' }} title="Liquidity on the brokers today, before the nearest expenses erode it">
+                                    Year 0: €{Math.round(year0Point.liquidityValue).toLocaleString()}
                                 </div>
                             </div>
                         </>
