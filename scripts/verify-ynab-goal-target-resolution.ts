@@ -34,6 +34,54 @@ const resolve = (
     existing: Pick<YnabGoal, 'targetAmount' | 'targetDate' | 'targetSource'> | null,
 ) => resolveGoalTarget(parseGoalDescriptor(name, note), nativeGoalTarget(cat), existing);
 
+console.log('parseGoalDescriptor — "nome - importo€ - data" category names');
+const parseName = (name: string) => {
+    const r = parseGoalDescriptor(name, null);
+    return { name: r.name, amount: r.amount, date: r.date, confidence: r.confidence };
+};
+check('plain year closes on 31 December',
+    parseName('Computer - 2500€ - 2030'),
+    { name: 'Computer', amount: 2500, date: '2030-12-31', confidence: 'high' });
+check('exact day, Italian dd/mm/yyyy',
+    parseName('Cambio Polo - 12000€ - 15/11/2026'),
+    { name: 'Cambio Polo', amount: 12000, date: '2026-11-15', confidence: 'high' });
+check('exact day with a one-digit month',
+    parseName('Ripristino terrazzo - 3500€ - 30/6/2027'),
+    { name: 'Ripristino terrazzo', amount: 3500, date: '2027-06-30', confidence: 'high' });
+check('two-digit year expands to this century',
+    parseName('Tech - Smartphone - 1350€ - 30/10/26'),
+    { name: 'Tech - Smartphone', amount: 1350, date: '2026-10-30', confidence: 'high' });
+check('a dash inside the goal name survives',
+    parseName('Tech - Activity Tracker - 460€ - 31/12/26'),
+    { name: 'Tech - Activity Tracker', amount: 460, date: '2026-12-31', confidence: 'high' });
+check('month and year close on the last day of the month',
+    parseName('Rifare il Bagno - 7000€ - 11/2026'),
+    { name: 'Rifare il Bagno', amount: 7000, date: '2026-11-30', confidence: 'high' });
+check('month written out',
+    parseName('Cameratta Elia Nuova - 3000€ - giugno 2029'),
+    { name: 'Cameratta Elia Nuova', amount: 3000, date: '2029-06-30', confidence: 'high' });
+check('TBD keeps the amount and leaves the date open',
+    parseName('Tenda Sole - 3000€ - TBD'),
+    { name: 'Tenda Sole', amount: 3000, date: null, confidence: 'medium' });
+check('thousands separator in the amount',
+    parseName('Rifare il Bagno - 7.000€ - 2031'),
+    { name: 'Rifare il Bagno', amount: 7000, date: '2031-12-31', confidence: 'high' });
+check('an impossible day is not a date',
+    parseName('Boiler - 900€ - 31/6/2027'),
+    { name: 'Boiler', amount: 900, date: null, confidence: 'medium' });
+check('legacy syntax still parses, name cleaned of the descriptor',
+    parseName('Bagno [7000€ by 2028-06]'),
+    { name: 'Bagno', amount: 7000, date: '2028-06-30', confidence: 'high' });
+check('legacy k-suffix syntax',
+    parseName('Bagno (7k entro 2028-06)'),
+    { name: 'Bagno', amount: 7000, date: '2028-06-30', confidence: 'high' });
+check('a category with no descriptor keeps its name untouched',
+    parseName('Wedding'),
+    { name: null, amount: null, date: null, confidence: 'low' });
+check('descriptor in the note leaves the category name alone',
+    (() => { const r = parseGoalDescriptor('Wedding', 'target: 7000€ by 2028-06'); return { name: r.name, amount: r.amount, date: r.date, source: r.source }; })(),
+    { name: null, amount: 7000, date: '2028-06-30', source: 'parsed-note' });
+
 console.log('nativeGoalTarget');
 check('TBD carries total + target month',
     nativeGoalTarget({ goalType: 'TBD', goalTargetMilliunits: 15000000, goalTargetMonth: '2029-06-30' }),

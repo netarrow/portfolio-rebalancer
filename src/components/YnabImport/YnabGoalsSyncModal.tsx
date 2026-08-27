@@ -62,7 +62,12 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
             <div className="modal-content goal-sync-modal" onClick={e => e.stopPropagation()}>
                 <h3 style={{ marginTop: 0 }}>Sync YNAB Investment Goals</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: 0 }}>
-                    Edit the parsed values before confirming. Recognized syntax in the category name or note:
+                    Edit the parsed values before confirming. Category names written as
+                    <code style={{ marginLeft: 4 }}>Computer - 2500€ - 2030</code> are split into goal name, target
+                    and date; the date can be a plain year (<code>2030</code> → 31 Dec), a month
+                    (<code>11/2026</code> → end of month), an exact day (<code>15/11/2026</code>,
+                    <code style={{ marginLeft: 4 }}>30/10/26</code>), or <code>TBD</code> to leave it open.
+                    {' '}Also recognized, in the name or the note:
                     <code style={{ marginLeft: 4 }}>7000€ by 2028-06</code>,
                     <code style={{ marginLeft: 4 }}>[target:7000][date:2028-06]</code>,
                     <code style={{ marginLeft: 4 }}>7k entro 2028-06</code>.
@@ -75,7 +80,7 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                     <table className="goal-sync-table">
                         <thead>
                             <tr>
-                                <th>Category</th>
+                                <th>Goal name</th>
                                 <th>Target €</th>
                                 <th>Target date</th>
                                 <th>Confidence</th>
@@ -94,7 +99,21 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                                     <React.Fragment key={row.ynabCategoryId}>
                                         <tr className={`row-${row.confidence}`}>
                                             <td>
-                                                <div style={{ fontWeight: 600 }}>{row.ynabCategoryName}</div>
+                                                <input
+                                                    type="text"
+                                                    className="form-input"
+                                                    value={row.parsedName}
+                                                    onChange={e => updateRow(idx, { parsedName: e.target.value })}
+                                                    style={{ width: 200, fontWeight: 600 }}
+                                                />
+                                                {row.parsedName.trim() !== row.ynabCategoryName && (
+                                                    <div
+                                                        style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}
+                                                        title="Full YNAB category name"
+                                                    >
+                                                        {row.ynabCategoryName}
+                                                    </div>
+                                                )}
                                                 {row.rawNote && (
                                                     <button
                                                         type="button"
