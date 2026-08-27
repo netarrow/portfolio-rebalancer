@@ -63,6 +63,33 @@ const AllowedGoalsChips: React.FC<{
     </>
 );
 
+// Per-expense funding order. With erosion on, the expense drains broker
+// liquidity before anything is sold; with it off liquidity is untouchable and
+// the shortfall goes straight to the allowed portfolios. In both cases the
+// monthly inflow of the year the expense falls in pays first.
+const ErosionToggle: React.FC<{ allowed: boolean; onToggle: () => void }> = ({ allowed, onToggle }) => (
+    <button
+        type="button"
+        onClick={onToggle}
+        title={allowed
+            ? 'Erodes liquidity first: inflow → broker liquidity → allowed portfolios. Click to protect liquidity instead.'
+            : 'Liquidity is protected: inflow → allowed portfolios, brokers untouched. Click to let this expense erode liquidity first.'}
+        style={{
+            background: 'none',
+            border: 'none',
+            padding: 0,
+            cursor: 'pointer',
+            fontSize: '0.75rem',
+            textAlign: 'left',
+            textDecoration: 'underline dotted',
+            color: allowed ? 'var(--color-danger)' : 'var(--text-muted)',
+        }}
+    >
+        {allowed ? '⚠ Erodes liquidity first' : '🛡 Liquidity safe'}
+    </button>
+);
+
+
 const ForecastView: React.FC = () => {
     // Scoped: the family/illiquid toggles decide what the forecast simulates
     const { portfolios, scopedBrokers: brokers, marketData, scopedTransactions: transactions, assetSettings, goals, priceHistory,
@@ -254,6 +281,18 @@ const ForecastView: React.FC = () => {
             e.id === expenseId ? { ...e, allowedGoalIds: toggleGoalIn(e.allowedGoalIds, goalId) } : e));
     };
 
+    // Whether an expense may eat into broker liquidity before it touches the
+    // portfolios — decided per expense, on both lists.
+    const toggleExpenseErosion = (expenseId: string) => {
+        setYearlyExpenses(prev => prev.map(e =>
+            e.id === expenseId ? { ...e, erosionAllowed: !e.erosionAllowed } : e));
+    };
+
+    const toggleYnabExpenseErosion = (expenseId: string) => {
+        setPlannedForecastExpenses(prev => (prev ?? []).map(e =>
+            e.id === expenseId ? { ...e, erosionAllowed: !e.erosionAllowed } : e));
+    };
+
     // YNAB goal expenses (persisted in context; enabled ones join the simulation)
     const toggleYnabExpense = (id: string) => {
         setPlannedForecastExpenses(prev => (prev ?? []).map(e => e.id === id ? { ...e, enabled: !e.enabled } : e));
@@ -269,7 +308,7 @@ const ForecastView: React.FC = () => {
     const handleSyncYnabExpenses = async () => {
         const result = await Swal.fire({
             title: 'Sync from YNAB Goals?',
-            text: 'The planned expense list is rebuilt from the goals in the YNAB Goals section, with their targets and portfolio allocations. Removed entries come back and enable/disable flags are reset.',
+            text: 'The planned expense list is rebuilt from the goals in the YNAB Goals section, with their targets and portfolio allocations. Removed entries come back and enable/disable flags are reset; the per-expense liquidity-erosion choice is kept.',
             icon: 'question',
             showCancelButton: true,
             confirmButtonText: 'Sync',
@@ -1060,7 +1099,12 @@ const ForecastView: React.FC = () => {
                     {/* Expense Controls */}
                     <div style={{ marginBottom: '1rem', padding: '0.5rem', background: 'var(--bg-input)', borderRadius: 'var(--radius-md)', fontSize: '0.85rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                            <label style={{ color: 'var(--text-secondary)' }}>Allow Erosion of Liquidity?</label>
+                            <label
+                                style={{ color: 'var(--text-secondary)' }}
+                                title="On: the expense drains broker liquidity before selling from the portfolios. Off: liquidity is untouched and the portfolios pay. Changeable per expense afterwards."
+                            >
+                                Allow Erosion of Liquidity?
+                            </label>
                             <input
                                 type="checkbox"
                                 checked={newExpErosionAllowed}
@@ -1095,9 +1139,10 @@ const ForecastView: React.FC = () => {
                                 </div>
                                 {expense.description && <div style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem', marginBottom: '0.25rem' }}>{expense.description}</div>}
                                 <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap', alignItems: 'center' }}>
-                                    <span style={{ color: expense.erosionAllowed ? 'var(--color-danger)' : 'var(--text-muted)' }}>
-                                        {expense.erosionAllowed ? '⚠ Liquidity Eroded' : '🛡 Liquidity Safe'}
-                                    </span>
+                                    <ErosionToggle
+                                        allowed={expense.erosionAllowed}
+                                        onToggle={() => toggleExpenseErosion(expense.id)}
+                                    />
                                     <span>|</span>
                                     <button
                                         onClick={() => toggleSourcesEditor(expense.id)}
@@ -1178,6 +1223,11 @@ const ForecastView: React.FC = () => {
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap', alignItems: 'center' }}>
                                             <span>🎯 {expense.targetDate}</span>
+                                            <span>|</span>
+                                            <ErosionToggle
+                                                allowed={expense.erosionAllowed}
+                                                onToggle={() => toggleYnabExpenseErosion(expense.id)}
+                                            />
                                             <span>|</span>
                                             <button
                                                 onClick={() => toggleSourcesEditor(expense.id)}

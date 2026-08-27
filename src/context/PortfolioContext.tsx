@@ -295,7 +295,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // overridden) and the portfolio allocations. No YNAB call: refreshing that
     // copy from YNAB is the Goals view's own sync.
     const restorePlannedForecastExpenses = (): PlannedForecastExpense[] => {
-        const rebuilt = buildPlannedForecastExpenses(ynabGoals, ynabGoalAllocations, portfolios);
+        const rebuilt = buildPlannedForecastExpenses(ynabGoals, ynabGoalAllocations, portfolios, storedPlannedForecastExpenses ?? []);
         setStoredPlannedForecastExpenses(rebuilt);
         return rebuilt;
     };

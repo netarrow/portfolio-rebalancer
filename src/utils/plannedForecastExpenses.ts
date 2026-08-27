@@ -18,11 +18,17 @@ export const forecastYearForDate = (targetDate: string, now: Date = new Date()):
 // funding Goals are derived from the goal's portfolio allocations: portfolios
 // funding the YNAB goal → their linked manual Goal. No allocations (or
 // allocations to portfolios without a Goal) → empty list = all portfolios.
+// `previous` carries over the one thing YNAB knows nothing about: whether the
+// expense may erode broker liquidity before selling. A re-sync refreshes the
+// targets and brings removed entries back, but that funding choice is the
+// user's and is kept.
 export const buildPlannedForecastExpenses = (
     ynabGoals: YnabGoal[],
     ynabGoalAllocations: YnabGoalAllocation[],
-    portfolios: Portfolio[]
+    portfolios: Portfolio[],
+    previous: PlannedForecastExpense[] = []
 ): PlannedForecastExpense[] => {
+    const erosionByGoalId = new Map(previous.map(e => [e.id, e.erosionAllowed]));
     const goalIdByPortfolio: Record<string, string | undefined> = {};
     portfolios.forEach(p => { goalIdByPortfolio[p.id] = p.goalId; });
 
@@ -45,7 +51,7 @@ export const buildPlannedForecastExpenses = (
                 amount: g.targetAmount!,
                 enabled: true,
                 allowedGoalIds,
-                erosionAllowed: false,
+                erosionAllowed: erosionByGoalId.get(g.id) ?? false,
                 importedAt: now,
             };
         })
