@@ -112,7 +112,7 @@ export function mergeYnabGoalsFromCandidates(
         byId.set(c.ynabCategoryId, {
             id: c.ynabCategoryId,
             ynabBudgetId: opts.budgetId,
-            name: c.ynabCategoryName,
+            name: c.parsedName?.trim() || c.ynabCategoryName,
             targetAmount: c.parsedAmount ?? undefined,
             targetDate: c.parsedDate ?? undefined,
             cashCoverage: c.cashCoverage,

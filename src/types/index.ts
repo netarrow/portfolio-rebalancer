@@ -383,6 +383,9 @@ export type YnabGoalFieldSource = 'parsed-name' | 'parsed-note' | 'ynab-goal' | 
 export interface YnabGoalSyncCandidate {
   ynabCategoryId: string;
   ynabCategoryName: string;
+  // Name the goal will be stored under: the category name stripped of its
+  // "- 2500€ - 2030" tail when it carries one. Editable in the sync modal.
+  parsedName: string;
   rawNote: string | null;
   // Values that will be applied: the name/note parse when it found something,
   // otherwise YNAB's own goal target, otherwise the value already stored in

@@ -2847,6 +2847,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 return {
                     ynabCategoryId: cat.id,
                     ynabCategoryName: cat.name,
+                    // "Laptop - 1800€ - 2031" is stored as "Laptop": the
+                    // amount and date live in their own fields.
+                    parsedName: parsed.name ?? cat.name,
                     rawNote: cat.note ?? null,
                     parsedAmount: resolved.amount,
                     parsedDate: resolved.date,
