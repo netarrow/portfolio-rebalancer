@@ -10,9 +10,7 @@ import {
 import type {
     LiquidityTargetConfig,
     PortfolioTargetConfig,
-    PortfolioTargetMode,
-    RatioGroupConfig,
-    RatioGroupTargetMode
+    PortfolioTargetMode
 } from '../../types';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
@@ -63,14 +61,7 @@ const modeLabels: Record<PortfolioTargetMode, string> = {
     excluded: 'Excluded',
     locked: 'Locked at current',
     fixed: 'Fixed EUR',
-    percent: '% of total',
-    ratio: 'Ratio (group)'
-};
-
-const groupModeLabels: Record<RatioGroupTargetMode, string> = {
-    fixed: 'Fixed EUR',
-    percent: '% of total',
-    remainder: 'Remainder'
+    percent: '% of total'
 };
 
 // ---------------------------------------------------------------------------
@@ -127,9 +118,7 @@ const GlobalRebalancingView: React.FC = () => {
         scopedBrokers: brokers,
         assetAllocationSettings,
         updatePortfolioTarget,
-        updateLiquidityTarget,
-        upsertRatioGroup,
-        deleteRatioGroup
+        updateLiquidityTarget
     } = usePortfolio();
 
     /**
@@ -307,26 +296,6 @@ const GlobalRebalancingView: React.FC = () => {
             return;
         }
         const existing = assetAllocationSettings.portfolioTargets[portfolioId];
-        if (mode === 'ratio') {
-            const firstGroup = assetAllocationSettings.ratioGroups[0];
-            if (!firstGroup) {
-                Swal.fire({
-                    title: 'No ratio group available',
-                    text: 'Create a ratio group first to assign this portfolio.',
-                    icon: 'info',
-                    confirmButtonColor: '#6366f1',
-                    background: 'var(--bg-surface)',
-                    color: 'var(--text-primary)'
-                });
-                return;
-            }
-            updatePortfolioTarget(portfolioId, {
-                mode: 'ratio',
-                value: existing?.value ?? 1,
-                ratioGroupId: existing?.ratioGroupId ?? firstGroup.id
-            });
-            return;
-        }
         updatePortfolioTarget(portfolioId, {
             mode,
             value: existing && existing.mode === mode ? existing.value : 0
@@ -338,77 +307,6 @@ const GlobalRebalancingView: React.FC = () => {
         if (!existing || existing.mode === 'excluded' || existing.mode === 'locked') return;
         const val = parseNumericInput(rawValue);
         updatePortfolioTarget(portfolioId, { ...existing, value: val });
-    };
-
-    const handleChangePortfolioRatioGroup = (portfolioId: string, groupId: string) => {
-        const existing = assetAllocationSettings.portfolioTargets[portfolioId];
-        if (!existing || existing.mode !== 'ratio') return;
-        updatePortfolioTarget(portfolioId, { ...existing, ratioGroupId: groupId });
-    };
-
-    // --- Ratio group handlers ---
-    const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
-    const [groupDraft, setGroupDraft] = useState<RatioGroupConfig>({
-        id: '',
-        name: '',
-        groupTargetMode: 'remainder',
-        groupTargetValue: 0
-    });
-
-    const startAddGroup = () => {
-        setGroupDraft({
-            id: generateId(),
-            name: '',
-            groupTargetMode: 'remainder',
-            groupTargetValue: 0
-        });
-        setEditingGroupId('__new__');
-    };
-
-    const startEditGroup = (g: RatioGroupConfig) => {
-        setGroupDraft({ ...g });
-        setEditingGroupId(g.id);
-    };
-
-    const cancelEditGroup = () => {
-        setEditingGroupId(null);
-    };
-
-    const saveGroup = () => {
-        if (!groupDraft.name.trim()) {
-            Swal.fire({
-                title: 'Missing name',
-                text: 'Enter a name for the ratio group.',
-                icon: 'warning',
-                confirmButtonColor: '#6366f1',
-                background: 'var(--bg-surface)',
-                color: 'var(--text-primary)'
-            });
-            return;
-        }
-        upsertRatioGroup({
-            ...groupDraft,
-            name: groupDraft.name.trim(),
-            groupTargetValue:
-                groupDraft.groupTargetMode === 'remainder' ? 0 : Math.max(0, groupDraft.groupTargetValue)
-        });
-        setEditingGroupId(null);
-    };
-
-    const handleDeleteGroup = async (g: RatioGroupConfig) => {
-        const confirmation = await Swal.fire({
-            title: `Delete "${g.name}"?`,
-            text: 'Portfolios using this group will be reset to Excluded.',
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Delete',
-            cancelButtonText: 'Cancel',
-            confirmButtonColor: '#ef4444',
-            background: 'var(--bg-surface)',
-            color: 'var(--text-primary)'
-        });
-        if (!confirmation.isConfirmed) return;
-        deleteRatioGroup(g.id);
     };
 
     // --- Empty state ---
@@ -430,14 +328,6 @@ const GlobalRebalancingView: React.FC = () => {
         );
     }
 
-    const existingRemainderGroup = assetAllocationSettings.ratioGroups.find(
-        (g) => g.groupTargetMode === 'remainder'
-    );
-    const editingIsDifferentRemainder =
-        groupDraft.groupTargetMode === 'remainder' &&
-        existingRemainderGroup &&
-        existingRemainderGroup.id !== groupDraft.id;
-
     return (
         <div className="aa-page">
             {/* ============ HERO ============ */}
@@ -445,9 +335,11 @@ const GlobalRebalancingView: React.FC = () => {
                 <div>
                     <h2>Asset Allocation</h2>
                     <p>
-                        Configure high-level targets for each portfolio (fixed in EUR, % of total, locked, excluded
-                        or ratio group). The system calculates the expected distribution, suggests sell/buy actions and signals
-                        whether the configuration is sustainable.
+                        Configure a high-level target for each bucket of wealth — fixed in EUR, % of total,
+                        locked at its current value, or excluded. A parent/child group is one bucket: its
+                        target is set here, and how it divides between parent and children is the ratio on
+                        the Portfolios page. The system calculates the expected distribution, suggests
+                        sell/buy actions and signals whether the configuration is sustainable.
                     </p>
                     <AssetScopeToggles style={{ marginTop: 'var(--space-4)' }} />
                 </div>
@@ -563,73 +455,6 @@ const GlobalRebalancingView: React.FC = () => {
                 )}
             </section>
 
-            {/* ============ RATIO GROUPS ============ */}
-            <section className="aa-card">
-                <div className="aa-section-head">
-                    <h3>Ratio Groups</h3>
-                    <button className="btn btn-secondary" onClick={startAddGroup}>
-                        + New group
-                    </button>
-                </div>
-                {assetAllocationSettings.ratioGroups.length === 0 && editingGroupId !== '__new__' && (
-                    <p className="aa-muted">
-                        No ratio group defined. Create a group to assign portfolios in ratio mode (e.g.
-                        "Core/Satellite" with Remainder target).
-                    </p>
-                )}
-                <div className="aa-group-list">
-                    {assetAllocationSettings.ratioGroups.map((g) => {
-                        const isEditing = editingGroupId === g.id;
-                        const resultGroup = result.ratioGroups.find((rg) => rg.id === g.id);
-                        return (
-                            <div key={g.id} className={`aa-group-item ${isEditing ? 'editing' : ''}`}>
-                                {!isEditing ? (
-                                    <>
-                                        <div className="aa-group-info">
-                                            <strong>{g.name}</strong>
-                                            <span className="aa-group-meta">
-                                                {groupModeLabels[g.groupTargetMode]}
-                                                {g.groupTargetMode !== 'remainder' &&
-                                                    ` (${g.groupTargetMode === 'fixed' ? formatCurrency(g.groupTargetValue) : `${g.groupTargetValue}%`})`}
-                                                {resultGroup && ` • Budget: ${formatCurrency(resultGroup.budget)}`}
-                                                {resultGroup && resultGroup.members.length > 0 && ` • ${resultGroup.members.length} membri`}
-                                            </span>
-                                        </div>
-                                        <div className="aa-group-actions">
-                                            <button className="btn-icon" onClick={() => startEditGroup(g)}>
-                                                ✎
-                                            </button>
-                                            <button className="btn-icon danger" onClick={() => handleDeleteGroup(g)}>
-                                                ✕
-                                            </button>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <GroupEditor
-                                        draft={groupDraft}
-                                        setDraft={setGroupDraft}
-                                        onSave={saveGroup}
-                                        onCancel={cancelEditGroup}
-                                        conflictRemainder={!!editingIsDifferentRemainder}
-                                    />
-                                )}
-                            </div>
-                        );
-                    })}
-                    {editingGroupId === '__new__' && (
-                        <div className="aa-group-item editing">
-                            <GroupEditor
-                                draft={groupDraft}
-                                setDraft={setGroupDraft}
-                                onSave={saveGroup}
-                                onCancel={cancelEditGroup}
-                                conflictRemainder={!!editingIsDifferentRemainder}
-                            />
-                        </div>
-                    )}
-                </div>
-            </section>
-
             {/* ============ PORTFOLIO TARGETS TABLE ============ */}
             <section className="aa-card">
                 <div className="aa-section-head">
@@ -646,7 +471,6 @@ const GlobalRebalancingView: React.FC = () => {
                                 <th>Portfolio</th>
                                 <th>Mode</th>
                                 <th>Value</th>
-                                <th>Ratio Group</th>
                                 <th>Current</th>
                                 <th>Current %</th>
                                 <th>Target</th>
@@ -662,7 +486,7 @@ const GlobalRebalancingView: React.FC = () => {
                                 const memberRows = memberRowsByGroup[row.portfolioId];
                                 const valueDisabled = mode === 'excluded' || mode === 'locked';
                                 const unitLabel =
-                                    mode === 'fixed' ? '€' : mode === 'percent' ? '%' : mode === 'ratio' ? 'w' : '—';
+                                    mode === 'fixed' ? '€' : mode === 'percent' ? '%' : '—';
                                 const displayValue =
                                     cfg && !valueDisabled ? String(cfg.value) : '';
                                 return (
@@ -709,28 +533,6 @@ const GlobalRebalancingView: React.FC = () => {
                                                 <span className="aa-unit">{unitLabel}</span>
                                             </div>
                                         </td>
-                                        <td>
-                                            {mode === 'ratio' ? (
-                                                <select
-                                                    className="aa-select"
-                                                    value={cfg?.ratioGroupId ?? ''}
-                                                    onChange={(e) =>
-                                                        handleChangePortfolioRatioGroup(
-                                                            row.portfolioId,
-                                                            e.target.value
-                                                        )
-                                                    }
-                                                >
-                                                    {assetAllocationSettings.ratioGroups.map((g) => (
-                                                        <option key={g.id} value={g.id}>
-                                                            {g.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            ) : (
-                                                <span className="aa-muted">—</span>
-                                            )}
-                                        </td>
                                         <td>{formatCurrency(row.currentValue)}</td>
                                         <td>{muted ? '—' : formatPercent(row.currentWeight)}</td>
                                         <td>{muted ? '—' : formatCurrency(row.targetValue)}</td>
@@ -764,7 +566,6 @@ const GlobalRebalancingView: React.FC = () => {
                                             </td>
                                             <td className="aa-muted">via group ratio</td>
                                             <td className="aa-muted">{formatPercent(member.share * 100)}</td>
-                                            <td className="aa-muted">—</td>
                                             <td>{formatCurrency(member.currentValue)}</td>
                                             <td className="aa-muted">
                                                 {row.currentValue > 0
@@ -804,11 +605,9 @@ const GlobalRebalancingView: React.FC = () => {
                             key={`${row.portfolioId}-m`}
                             row={row}
                             cfg={assetAllocationSettings.portfolioTargets[row.portfolioId]}
-                            ratioGroups={assetAllocationSettings.ratioGroups}
                             memberRows={memberRowsByGroup[row.portfolioId]}
                             onChangeMode={handleChangePortfolioMode}
                             onChangeValue={handleChangePortfolioValue}
-                            onChangeRatioGroup={handleChangePortfolioRatioGroup}
                         />
                     ))}
                 </div>
@@ -1265,79 +1064,6 @@ const GlobalRebalancingView: React.FC = () => {
 // Subcomponents / helpers
 // ---------------------------------------------------------------------------
 
-interface GroupEditorProps {
-    draft: RatioGroupConfig;
-    setDraft: (g: RatioGroupConfig) => void;
-    onSave: () => void;
-    onCancel: () => void;
-    conflictRemainder: boolean;
-}
-
-const GroupEditor: React.FC<GroupEditorProps> = ({ draft, setDraft, onSave, onCancel, conflictRemainder }) => {
-    return (
-        <div className="aa-group-editor">
-            <div className="aa-field">
-                <label>Nome</label>
-                <input
-                    type="text"
-                    className="aa-input"
-                    value={draft.name}
-                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                    placeholder="es. Core/Satellite"
-                />
-            </div>
-            <div className="aa-field">
-                <label>Target mode</label>
-                <select
-                    className="aa-select"
-                    value={draft.groupTargetMode}
-                    onChange={(e) =>
-                        setDraft({ ...draft, groupTargetMode: e.target.value as RatioGroupTargetMode })
-                    }
-                >
-                    <option value="remainder">Remainder</option>
-                    <option value="percent">% of total</option>
-                    <option value="fixed">Fixed EUR</option>
-                </select>
-            </div>
-            <div className="aa-field">
-                <label>Value {draft.groupTargetMode === 'fixed' ? '(€)' : draft.groupTargetMode === 'percent' ? '(%)' : ''}</label>
-                <input
-                    type="text"
-                    className="aa-input"
-                    value={draft.groupTargetMode === 'remainder' ? '' : String(draft.groupTargetValue)}
-                    disabled={draft.groupTargetMode === 'remainder'}
-                    onChange={(e) =>
-                        setDraft({
-                            ...draft,
-                            groupTargetValue: parseNumericInput(e.target.value)
-                        })
-                    }
-                    placeholder={draft.groupTargetMode === 'remainder' ? '—' : '0'}
-                />
-            </div>
-            <div className="aa-group-editor-actions">
-                <button className="btn btn-primary" onClick={onSave}>
-                    Save
-                </button>
-                <button className="btn btn-secondary" onClick={onCancel}>
-                    Cancel
-                </button>
-            </div>
-            {conflictRemainder && (
-                <div className="aa-conflict">
-                    ⚠ A "remainder" group already exists: it will be converted to "percent 0" on save.
-                </div>
-            )}
-        </div>
-    );
-};
-
-/**
- * Dense expandable mobile row for the Portfolio Targets table (mrow pattern,
- * styles/mobile-list.css). Collapsed: name, mode, current→target; expanded:
- * the Mode/Value/Ratio-Group editors plus every table column.
- */
 interface PortfolioTargetMobileRowProps {
     row: {
         portfolioId: string;
@@ -1349,22 +1075,20 @@ interface PortfolioTargetMobileRowProps {
         delta: number;
     };
     cfg?: PortfolioTargetConfig;
-    ratioGroups: RatioGroupConfig[];
     /** Set when the row is a parent/child group: its read-only member split. */
     memberRows?: { portfolioId: string; name: string; share: number; currentValue: number }[];
     onChangeMode: (portfolioId: string, mode: PortfolioTargetMode) => void;
     onChangeValue: (portfolioId: string, value: string) => void;
-    onChangeRatioGroup: (portfolioId: string, ratioGroupId: string) => void;
 }
 
 const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
-    row, cfg, ratioGroups, memberRows, onChangeMode, onChangeValue, onChangeRatioGroup,
+    row, cfg, memberRows, onChangeMode, onChangeValue,
 }) => {
     const [expanded, setExpanded] = useState(false);
     const mode = cfg?.mode ?? 'excluded';
     const muted = mode === 'excluded';
     const valueDisabled = mode === 'excluded' || mode === 'locked';
-    const unitLabel = mode === 'fixed' ? '€' : mode === 'percent' ? '%' : mode === 'ratio' ? 'w' : '—';
+    const unitLabel = mode === 'fixed' ? '€' : mode === 'percent' ? '%' : '—';
     const displayValue = cfg && !valueDisabled ? String(cfg.value) : '';
     const deltaClass = muted || Math.abs(row.delta) < 0.01 ? '' : row.delta > 0 ? 'ok' : 'warn';
 
@@ -1419,20 +1143,6 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                             style={{ width: '100%' }}
                         />
                     </div>
-                    {mode === 'ratio' && (
-                        <div className="mrow-detail mrow-detail--wide">
-                            <span className="mrow-label">Ratio Group</span>
-                            <select
-                                className="aa-select"
-                                value={cfg?.ratioGroupId ?? ''}
-                                onChange={(e) => onChangeRatioGroup(row.portfolioId, e.target.value)}
-                            >
-                                {ratioGroups.map((g) => (
-                                    <option key={g.id} value={g.id}>{g.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
                     <div className="mrow-detail">
                         <span className="mrow-label">Current</span>
                         <span className="mrow-value">{formatCurrency(row.currentValue)}</span>
