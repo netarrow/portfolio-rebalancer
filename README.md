@@ -90,7 +90,7 @@ A composition deep-dive across portfolios and macro exposure.
 - **Portfolio Pyramid** — wealth distribution by goal category (Growth → Protection → Security → Liquidity).
   - Parent/child groups count as **one portfolio**, so a member attached to a *different* goal than its parent is counted at the parent's level. That is a re-bucketing, never a re-count: the pyramid's total is identical either way, and the level shows the borrowed part as a **lighter shade of its own colour**, with the lending goal named on hover. A portfolio with no goal at all stays outside the pyramid, group member or not — exactly as before.
 
-![Goal pyramid with a merged, borrowed slice](screenshots/stats_top.png)
+![Goal pyramid with a merged, borrowed slice](screenshots/stats_goal_pyramid_merged.png)
 - **Macro Allocation** — aggregate exposure (Stocks, Bonds, Cash…) vs your configured targets.
 - **Per-portfolio breakdowns** with cost / value / return.
 - **Group breakdowns** — where a portfolio has sub-portfolios (see *Parent Portfolio* in the portfolio form), the *By Portfolio* tab shows the parent and its children aggregated into a single set of charts first — one composition bar for the members' weights, group-level risk metrics, and a target blended by member value — then each portfolio again on its own. The Overview's *Value by Portfolio* pie has a **Single / Grouped** switch that folds children into their parent's slice. The rebalancing tables have their own **Single / Merged / Group** switch — see [Dashboard](#dashboard).
@@ -232,6 +232,8 @@ The **group ratio** — how the group splits internally between parent and child
 - Leave a member **blank** and it keeps its current share of the group — a portfolio added to a group is never planned down to zero before you have said what it should be.
 - *Seed from current values* fills every share from what each member is worth today.
 
+![Group ratio dialog](screenshots/portfolio_group_ratio.png)
+
 The ratio drives the Dashboard's ⚖ *Portfolio rebalance* panel, the Merged allocation table, and how Asset Allocation splits the group's target across its members.
 
 Each portfolio has its own **target allocation**, edited from the *Manage allocations* dialog. Targets must total 100%.
@@ -273,6 +275,8 @@ A top-down split of **total wealth** across portfolios — the complement to the
 ![Global rebalancing — actions](screenshots/global_rebalancing_bottom.png)
 
 A **parent/child group counts as one row**: this page decides how big a bucket of wealth should be, and a group is one bucket. Its members appear underneath in read-only sub-rows, with the € each would get derived from the group ratio set on the Portfolios page — so the split is visible here but only editable there.
+
+![Asset Allocation with a group row and its read-only members](screenshots/global_rebalancing_group_row.png)
 
 Each portfolio's (or group's) target can be:
 
