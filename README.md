@@ -88,6 +88,9 @@ A composition deep-dive across portfolios and macro exposure.
 ![Stats — per portfolio](screenshots/stats_bottom.png)
 
 - **Portfolio Pyramid** — wealth distribution by goal category (Growth → Protection → Security → Liquidity).
+  - Parent/child groups count as **one portfolio**, so a member attached to a *different* goal than its parent is counted at the parent's level. That is a re-bucketing, never a re-count: the pyramid's total is identical either way, and the level shows the borrowed part as a **lighter shade of its own colour**, with the lending goal named on hover. A portfolio with no goal at all stays outside the pyramid, group member or not — exactly as before.
+
+![Goal pyramid with a merged, borrowed slice](screenshots/stats_top.png)
 - **Macro Allocation** — aggregate exposure (Stocks, Bonds, Cash…) vs your configured targets.
 - **Per-portfolio breakdowns** with cost / value / return.
 - **Group breakdowns** — where a portfolio has sub-portfolios (see *Parent Portfolio* in the portfolio form), the *By Portfolio* tab shows the parent and its children aggregated into a single set of charts first — one composition bar for the members' weights, group-level risk metrics, and a target blended by member value — then each portfolio again on its own. The Overview's *Value by Portfolio* pie has a **Single / Grouped** switch that folds children into their parent's slice. The rebalancing tables have their own **Single / Merged / Group** switch — see [Dashboard](#dashboard).
@@ -97,6 +100,8 @@ A composition deep-dive across portfolios and macro exposure.
 A what-if for moving money between buckets, with the friction included.
 
 Portfolios here are logical containers over transactions, so relocating funds is not a bookkeeping edit: it is **sell there, buy here**, and the round trip permanently leaks capital-gains tax and two sets of commissions. Every other view would show the money simply arriving; this one shows what it costs to get there.
+
+Either end can be a **whole parent/child group** as well as a single portfolio — both are listed in the pickers. A group instruction is expanded into real per-member moves *before* it is queued, so the queue, the what-if and the ledger only ever hold portfolios that exist. The split is not arbitrary: money leaving is taken from whichever member is heaviest against the group ratio and money arriving goes to whichever is lightest, so moving between goals quietly closes the parent/child ratio instead of dragging it further off. Picking a group and one of its own members as the two ends is refused — it is the same money.
 
 ![Fund Relocation — form and cost](screenshots/fund_relocation_top.png)
 
@@ -128,7 +133,7 @@ Historical net-worth and price charts, powered by the **daily price history** th
 
 ![Performance — net worth](screenshots/performance_page.png)
 
-- **Scope selector** — chart your whole **Net Worth**, a single **portfolio**, or a single **asset**.
+- **Scope selector** — chart your whole **Net Worth**, a **parent/child group** as one portfolio, a single **portfolio**, or a single **asset**. Groups and their members are both listed, and the selector is single-choice, so a group is never charted on top of its own members.
 - **Ranges** — 1M / 6M / 1Y / MAX.
 - **Net worth** can optionally overlay today's liquidity as a constant line.
 - **Return toggle** — switch between **TWR** (Time-Weighted Return, strips out deposits/withdrawals) and **MWR** (Money-Weighted Return, which on MAX matches the Dashboard's Total Appreciation).
@@ -219,6 +224,16 @@ Organise investments into distinct portfolios (e.g. *Main Strategy*, *Bond Alloc
 
 ![Portfolios](screenshots/portfolios_page.png)
 
+**Parent/child groups** — a portfolio nested under another is not just a visual grouping: the two are read as **one portfolio** wherever that is the useful reading (Stats pyramid, Performance, Fund Relocation, Asset Allocation).
+
+The **group ratio** — how the group splits internally between parent and children — is set here, from the ⚖ button on the parent's card:
+
+- Give each member a **share %**. They are relative weights, so 80/20 and 8/2 mean the same thing; *Normalise to 100* rewrites them to read as percentages.
+- Leave a member **blank** and it keeps its current share of the group — a portfolio added to a group is never planned down to zero before you have said what it should be.
+- *Seed from current values* fills every share from what each member is worth today.
+
+The ratio drives the Dashboard's ⚖ *Portfolio rebalance* panel, the Merged allocation table, and how Asset Allocation splits the group's target across its members.
+
 Each portfolio has its own **target allocation**, edited from the *Manage allocations* dialog. Targets must total 100%.
 
 ![Portfolio allocations](screenshots/portfolio_targets.png)
@@ -257,7 +272,9 @@ A top-down split of **total wealth** across portfolios — the complement to the
 ![Global rebalancing — deltas](screenshots/global_rebalancing_middle.png)
 ![Global rebalancing — actions](screenshots/global_rebalancing_bottom.png)
 
-Each portfolio's target can be:
+A **parent/child group counts as one row**: this page decides how big a bucket of wealth should be, and a group is one bucket. Its members appear underneath in read-only sub-rows, with the € each would get derived from the group ratio set on the Portfolios page — so the split is visible here but only editable there.
+
+Each portfolio's (or group's) target can be:
 
 - **Fixed EUR** — an absolute amount.
 - **% of total** — a percentage of the eligible wealth.
@@ -266,6 +283,8 @@ Each portfolio's target can be:
 - **Ratio Group** — shares a remainder pool with other portfolios, split by relative weights.
 
 There is a dedicated **Liquidity Target** (broker cash) row, a **sustainability indicator**, and per-portfolio delta vs current value with suggested buy/sell actions.
+
+> Upgrading from an earlier version: the parent/child ratio used to be implied here, by whatever the members' individual targets normalised to. It is read once on first load and rewritten as a group ratio on the portfolios, with the members' rows folded into a single group target — the ratio you had is the ratio you keep.
 
 ### Goals
 
