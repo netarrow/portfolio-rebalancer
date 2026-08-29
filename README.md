@@ -284,11 +284,17 @@ Each portfolio's (or group's) target can be:
 - **% of total** — a percentage of the eligible wealth.
 - **Locked** — counts toward the total but never moves.
 - **Excluded** — ignored entirely.
-- **Ratio Group** — shares a remainder pool with other portfolios, split by relative weights.
+
+There is no ratio setting here. Sharing one budget between portfolios is what a
+parent/child group is for, and its split is the ratio on the Portfolios page —
+so a proportion is stated in exactly one place.
 
 There is a dedicated **Liquidity Target** (broker cash) row, a **sustainability indicator**, and per-portfolio delta vs current value with suggested buy/sell actions.
 
-> Upgrading from an earlier version: the parent/child ratio used to be implied here, by whatever the members' individual targets normalised to. It is read once on first load and rewritten as a group ratio on the portfolios, with the members' rows folded into a single group target — the ratio you had is the ratio you keep.
+> **Upgrading from an earlier version.** Two things move on first load, once:
+>
+> - the parent/child ratio used to be implied here, by whatever the members' individual targets normalised to. It is read and rewritten as a group ratio on the portfolios, with the members' rows folded into a single group target — the ratio you had is the ratio you keep;
+> - **Ratio Groups** are gone. A group with a stated budget is converted faithfully: a *Fixed EUR* group hands each member its share in euro, a *% of total* group hands each member its share of the percentage. A **Remainder** group stated no number of its own, so its members become **Locked** at their current value rather than being given an invented target — set one for them when you next open this page.
 
 ### Goals
 

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, RatioGroupConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
@@ -16,12 +16,16 @@ import { mergeYnabGoalsFromCandidates, resolveGoalTarget } from '../utils/ynabGo
 import type { YnabGoalSyncReport } from '../utils/ynabGoalSync';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
-import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
+import { migrateRatioGroups, normalizeAssetAllocationSettings } from '../utils/assetAllocation';
 import { buildPortfolioTree } from '../utils/portfolioGroups';
 import { MERGED_PORTFOLIO_PREFIX, isMergedPortfolioId } from '../utils/mergedGroup';
 
-/** Set once the parent/child ratio has been moved out of Global Rebalancing. */
-const GROUP_RATIO_MIGRATION_KEY = 'portfolio_group_ratio_migrated_v1';
+/**
+ * Set once Asset Allocation has been rewritten: the parent/child ratio moved
+ * onto the portfolios, ratio groups removed, and each group's member rows
+ * folded into one row for the group.
+ */
+const GROUP_RATIO_MIGRATION_KEY = 'portfolio_group_ratio_migrated_v2';
 import Swal from 'sweetalert2';
 import { encrypt, decrypt, uploadToAzure, downloadFromAzure } from '../services/azureSync';
 import type { AzureConfig, SyncPayload } from '../services/azureSync';
@@ -73,8 +77,6 @@ interface PortfolioContextType {
     deleteGoal: (id: string) => void;
     updatePortfolioTarget: (portfolioId: string, target: PortfolioTargetConfig | null) => void;
     updateLiquidityTarget: (target: LiquidityTargetConfig | undefined) => void;
-    upsertRatioGroup: (group: RatioGroupConfig) => void;
-    deleteRatioGroup: (id: string) => void;
     resetAssetAllocationSettings: () => void;
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
@@ -219,7 +221,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [priceHistory, setPriceHistory] = useLocalStorage<PriceHistoryMap>('portfolio_price_history', {});
     const [storedAssetAllocationSettings, setStoredAssetAllocationSettings] = useLocalStorage<AssetAllocationSettings>(
         'portfolio_asset_allocation_v1',
-        { portfolioTargets: {}, ratioGroups: [] }
+        { portfolioTargets: {} }
     );
 
     // New State for Macro/Goal Targets
@@ -349,51 +351,64 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
 
         const { groups } = buildPortfolioTree(portfolios);
-        const settings = normalizeAssetAllocationSettings(storedAssetAllocationSettings);
+        // The RAW stored object, not a normalized one: ratio weights are what
+        // the shares are derived from, and normalization has already dropped
+        // them by the time this runs.
+        const raw = (storedAssetAllocationSettings ?? {}) as {
+            portfolioTargets?: Record<string, { mode?: string; value?: number }>;
+        };
+        const rawTargets = raw.portfolioTargets ?? {};
         const sharesByPortfolio = new Map<string, number>();
-        const nextTargets = { ...settings.portfolioTargets };
-        let changedTargets = false;
 
+        // Step 1 — the parent/child ratio, read off the members' old targets.
+        // Inside a group those values were only ever used relatively: a
+        // percentage, a euro amount and a ratio weight all say the same thing
+        // once normalized over the members, so they ARE the shares.
         groups.forEach(group => {
             // Somebody has already set a ratio here: their choice wins.
             if (group.members.some(m => m.groupSharePercent !== undefined)) return;
 
             const covered = group.members
-                .map(m => ({ member: m, cfg: settings.portfolioTargets[m.id] }))
+                .map(m => ({ member: m, cfg: rawTargets[m.id] }))
                 .filter(({ cfg }) =>
-                    cfg && (cfg.mode === 'percent' || cfg.mode === 'fixed' || cfg.mode === 'ratio'));
+                    !!cfg && (cfg.mode === 'percent' || cfg.mode === 'fixed' || cfg.mode === 'ratio'));
             if (covered.length < 2) return;
 
-            // The old targets were only ever used relatively inside a group, so
-            // their raw values are exactly the weights to normalize.
-            const basisTotal = covered.reduce((sum, { cfg }) => sum + Math.max(0, cfg!.value), 0);
+            const basisTotal = covered.reduce((sum, { cfg }) => sum + Math.max(0, cfg!.value ?? 0), 0);
             if (basisTotal <= 0) return;
 
             covered.forEach(({ member, cfg }) => {
-                const share = (Math.max(0, cfg!.value) / basisTotal) * 100;
+                const share = (Math.max(0, cfg!.value ?? 0) / basisTotal) * 100;
                 sharesByPortfolio.set(member.id, Math.round(share * 10) / 10);
             });
+        });
 
-            // Fold the members' targets into one for the group. A ratio-group
-            // membership is the most specific statement, so it wins; failing
-            // that a percentage, and only then a plain euro amount.
+        // Step 2 — ratio groups are gone; rewrite whatever used them.
+        const migration = migrateRatioGroups(raw);
+        const nextTargets = { ...migration.portfolioTargets };
+        let changedTargets = migration.changed;
+
+        // Step 3 — fold each group's member rows into one row for the group.
+        // Leaving them would be the one way to double-count: the group row
+        // already carries the whole group's value.
+        groups.forEach(group => {
+            const memberCfgs = group.members
+                .map(m => nextTargets[m.id])
+                .filter((cfg): cfg is PortfolioTargetConfig => !!cfg);
+            if (memberCfgs.length === 0) return;
+
             const groupKey = `${MERGED_PORTFOLIO_PREFIX}${group.parent.id}`;
-            const ratioMember = covered.find(({ cfg }) => cfg!.mode === 'ratio');
             const sumOf = (mode: PortfolioTargetConfig['mode']) =>
-                covered
-                    .filter(({ cfg }) => cfg!.mode === mode)
-                    .reduce((sum, { cfg }) => sum + Math.max(0, cfg!.value), 0);
+                memberCfgs.filter(c => c.mode === mode).reduce((sum, c) => sum + Math.max(0, c.value), 0);
 
-            if (ratioMember) {
-                nextTargets[groupKey] = {
-                    mode: 'ratio',
-                    value: sumOf('ratio'),
-                    ratioGroupId: ratioMember.cfg!.ratioGroupId,
-                };
-            } else if (covered.some(({ cfg }) => cfg!.mode === 'percent')) {
+            // The most specific statement wins: a percentage of the total, then
+            // a euro amount, then "hold what you have".
+            if (memberCfgs.some(c => c.mode === 'percent')) {
                 nextTargets[groupKey] = { mode: 'percent', value: sumOf('percent') };
-            } else {
+            } else if (memberCfgs.some(c => c.mode === 'fixed')) {
                 nextTargets[groupKey] = { mode: 'fixed', value: sumOf('fixed') };
+            } else if (memberCfgs.some(c => c.mode === 'locked')) {
+                nextTargets[groupKey] = { mode: 'locked', value: 0 };
             }
 
             group.members.forEach(m => { delete nextTargets[m.id]; });
@@ -408,7 +423,22 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             )));
         }
         if (changedTargets) {
-            setStoredAssetAllocationSettings({ ...settings, portfolioTargets: nextTargets });
+            setStoredAssetAllocationSettings(prev => {
+                const { liquidityTarget } = normalizeAssetAllocationSettings(prev);
+                return liquidityTarget
+                    ? { liquidityTarget, portfolioTargets: nextTargets }
+                    : { portfolioTargets: nextTargets };
+            });
+        }
+        if (migration.convertedFromRemainder.length > 0) {
+            const names = migration.convertedFromRemainder
+                .map(id => portfolios.find(p => p.id === id)?.name ?? id)
+                .join(', ');
+            console.info(
+                `[asset-allocation] Ratio groups have been removed. ${names} used a "remainder" group, ` +
+                'which stated no target of its own, so they are now Locked at their current value. ' +
+                'Set a target for them on the Asset Allocation page.'
+            );
         }
         try {
             localStorage.setItem(GROUP_RATIO_MIGRATION_KEY, '1');
@@ -1204,50 +1234,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
-    const upsertRatioGroup = (group: RatioGroupConfig) => {
-        setStoredAssetAllocationSettings(prev => {
-            const normalized = normalizeAssetAllocationSettings(prev);
-            let nextGroups = normalized.ratioGroups.slice();
-            const idx = nextGroups.findIndex(g => g.id === group.id);
-
-            // Enforce: only one remainder group allowed at a time
-            let sanitizedGroup = group;
-            if (group.groupTargetMode === 'remainder') {
-                nextGroups = nextGroups.map(g =>
-                    g.id !== group.id && g.groupTargetMode === 'remainder'
-                        ? { ...g, groupTargetMode: 'percent' as const, groupTargetValue: 0 }
-                        : g
-                );
-            }
-
-            if (idx >= 0) {
-                nextGroups[idx] = sanitizedGroup;
-            } else {
-                nextGroups.push(sanitizedGroup);
-            }
-            return { ...normalized, ratioGroups: nextGroups };
-        });
-    };
-
-    const deleteRatioGroup = (id: string) => {
-        setStoredAssetAllocationSettings(prev => {
-            const normalized = normalizeAssetAllocationSettings(prev);
-            const nextGroups = normalized.ratioGroups.filter(g => g.id !== id);
-            // Reset portfolios that referenced this group to 'excluded'
-            const nextTargets: Record<string, PortfolioTargetConfig> = {};
-            for (const [pid, cfg] of Object.entries(normalized.portfolioTargets)) {
-                if (cfg.mode === 'ratio' && cfg.ratioGroupId === id) {
-                    nextTargets[pid] = { mode: 'excluded', value: 0 };
-                } else {
-                    nextTargets[pid] = cfg;
-                }
-            }
-            return { ...normalized, ratioGroups: nextGroups, portfolioTargets: nextTargets };
-        });
-    };
-
     const resetAssetAllocationSettings = () => {
-        setStoredAssetAllocationSettings({ portfolioTargets: {}, ratioGroups: [] });
+        setStoredAssetAllocationSettings({ portfolioTargets: {} });
     };
 
     /**
@@ -1543,7 +1531,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setPortfolios([]);
         setBrokers([]);
         setMarketData({});
-        setStoredAssetAllocationSettings({ portfolioTargets: {}, ratioGroups: [] });
+        setStoredAssetAllocationSettings({ portfolioTargets: {} });
         setOldTargets([]);
         setMacroAllocations({});
         setGoalAllocations({});
@@ -2282,22 +2270,22 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setPacExecutions(mockPacExecutions);
         setMacroAllocations(newMacros);
         setGoalAllocations(newGoals);
+        // Percentages throughout, summing to 100 with the liquidity target, so
+        // the demo stays fully allocated whatever the prices do — a fixed euro
+        // amount could only promise that on the day it was written. The old
+        // "remainder" ratio group used to absorb the difference; with ratio
+        // groups gone, the targets have to add up on their own.
         setStoredAssetAllocationSettings({
-            liquidityTarget: { mode: 'fixed', value: 0 },
+            liquidityTarget: { mode: 'percent', value: 10 },
             portfolioTargets: {
                 // Main Strategy and its Tactical Tilt are one parent/child
                 // group, so they take ONE target, keyed on the group. How that
                 // target is shared between them is the ratio on the portfolios
                 // (75/25 here), not a second row in this table.
-                [`${MERGED_PORTFOLIO_PREFIX}${pIdMain}`]: {
-                    mode: 'ratio', value: 100, ratioGroupId: 'rg-growth-remainder',
-                },
+                [`${MERGED_PORTFOLIO_PREFIX}${pIdMain}`]: { mode: 'percent', value: 55 },
                 [pIdBonds]: { mode: 'percent', value: 20 },
-                [pIdSafe]: { mode: 'fixed', value: 10000 }
-            },
-            ratioGroups: [
-                { id: 'rg-growth-remainder', name: 'Growth Remainder', groupTargetMode: 'remainder', groupTargetValue: 0 }
-            ]
+                [pIdSafe]: { mode: 'percent', value: 15 }
+            }
         });
         // 7a-bis. Household members: personal brokers are split between two
         // people so the per-person scope chips have something to filter.
@@ -3271,8 +3259,6 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteGoal,
         updatePortfolioTarget,
         updateLiquidityTarget,
-        upsertRatioGroup,
-        deleteRatioGroup,
         resetAssetAllocationSettings,
         importData,
         updateMarketData,
