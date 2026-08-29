@@ -1956,6 +1956,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             {
                 id: pIdMain,
                 name: 'Main Strategy',
+                // Parent/child ratio: the group is planned 75/25 between the
+                // core and its tactical tilt. Edited from the Portfolios page.
+                groupSharePercent: 75,
                 description: 'Core developed + emerging stocks (Growth parent)',
                 goalId: 'goal-growth',
                 order: 0,
@@ -1984,6 +1987,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 description: 'Nested Growth sub-portfolio tilting toward EM + dividend ETF',
                 goalId: 'goal-growth',
                 parentId: pIdMain,
+                groupSharePercent: 25,
                 order: 1,
                 // Weighted allocation group: instead of priority order, buys and
                 // sells keep VWRL/EMIM close to their intra-group weight %.
@@ -2281,8 +2285,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setStoredAssetAllocationSettings({
             liquidityTarget: { mode: 'fixed', value: 0 },
             portfolioTargets: {
-                [pIdMain]: { mode: 'percent', value: 40 },
-                [pIdMainTilt]: { mode: 'ratio', value: 100, ratioGroupId: 'rg-growth-remainder' },
+                // Main Strategy and its Tactical Tilt are one parent/child
+                // group, so they take ONE target, keyed on the group. How that
+                // target is shared between them is the ratio on the portfolios
+                // (75/25 here), not a second row in this table.
+                [`${MERGED_PORTFOLIO_PREFIX}${pIdMain}`]: {
+                    mode: 'ratio', value: 100, ratioGroupId: 'rg-growth-remainder',
+                },
                 [pIdBonds]: { mode: 'percent', value: 20 },
                 [pIdSafe]: { mode: 'fixed', value: 10000 }
             },
