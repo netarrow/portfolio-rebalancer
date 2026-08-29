@@ -59,8 +59,6 @@ const coreValue = view.groups[0].valueByMember.core;
 const satValue = view.groups[0].valueByMember.sat;
 
 const sumOf = (rs: { netAmount: number }[]) => rs.reduce((s, r) => s + r.netAmount, 0);
-const idsOf = (rs: { from: { kind: string; portfolioId?: string } }[]) =>
-    rs.map(r => r.from.portfolioId ?? 'cash');
 
 // ── 1. Nothing to expand when neither end is a group ──
 {
