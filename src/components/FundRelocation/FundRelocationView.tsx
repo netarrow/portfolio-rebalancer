@@ -2,9 +2,6 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { GoalFlowPortfolioState } from '../../types';
 import {
-    applyRelocationToState,
-    isSameEndpoint,
-    planFundRelocation,
     planHasEffect,
     planRelocationSequence,
     portfolioAssets,
@@ -12,6 +9,8 @@ import {
     type RelocationEndpoint,
     type RelocationRequest,
 } from '../../utils/fundRelocation';
+import { buildMergedPortfolioView } from '../../utils/mergedPortfolioView';
+import { endpointsOverlap, expandGroupRequest } from '../../utils/groupRelocation';
 import { buildSnapshot, type SnapshotInput } from '../../utils/relocationSnapshot';
 import RelocationForm from './RelocationForm';
 import RelocationActions from './RelocationActions';
@@ -60,19 +59,6 @@ const FundRelocationView: React.FC = () => {
     /** Moves already pinned, in execution order. The form always edits the next one. */
     const [queue, setQueue] = useState<RelocationRequest[]>([]);
 
-    // Default the two ends to different portfolios once the data is loaded,
-    // without fighting a choice the user has already made.
-    const resolvedFrom = useMemo<RelocationEndpoint>(() => {
-        if (from.kind === 'cash' || portfolios.some(p => p.id === from.portfolioId)) return from;
-        return { kind: 'portfolio', portfolioId: portfolios[0]?.id ?? '' };
-    }, [from, portfolios]);
-
-    const resolvedTo = useMemo<RelocationEndpoint>(() => {
-        if (to.kind === 'cash' || portfolios.some(p => p.id === to.portfolioId)) return to;
-        const fallback = portfolios.find(p => p.id !== (resolvedFrom.kind === 'portfolio' ? resolvedFrom.portfolioId : ''));
-        return { kind: 'portfolio', portfolioId: (fallback ?? portfolios[0])?.id ?? '' };
-    }, [to, portfolios, resolvedFrom]);
-
     /** Today's state — the baseline every comparison is measured against. */
     const baseCtx = useMemo<RelocationContext>(() => ({
         portfolios, brokers, transactions, assetSettings, marketData, freeCommissionPeriods,
@@ -87,33 +73,101 @@ const FundRelocationView: React.FC = () => {
      */
     const draftCtx = sequence.ctx;
 
-    const sourceAssets = useMemo(
-        () => (resolvedFrom.kind === 'portfolio' && resolvedFrom.portfolioId ? portfolioAssets(resolvedFrom.portfolioId, draftCtx) : []),
-        [resolvedFrom, draftCtx]
-    );
-    const destAssets = useMemo(
-        () => (resolvedTo.kind === 'portfolio' && resolvedTo.portfolioId ? portfolioAssets(resolvedTo.portfolioId, draftCtx) : []),
-        [resolvedTo, draftCtx]
-    );
+    /**
+     * Parent/child groups as single portfolios, read off the DRAFT state so a
+     * group's split reflects the moves already queued.
+     *
+     * Only the endpoint pickers and the goal planner see this. The ledger keeps
+     * working on real portfolios: a group endpoint is expanded into member
+     * moves before it is planned, so nothing downstream ever meets a portfolio
+     * that does not exist.
+     */
+    const mergedView = useMemo(() => buildMergedPortfolioView({
+        portfolios: draftCtx.portfolios,
+        transactions: draftCtx.transactions,
+        brokers: draftCtx.brokers,
+        assetSettings,
+        marketData,
+    }), [draftCtx, assetSettings, marketData]);
+
+    /** Group entries offered alongside the real portfolios in both pickers. */
+    const groupOptions = useMemo(() => mergedView.groups.map(g => {
+        const parent = portfolios.find(p => p.id === g.parentId);
+        return {
+            id: g.id,
+            name: `${parent?.name ?? 'Group'} (group)`,
+            memberNames: g.memberIds
+                .map(id => portfolios.find(p => p.id === id)?.name ?? id)
+                .join(' + '),
+        };
+    }), [mergedView.groups, portfolios]);
+
+    const isSelectable = (id: string) =>
+        !!id && (portfolios.some(p => p.id === id) || !!mergedView.groupById[id]);
+
+    // Default the two ends to different portfolios once the data is loaded,
+    // without fighting a choice the user has already made.
+    const resolvedFrom = useMemo<RelocationEndpoint>(() => {
+        if (from.kind === 'cash' || isSelectable(from.portfolioId)) return from;
+        return { kind: 'portfolio', portfolioId: portfolios[0]?.id ?? '' };
+    }, [from, portfolios, mergedView]);
+
+    const resolvedTo = useMemo<RelocationEndpoint>(() => {
+        if (to.kind === 'cash' || isSelectable(to.portfolioId)) return to;
+        const fallback = portfolios.find(p => p.id !== (resolvedFrom.kind === 'portfolio' ? resolvedFrom.portfolioId : ''));
+        return { kind: 'portfolio', portfolioId: (fallback ?? portfolios[0])?.id ?? '' };
+    }, [to, portfolios, resolvedFrom, mergedView]);
+
+    /**
+     * Holdings behind an endpoint. A group has no transactions of its own, so
+     * its assets are its members' merged — which is exactly what the merged
+     * view's re-tagged transactions give, with per-broker cash already pooled.
+     */
+    const assetsOfEndpoint = (endpoint: RelocationEndpoint) => {
+        if (endpoint.kind !== 'portfolio' || !endpoint.portfolioId) return [];
+        if (mergedView.groupById[endpoint.portfolioId]) {
+            return portfolioAssets(endpoint.portfolioId, {
+                ...draftCtx,
+                portfolios: mergedView.portfolios,
+                transactions: mergedView.transactions,
+                brokers: mergedView.brokers,
+            });
+        }
+        return portfolioAssets(endpoint.portfolioId, draftCtx);
+    };
+
+    const sourceAssets = useMemo(() => assetsOfEndpoint(resolvedFrom), [resolvedFrom, draftCtx, mergedView]);
+    const destAssets = useMemo(() => assetsOfEndpoint(resolvedTo), [resolvedTo, draftCtx, mergedView]);
 
     const request = useMemo<RelocationRequest>(
         () => ({ from: resolvedFrom, to: resolvedTo, netAmount, applyFreeBuyPromo }),
         [resolvedFrom, resolvedTo, netAmount, applyFreeBuyPromo]
     );
 
-    const sameEndpoint = isSameEndpoint(resolvedFrom, resolvedTo);
+    // A group and one of its own members are the same money: moving between
+    // them would be a round trip that pays tax and commissions to change nothing.
+    const sameEndpoint = endpointsOverlap(resolvedFrom, resolvedTo, mergedView);
 
-    const plan = useMemo(
-        () => (netAmount > 0 && !sameEndpoint ? planFundRelocation(request, draftCtx) : null),
-        [request, draftCtx, netAmount, sameEndpoint]
+    /**
+     * The move in the form, as the real per-member moves it stands for. A move
+     * between two ordinary portfolios expands to itself; one touching a group
+     * becomes one leg per member involved.
+     */
+    const draftRequests = useMemo(
+        () => (netAmount > 0 && !sameEndpoint ? expandGroupRequest(request, mergedView) : []),
+        [request, mergedView, netAmount, sameEndpoint]
     );
 
+    /** The draft priced as its own little chain, on top of the queued state. */
+    const draftSequence = useMemo(
+        () => planRelocationSequence(draftRequests, draftCtx),
+        [draftRequests, draftCtx]
+    );
+
+    const draftSteps = draftSequence.steps;
+
     /** State after the queue AND the move currently in the form. */
-    const previewCtx = useMemo(() => {
-        if (!plan) return draftCtx;
-        const moved = applyRelocationToState(draftCtx.transactions, draftCtx.brokers, request, plan, '__reloc_draft');
-        return { ...draftCtx, transactions: moved.transactions, brokers: moved.brokers };
-    }, [plan, request, draftCtx]);
+    const previewCtx = draftSequence.ctx;
 
     const snapshotInput = useMemo<SnapshotInput>(() => ({
         transactions, brokers, portfolios, goals, assetSettings, marketData, macroAllocations, goalAllocations,
@@ -125,8 +179,9 @@ const FundRelocationView: React.FC = () => {
     // it must not be counted as "included" in a what-if that would show no
     // change at all — its warnings already say why nothing happened.
     const previewCount = useMemo(
-        () => sequence.steps.filter(s => planHasEffect(s.plan)).length + (plan && planHasEffect(plan) ? 1 : 0),
-        [sequence, plan]
+        () => sequence.steps.filter(s => planHasEffect(s.plan)).length
+            + draftSteps.filter(s => planHasEffect(s.plan)).length,
+        [sequence, draftSteps]
     );
 
     const after = useMemo(() => {
@@ -134,7 +189,7 @@ const FundRelocationView: React.FC = () => {
         return buildSnapshot({ ...snapshotInput, transactions: previewCtx.transactions, brokers: previewCtx.brokers });
     }, [previewCount, previewCtx, snapshotInput]);
 
-    const totalFriction = sequence.totals.friction + (plan?.friction ?? 0);
+    const totalFriction = sequence.totals.friction + draftSequence.totals.friction;
 
     /** The queue as ordered actions: sell here, wire there, buy at the other end. */
     const executionMoves = useMemo(
@@ -208,12 +263,15 @@ const FundRelocationView: React.FC = () => {
     }, [executionMoves, brokers, addTransactionsBulk, adjustBrokerLiquidity]);
 
     const addToSequence = useCallback(() => {
-        if (!plan) return;
-        setQueue(prev => [...prev, request]);
+        if (draftRequests.length === 0) return;
+        // The EXPANDED moves are queued, never the group-level instruction: the
+        // queue is the record of what will actually be done, on portfolios the
+        // ledger knows.
+        setQueue(prev => [...prev, ...draftRequests]);
         // Only the amount is cleared: the endpoints are the most likely start of
         // the next move, and leaving them alone keeps the form where the eye is.
         setNetAmount(0);
-    }, [plan, request]);
+    }, [draftRequests]);
 
     /** The goal planner hands over whole moves; they queue like any other. */
     /**
@@ -303,7 +361,8 @@ const FundRelocationView: React.FC = () => {
                 destAssets={destAssets}
                 queuedCount={queue.length}
                 onAddToSequence={addToSequence}
-                canAddToSequence={plan !== null}
+                groups={groupOptions}
+                canAddToSequence={draftSteps.length > 0}
             />
 
             <RelocationSequenceView
@@ -311,7 +370,7 @@ const FundRelocationView: React.FC = () => {
                 totals={sequence.totals}
                 portfolios={portfolios}
                 brokers={brokers}
-                draftFriction={plan?.friction ?? 0}
+                draftFriction={draftSequence.totals.friction}
                 onRemove={removeStep}
                 onReorder={reorderStep}
                 onClear={() => setQueue([])}
@@ -322,7 +381,10 @@ const FundRelocationView: React.FC = () => {
             {sameEndpoint && (
                 <div className="reloc-warning critical">
                     <span aria-hidden="true">⛔</span>
-                    <span>Source and destination are the same: pick two different endpoints.</span>
+                    <span>
+                        Source and destination are the same money — a group and one of its own
+                        members count as the same endpoint. Pick two different ones.
+                    </span>
                 </div>
             )}
 
@@ -336,12 +398,26 @@ const FundRelocationView: React.FC = () => {
                 </div>
             )}
 
-            {plan && (
+            {draftSteps.length > 0 && (
                 <>
-                    {queue.length > 0 && (
-                        <h3 className="reloc-draft-title">Move {queue.length + 1}, not yet queued</h3>
+                    {(queue.length > 0 || draftSteps.length > 1) && (
+                        <h3 className="reloc-draft-title">
+                            {draftSteps.length === 1
+                                ? `Move ${queue.length + 1}, not yet queued`
+                                : `Moves ${queue.length + 1}–${queue.length + draftSteps.length}, not yet queued`}
+                        </h3>
                     )}
-                    <RelocationActions plan={plan} />
+                    {draftSteps.length > 1 && (
+                        <p className="reloc-intro reloc-group-note">
+                            A whole group is one end of this move, so it is carried out as{' '}
+                            {draftSteps.length} moves on the real portfolios behind it — taken from
+                            whichever member is heaviest against the group ratio, and delivered to
+                            whichever is lightest.
+                        </p>
+                    )}
+                    {draftSteps.map((step, i) => (
+                        <RelocationActions key={i} plan={step.plan} />
+                    ))}
                 </>
             )}
 

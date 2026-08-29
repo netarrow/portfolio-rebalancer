@@ -128,6 +128,12 @@ export interface Portfolio {
   preferredBrokerId?: string;
   goalId?: string;
   parentId?: string; // ID of parent portfolio for nested Core/Satellite grouping
+  // Share of the parent/child group this portfolio belongs to, 0-100. Set on
+  // the parent AND on each child from the Portfolios page, where the group's
+  // ratio is edited as a whole. Absent = "no ratio configured for this member":
+  // it keeps its current share of the group's value, so a member added later is
+  // never silently planned down to zero. Meaningless on a standalone portfolio.
+  groupSharePercent?: number;
   order: number; // Display order (lower = left)
 }
 

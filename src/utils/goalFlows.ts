@@ -1,5 +1,5 @@
 import type { AssetDefinition, Broker, Goal, GoalFlowPortfolioState, Portfolio, Transaction } from '../types';
-import { LIQUIDITY_COLOR, UNASSIGNED_LIQUIDITY_ID, unassignedLiquidityOf } from './goalDistribution';
+import { effectiveGoalIds, LIQUIDITY_COLOR, UNASSIGNED_LIQUIDITY_ID, unassignedLiquidityOf } from './goalDistribution';
 import { calculateAssets, injectCashAssets } from './portfolioCalculations';
 
 /**
@@ -201,9 +201,19 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
 
     const sortedGoals = [...goals].sort((a, b) => a.order - b.order);
 
+    // Which LEVEL each portfolio counts at, with parent/child groups read as one
+    // portfolio — the same rule the Stats pyramid uses, so the two never
+    // disagree about where a group's money sits.
+    //
+    // Only the level is merged, not the portfolios: the moves this planner
+    // proposes, and the per-portfolio Move/Freeze/Skip switches beside them,
+    // stay on real portfolios. A group is where the money IS; which member to
+    // sell from is still a decision worth keeping.
+    const levelOf = effectiveGoalIds(portfolios);
+
     const goalPortfolios = (goalId: string): GoalFlowPortfolio[] =>
         portfolios
-            .filter(p => p.goalId === goalId)
+            .filter(p => levelOf.get(p.id) === goalId)
             .map(p => ({ id: p.id, name: p.name, value: valueById[p.id] ?? 0, state: stateOf(p.id) }))
             .sort((a, b) => b.value - a.value);
 
@@ -337,8 +347,14 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
 
     if (dropped >= 1) issues.push({ kind: 'below-minimum', amount: dropped });
 
+    // Orphaned by its EFFECTIVE level, not its own goal: a member merged onto a
+    // parent that has a goal is inside the split, and listing it here as well
+    // would show the same money twice.
     const orphanPortfolios = portfolios
-        .filter(p => !p.goalId || !goals.some(g => g.id === p.goalId))
+        .filter(p => {
+            const level = levelOf.get(p.id);
+            return !level || !goals.some(g => g.id === level);
+        })
         .map(p => ({ id: p.id, name: p.name, value: valueById[p.id] ?? 0, state: stateOf(p.id) }))
         .filter(p => p.value > 0)
         .sort((a, b) => b.value - a.value);

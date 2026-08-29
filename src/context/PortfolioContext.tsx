@@ -17,6 +17,11 @@ import type { YnabGoalSyncReport } from '../utils/ynabGoalSync';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { normalizeAssetAllocationSettings } from '../utils/assetAllocation';
+import { buildPortfolioTree } from '../utils/portfolioGroups';
+import { MERGED_PORTFOLIO_PREFIX, isMergedPortfolioId } from '../utils/mergedGroup';
+
+/** Set once the parent/child ratio has been moved out of Global Rebalancing. */
+const GROUP_RATIO_MIGRATION_KEY = 'portfolio_group_ratio_migrated_v1';
 import Swal from 'sweetalert2';
 import { encrypt, decrypt, uploadToAzure, downloadFromAzure } from '../services/azureSync';
 import type { AzureConfig, SyncPayload } from '../services/azureSync';
@@ -320,6 +325,129 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             // ignore
         }
     }, []);
+
+    /**
+     * One-shot move of the parent/child ratio out of Global Rebalancing.
+     *
+     * It used to be implied there: a group's internal split was whatever its
+     * members' individual targets normalized to. Now the split lives on the
+     * portfolios and Global Rebalancing sizes the group as a whole, so the old
+     * configuration is read once and rewritten in the new shape — the ratio a
+     * user had is the ratio they keep.
+     *
+     * Members' target rows are then removed. Leaving them would be the one way
+     * to double-count: the group row already carries the whole group's value,
+     * so a member row beside it would ask the engine to fund the same money
+     * twice.
+     */
+    useEffect(() => {
+        if (portfolios.length === 0) return;
+        try {
+            if (localStorage.getItem(GROUP_RATIO_MIGRATION_KEY)) return;
+        } catch {
+            // Storage unavailable: run the migration, it is idempotent in effect.
+        }
+
+        const { groups } = buildPortfolioTree(portfolios);
+        const settings = normalizeAssetAllocationSettings(storedAssetAllocationSettings);
+        const sharesByPortfolio = new Map<string, number>();
+        const nextTargets = { ...settings.portfolioTargets };
+        let changedTargets = false;
+
+        groups.forEach(group => {
+            // Somebody has already set a ratio here: their choice wins.
+            if (group.members.some(m => m.groupSharePercent !== undefined)) return;
+
+            const covered = group.members
+                .map(m => ({ member: m, cfg: settings.portfolioTargets[m.id] }))
+                .filter(({ cfg }) =>
+                    cfg && (cfg.mode === 'percent' || cfg.mode === 'fixed' || cfg.mode === 'ratio'));
+            if (covered.length < 2) return;
+
+            // The old targets were only ever used relatively inside a group, so
+            // their raw values are exactly the weights to normalize.
+            const basisTotal = covered.reduce((sum, { cfg }) => sum + Math.max(0, cfg!.value), 0);
+            if (basisTotal <= 0) return;
+
+            covered.forEach(({ member, cfg }) => {
+                const share = (Math.max(0, cfg!.value) / basisTotal) * 100;
+                sharesByPortfolio.set(member.id, Math.round(share * 10) / 10);
+            });
+
+            // Fold the members' targets into one for the group. A ratio-group
+            // membership is the most specific statement, so it wins; failing
+            // that a percentage, and only then a plain euro amount.
+            const groupKey = `${MERGED_PORTFOLIO_PREFIX}${group.parent.id}`;
+            const ratioMember = covered.find(({ cfg }) => cfg!.mode === 'ratio');
+            const sumOf = (mode: PortfolioTargetConfig['mode']) =>
+                covered
+                    .filter(({ cfg }) => cfg!.mode === mode)
+                    .reduce((sum, { cfg }) => sum + Math.max(0, cfg!.value), 0);
+
+            if (ratioMember) {
+                nextTargets[groupKey] = {
+                    mode: 'ratio',
+                    value: sumOf('ratio'),
+                    ratioGroupId: ratioMember.cfg!.ratioGroupId,
+                };
+            } else if (covered.some(({ cfg }) => cfg!.mode === 'percent')) {
+                nextTargets[groupKey] = { mode: 'percent', value: sumOf('percent') };
+            } else {
+                nextTargets[groupKey] = { mode: 'fixed', value: sumOf('fixed') };
+            }
+
+            group.members.forEach(m => { delete nextTargets[m.id]; });
+            changedTargets = true;
+        });
+
+        if (sharesByPortfolio.size > 0) {
+            setPortfolios(prev => prev.map(p => (
+                sharesByPortfolio.has(p.id)
+                    ? { ...p, groupSharePercent: sharesByPortfolio.get(p.id) }
+                    : p
+            )));
+        }
+        if (changedTargets) {
+            setStoredAssetAllocationSettings({ ...settings, portfolioTargets: nextTargets });
+        }
+        try {
+            localStorage.setItem(GROUP_RATIO_MIGRATION_KEY, '1');
+        } catch {
+            // ignore
+        }
+        // Runs on the first render that has portfolios; the storage flag stops
+        // it ever running twice.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [portfolios.length]);
+
+    /**
+     * Drop group targets whose group no longer exists, and member targets that
+     * a re-parenting has just brought inside one.
+     *
+     * Both would otherwise be invisible and still counted: the Global
+     * Rebalancing table only renders rows for the groups and standalones that
+     * exist today, so a stale key is a target nobody can see or clear.
+     */
+    useEffect(() => {
+        if (portfolios.length === 0) return;
+        const { groups } = buildPortfolioTree(portfolios);
+        const liveGroupKeys = new Set(groups.map(g => `${MERGED_PORTFOLIO_PREFIX}${g.parent.id}`));
+        const groupedMemberIds = new Set(groups.flatMap(g => g.members.map(m => m.id)));
+
+        setStoredAssetAllocationSettings(prev => {
+            const normalized = normalizeAssetAllocationSettings(prev);
+            const nextTargets: Record<string, PortfolioTargetConfig> = {};
+            let dropped = false;
+            Object.entries(normalized.portfolioTargets).forEach(([id, cfg]) => {
+                const stale = isMergedPortfolioId(id)
+                    ? !liveGroupKeys.has(id)
+                    : groupedMemberIds.has(id);
+                if (stale) { dropped = true; return; }
+                nextTargets[id] = cfg;
+            });
+            return dropped ? { ...normalized, portfolioTargets: nextTargets } : prev;
+        });
+    }, [portfolios, setStoredAssetAllocationSettings]);
 
     // Migrate portfolios to add order field if missing
     useEffect(() => {

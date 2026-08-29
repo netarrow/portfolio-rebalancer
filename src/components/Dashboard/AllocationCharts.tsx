@@ -4,6 +4,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { getAssetGoal } from '../../utils/goalCalculations';
 import { buildGoalDistribution, goalDistributionTotal, type GoalSegment } from '../../utils/goalDistribution';
+import { tintForInherited } from '../../utils/colorTint';
 import type { Asset, Transaction, PriceHistoryMap } from '../../types';
 import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
@@ -424,6 +425,37 @@ const GroupHeaderBar: React.FC<{ aggregate: GroupAggregate }> = ({ aggregate }) 
  * Relocation what-if can render the very same bar for the before and after
  * states instead of growing a second look-alike chart.
  */
+/**
+ * A goal level whose value is partly on loan renders as a hard-stopped
+ * gradient: its own colour up to `nativeValue`, then one tint per lending goal.
+ * A level with nothing inherited returns undefined and keeps its flat fill.
+ */
+const goalSegmentGradient = (goal: GoalSegment): string | undefined => {
+    if (goal.inherited.length === 0 || goal.value <= 0) return undefined;
+    const stops: string[] = [];
+    let cursor = (Math.max(0, goal.nativeValue) / goal.value) * 100;
+    stops.push(`${goal.color} 0%`, `${goal.color} ${cursor}%`);
+    goal.inherited.forEach((h, i) => {
+        const end = i === goal.inherited.length - 1
+            ? 100
+            : cursor + (h.value / goal.value) * 100;
+        stops.push(`${h.color} ${cursor}%`, `${h.color} ${end}%`);
+        cursor = end;
+    });
+    return `linear-gradient(90deg, ${stops.join(', ')})`;
+};
+
+/** Native/borrowed split as a hover title, for the segments too narrow to label. */
+const goalSegmentTitle = (goal: GoalSegment): string | undefined => {
+    if (goal.inherited.length === 0) return undefined;
+    const eur = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
+    return [
+        `${goal.name}: ${eur(goal.value)}`,
+        `  attached to this goal: ${eur(goal.nativeValue)}`,
+        ...goal.inherited.map(h => `  merged from ${h.fromGoalTitle}: ${eur(h.value)}`),
+    ].join('\n');
+};
+
 export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number; title?: string }> = ({ data, total, title = 'Goal Distribution' }) => {
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const hoveredGoal = data.find(g => g.id === hoveredId);
@@ -450,9 +482,14 @@ export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: numbe
                                 key={goal.id}
                                 onMouseEnter={() => setHoveredId(goal.id)}
                                 onMouseLeave={() => setHoveredId(null)}
+                                title={goalSegmentTitle(goal)}
                                 style={{
                                     width: `${pct}%`,
                                     backgroundColor: goal.color,
+                                    // Value merged in from another goal keeps this level's hue in a
+                                    // lighter tint, split off by a hard stop: you can see the level is
+                                    // partly on loan without it reading as a different goal.
+                                    backgroundImage: goalSegmentGradient(goal),
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'center',
@@ -488,6 +525,29 @@ export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: numbe
                             <div style={{ fontWeight: 600, marginBottom: '0.4rem', color: 'var(--text-primary)' }}>
                                 Total: €{hoveredGoal.value.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
                             </div>
+                            {hoveredGoal.inherited.length > 0 && (
+                                <div style={{ marginBottom: '0.5rem', paddingBottom: '0.4rem', borderBottom: '1px solid var(--border-color)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', color: 'var(--text-secondary)' }}>
+                                        <span>
+                                            <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, backgroundColor: hoveredGoal.color, marginRight: 6 }} />
+                                            Attached to this goal
+                                        </span>
+                                        <span>€{hoveredGoal.nativeValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>
+                                    </div>
+                                    {hoveredGoal.inherited.map(h => (
+                                        <div key={h.fromGoalId} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', color: 'var(--text-secondary)' }}>
+                                            <span>
+                                                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, backgroundColor: h.color, marginRight: 6 }} />
+                                                Merged from {h.fromGoalTitle}
+                                                {h.portfolioNames.length > 0 && (
+                                                    <span style={{ color: 'var(--text-muted)' }}> ({h.portfolioNames.join(', ')})</span>
+                                                )}
+                                            </span>
+                                            <span>€{h.value.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                             {hoveredGoal.breakdown.map(b => (
                                 <div key={b.label} style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', color: 'var(--text-secondary)' }}>
                                     <span>{b.label}</span>
@@ -508,6 +568,16 @@ export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: numbe
                         </div>
                     ))}
                 </div>
+
+                {/* Why some levels are two-tone. Only shown when one actually is. */}
+                {visible.some(g => g.inherited.length > 0) && (
+                    <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                        <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, backgroundColor: tintForInherited('#9CA3AF'), marginRight: 6, verticalAlign: 'middle' }} />
+                        The lighter part of a level is value merged in from a portfolio attached to
+                        another goal, because its parent/child group counts as one portfolio. It sits
+                        here, but it belongs there — hover a level for the split. Totals are unchanged.
+                    </div>
+                )}
             </div>
         </div>
     );

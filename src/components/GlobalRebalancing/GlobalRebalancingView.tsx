@@ -16,6 +16,8 @@ import type {
 } from '../../types';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
+import { buildMergedPortfolioView } from '../../utils/mergedPortfolioView';
+import { GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -130,13 +132,49 @@ const GlobalRebalancingView: React.FC = () => {
         deleteRatioGroup
     } = usePortfolio();
 
+    /**
+     * The world with every parent/child group collapsed into one portfolio.
+     *
+     * This page decides how big each bucket of wealth should be, and a group is
+     * ONE bucket: its internal split is the ratio set on the Portfolios page.
+     * So the engine is fed the merged view rather than the raw list — a
+     * substitution, so the members are gone from the input rather than sitting
+     * alongside their group, which is what would double the eligible total.
+     */
+    const mergedView = useMemo(
+        () => buildMergedPortfolioView({ portfolios, transactions, brokers, assetSettings, marketData }),
+        [portfolios, transactions, brokers, assetSettings, marketData]
+    );
+
+    /** Members of a group row, with their share and current value, for display only. */
+    const memberRowsByGroup = useMemo(() => {
+        const byId = new Map(portfolios.map(p => [p.id, p]));
+        const out: Record<string, { portfolioId: string; name: string; share: number; currentValue: number }[]> = {};
+        mergedView.groups.forEach(group => {
+            const shareById = new Map(group.members.map(m => [m.portfolioId, m.share]));
+            out[group.id] = group.memberIds.map(id => {
+                const txs = transactions.filter(t => t.portfolioId === id);
+                const { summary } = calculateAssets(txs, assetSettings, marketData);
+                return {
+                    portfolioId: id,
+                    name: byId.get(id)?.name ?? id,
+                    share: shareById.get(id) ?? 0,
+                    // Invested assets only, matching the group row above it, so
+                    // the sub-rows add up to their parent exactly.
+                    currentValue: summary.totalValue,
+                };
+            });
+        });
+        return out;
+    }, [mergedView.groups, portfolios, transactions, assetSettings, marketData]);
+
     // Compute each portfolio's current state.
     // Asset Allocation only counts the value of invested assets — non-invested
     // portfolio cash (p.liquidity) is deliberately excluded, so e.g. a portfolio
     // holding only parked cash contributes €0 to the allocation.
     const portfolioInputs = useMemo<AssetAllocationPortfolioInput[]>(() => {
-        return portfolios.map((p) => {
-            const txs = transactions.filter((t) => t.portfolioId === p.id);
+        return mergedView.portfolios.map((p) => {
+            const txs = mergedView.transactions.filter((t) => t.portfolioId === p.id);
             const { summary } = calculateAssets(txs, assetSettings, marketData);
             const liquidity = Number.isFinite(p.liquidity) ? p.liquidity || 0 : 0;
             return {
@@ -148,7 +186,7 @@ const GlobalRebalancingView: React.FC = () => {
                 currentTotalValue: summary.totalValue
             };
         });
-    }, [assetSettings, marketData, portfolios, transactions]);
+    }, [assetSettings, marketData, mergedView]);
 
     const brokerLiquidity = useMemo(
         () => brokers.reduce((s, b) => s + (Number.isFinite(b.currentLiquidity) ? b.currentLiquidity || 0 : 0), 0),
@@ -172,10 +210,10 @@ const GlobalRebalancingView: React.FC = () => {
         for (const pResult of result.portfolios) {
             if (pResult.mode === 'excluded') continue;
 
-            const portfolio = portfolios.find(p => p.id === pResult.portfolioId);
+            const portfolio = mergedView.portfolios.find(p => p.id === pResult.portfolioId);
             if (!portfolio) continue;
 
-            const pTxs = transactions.filter(t => t.portfolioId === pResult.portfolioId);
+            const pTxs = mergedView.transactions.filter(t => t.portfolioId === pResult.portfolioId);
             const { assets } = calculateAssets(pTxs, assetSettings, marketData);
 
             const classValues: Record<string, number> = {};
@@ -218,7 +256,7 @@ const GlobalRebalancingView: React.FC = () => {
             .filter(([, v]) => v > 0)
             .map(([name, value]) => ({ name, value, percent: value / total, color: CLASS_COLORS[name] ?? DEFAULT_CLASS_COLOR }))
             .sort((a, b) => b.value - a.value);
-    }, [result.portfolios, portfolios, transactions, assetSettings, marketData, brokerLiquidity, assetAllocationSettings.liquidityTarget]);
+    }, [result.portfolios, mergedView, assetSettings, marketData, brokerLiquidity, assetAllocationSettings.liquidityTarget]);
 
     const [projectedIncludeCash, setProjectedIncludeCash] = useState(true);
     const projectedChartData = useMemo(() => {
@@ -441,7 +479,7 @@ const GlobalRebalancingView: React.FC = () => {
                     <div className="aa-metric">
                         <span className="aa-metric-label">Configured portfolios</span>
                         <strong>
-                            {Object.keys(assetAllocationSettings.portfolioTargets).length} / {portfolios.length}
+                            {mergedView.portfolios.filter(p => assetAllocationSettings.portfolioTargets[p.id]).length} / {mergedView.portfolios.length}
                         </strong>
                     </div>
                 </div>
@@ -596,7 +634,10 @@ const GlobalRebalancingView: React.FC = () => {
             <section className="aa-card">
                 <div className="aa-section-head">
                     <h3>Portfolio Targets</h3>
-                    <span className="aa-muted">{portfolios.length} portfolios</span>
+                    <span className="aa-muted">
+                        {mergedView.portfolios.length} rows
+                        {mergedView.groups.length > 0 && ` · ${mergedView.groups.length} parent/child group${mergedView.groups.length === 1 ? '' : 's'} counted as one`}
+                    </span>
                 </div>
                 <div className="aa-table-scroll">
                     <table className="aa-table">
@@ -618,15 +659,22 @@ const GlobalRebalancingView: React.FC = () => {
                                 const cfg = assetAllocationSettings.portfolioTargets[row.portfolioId];
                                 const mode = cfg?.mode ?? 'excluded';
                                 const muted = mode === 'excluded';
+                                const memberRows = memberRowsByGroup[row.portfolioId];
                                 const valueDisabled = mode === 'excluded' || mode === 'locked';
                                 const unitLabel =
                                     mode === 'fixed' ? '€' : mode === 'percent' ? '%' : mode === 'ratio' ? 'w' : '—';
                                 const displayValue =
                                     cfg && !valueDisabled ? String(cfg.value) : '';
                                 return (
-                                    <tr key={row.portfolioId} className={muted ? 'muted' : ''}>
+                                    <React.Fragment key={row.portfolioId}>
+                                    <tr className={muted ? 'muted' : ''}>
                                         <td className="td-name">
                                             <strong>{row.name}</strong>
+                                            {memberRows && (
+                                                <span className="aa-group-badge" title="Parent/child group, counted as one portfolio. Its internal split is the ratio set on the Portfolios page.">
+                                                    ⬡ group of {memberRows.length}
+                                                </span>
+                                            )}
                                         </td>
                                         <td>
                                             <select
@@ -701,6 +749,48 @@ const GlobalRebalancingView: React.FC = () => {
                                             {muted ? '—' : formatSignedCurrency(row.delta)}
                                         </td>
                                     </tr>
+                                    {/* Read-only split of a group row across its members. The
+                                        target is set once on the group; how it is shared out is
+                                        the ratio configured on the Portfolios page, so these
+                                        rows are derived and never editable here. */}
+                                    {memberRows && memberRows.map((member, mi) => (
+                                        <tr key={member.portfolioId} className={`aa-member-row${muted ? ' muted' : ''}`}>
+                                            <td className="td-name">
+                                                <span
+                                                    className="aa-member-dot"
+                                                    style={{ backgroundColor: GROUP_MEMBER_COLORS[mi % GROUP_MEMBER_COLORS.length] }}
+                                                />
+                                                {member.name}
+                                            </td>
+                                            <td className="aa-muted">via group ratio</td>
+                                            <td className="aa-muted">{formatPercent(member.share * 100)}</td>
+                                            <td className="aa-muted">—</td>
+                                            <td>{formatCurrency(member.currentValue)}</td>
+                                            <td className="aa-muted">
+                                                {row.currentValue > 0
+                                                    ? formatPercent((member.currentValue / row.currentValue) * 100)
+                                                    : '—'}
+                                            </td>
+                                            <td>{muted ? '—' : formatCurrency(row.targetValue * member.share)}</td>
+                                            <td className="aa-muted">
+                                                {muted ? '—' : formatPercent(row.targetWeight * member.share)}
+                                            </td>
+                                            <td
+                                                className={
+                                                    muted
+                                                        ? ''
+                                                        : Math.abs(row.targetValue * member.share - member.currentValue) < 0.01
+                                                        ? ''
+                                                        : row.targetValue * member.share > member.currentValue
+                                                        ? 'ok'
+                                                        : 'warn'
+                                                }
+                                            >
+                                                {muted ? '—' : formatSignedCurrency(row.targetValue * member.share - member.currentValue)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    </React.Fragment>
                                 );
                             })}
                         </tbody>
@@ -715,6 +805,7 @@ const GlobalRebalancingView: React.FC = () => {
                             row={row}
                             cfg={assetAllocationSettings.portfolioTargets[row.portfolioId]}
                             ratioGroups={assetAllocationSettings.ratioGroups}
+                            memberRows={memberRowsByGroup[row.portfolioId]}
                             onChangeMode={handleChangePortfolioMode}
                             onChangeValue={handleChangePortfolioValue}
                             onChangeRatioGroup={handleChangePortfolioRatioGroup}
@@ -1024,6 +1115,43 @@ const GlobalRebalancingView: React.FC = () => {
                 .aa-table th:first-child,
                 .aa-table td:first-child { text-align: left; }
                 .aa-table tr.muted { opacity: 0.5; }
+
+                /* Read-only split of a group row across its members. Indented and
+                   quieter than the row above so it reads as a consequence of it,
+                   never as another configurable bucket. */
+                .aa-member-row td {
+                    font-size: 0.8rem;
+                    color: var(--text-secondary);
+                    border-top: none;
+                    padding-top: var(--space-1);
+                    padding-bottom: var(--space-1);
+                }
+                .aa-member-row td:first-child { padding-left: var(--space-6); }
+                .aa-member-dot {
+                    display: inline-block;
+                    width: 8px; height: 8px;
+                    border-radius: 50%;
+                    margin-right: var(--space-2);
+                    flex-shrink: 0;
+                }
+                .aa-group-badge {
+                    margin-left: var(--space-2);
+                    font-size: 0.7rem;
+                    font-weight: 500;
+                    color: var(--text-muted);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-full);
+                    padding: 1px 7px;
+                    white-space: nowrap;
+                }
+                .aa-member-line {
+                    display: flex;
+                    align-items: center;
+                    gap: var(--space-2);
+                    font-size: 0.8rem;
+                    padding: 2px 0;
+                }
+                .aa-member-line-name { flex: 1; min-width: 0; color: var(--text-secondary); }
                 .aa-value-cell {
                     display: inline-flex;
                     align-items: center;
@@ -1222,13 +1350,15 @@ interface PortfolioTargetMobileRowProps {
     };
     cfg?: PortfolioTargetConfig;
     ratioGroups: RatioGroupConfig[];
+    /** Set when the row is a parent/child group: its read-only member split. */
+    memberRows?: { portfolioId: string; name: string; share: number; currentValue: number }[];
     onChangeMode: (portfolioId: string, mode: PortfolioTargetMode) => void;
     onChangeValue: (portfolioId: string, value: string) => void;
     onChangeRatioGroup: (portfolioId: string, ratioGroupId: string) => void;
 }
 
 const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
-    row, cfg, ratioGroups, onChangeMode, onChangeValue, onChangeRatioGroup,
+    row, cfg, ratioGroups, memberRows, onChangeMode, onChangeValue, onChangeRatioGroup,
 }) => {
     const [expanded, setExpanded] = useState(false);
     const mode = cfg?.mode ?? 'excluded';
@@ -1245,6 +1375,9 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                 <div className="mrow-main">
                     <div className="mrow-line1">
                         <span className="mrow-title">{row.name}</span>
+                        {memberRows && (
+                            <span className="aa-group-badge">⬡ group of {memberRows.length}</span>
+                        )}
                     </div>
                     <div className="mrow-line2">
                         <span>{modeLabels[mode]}</span>
@@ -1320,6 +1453,24 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                         <span className="mrow-label">Target %</span>
                         <span className="mrow-value">{muted ? '—' : formatPercent(row.targetWeight)}</span>
                     </div>
+                    {memberRows && (
+                        <div className="mrow-detail mrow-detail--wide">
+                            <span className="mrow-label">Group ratio (set on the Portfolios page)</span>
+                            {memberRows.map((member, mi) => (
+                                <span key={member.portfolioId} className="aa-member-line">
+                                    <span
+                                        className="aa-member-dot"
+                                        style={{ backgroundColor: GROUP_MEMBER_COLORS[mi % GROUP_MEMBER_COLORS.length] }}
+                                    />
+                                    <span className="aa-member-line-name">{member.name}</span>
+                                    <span className="aa-muted">{formatPercent(member.share * 100)}</span>
+                                    <span className="mrow-value">
+                                        {muted ? '—' : formatCurrency(row.targetValue * member.share)}
+                                    </span>
+                                </span>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
         </div>

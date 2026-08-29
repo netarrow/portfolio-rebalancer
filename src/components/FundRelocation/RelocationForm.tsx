@@ -9,21 +9,31 @@ import { isCashTicker } from '../../utils/portfolioCalculations';
  * what lets one screen express a divestment, an investment and a swap.
  */
 
+/** A parent/child group offered as one endpoint, next to the real portfolios. */
+export interface GroupOption {
+    id: string;
+    name: string;
+    /** "Core + Satellite", for the caption under the picker. */
+    memberNames: string;
+}
+
 interface EndpointPickerProps {
     title: string;
     side: 'from' | 'to';
     value: RelocationEndpoint;
     onChange: (endpoint: RelocationEndpoint) => void;
     portfolios: Portfolio[];
+    groups: GroupOption[];
     brokers: Broker[];
-    /** Holdings of the currently selected portfolio, for the asset dropdown. */
+    /** Holdings of the currently selected portfolio or group, for the asset dropdown. */
     assets: Asset[];
 }
 
 const EndpointPicker: React.FC<EndpointPickerProps> = ({
-    title, side, value, onChange, portfolios, brokers, assets,
+    title, side, value, onChange, portfolios, groups, brokers, assets,
 }) => {
     const isPortfolio = value.kind === 'portfolio';
+    const selectedGroup = isPortfolio ? groups.find(g => g.id === value.portfolioId) : undefined;
 
     const selectPortfolio = () => {
         if (isPortfolio) return;
@@ -43,14 +53,29 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
             .map(a => ({ ticker: a.ticker, label: a.label }));
         if (side === 'from') return held;
 
-        const portfolio = isPortfolio ? portfolios.find(p => p.id === value.portfolioId) : undefined;
+        // A group has no stored allocations of its own, so its buy-side targets
+        // are the union of its members'.
+        const sources: Portfolio[] = isPortfolio
+            ? (groups.some(g => g.id === value.portfolioId)
+                ? portfolios
+                : portfolios.filter(p => p.id === value.portfolioId))
+            : [];
         const heldTickers = new Set(held.map(h => h.ticker.toUpperCase()));
-        const targets = Object.keys(portfolio?.allocations || {})
-            .filter(k => !heldTickers.has(k.toUpperCase()))
-            .filter(k => !(portfolio?.allocationGroups || []).some(g => g.id === k))
-            .map(ticker => ({ ticker, label: undefined }));
+        const seen = new Set<string>();
+        const targets = sources.flatMap(portfolio =>
+            Object.keys(portfolio.allocations || {})
+                .filter(k => !heldTickers.has(k.toUpperCase()))
+                .filter(k => !(portfolio.allocationGroups || []).some(g => g.id === k))
+                .filter(k => {
+                    const key = k.toUpperCase();
+                    if (seen.has(key)) return false;
+                    seen.add(key);
+                    return true;
+                })
+                .map(ticker => ({ ticker, label: undefined }))
+        );
         return [...held, ...targets];
-    }, [assets, side, isPortfolio, portfolios, value]);
+    }, [assets, side, isPortfolio, portfolios, groups, value]);
 
     return (
         <div className="reloc-endpoint">
@@ -82,10 +107,32 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
                             value={value.portfolioId}
                             onChange={e => onChange({ kind: 'portfolio', portfolioId: e.target.value })}
                         >
-                            {portfolios.map(p => (
-                                <option key={p.id} value={p.id}>{p.name}</option>
-                            ))}
+                            {groups.length > 0 && (
+                                <optgroup label="Groups (parent + children as one)">
+                                    {groups.map(g => (
+                                        <option key={g.id} value={g.id}>{g.name}</option>
+                                    ))}
+                                </optgroup>
+                            )}
+                            {groups.length > 0 ? (
+                                <optgroup label="Single portfolios">
+                                    {portfolios.map(p => (
+                                        <option key={p.id} value={p.id}>{p.name}</option>
+                                    ))}
+                                </optgroup>
+                            ) : (
+                                portfolios.map(p => (
+                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                ))
+                            )}
                         </select>
+                        {selectedGroup && (
+                            <span className="reloc-hint">
+                                {selectedGroup.memberNames} — the move is carried out on the members,
+                                {side === 'from' ? ' taken from' : ' delivered to'} whichever is furthest
+                                from the group ratio.
+                            </span>
+                        )}
                     </div>
 
                     <div className="reloc-field">
@@ -148,6 +195,8 @@ interface RelocationFormProps {
     onNetAmountChange: (amount: number) => void;
     onFreeBuyPromoChange: (enabled: boolean) => void;
     portfolios: Portfolio[];
+    /** Parent/child groups, offered as single endpoints alongside the portfolios. */
+    groups: GroupOption[];
     brokers: Broker[];
     sourceAssets: Asset[];
     destAssets: Asset[];
@@ -161,7 +210,7 @@ interface RelocationFormProps {
 const RelocationForm: React.FC<RelocationFormProps> = ({
     from, to, netAmount, applyFreeBuyPromo,
     onFromChange, onToChange, onNetAmountChange, onFreeBuyPromoChange,
-    portfolios, brokers, sourceAssets, destAssets,
+    portfolios, groups, brokers, sourceAssets, destAssets,
     queuedCount, onAddToSequence, canAddToSequence,
 }) => (
     <div className="reloc-card">
@@ -178,6 +227,7 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
                 value={from}
                 onChange={onFromChange}
                 portfolios={portfolios}
+                groups={groups}
                 brokers={brokers}
                 assets={sourceAssets}
             />
@@ -188,6 +238,7 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
                 value={to}
                 onChange={onToChange}
                 portfolios={portfolios}
+                groups={groups}
                 brokers={brokers}
                 assets={destAssets}
             />
