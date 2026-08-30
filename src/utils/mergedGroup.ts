@@ -21,7 +21,6 @@
 import type { AllocationGroup, AllocationMemberRule, Broker, Portfolio, Transaction } from '../types';
 import { isGroupKey } from './portfolioCalculations';
 import { resolveGroups } from './allocationGroups';
-import type { GroupRebalancePlan } from './groupRebalance';
 
 /** Prefix of the synthetic portfolio id. Distinct from _GRP_ and _CASH_. */
 export const MERGED_PORTFOLIO_PREFIX = '_MERGED_';
@@ -55,7 +54,7 @@ export interface MergedGroup {
     brokers: Broker[];
     members: MergedMemberRatio[];
     /** Where the parent/child ratio came from. */
-    ratioSource: 'global' | 'value';
+    ratioSource: RatioSource;
     /** unit key (standalone ticker or groupId) -> owning portfolioId. */
     ownerByUnit: Record<string, string>;
 }
@@ -63,17 +62,43 @@ export interface MergedGroup {
 const roundPct = (v: number): number => Math.round(v * 1e6) / 1e6;
 
 /**
+ * 'config' = at least one member carries a `groupSharePercent` set on the
+ * Portfolios page; 'value' = nobody does, so the group is split by what the
+ * members are worth today.
+ */
+export type RatioSource = 'config' | 'value';
+
+/**
+ * The ratio configured on the Portfolios page: portfolioId -> share %, keeping
+ * only the members that actually carry one. A share of 0 is a real answer
+ * ("plan this member down to nothing") and is kept; a missing, negative or
+ * non-finite one is not a configuration at all and is left out, so the member
+ * falls back to its current share of the group's value.
+ */
+export const configuredShares = (portfolios: Portfolio[]): Record<string, number> => {
+    const out: Record<string, number> = {};
+    portfolios.forEach(p => {
+        const share = p.groupSharePercent;
+        if (typeof share === 'number' && Number.isFinite(share) && share >= 0) {
+            out[p.id] = share;
+        }
+    });
+    return out;
+};
+
+/**
  * Parent/child shares for the merge.
  *
- * Members covered by the Global Rebalancing plan are split by its target
- * shares; members without an active target keep their current share of the
- * group, and the covered block keeps its own current share as a whole. That
- * way an unconfigured member is neither dropped nor silently re-sized.
+ * Members with a share configured on the Portfolios page are split by it;
+ * members without one keep their current share of the group, and the
+ * configured block keeps its own current share as a whole. That way a member
+ * added to the group later is neither dropped nor silently re-sized until
+ * somebody actually gives it a share.
  */
 export const mergedRatio = (
     members: MemberValue[],
-    plan: GroupRebalancePlan | null,
-): { members: MergedMemberRatio[]; ratioSource: 'global' | 'value' } => {
+    shares: Record<string, number>,
+): { members: MergedMemberRatio[]; ratioSource: RatioSource } => {
     const equal = (): MergedMemberRatio[] =>
         members.map(m => ({
             portfolioId: m.portfolio.id,
@@ -81,37 +106,67 @@ export const mergedRatio = (
             share: members.length > 0 ? 1 / members.length : 0,
         }));
 
+    // Only shares belonging to THIS group count: a stale entry for a portfolio
+    // that has since been re-parented must not steer somebody else's ratio.
+    const memberIds = new Set(members.map(m => m.portfolio.id));
+    const configured = new Map(
+        Object.entries(shares).filter(([id]) => memberIds.has(id))
+    );
+    const configuredTotal = Array.from(configured.values()).reduce((s, v) => s + v, 0);
+    // Shares that sum to nothing carry no proportion at all — treat them as
+    // absent rather than dividing by zero further down.
+    const hasConfig = configured.size > 0 && configuredTotal > 0;
+    const ratioSource: RatioSource = hasConfig ? 'config' : 'value';
+
     const groupTotal = members.reduce((s, m) => s + Math.max(0, m.totalValue), 0);
     if (members.length === 0) return { members: [], ratioSource: 'value' };
-    if (groupTotal <= 0) return { members: equal(), ratioSource: plan ? 'global' : 'value' };
+    if (groupTotal <= 0) {
+        if (!hasConfig) return { members: equal(), ratioSource };
+        // Nothing invested yet: the configured shares ARE the answer, and the
+        // unconfigured members have no value to claim a share with.
+        return {
+            members: members.map(m => ({
+                portfolioId: m.portfolio.id,
+                name: m.portfolio.name,
+                share: (configured.get(m.portfolio.id) ?? 0) / configuredTotal,
+            })),
+            ratioSource,
+        };
+    }
+    if (!hasConfig) {
+        return {
+            members: members.map(m => ({
+                portfolioId: m.portfolio.id,
+                name: m.portfolio.name,
+                share: Math.max(0, m.totalValue) / groupTotal,
+            })),
+            ratioSource,
+        };
+    }
 
-    const targetShareById = new Map(
-        (plan?.members ?? []).map(m => [m.portfolioId, m.targetShare])
-    );
+    // The configured members share out the slice of the group they hold today;
+    // the rest keep their own slice untouched.
     const coveredValue = members
-        .filter(m => targetShareById.has(m.portfolio.id))
+        .filter(m => configured.has(m.portfolio.id))
         .reduce((s, m) => s + Math.max(0, m.totalValue), 0);
     const coveredWeight = coveredValue / groupTotal;
 
     const raw = members.map(m => {
-        const targetShare = targetShareById.get(m.portfolio.id);
-        const share = targetShare !== undefined
-            ? coveredWeight * (targetShare / 100)
+        const configuredShare = configured.get(m.portfolio.id);
+        const share = configuredShare !== undefined
+            ? coveredWeight * (configuredShare / configuredTotal)
             : Math.max(0, m.totalValue) / groupTotal;
         return { portfolioId: m.portfolio.id, name: m.portfolio.name, share };
     });
 
-    // Renormalize: a covered member worth 0 contributes nothing to
+    // Renormalize: a configured member worth 0 contributes nothing to
     // coveredWeight, so the raw shares can fall short of 1.
     const sum = raw.reduce((s, r) => s + r.share, 0);
     const normalized = sum > 0
         ? raw.map(r => ({ ...r, share: r.share / sum }))
         : equal();
 
-    return {
-        members: normalized,
-        ratioSource: targetShareById.size > 0 ? 'global' : 'value',
-    };
+    return { members: normalized, ratioSource };
 };
 
 /**
@@ -184,7 +239,7 @@ export interface BuildMergedGroupParams {
     /** Parent first, then the children — the order decides who wins a clash. */
     members: MemberValue[];
     ratio: MergedMemberRatio[];
-    ratioSource: 'global' | 'value';
+    ratioSource: RatioSource;
     /** All transactions; only the members' own are taken. */
     transactions: Transaction[];
     brokers: Broker[];

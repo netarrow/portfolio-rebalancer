@@ -128,6 +128,12 @@ export interface Portfolio {
   preferredBrokerId?: string;
   goalId?: string;
   parentId?: string; // ID of parent portfolio for nested Core/Satellite grouping
+  // Share of the parent/child group this portfolio belongs to, 0-100. Set on
+  // the parent AND on each child from the Portfolios page, where the group's
+  // ratio is edited as a whole. Absent = "no ratio configured for this member":
+  // it keeps its current share of the group's value, so a member added later is
+  // never silently planned down to zero. Meaningless on a standalone portfolio.
+  groupSharePercent?: number;
   order: number; // Display order (lower = left)
 }
 
@@ -135,13 +141,15 @@ export type PortfolioTargetMode =
   | 'excluded'   // Not counted in total, no target
   | 'locked'     // Counts in total, target = current value (does not move)
   | 'fixed'      // Target = fixed EUR amount
-  | 'percent'    // Target = X% of eligible total
-  | 'ratio';     // Part of a ratio group (share a group budget by relative weight)
+  | 'percent';   // Target = X% of eligible total
 
+// A row here is a bucket of wealth: a standalone portfolio, or a whole
+// parent/child group counted as one. Ratios are NOT set here — how a group
+// divides internally is `Portfolio.groupSharePercent`, edited on the Portfolios
+// page, and this target is simply shared out by it.
 export interface PortfolioTargetConfig {
   mode: PortfolioTargetMode;
-  value: number;          // fixed: EUR | percent: 0-100 | ratio: relative weight | excluded/locked: ignored
-  ratioGroupId?: string;  // required only for mode === 'ratio'
+  value: number;          // fixed: EUR | percent: 0-100 | excluded/locked: ignored
 }
 
 export type LiquidityTargetMode = 'fixed' | 'percent';
@@ -151,19 +159,9 @@ export interface LiquidityTargetConfig {
   value: number; // EUR if fixed, 0-100 if percent
 }
 
-export type RatioGroupTargetMode = 'fixed' | 'percent' | 'remainder';
-
-export interface RatioGroupConfig {
-  id: string;
-  name: string;
-  groupTargetMode: RatioGroupTargetMode;
-  groupTargetValue: number; // fixed: EUR | percent: 0-100 | remainder: ignored
-}
-
 export interface AssetAllocationSettings {
   liquidityTarget?: LiquidityTargetConfig;
   portfolioTargets: Record<string, PortfolioTargetConfig>;
-  ratioGroups: RatioGroupConfig[];
 }
 
 // Free-buy promo list: ISINs whose BUY commission is waived by a specific

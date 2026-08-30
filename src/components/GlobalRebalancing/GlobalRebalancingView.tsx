@@ -10,12 +10,12 @@ import {
 import type {
     LiquidityTargetConfig,
     PortfolioTargetConfig,
-    PortfolioTargetMode,
-    RatioGroupConfig,
-    RatioGroupTargetMode
+    PortfolioTargetMode
 } from '../../types';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
+import { buildMergedPortfolioView } from '../../utils/mergedPortfolioView';
+import { GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,14 +61,7 @@ const modeLabels: Record<PortfolioTargetMode, string> = {
     excluded: 'Excluded',
     locked: 'Locked at current',
     fixed: 'Fixed EUR',
-    percent: '% of total',
-    ratio: 'Ratio (group)'
-};
-
-const groupModeLabels: Record<RatioGroupTargetMode, string> = {
-    fixed: 'Fixed EUR',
-    percent: '% of total',
-    remainder: 'Remainder'
+    percent: '% of total'
 };
 
 // ---------------------------------------------------------------------------
@@ -125,18 +118,52 @@ const GlobalRebalancingView: React.FC = () => {
         scopedBrokers: brokers,
         assetAllocationSettings,
         updatePortfolioTarget,
-        updateLiquidityTarget,
-        upsertRatioGroup,
-        deleteRatioGroup
+        updateLiquidityTarget
     } = usePortfolio();
+
+    /**
+     * The world with every parent/child group collapsed into one portfolio.
+     *
+     * This page decides how big each bucket of wealth should be, and a group is
+     * ONE bucket: its internal split is the ratio set on the Portfolios page.
+     * So the engine is fed the merged view rather than the raw list — a
+     * substitution, so the members are gone from the input rather than sitting
+     * alongside their group, which is what would double the eligible total.
+     */
+    const mergedView = useMemo(
+        () => buildMergedPortfolioView({ portfolios, transactions, brokers, assetSettings, marketData }),
+        [portfolios, transactions, brokers, assetSettings, marketData]
+    );
+
+    /** Members of a group row, with their share and current value, for display only. */
+    const memberRowsByGroup = useMemo(() => {
+        const byId = new Map(portfolios.map(p => [p.id, p]));
+        const out: Record<string, { portfolioId: string; name: string; share: number; currentValue: number }[]> = {};
+        mergedView.groups.forEach(group => {
+            const shareById = new Map(group.members.map(m => [m.portfolioId, m.share]));
+            out[group.id] = group.memberIds.map(id => {
+                const txs = transactions.filter(t => t.portfolioId === id);
+                const { summary } = calculateAssets(txs, assetSettings, marketData);
+                return {
+                    portfolioId: id,
+                    name: byId.get(id)?.name ?? id,
+                    share: shareById.get(id) ?? 0,
+                    // Invested assets only, matching the group row above it, so
+                    // the sub-rows add up to their parent exactly.
+                    currentValue: summary.totalValue,
+                };
+            });
+        });
+        return out;
+    }, [mergedView.groups, portfolios, transactions, assetSettings, marketData]);
 
     // Compute each portfolio's current state.
     // Asset Allocation only counts the value of invested assets — non-invested
     // portfolio cash (p.liquidity) is deliberately excluded, so e.g. a portfolio
     // holding only parked cash contributes €0 to the allocation.
     const portfolioInputs = useMemo<AssetAllocationPortfolioInput[]>(() => {
-        return portfolios.map((p) => {
-            const txs = transactions.filter((t) => t.portfolioId === p.id);
+        return mergedView.portfolios.map((p) => {
+            const txs = mergedView.transactions.filter((t) => t.portfolioId === p.id);
             const { summary } = calculateAssets(txs, assetSettings, marketData);
             const liquidity = Number.isFinite(p.liquidity) ? p.liquidity || 0 : 0;
             return {
@@ -148,7 +175,7 @@ const GlobalRebalancingView: React.FC = () => {
                 currentTotalValue: summary.totalValue
             };
         });
-    }, [assetSettings, marketData, portfolios, transactions]);
+    }, [assetSettings, marketData, mergedView]);
 
     const brokerLiquidity = useMemo(
         () => brokers.reduce((s, b) => s + (Number.isFinite(b.currentLiquidity) ? b.currentLiquidity || 0 : 0), 0),
@@ -172,10 +199,10 @@ const GlobalRebalancingView: React.FC = () => {
         for (const pResult of result.portfolios) {
             if (pResult.mode === 'excluded') continue;
 
-            const portfolio = portfolios.find(p => p.id === pResult.portfolioId);
+            const portfolio = mergedView.portfolios.find(p => p.id === pResult.portfolioId);
             if (!portfolio) continue;
 
-            const pTxs = transactions.filter(t => t.portfolioId === pResult.portfolioId);
+            const pTxs = mergedView.transactions.filter(t => t.portfolioId === pResult.portfolioId);
             const { assets } = calculateAssets(pTxs, assetSettings, marketData);
 
             const classValues: Record<string, number> = {};
@@ -218,7 +245,7 @@ const GlobalRebalancingView: React.FC = () => {
             .filter(([, v]) => v > 0)
             .map(([name, value]) => ({ name, value, percent: value / total, color: CLASS_COLORS[name] ?? DEFAULT_CLASS_COLOR }))
             .sort((a, b) => b.value - a.value);
-    }, [result.portfolios, portfolios, transactions, assetSettings, marketData, brokerLiquidity, assetAllocationSettings.liquidityTarget]);
+    }, [result.portfolios, mergedView, assetSettings, marketData, brokerLiquidity, assetAllocationSettings.liquidityTarget]);
 
     const [projectedIncludeCash, setProjectedIncludeCash] = useState(true);
     const projectedChartData = useMemo(() => {
@@ -269,26 +296,6 @@ const GlobalRebalancingView: React.FC = () => {
             return;
         }
         const existing = assetAllocationSettings.portfolioTargets[portfolioId];
-        if (mode === 'ratio') {
-            const firstGroup = assetAllocationSettings.ratioGroups[0];
-            if (!firstGroup) {
-                Swal.fire({
-                    title: 'No ratio group available',
-                    text: 'Create a ratio group first to assign this portfolio.',
-                    icon: 'info',
-                    confirmButtonColor: '#6366f1',
-                    background: 'var(--bg-surface)',
-                    color: 'var(--text-primary)'
-                });
-                return;
-            }
-            updatePortfolioTarget(portfolioId, {
-                mode: 'ratio',
-                value: existing?.value ?? 1,
-                ratioGroupId: existing?.ratioGroupId ?? firstGroup.id
-            });
-            return;
-        }
         updatePortfolioTarget(portfolioId, {
             mode,
             value: existing && existing.mode === mode ? existing.value : 0
@@ -300,77 +307,6 @@ const GlobalRebalancingView: React.FC = () => {
         if (!existing || existing.mode === 'excluded' || existing.mode === 'locked') return;
         const val = parseNumericInput(rawValue);
         updatePortfolioTarget(portfolioId, { ...existing, value: val });
-    };
-
-    const handleChangePortfolioRatioGroup = (portfolioId: string, groupId: string) => {
-        const existing = assetAllocationSettings.portfolioTargets[portfolioId];
-        if (!existing || existing.mode !== 'ratio') return;
-        updatePortfolioTarget(portfolioId, { ...existing, ratioGroupId: groupId });
-    };
-
-    // --- Ratio group handlers ---
-    const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
-    const [groupDraft, setGroupDraft] = useState<RatioGroupConfig>({
-        id: '',
-        name: '',
-        groupTargetMode: 'remainder',
-        groupTargetValue: 0
-    });
-
-    const startAddGroup = () => {
-        setGroupDraft({
-            id: generateId(),
-            name: '',
-            groupTargetMode: 'remainder',
-            groupTargetValue: 0
-        });
-        setEditingGroupId('__new__');
-    };
-
-    const startEditGroup = (g: RatioGroupConfig) => {
-        setGroupDraft({ ...g });
-        setEditingGroupId(g.id);
-    };
-
-    const cancelEditGroup = () => {
-        setEditingGroupId(null);
-    };
-
-    const saveGroup = () => {
-        if (!groupDraft.name.trim()) {
-            Swal.fire({
-                title: 'Missing name',
-                text: 'Enter a name for the ratio group.',
-                icon: 'warning',
-                confirmButtonColor: '#6366f1',
-                background: 'var(--bg-surface)',
-                color: 'var(--text-primary)'
-            });
-            return;
-        }
-        upsertRatioGroup({
-            ...groupDraft,
-            name: groupDraft.name.trim(),
-            groupTargetValue:
-                groupDraft.groupTargetMode === 'remainder' ? 0 : Math.max(0, groupDraft.groupTargetValue)
-        });
-        setEditingGroupId(null);
-    };
-
-    const handleDeleteGroup = async (g: RatioGroupConfig) => {
-        const confirmation = await Swal.fire({
-            title: `Delete "${g.name}"?`,
-            text: 'Portfolios using this group will be reset to Excluded.',
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Delete',
-            cancelButtonText: 'Cancel',
-            confirmButtonColor: '#ef4444',
-            background: 'var(--bg-surface)',
-            color: 'var(--text-primary)'
-        });
-        if (!confirmation.isConfirmed) return;
-        deleteRatioGroup(g.id);
     };
 
     // --- Empty state ---
@@ -392,14 +328,6 @@ const GlobalRebalancingView: React.FC = () => {
         );
     }
 
-    const existingRemainderGroup = assetAllocationSettings.ratioGroups.find(
-        (g) => g.groupTargetMode === 'remainder'
-    );
-    const editingIsDifferentRemainder =
-        groupDraft.groupTargetMode === 'remainder' &&
-        existingRemainderGroup &&
-        existingRemainderGroup.id !== groupDraft.id;
-
     return (
         <div className="aa-page">
             {/* ============ HERO ============ */}
@@ -407,9 +335,11 @@ const GlobalRebalancingView: React.FC = () => {
                 <div>
                     <h2>Asset Allocation</h2>
                     <p>
-                        Configure high-level targets for each portfolio (fixed in EUR, % of total, locked, excluded
-                        or ratio group). The system calculates the expected distribution, suggests sell/buy actions and signals
-                        whether the configuration is sustainable.
+                        Configure a high-level target for each bucket of wealth — fixed in EUR, % of total,
+                        locked at its current value, or excluded. A parent/child group is one bucket: its
+                        target is set here, and how it divides between parent and children is the ratio on
+                        the Portfolios page. The system calculates the expected distribution, suggests
+                        sell/buy actions and signals whether the configuration is sustainable.
                     </p>
                     <AssetScopeToggles style={{ marginTop: 'var(--space-4)' }} />
                 </div>
@@ -441,7 +371,7 @@ const GlobalRebalancingView: React.FC = () => {
                     <div className="aa-metric">
                         <span className="aa-metric-label">Configured portfolios</span>
                         <strong>
-                            {Object.keys(assetAllocationSettings.portfolioTargets).length} / {portfolios.length}
+                            {mergedView.portfolios.filter(p => assetAllocationSettings.portfolioTargets[p.id]).length} / {mergedView.portfolios.length}
                         </strong>
                     </div>
                 </div>
@@ -525,78 +455,14 @@ const GlobalRebalancingView: React.FC = () => {
                 )}
             </section>
 
-            {/* ============ RATIO GROUPS ============ */}
-            <section className="aa-card">
-                <div className="aa-section-head">
-                    <h3>Ratio Groups</h3>
-                    <button className="btn btn-secondary" onClick={startAddGroup}>
-                        + New group
-                    </button>
-                </div>
-                {assetAllocationSettings.ratioGroups.length === 0 && editingGroupId !== '__new__' && (
-                    <p className="aa-muted">
-                        No ratio group defined. Create a group to assign portfolios in ratio mode (e.g.
-                        "Core/Satellite" with Remainder target).
-                    </p>
-                )}
-                <div className="aa-group-list">
-                    {assetAllocationSettings.ratioGroups.map((g) => {
-                        const isEditing = editingGroupId === g.id;
-                        const resultGroup = result.ratioGroups.find((rg) => rg.id === g.id);
-                        return (
-                            <div key={g.id} className={`aa-group-item ${isEditing ? 'editing' : ''}`}>
-                                {!isEditing ? (
-                                    <>
-                                        <div className="aa-group-info">
-                                            <strong>{g.name}</strong>
-                                            <span className="aa-group-meta">
-                                                {groupModeLabels[g.groupTargetMode]}
-                                                {g.groupTargetMode !== 'remainder' &&
-                                                    ` (${g.groupTargetMode === 'fixed' ? formatCurrency(g.groupTargetValue) : `${g.groupTargetValue}%`})`}
-                                                {resultGroup && ` • Budget: ${formatCurrency(resultGroup.budget)}`}
-                                                {resultGroup && resultGroup.members.length > 0 && ` • ${resultGroup.members.length} membri`}
-                                            </span>
-                                        </div>
-                                        <div className="aa-group-actions">
-                                            <button className="btn-icon" onClick={() => startEditGroup(g)}>
-                                                ✎
-                                            </button>
-                                            <button className="btn-icon danger" onClick={() => handleDeleteGroup(g)}>
-                                                ✕
-                                            </button>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <GroupEditor
-                                        draft={groupDraft}
-                                        setDraft={setGroupDraft}
-                                        onSave={saveGroup}
-                                        onCancel={cancelEditGroup}
-                                        conflictRemainder={!!editingIsDifferentRemainder}
-                                    />
-                                )}
-                            </div>
-                        );
-                    })}
-                    {editingGroupId === '__new__' && (
-                        <div className="aa-group-item editing">
-                            <GroupEditor
-                                draft={groupDraft}
-                                setDraft={setGroupDraft}
-                                onSave={saveGroup}
-                                onCancel={cancelEditGroup}
-                                conflictRemainder={!!editingIsDifferentRemainder}
-                            />
-                        </div>
-                    )}
-                </div>
-            </section>
-
             {/* ============ PORTFOLIO TARGETS TABLE ============ */}
             <section className="aa-card">
                 <div className="aa-section-head">
                     <h3>Portfolio Targets</h3>
-                    <span className="aa-muted">{portfolios.length} portfolios</span>
+                    <span className="aa-muted">
+                        {mergedView.portfolios.length} rows
+                        {mergedView.groups.length > 0 && ` · ${mergedView.groups.length} parent/child group${mergedView.groups.length === 1 ? '' : 's'} counted as one`}
+                    </span>
                 </div>
                 <div className="aa-table-scroll">
                     <table className="aa-table">
@@ -605,7 +471,6 @@ const GlobalRebalancingView: React.FC = () => {
                                 <th>Portfolio</th>
                                 <th>Mode</th>
                                 <th>Value</th>
-                                <th>Ratio Group</th>
                                 <th>Current</th>
                                 <th>Current %</th>
                                 <th>Target</th>
@@ -618,15 +483,22 @@ const GlobalRebalancingView: React.FC = () => {
                                 const cfg = assetAllocationSettings.portfolioTargets[row.portfolioId];
                                 const mode = cfg?.mode ?? 'excluded';
                                 const muted = mode === 'excluded';
+                                const memberRows = memberRowsByGroup[row.portfolioId];
                                 const valueDisabled = mode === 'excluded' || mode === 'locked';
                                 const unitLabel =
-                                    mode === 'fixed' ? '€' : mode === 'percent' ? '%' : mode === 'ratio' ? 'w' : '—';
+                                    mode === 'fixed' ? '€' : mode === 'percent' ? '%' : '—';
                                 const displayValue =
                                     cfg && !valueDisabled ? String(cfg.value) : '';
                                 return (
-                                    <tr key={row.portfolioId} className={muted ? 'muted' : ''}>
+                                    <React.Fragment key={row.portfolioId}>
+                                    <tr className={muted ? 'muted' : ''}>
                                         <td className="td-name">
                                             <strong>{row.name}</strong>
+                                            {memberRows && (
+                                                <span className="aa-group-badge" title="Parent/child group, counted as one portfolio. Its internal split is the ratio set on the Portfolios page.">
+                                                    ⬡ group of {memberRows.length}
+                                                </span>
+                                            )}
                                         </td>
                                         <td>
                                             <select
@@ -661,28 +533,6 @@ const GlobalRebalancingView: React.FC = () => {
                                                 <span className="aa-unit">{unitLabel}</span>
                                             </div>
                                         </td>
-                                        <td>
-                                            {mode === 'ratio' ? (
-                                                <select
-                                                    className="aa-select"
-                                                    value={cfg?.ratioGroupId ?? ''}
-                                                    onChange={(e) =>
-                                                        handleChangePortfolioRatioGroup(
-                                                            row.portfolioId,
-                                                            e.target.value
-                                                        )
-                                                    }
-                                                >
-                                                    {assetAllocationSettings.ratioGroups.map((g) => (
-                                                        <option key={g.id} value={g.id}>
-                                                            {g.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            ) : (
-                                                <span className="aa-muted">—</span>
-                                            )}
-                                        </td>
                                         <td>{formatCurrency(row.currentValue)}</td>
                                         <td>{muted ? '—' : formatPercent(row.currentWeight)}</td>
                                         <td>{muted ? '—' : formatCurrency(row.targetValue)}</td>
@@ -701,6 +551,47 @@ const GlobalRebalancingView: React.FC = () => {
                                             {muted ? '—' : formatSignedCurrency(row.delta)}
                                         </td>
                                     </tr>
+                                    {/* Read-only split of a group row across its members. The
+                                        target is set once on the group; how it is shared out is
+                                        the ratio configured on the Portfolios page, so these
+                                        rows are derived and never editable here. */}
+                                    {memberRows && memberRows.map((member, mi) => (
+                                        <tr key={member.portfolioId} className={`aa-member-row${muted ? ' muted' : ''}`}>
+                                            <td className="td-name">
+                                                <span
+                                                    className="aa-member-dot"
+                                                    style={{ backgroundColor: GROUP_MEMBER_COLORS[mi % GROUP_MEMBER_COLORS.length] }}
+                                                />
+                                                {member.name}
+                                            </td>
+                                            <td className="aa-muted">via group ratio</td>
+                                            <td className="aa-muted">{formatPercent(member.share * 100)}</td>
+                                            <td>{formatCurrency(member.currentValue)}</td>
+                                            <td className="aa-muted">
+                                                {row.currentValue > 0
+                                                    ? formatPercent((member.currentValue / row.currentValue) * 100)
+                                                    : '—'}
+                                            </td>
+                                            <td>{muted ? '—' : formatCurrency(row.targetValue * member.share)}</td>
+                                            <td className="aa-muted">
+                                                {muted ? '—' : formatPercent(row.targetWeight * member.share)}
+                                            </td>
+                                            <td
+                                                className={
+                                                    muted
+                                                        ? ''
+                                                        : Math.abs(row.targetValue * member.share - member.currentValue) < 0.01
+                                                        ? ''
+                                                        : row.targetValue * member.share > member.currentValue
+                                                        ? 'ok'
+                                                        : 'warn'
+                                                }
+                                            >
+                                                {muted ? '—' : formatSignedCurrency(row.targetValue * member.share - member.currentValue)}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    </React.Fragment>
                                 );
                             })}
                         </tbody>
@@ -714,10 +605,9 @@ const GlobalRebalancingView: React.FC = () => {
                             key={`${row.portfolioId}-m`}
                             row={row}
                             cfg={assetAllocationSettings.portfolioTargets[row.portfolioId]}
-                            ratioGroups={assetAllocationSettings.ratioGroups}
+                            memberRows={memberRowsByGroup[row.portfolioId]}
                             onChangeMode={handleChangePortfolioMode}
                             onChangeValue={handleChangePortfolioValue}
-                            onChangeRatioGroup={handleChangePortfolioRatioGroup}
                         />
                     ))}
                 </div>
@@ -1024,6 +914,43 @@ const GlobalRebalancingView: React.FC = () => {
                 .aa-table th:first-child,
                 .aa-table td:first-child { text-align: left; }
                 .aa-table tr.muted { opacity: 0.5; }
+
+                /* Read-only split of a group row across its members. Indented and
+                   quieter than the row above so it reads as a consequence of it,
+                   never as another configurable bucket. */
+                .aa-member-row td {
+                    font-size: 0.8rem;
+                    color: var(--text-secondary);
+                    border-top: none;
+                    padding-top: var(--space-1);
+                    padding-bottom: var(--space-1);
+                }
+                .aa-member-row td:first-child { padding-left: var(--space-6); }
+                .aa-member-dot {
+                    display: inline-block;
+                    width: 8px; height: 8px;
+                    border-radius: 50%;
+                    margin-right: var(--space-2);
+                    flex-shrink: 0;
+                }
+                .aa-group-badge {
+                    margin-left: var(--space-2);
+                    font-size: 0.7rem;
+                    font-weight: 500;
+                    color: var(--text-muted);
+                    border: 1px solid var(--border-color);
+                    border-radius: var(--radius-full);
+                    padding: 1px 7px;
+                    white-space: nowrap;
+                }
+                .aa-member-line {
+                    display: flex;
+                    align-items: center;
+                    gap: var(--space-2);
+                    font-size: 0.8rem;
+                    padding: 2px 0;
+                }
+                .aa-member-line-name { flex: 1; min-width: 0; color: var(--text-secondary); }
                 .aa-value-cell {
                     display: inline-flex;
                     align-items: center;
@@ -1137,79 +1064,6 @@ const GlobalRebalancingView: React.FC = () => {
 // Subcomponents / helpers
 // ---------------------------------------------------------------------------
 
-interface GroupEditorProps {
-    draft: RatioGroupConfig;
-    setDraft: (g: RatioGroupConfig) => void;
-    onSave: () => void;
-    onCancel: () => void;
-    conflictRemainder: boolean;
-}
-
-const GroupEditor: React.FC<GroupEditorProps> = ({ draft, setDraft, onSave, onCancel, conflictRemainder }) => {
-    return (
-        <div className="aa-group-editor">
-            <div className="aa-field">
-                <label>Nome</label>
-                <input
-                    type="text"
-                    className="aa-input"
-                    value={draft.name}
-                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                    placeholder="es. Core/Satellite"
-                />
-            </div>
-            <div className="aa-field">
-                <label>Target mode</label>
-                <select
-                    className="aa-select"
-                    value={draft.groupTargetMode}
-                    onChange={(e) =>
-                        setDraft({ ...draft, groupTargetMode: e.target.value as RatioGroupTargetMode })
-                    }
-                >
-                    <option value="remainder">Remainder</option>
-                    <option value="percent">% of total</option>
-                    <option value="fixed">Fixed EUR</option>
-                </select>
-            </div>
-            <div className="aa-field">
-                <label>Value {draft.groupTargetMode === 'fixed' ? '(€)' : draft.groupTargetMode === 'percent' ? '(%)' : ''}</label>
-                <input
-                    type="text"
-                    className="aa-input"
-                    value={draft.groupTargetMode === 'remainder' ? '' : String(draft.groupTargetValue)}
-                    disabled={draft.groupTargetMode === 'remainder'}
-                    onChange={(e) =>
-                        setDraft({
-                            ...draft,
-                            groupTargetValue: parseNumericInput(e.target.value)
-                        })
-                    }
-                    placeholder={draft.groupTargetMode === 'remainder' ? '—' : '0'}
-                />
-            </div>
-            <div className="aa-group-editor-actions">
-                <button className="btn btn-primary" onClick={onSave}>
-                    Save
-                </button>
-                <button className="btn btn-secondary" onClick={onCancel}>
-                    Cancel
-                </button>
-            </div>
-            {conflictRemainder && (
-                <div className="aa-conflict">
-                    ⚠ A "remainder" group already exists: it will be converted to "percent 0" on save.
-                </div>
-            )}
-        </div>
-    );
-};
-
-/**
- * Dense expandable mobile row for the Portfolio Targets table (mrow pattern,
- * styles/mobile-list.css). Collapsed: name, mode, current→target; expanded:
- * the Mode/Value/Ratio-Group editors plus every table column.
- */
 interface PortfolioTargetMobileRowProps {
     row: {
         portfolioId: string;
@@ -1221,20 +1075,20 @@ interface PortfolioTargetMobileRowProps {
         delta: number;
     };
     cfg?: PortfolioTargetConfig;
-    ratioGroups: RatioGroupConfig[];
+    /** Set when the row is a parent/child group: its read-only member split. */
+    memberRows?: { portfolioId: string; name: string; share: number; currentValue: number }[];
     onChangeMode: (portfolioId: string, mode: PortfolioTargetMode) => void;
     onChangeValue: (portfolioId: string, value: string) => void;
-    onChangeRatioGroup: (portfolioId: string, ratioGroupId: string) => void;
 }
 
 const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
-    row, cfg, ratioGroups, onChangeMode, onChangeValue, onChangeRatioGroup,
+    row, cfg, memberRows, onChangeMode, onChangeValue,
 }) => {
     const [expanded, setExpanded] = useState(false);
     const mode = cfg?.mode ?? 'excluded';
     const muted = mode === 'excluded';
     const valueDisabled = mode === 'excluded' || mode === 'locked';
-    const unitLabel = mode === 'fixed' ? '€' : mode === 'percent' ? '%' : mode === 'ratio' ? 'w' : '—';
+    const unitLabel = mode === 'fixed' ? '€' : mode === 'percent' ? '%' : '—';
     const displayValue = cfg && !valueDisabled ? String(cfg.value) : '';
     const deltaClass = muted || Math.abs(row.delta) < 0.01 ? '' : row.delta > 0 ? 'ok' : 'warn';
 
@@ -1245,6 +1099,9 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                 <div className="mrow-main">
                     <div className="mrow-line1">
                         <span className="mrow-title">{row.name}</span>
+                        {memberRows && (
+                            <span className="aa-group-badge">⬡ group of {memberRows.length}</span>
+                        )}
                     </div>
                     <div className="mrow-line2">
                         <span>{modeLabels[mode]}</span>
@@ -1286,20 +1143,6 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                             style={{ width: '100%' }}
                         />
                     </div>
-                    {mode === 'ratio' && (
-                        <div className="mrow-detail mrow-detail--wide">
-                            <span className="mrow-label">Ratio Group</span>
-                            <select
-                                className="aa-select"
-                                value={cfg?.ratioGroupId ?? ''}
-                                onChange={(e) => onChangeRatioGroup(row.portfolioId, e.target.value)}
-                            >
-                                {ratioGroups.map((g) => (
-                                    <option key={g.id} value={g.id}>{g.name}</option>
-                                ))}
-                            </select>
-                        </div>
-                    )}
                     <div className="mrow-detail">
                         <span className="mrow-label">Current</span>
                         <span className="mrow-value">{formatCurrency(row.currentValue)}</span>
@@ -1320,6 +1163,24 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                         <span className="mrow-label">Target %</span>
                         <span className="mrow-value">{muted ? '—' : formatPercent(row.targetWeight)}</span>
                     </div>
+                    {memberRows && (
+                        <div className="mrow-detail mrow-detail--wide">
+                            <span className="mrow-label">Group ratio (set on the Portfolios page)</span>
+                            {memberRows.map((member, mi) => (
+                                <span key={member.portfolioId} className="aa-member-line">
+                                    <span
+                                        className="aa-member-dot"
+                                        style={{ backgroundColor: GROUP_MEMBER_COLORS[mi % GROUP_MEMBER_COLORS.length] }}
+                                    />
+                                    <span className="aa-member-line-name">{member.name}</span>
+                                    <span className="aa-muted">{formatPercent(member.share * 100)}</span>
+                                    <span className="mrow-value">
+                                        {muted ? '—' : formatCurrency(row.targetValue * member.share)}
+                                    </span>
+                                </span>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
         </div>
