@@ -537,4 +537,167 @@ const ctxOf = (over: Partial<RelocationContext>): RelocationContext => ({
     assertTrue('15 so no warning', !plan.warnings.some(w => w.kind === 'cross-broker'));
 }
 
+// ── 16. Spending cash: it simply stops being there ──────────────────────────
+{
+    // The point of the spend endpoint: no sale, no fee, no transaction — the
+    // money leaves the net worth and the stats are read without it.
+    const brokers = [fixedBroker('b1', 5, 30_000), fixedBroker('b2', 5, 10_000)];
+    const transactions = [buy('SWDA', 200, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b1')];
+    const ctx = ctxOf({ brokers, transactions });
+    const request: RelocationRequest = {
+        from: { kind: 'cash', brokerId: 'b1' },
+        to: { kind: 'spend' },
+        netAmount: 12_000,
+    };
+    const plan = planFundRelocation(request, ctx);
+
+    assertEq('16 nothing is sold', plan.sells.length, 0);
+    assertEq('16 nothing is bought', plan.buys.length, 0);
+    assertEq('16 no friction at all', plan.friction, 0);
+    assertEq('16 the whole amount is spent', plan.spent, 12_000);
+    assertTrue('16 the move does something', planHasEffect(plan));
+
+    const goals: Goal[] = [
+        { id: 'g-growth', title: 'Growth', order: 0 },
+        { id: 'g-security', title: 'Security', order: 1 },
+    ];
+    const snapshotInput = {
+        transactions, brokers, portfolios: ctx.portfolios, goals,
+        assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+    };
+    const before = buildSnapshot(snapshotInput);
+    const moved = applyRelocationToState(transactions, brokers, request, plan);
+    const after = buildSnapshot({ ...snapshotInput, transactions: moved.transactions, brokers: moved.brokers });
+
+    assertEq('16 no transaction is invented', moved.transactions.length, transactions.length);
+    assertEq('16 liquidity falls by the spend', before.liquidity - after.liquidity, plan.spent, 1e-6);
+    assertEq('16 the investments are untouched', after.invested - before.invested, 0, 1e-6);
+    assertEq('16 net worth falls by exactly the spend', before.netWorth - after.netWorth, plan.spent, 1e-6);
+    assertEq('16 the pyramid total agrees', before.goalPyramidTotal - after.goalPyramidTotal, plan.spent, 1e-6);
+    assertEq('16 it comes out of the broker it was pinned to',
+        (brokers[0].currentLiquidity ?? 0) - (moved.brokers[0].currentLiquidity ?? 0), 12_000, 1e-6);
+    assertEq('16 and not out of the other one',
+        (brokers[1].currentLiquidity ?? 0) - (moved.brokers[1].currentLiquidity ?? 0), 0, 1e-6);
+}
+
+// ── 17. Spending more than the cash: flagged like any other overdraft ───────
+{
+    const brokers = [fixedBroker('b1', 5, 5_000)];
+    const ctx = ctxOf({ brokers, transactions: [buy('SWDA', 200, 80, 'p1', 'b1')] });
+    const plan = planFundRelocation(
+        { from: { kind: 'cash', brokerId: 'b1' }, to: { kind: 'spend' }, netAmount: 9_000 },
+        ctx
+    );
+    assertTrue('17 the overdraft is flagged', plan.warnings.some(w => w.kind === 'cash-overdraft'));
+}
+
+// ── 18. Spending what a sale raises: friction AND the spend leave ───────────
+{
+    // The case the "falls by exactly the friction" invariant does not cover: a
+    // spend is not a cost, so the drop has to be friction PLUS what was used.
+    const brokers = [fixedBroker('b1', 5, 1_000)];
+    const transactions = [buy('SWDA', 300, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b1')];
+    const ctx = ctxOf({ brokers, transactions });
+    const request: RelocationRequest = {
+        from: { kind: 'portfolio', portfolioId: 'p1' },
+        to: { kind: 'spend' },
+        netAmount: 5_000,
+    };
+    const plan = planFundRelocation(request, ctx);
+
+    assertTrue('18 something is sold', plan.sells.length > 0);
+    assertTrue('18 nothing is bought', plan.buys.length === 0);
+    assertTrue('18 no wire: the money is spent where it landed', plan.transfers.length === 0);
+    assertEq('18 exactly the requested amount is spent', plan.spent, 5_000);
+    assertTrue('18 the friction is only the sell side', plan.friction === plan.tax + plan.sellCommission);
+
+    const goals: Goal[] = [
+        { id: 'g-growth', title: 'Growth', order: 0 },
+        { id: 'g-security', title: 'Security', order: 1 },
+    ];
+    const snapshotInput = {
+        transactions, brokers, portfolios: ctx.portfolios, goals,
+        assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+    };
+    const before = buildSnapshot(snapshotInput);
+    const moved = applyRelocationToState(transactions, brokers, request, plan);
+    const after = buildSnapshot({ ...snapshotInput, transactions: moved.transactions, brokers: moved.brokers });
+
+    assertEq('18 net worth falls by the friction plus the spend',
+        before.netWorth - after.netWorth, plan.friction + plan.spent, 1e-6);
+    // Whole shares cannot raise €5,000 to the euro: the change is reported and
+    // stays in the account instead of being spent by accident.
+    const change = plan.sells.reduce((s, l) => s + l.net, 0) - plan.spent;
+    assertTrue('18 the change is kept, not spent', change > 0);
+    assertEq('18 and it is reported',
+        plan.warnings.find(w => w.kind === 'spend-residual')?.amount ?? 0, change, 1e-6);
+    assertEq('18 liquidity rises by exactly that change', after.liquidity - before.liquidity, change, 1e-6);
+    assertTrue('18 no broker is driven negative', moved.brokers.every(b => (b.currentLiquidity ?? 0) >= 0));
+}
+
+// ── 19. A spend inside a chain, priced on the state before it ───────────────
+{
+    const brokers = [fixedBroker('b1', 5, 20_000)];
+    const transactions = [buy('SWDA', 300, 80, 'p1', 'b1'), buy('AGGH', 100, 40, 'p2', 'b1')];
+    const ctx = ctxOf({ brokers, transactions });
+
+    const queue: RelocationRequest[] = [
+        { from: { kind: 'portfolio', portfolioId: 'p1' }, to: { kind: 'portfolio', portfolioId: 'p2' }, netAmount: 3_000 },
+        { from: { kind: 'cash', brokerId: 'b1' }, to: { kind: 'spend' }, netAmount: 8_000 },
+    ];
+    const sequence = planRelocationSequence(queue, ctx);
+
+    const goals: Goal[] = [
+        { id: 'g-growth', title: 'Growth', order: 0 },
+        { id: 'g-security', title: 'Security', order: 1 },
+    ];
+    const snapshotInput = {
+        transactions, brokers, portfolios: ctx.portfolios, goals,
+        assetSettings, marketData, macroAllocations: {}, goalAllocations: {},
+    };
+    const before = buildSnapshot(snapshotInput);
+    const after = buildSnapshot({ ...snapshotInput, transactions: sequence.ctx.transactions, brokers: sequence.ctx.brokers });
+
+    assertEq('19 the chain spends once', sequence.totals.spent, 8_000);
+    assertEq('19 net worth falls by the friction plus the spend',
+        before.netWorth - after.netWorth, sequence.totals.friction + sequence.totals.spent, 1e-6);
+    assertEq('19 the pyramid total agrees',
+        before.goalPyramidTotal - after.goalPyramidTotal, sequence.totals.friction + sequence.totals.spent, 1e-6);
+    // The spend only ever touches cash, so the trades of step 1 are the only
+    // transactions the chain produces.
+    assertTrue('19 the spend adds no transaction',
+        sequence.ctx.transactions.length === transactions.length + sequence.steps[0].plan.sells.length + sequence.steps[0].plan.buys.length);
+}
+
+// ── 20. Spend is a destination only ─────────────────────────────────────────
+{
+    const ctx = ctxOf({ brokers: [fixedBroker('b1', 5, 10_000)], transactions: [buy('SWDA', 100, 80, 'p1', 'b1')] });
+    const plan = planFundRelocation(
+        { from: { kind: 'spend' }, to: { kind: 'portfolio', portfolioId: 'p2' }, netAmount: 1_000 },
+        ctx
+    );
+    assertTrue('20 nothing comes out of money that is gone', !planHasEffect(plan));
+    assertEq('20 and nothing is spent', plan.spent, 0);
+}
+
+// ── 21. Spending the total liquidity: taken pro-rata, nobody goes negative ──
+{
+    // "Total liquidity" is not a pot: it is every broker at once. Draining the
+    // first one until it goes negative would rescale its earmarks by a negative
+    // factor and inflate the pyramid — the bug section 13 pins down for wires.
+    const brokers = [fixedBroker('b1', 5, 4_000), fixedBroker('b2', 5, 16_000)];
+    const request: RelocationRequest = { from: { kind: 'cash' }, to: { kind: 'spend' }, netAmount: 10_000 };
+    const ctx = ctxOf({ brokers, transactions: [] });
+    const plan = planFundRelocation(request, ctx);
+    const moved = applyRelocationToState([], brokers, request, plan);
+
+    assertEq('21 the whole amount is spent', plan.spent, 10_000);
+    assertTrue('21 no broker is driven negative', moved.brokers.every(b => (b.currentLiquidity ?? 0) >= 0));
+    assertEq('21 taken in proportion to what each holds',
+        moved.brokers.find(b => b.id === 'b1')!.currentLiquidity ?? 0, 2_000, 1e-6);
+    assertEq('21 total liquidity falls by the spend',
+        brokers.reduce((s, b) => s + (b.currentLiquidity ?? 0), 0)
+        - moved.brokers.reduce((s, b) => s + (b.currentLiquidity ?? 0), 0), 10_000, 1e-6);
+}
+
 console.log('\nAll fund-relocation checks passed.');

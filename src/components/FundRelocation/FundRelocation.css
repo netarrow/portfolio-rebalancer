@@ -344,6 +344,20 @@
     background-color: rgba(245, 158, 11, 0.08);
 }
 
+/* The spend: dashed, because it is the one step nobody performs at a broker and
+   nothing records — the money simply stops being there. */
+.reloc-exec-step.spend {
+    border-style: dashed;
+    border-color: rgba(148, 163, 184, 0.5);
+    background-color: transparent;
+}
+
+/* A whole move that is only a simulation reads one notch back from the rest of
+   the list: it is shown for completeness, not to be ticked off. */
+.reloc-exec-move.simulated .reloc-exec-step {
+    opacity: 0.75;
+}
+
 .reloc-exec-num {
     flex: 0 0 auto;
     width: 1.6rem;
@@ -995,6 +1009,13 @@
 .reloc-badge.transfer {
     background-color: rgba(245, 158, 11, 0.2);
     color: #fcd34d;
+}
+
+/* A spend is neither a trade nor an instruction: grey, the colour of something
+   that only exists in the simulation. */
+.reloc-badge.spend {
+    background-color: rgba(148, 163, 184, 0.2);
+    color: #cbd5e1;
 }
 
 /* ── Friction summary ── */

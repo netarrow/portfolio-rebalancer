@@ -108,12 +108,14 @@ const FundRelocationView: React.FC = () => {
     // Default the two ends to different portfolios once the data is loaded,
     // without fighting a choice the user has already made.
     const resolvedFrom = useMemo<RelocationEndpoint>(() => {
-        if (from.kind === 'cash' || isSelectable(from.portfolioId)) return from;
+        // 'spend' is a destination only: nothing can come out of money that is gone.
+        if (from.kind === 'cash') return from;
+        if (from.kind === 'portfolio' && isSelectable(from.portfolioId)) return from;
         return { kind: 'portfolio', portfolioId: portfolios[0]?.id ?? '' };
     }, [from, portfolios, mergedView]);
 
     const resolvedTo = useMemo<RelocationEndpoint>(() => {
-        if (to.kind === 'cash' || isSelectable(to.portfolioId)) return to;
+        if (to.kind !== 'portfolio' || isSelectable(to.portfolioId)) return to;
         const fallback = portfolios.find(p => p.id !== (resolvedFrom.kind === 'portfolio' ? resolvedFrom.portfolioId : ''));
         return { kind: 'portfolio', portfolioId: (fallback ?? portfolios[0])?.id ?? '' };
     }, [to, portfolios, resolvedFrom, mergedView]);
@@ -190,6 +192,8 @@ const FundRelocationView: React.FC = () => {
     }, [previewCount, previewCtx, snapshotInput]);
 
     const totalFriction = sequence.totals.friction + draftSequence.totals.friction;
+    /** Money consumed by spend destinations: out of the net worth, but not a cost. */
+    const totalSpent = sequence.totals.spent + draftSequence.totals.spent;
 
     /** The queue as ordered actions: sell here, wire there, buy at the other end. */
     const executionMoves = useMemo(
@@ -328,7 +332,9 @@ const FundRelocationView: React.FC = () => {
                 <strong> selling there and buying back here</strong> — and the round trip leaves tax and
                 commissions behind. This page shows the exact actions, what the move really costs, and how
                 the stats and the pyramid would end up. Queue several moves and the chain is priced in
-                order, each one on the state the previous left behind. Start from the goal split below to
+                order, each one on the state the previous left behind. A move can also end in
+                <strong> Spend</strong>: the money leaves for good, nothing is written to Transactions, and
+                the before/after simply shows the state without it. Start from the goal split below to
                 let the gaps between your goals propose the moves.
             </p>
 
@@ -426,6 +432,7 @@ const FundRelocationView: React.FC = () => {
                     before={before}
                     after={after}
                     friction={totalFriction}
+                    spent={totalSpent}
                     moveCount={previewCount}
                 />
             )}

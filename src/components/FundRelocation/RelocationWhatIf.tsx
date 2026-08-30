@@ -93,13 +93,27 @@ const CompareTable: React.FC<{ title: string; rows: Row[]; format?: (v: number) 
 interface RelocationWhatIfProps {
     before: PortfolioSnapshot;
     after: PortfolioSnapshot;
-    /** tax + commissions across every move — should equal the net worth drop. */
+    /** tax + commissions across every move — with `spent`, the net worth drop. */
     friction: number;
+    /** € consumed by spend destinations: out of the net worth, but not a cost. */
+    spent?: number;
     /** How many moves the "after" column includes. */
     moveCount: number;
 }
 
-const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, friction, moveCount }) => {
+/**
+ * Why the net worth line names two numbers: friction is money paid to someone
+ * else to move your own money, a spend is money you chose to use. Both leave,
+ * only one is waste — so the hint keeps them apart instead of adding them up.
+ */
+const netWorthHint = (friction: number, spent: number): string | undefined => {
+    if (spent > 0 && friction > 0) return `falls by the spend (${eur0(spent)}) plus the friction (${eur0(friction)})`;
+    if (spent > 0) return `falls by exactly what is spent (${eur0(spent)}) — no tax, no fees`;
+    if (friction > 0) return `falls by exactly the friction (${eur0(friction)})`;
+    return undefined;
+};
+
+const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, friction, spent = 0, moveCount }) => {
     const plural = moveCount > 1;
     const suffix = plural ? `after all ${moveCount} moves` : 'after the move';
 
@@ -108,7 +122,7 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
             label: 'Net worth',
             before: before.netWorth,
             after: after.netWorth,
-            hint: friction > 0 ? `falls by exactly the friction (${eur0(friction)})` : undefined,
+            hint: netWorthHint(friction, spent),
         },
         { label: 'Invested', before: before.invested, after: after.invested },
         { label: 'Liquidity', before: before.liquidity, after: after.liquidity },

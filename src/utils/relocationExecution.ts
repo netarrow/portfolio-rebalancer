@@ -15,6 +15,13 @@ import type { RelocationStep } from './fundRelocation';
  *  - broker cash moves for all three, including the tax and the commissions
  *    that the generic per-trade sync (gross only) cannot know about.
  *
+ * A move that ends in a SPEND is the exception to all of it: it is a simulation
+ * and nothing more. It is listed here so the chain reads in full — and so a
+ * spend funded by a sale still shows which sale — but it writes nothing, not
+ * the spend and not the sale behind it. Committing half of it (the trade
+ * without the money leaving) would leave the ledger disagreeing with the very
+ * what-if the move was made for.
+ *
  * The cash figures are the plan's own — `sell.net` is already gross − tax −
  * commission — so what lands in the brokers after executing equals what the
  * what-if predicted. They are applied instead of, never on top of, the
@@ -51,6 +58,18 @@ export interface TransferStep {
     required: boolean;
 }
 
+/**
+ * Money consumed: it leaves the net worth and lands nowhere. Simulation only —
+ * never a transaction, never a cash adjustment.
+ */
+export interface SpendStep {
+    kind: 'spend';
+    moveIndex: number;
+    amount: number;
+    /** Where the money is taken from, for the line's caption. */
+    fromLabel: string;
+}
+
 export interface BuyStep {
     kind: 'buy';
     moveIndex: number;
@@ -67,7 +86,7 @@ export interface BuyStep {
     portfolioName: string;
 }
 
-export type ExecutionStep = SellStep | TransferStep | BuyStep;
+export type ExecutionStep = SellStep | TransferStep | BuyStep | SpendStep;
 
 export interface ExecutionMove {
     /** 1-based, matching the queue's own numbering. */
@@ -76,6 +95,8 @@ export interface ExecutionMove {
     toLabel: string;
     netAmount: number;
     steps: ExecutionStep[];
+    /** A spend: shown, but never committed — not its spend and not its sells. */
+    simulationOnly: boolean;
 }
 
 /** Virtual tickers (`_CASH_`, `_VBOND_`) are placeholders: no cash changes hands. */
@@ -86,6 +107,7 @@ const endpointLabel = (
     portfolios: Portfolio[]
 ): string => {
     if (endpoint.kind === 'cash') return 'Cash';
+    if (endpoint.kind === 'spend') return 'Spent';
     return portfolios.find(p => p.id === endpoint.portfolioId)?.name ?? 'Portfolio';
 };
 
@@ -146,12 +168,17 @@ export const buildExecutionMoves = (steps: RelocationStep[], portfolios: Portfol
             portfolioName: toLabel,
         }));
 
+        const spends: ExecutionStep[] = request.to.kind === 'spend' && plan.spent > 0
+            ? [{ kind: 'spend', moveIndex, amount: plan.spent, fromLabel }]
+            : [];
+
         return {
             index: moveIndex,
             fromLabel,
             toLabel,
             netAmount: request.netAmount,
-            steps: [...sells, ...transfers, ...buys],
+            steps: [...sells, ...transfers, ...buys, ...spends],
+            simulationOnly: request.to.kind === 'spend',
         };
     });
 
@@ -182,7 +209,9 @@ export const buildExecutionCommit = (
         liquidityDeltas[brokerId] = (liquidityDeltas[brokerId] ?? 0) + amount;
     };
 
-    moves.forEach(move => {
+    // A spend move is a what-if from end to end: skipped whole, so no sale of
+    // its own reaches the ledger either.
+    moves.filter(move => !move.simulationOnly).forEach(move => {
         move.steps.forEach((step, i) => {
             const id = `${idPrefix}-${move.index}-${i}`;
             if (step.kind === 'sell') {
@@ -214,7 +243,7 @@ export const buildExecutionCommit = (
                     freeCommission: step.freeCommission || undefined,
                 });
                 if (movesCash(step.ticker)) bump(step.brokerId, -(step.gross + step.commission));
-            } else {
+            } else if (step.kind === 'transfer') {
                 counts.transfers += 1;
                 bump(step.fromBrokerId, -step.amount);
                 bump(step.toBrokerId, step.amount);
