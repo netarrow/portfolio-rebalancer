@@ -204,4 +204,24 @@ const sumOf = (rs: { netAmount: number }[]) => rs.reduce((s, r) => s + r.netAmou
         view.groups[0].memberIds.reduce((s, id) => s + view.groups[0].valueByMember[id], 0));
 }
 
+// ── 10. Spending a whole group's money ──
+{
+    // A spend has no member to pick, so only the SOURCE splits — and every leg
+    // has to survive the pairing, or part of the money would be spent from
+    // nowhere and the totals would quietly disagree.
+    const legs = expandGroupRequest({
+        from: { kind: 'portfolio', portfolioId: groupId },
+        to: { kind: 'spend' },
+        netAmount: 5_000,
+    }, view);
+
+    assertEq('e10 the amount is preserved', sumOf(legs), 5_000);
+    assertTrue('e10 every leg is on a real portfolio',
+        legs.every(l => l.from.kind === 'portfolio' && ['core', 'sat'].includes(l.from.portfolioId)));
+    assertTrue('e10 and every leg still ends in the spend',
+        legs.every(l => l.to.kind === 'spend'));
+    assertTrue('e10 a spend never overlaps its source',
+        !endpointsOverlap({ kind: 'portfolio', portfolioId: groupId }, { kind: 'spend' }, view));
+}
+
 console.log('\nAll group-relocation checks passed.');

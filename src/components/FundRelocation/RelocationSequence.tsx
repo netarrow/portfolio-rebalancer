@@ -19,12 +19,13 @@ import RelocationActions from './RelocationActions';
 
 const eur0 = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
 
-/** "Growth" / "Growth · VWCE" / "Cash" / "Cash · Directa" */
+/** "Growth" / "Growth · VWCE" / "Cash" / "Cash · Directa" / "Spent" */
 const endpointLabel = (
     endpoint: RelocationEndpoint,
     portfolios: Portfolio[],
     brokers: Broker[]
 ): string => {
+    if (endpoint.kind === 'spend') return 'Spent';
     if (endpoint.kind === 'cash') {
         const broker = brokers.find(b => b.id === endpoint.brokerId);
         return broker ? `Cash · ${broker.name}` : 'Cash';
