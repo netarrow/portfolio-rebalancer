@@ -21,6 +21,12 @@ import GoalAllocationBar, { type GoalBarItem } from './GoalAllocationBar';
  * the relocation planner, which is also the only thing that can price the
  * round trip — so the moves are handed to the queue rather than executed here.
  *
+ * A parent/child group is one portfolio for the split and several for the
+ * moves: the level hands it its money as one pot, which is then shared across
+ * its members by the configured parent/child ratio. So the moves listed here
+ * name real portfolios — and closing a goal gap closes the group's ratio too,
+ * exactly as picking the group as an endpoint on the form below does.
+ *
  * Level 0 — cash not earmarked to any portfolio — is one of those levels: drag
  * it down and the moves deploy the cash, drag it up and they raise it by
  * selling. It is the only level whose target may go to zero, since an empty
