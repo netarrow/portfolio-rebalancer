@@ -7,6 +7,10 @@ import { isCashTicker } from '../../utils/portfolioCalculations';
  * Source and destination are the same control, because they are the same union:
  * either a portfolio (optionally pinned to one asset) or cash. That symmetry is
  * what lets one screen express a divestment, an investment and a swap.
+ *
+ * The destination has one option the source cannot have: SPEND. Money that is
+ * spent has no other end — it leaves, and the picker says so by offering
+ * nothing else to configure.
  */
 
 /** A parent/child group offered as one endpoint, next to the real portfolios. */
@@ -33,7 +37,9 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
     title, side, value, onChange, portfolios, groups, brokers, assets,
 }) => {
     const isPortfolio = value.kind === 'portfolio';
-    const selectedGroup = isPortfolio ? groups.find(g => g.id === value.portfolioId) : undefined;
+    const isCash = value.kind === 'cash';
+    const isSpend = value.kind === 'spend';
+    const selectedGroup = value.kind === 'portfolio' ? groups.find(g => g.id === value.portfolioId) : undefined;
 
     const selectPortfolio = () => {
         if (isPortfolio) return;
@@ -41,7 +47,7 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
     };
 
     const selectCash = () => {
-        if (!isPortfolio) return;
+        if (isCash) return;
         onChange({ kind: 'cash', brokerId: brokers[0]?.id });
     };
 
@@ -91,14 +97,23 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
                 </button>
                 <button
                     type="button"
-                    className={`reloc-kind-btn${!isPortfolio ? ' active' : ''}`}
+                    className={`reloc-kind-btn${isCash ? ' active' : ''}`}
                     onClick={selectCash}
                 >
                     Cash
                 </button>
+                {side === 'to' && (
+                    <button
+                        type="button"
+                        className={`reloc-kind-btn${isSpend ? ' active' : ''}`}
+                        onClick={() => { if (!isSpend) onChange({ kind: 'spend' }); }}
+                    >
+                        Spend
+                    </button>
+                )}
             </div>
 
-            {isPortfolio ? (
+            {value.kind === 'portfolio' ? (
                 <>
                     <div className="reloc-field">
                         <label className="reloc-label">Portfolio</label>
@@ -159,6 +174,14 @@ const EndpointPicker: React.FC<EndpointPickerProps> = ({
                         </select>
                     </div>
                 </>
+            ) : value.kind === 'spend' ? (
+                <div className="reloc-field">
+                    <p className="reloc-hint">
+                        The money is <strong>spent</strong>: it leaves your net worth and lands nowhere.
+                        Nothing is bought, and nothing is written to Transactions — this end exists only
+                        to see what the stats look like once the money is gone.
+                    </p>
+                </div>
             ) : (
                 <div className="reloc-field">
                     <label className="reloc-label">Broker</label>
@@ -247,9 +270,11 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
         <div className="reloc-amount-row">
             <div className="reloc-amount-field">
                 <label className="reloc-label">
-                    {to.kind === 'cash'
-                        ? 'Net cash to raise (€)'
-                        : 'Net amount to invest in the destination (€)'}
+                    {to.kind === 'spend'
+                        ? 'Amount to spend (€)'
+                        : to.kind === 'cash'
+                            ? 'Net cash to raise (€)'
+                            : 'Net amount to invest in the destination (€)'}
                 </label>
                 <input
                     type="number"
@@ -287,8 +312,12 @@ const RelocationForm: React.FC<RelocationFormProps> = ({
         </div>
 
         <p className="reloc-hint">
-            The amount is what must <strong>land in the destination</strong>: the sales are sized
-            backwards from it, so tax and commissions are already covered.
+            {to.kind === 'spend'
+                ? <>The amount is what actually <strong>leaves</strong>: a sale funding it is sized
+                    backwards from the spend, so tax and commissions are already covered, and any change
+                    whole shares leave behind stays in cash instead of being spent by accident.</>
+                : <>The amount is what must <strong>land in the destination</strong>: the sales are sized
+                    backwards from it, so tax and commissions are already covered.</>}
         </p>
     </div>
 );

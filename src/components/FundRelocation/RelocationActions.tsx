@@ -54,11 +54,19 @@ const FrictionSummary: React.FC<{ plan: RelocationPlan; cardClass: string }> = (
                 <div className="reloc-stat-value negative">{plan.friction > 0 ? `−${eur0(plan.friction)}` : eur0(0)}</div>
                 <div className="reloc-stat-sub">{pct(plan.frictionPercent)} of what lands</div>
             </div>
-            <div className="reloc-stat">
-                <div className="reloc-stat-label">Lands in the destination</div>
-                <div className="reloc-stat-value positive">{eur0(plan.netDelivered)}</div>
-                <div className="reloc-stat-sub">{eur0(plan.netRequested)} requested</div>
-            </div>
+            {plan.spent > 0 ? (
+                <div className="reloc-stat">
+                    <div className="reloc-stat-label">Spent</div>
+                    <div className="reloc-stat-value negative">−{eur0(plan.spent)}</div>
+                    <div className="reloc-stat-sub">leaves the net worth — never a transaction</div>
+                </div>
+            ) : (
+                <div className="reloc-stat">
+                    <div className="reloc-stat-label">Lands in the destination</div>
+                    <div className="reloc-stat-value positive">{eur0(plan.netDelivered)}</div>
+                    <div className="reloc-stat-sub">{eur0(plan.netRequested)} requested</div>
+                </div>
+            )}
             {plan.spreadCost > 0 && (
                 <div className="reloc-stat">
                     <div className="reloc-stat-label">Implicit cost</div>
