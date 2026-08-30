@@ -239,11 +239,13 @@ const GroupRatioModal: React.FC<Props> = ({ parent, onClose }) => {
                     </p>
                 )}
                 {divergentGoals.length > 0 && (
-                    <p className="ratio-note ratio-note-warn">
+                    <p className="ratio-note">
                         {divergentGoals.map(d => `${d.name} (${d.goalTitle})`).join(', ')}
-                        {divergentGoals.length === 1 ? ' is' : ' are'} attached to a different goal than the parent.
+                        {divergentGoals.length === 1 ? ' is' : ' are'} attached to a different goal than the parent
+                        — which is what a sleeve inside a core usually is. A rolling bond ETF, say, has no maturity
+                        to hold to, so it is Security shaded toward the parent's goal rather than either one alone.
                         Because the group counts as one portfolio, that value sits at the parent's level in the
-                        pyramid — shown there in a lighter shade, so you can see it is on loan. The pyramid's
+                        pyramid, drawn in a lighter shade of it and naming its own goal on hover. The pyramid's
                         total does not change.
                     </p>
                 )}

@@ -573,9 +573,10 @@ export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: numbe
                 {visible.some(g => g.inherited.length > 0) && (
                     <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                         <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, backgroundColor: tintForInherited('#9CA3AF'), marginRight: 6, verticalAlign: 'middle' }} />
-                        The lighter part of a level is value merged in from a portfolio attached to
-                        another goal, because its parent/child group counts as one portfolio. It sits
-                        here, but it belongs there — hover a level for the split. Totals are unchanged.
+                        The lighter part of a level is a sleeve whose own goal is a different one,
+                        counted here because its parent/child group is one portfolio — a rolling bond
+                        ETF inside a growth core, say: Security by intent, shaded toward Growth because
+                        it never matures. Hover a level for the split; totals are unchanged.
                     </div>
                 )}
             </div>

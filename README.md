@@ -88,7 +88,7 @@ A composition deep-dive across portfolios and macro exposure.
 ![Stats — per portfolio](screenshots/stats_bottom.png)
 
 - **Portfolio Pyramid** — wealth distribution by goal category (Growth → Protection → Security → Liquidity).
-  - Parent/child groups count as **one portfolio**, so a member attached to a *different* goal than its parent is counted at the parent's level. That is a re-bucketing, never a re-count: the pyramid's total is identical either way, and the level shows the borrowed part as a **lighter shade of its own colour**, with the lending goal named on hover. A portfolio with no goal at all stays outside the pyramid, group member or not — exactly as before.
+  - Parent/child groups count as **one portfolio**, so a sleeve carrying a *different* goal than its parent — the usual case for, say, a rolling bond ETF inside a growth core — is counted at the parent's level and drawn as a **lighter shade of that level's colour**, with its own goal named on hover. That is a re-bucketing, never a re-count: the pyramid's total is identical either way, and `nativeValue + Σ inherited === value` at every level. A portfolio with no goal at all stays outside the pyramid, group member or not — exactly as before.
 
 ![Goal pyramid with a merged, borrowed slice](screenshots/stats_goal_pyramid_merged.png)
 - **Macro Allocation** — aggregate exposure (Stocks, Bonds, Cash…) vs your configured targets.
@@ -225,6 +225,8 @@ Organise investments into distinct portfolios (e.g. *Main Strategy*, *Bond Alloc
 ![Portfolios](screenshots/portfolios_page.png)
 
 **Parent/child groups** — a portfolio nested under another is not just a visual grouping: the two are read as **one portfolio** wherever that is the useful reading (Stats pyramid, Performance, Fund Relocation, Asset Allocation).
+
+A child is normally a **sleeve inside a core**, and it often carries a *different goal* than its parent — that is the point, not a mistake. The demo's *Bond Allocation* sits under the growth core on a **Security** goal: it holds a rolling aggregate bond ETF, which never matures, so it behaves like Security shaded toward Growth rather than either one cleanly. The group counts as one portfolio, so that value is counted at the parent's level in the pyramid and drawn there in a lighter tint of it (see *Stats*).
 
 The **group ratio** — how the group splits internally between parent and children — is set here, from the ⚖ button on the parent's card:
 

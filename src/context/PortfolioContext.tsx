@@ -1944,8 +1944,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             {
                 id: pIdMain,
                 name: 'Main Strategy',
-                // Parent/child ratio: the group is planned 75/25 between the
-                // core and its tactical tilt. Edited from the Portfolios page.
+                // Parent/child ratio over the three members of the group, set
+                // from the Portfolios page: the core, its tactical tilt, and the
+                // rolling bond sleeve.
                 groupSharePercent: 75,
                 description: 'Core developed + emerging stocks (Growth parent)',
                 goalId: 'goal-growth',
@@ -1975,7 +1976,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 description: 'Nested Growth sub-portfolio tilting toward EM + dividend ETF',
                 goalId: 'goal-growth',
                 parentId: pIdMain,
-                groupSharePercent: 25,
+                groupSharePercent: 20,
                 order: 1,
                 // Weighted allocation group: instead of priority order, buys and
                 // sells keep VWRL/EMIM close to their intra-group weight %.
@@ -1997,8 +1998,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             {
                 id: pIdBonds,
                 name: 'Bond Allocation',
-                description: 'Global aggregate bond exposure (Security goal)',
+                description: 'Rolling aggregate bond sleeve inside the Growth core — Security, shaded toward Growth',
+                // A CHILD whose goal differs from its parent's, which is the
+                // ordinary case rather than a mistake: a rolling bond ETF has no
+                // maturity to hold to, so it behaves like Security shaded toward
+                // Growth. It counts at the parent's level in the pyramid and is
+                // drawn there in a lighter tint, naming Security on hover.
                 goalId: 'goal-security',
+                parentId: pIdMain,
+                groupSharePercent: 5,
                 order: 2,
                 // Single-broker portfolio: the full rebalance prices every leg
                 // against Trade Republic's commission plan and checks its cash
@@ -2278,12 +2286,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setStoredAssetAllocationSettings({
             liquidityTarget: { mode: 'percent', value: 10 },
             portfolioTargets: {
-                // Main Strategy and its Tactical Tilt are one parent/child
-                // group, so they take ONE target, keyed on the group. How that
-                // target is shared between them is the ratio on the portfolios
-                // (75/25 here), not a second row in this table.
-                [`${MERGED_PORTFOLIO_PREFIX}${pIdMain}`]: { mode: 'percent', value: 55 },
-                [pIdBonds]: { mode: 'percent', value: 20 },
+                // Main Strategy, its Tactical Tilt and the Bond Allocation are
+                // one parent/child group, so they take ONE target, keyed on the
+                // group. How that target is shared between them is the ratio on
+                // the portfolios (75/20/5), not three rows in this table.
+                [`${MERGED_PORTFOLIO_PREFIX}${pIdMain}`]: { mode: 'percent', value: 75 },
                 [pIdSafe]: { mode: 'percent', value: 15 }
             }
         });
