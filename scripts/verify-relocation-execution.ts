@@ -132,4 +132,38 @@ const commit = buildExecutionCommit(moves, '2026-08-21', 'test');
         0.01);
 }
 
+// ── 6. A spend is a simulation: listed, never written ───────────────────────
+{
+    // Both halves matter. The spend must not reach the ledger — and neither must
+    // the sale funding it, or the app would record a trade whose proceeds it
+    // then pretends are still there.
+    const spendRequest: RelocationRequest = {
+        from: { kind: 'portfolio', portfolioId: 'p1' },
+        to: { kind: 'spend' },
+        netAmount: 6_000,
+    };
+    const seq = planRelocationSequence([request, spendRequest], ctx);
+    const spendMoves = buildExecutionMoves(seq.steps, portfolios);
+    const c = buildExecutionCommit(spendMoves, '2026-08-21', 'test3');
+    const relocationMove = spendMoves[0];
+    const spendMove = spendMoves[1];
+
+    assertTrue('6 the spend move is flagged as simulated', spendMove.simulationOnly);
+    assertTrue('6 the relocation is not', !relocationMove.simulationOnly);
+    assertTrue('6 it is still listed, sells included',
+        spendMove.steps.some(s => s.kind === 'sell') && spendMove.steps.some(s => s.kind === 'spend'));
+    assertTrue('6 it reads as an outflow', spendMove.toLabel === 'Spent');
+
+    // Only the first move is committed: same figures as when it was alone.
+    assertEq('6 only the real move is written',
+        c.transactions.length, seq.steps[0].plan.sells.length + seq.steps[0].plan.buys.length);
+    assertTrue('6 nothing from the spend move reached the ledger',
+        c.transactions.every(t => t.id.startsWith('test3-1-')));
+    assertEq('6 and its cash never moved either',
+        Object.values(c.liquidityDeltas).reduce((s, v) => s + v, 0),
+        seq.steps[0].plan.sells.reduce((s, l) => s + l.net, 0)
+        - seq.steps[0].plan.buys.reduce((s, b) => s + b.gross + b.commission, 0),
+        0.01);
+}
+
 console.log('\nAll relocation-execution checks passed.');

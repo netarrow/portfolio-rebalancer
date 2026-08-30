@@ -29,6 +29,12 @@ import { currentMonthKey, isFreeBuyIsin } from './freeCommissions';
  * is a divestment, "cash → portfolio" an investment (no sale, so no tax), and
  * "portfolio → portfolio" the full round trip. One union covers all three.
  *
+ * A third endpoint answers a different question: SPEND. Money that is spent
+ * lands nowhere — it leaves the net worth for good — so it is a destination and
+ * never a source. It is deliberately not a transaction either: the ledger here
+ * records positions, and a holiday is not a position. It exists only so the
+ * what-if can answer "what do my stats look like once this money is gone".
+ *
  * The amount is always stated as the NET that must LAND in the destination, and
  * the sell side is solved backwards from it — the sizing question a user
  * actually has ("I want €20k working in the bond bucket"), not the one that is
@@ -41,7 +47,9 @@ export type RelocationEndpoint =
     /** `ticker` pins the exact asset to sell from / buy into; omit to let the solver choose. */
     | { kind: 'portfolio'; portfolioId: string; ticker?: string }
     /** `brokerId` picks whose cash moves; omit on the destination to leave it unassigned. */
-    | { kind: 'cash'; brokerId?: string };
+    | { kind: 'cash'; brokerId?: string }
+    /** Consumed: the money leaves the net worth entirely. Destination only. */
+    | { kind: 'spend' };
 
 export interface RelocationRequest {
     from: RelocationEndpoint;
@@ -142,7 +150,8 @@ export type RelocationWarningKind =
     | 'cash-min-liquidity'    // the move drops a broker under its configured floor
     | 'cash-earmark'          // it eats cash earmarked for other portfolios
     | 'no-price'              // an asset has no usable price
-    | 'no-target';            // the destination has no underweight asset to buy
+    | 'no-target'             // the destination has no underweight asset to buy
+    | 'spend-residual';       // the sale raised more than the spend: the change stays in cash
 
 export interface RelocationWarning {
     kind: RelocationWarningKind;
@@ -166,6 +175,12 @@ export interface RelocationPlan {
     spreadCost: number;
     /** € actually landing in the destination (invested, or credited when it is cash). */
     netDelivered: number;
+    /**
+     * € consumed by a spend destination — gone from the net worth, and gone
+     * without being friction: nobody was paid a fee, the money was simply used.
+     * 0 for every other destination.
+     */
+    spent: number;
     /** What was asked for. `netDelivered` may exceed it by rounding to whole shares. */
     netRequested: number;
     /** friction / netDelivered, as a %. */
@@ -183,7 +198,7 @@ const eurLabel = (value: number): string =>
 
 const emptyPlan = (netRequested: number, warnings: RelocationWarning[] = []): RelocationPlan => ({
     sells: [], buys: [], grossSold: 0, cashDrawn: 0, tax: 0, sellCommission: 0, buyCommission: 0,
-    friction: 0, spreadCost: 0, netDelivered: 0, netRequested, frictionPercent: 0, transfers: [], warnings,
+    friction: 0, spreadCost: 0, netDelivered: 0, spent: 0, netRequested, frictionPercent: 0, transfers: [], warnings,
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -533,6 +548,8 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
     const warnings: RelocationWarning[] = [];
 
     if (!(netAmount > 0)) return emptyPlan(netAmount);
+    // Nothing can come OUT of money that has been spent.
+    if (from.kind === 'spend') return emptyPlan(netAmount);
 
     const sourcePortfolio = from.kind === 'portfolio' ? portfolioOf(from.portfolioId, ctx) : undefined;
     const destPortfolio = to.kind === 'portfolio' ? portfolioOf(to.portfolioId, ctx) : undefined;
@@ -559,7 +576,7 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
     };
 
     const deploy = (budget: number): BuyAction[] => {
-        if (to.kind === 'cash' || budget <= 0) return [];
+        if (to.kind !== 'portfolio' || budget <= 0) return [];
         if (to.ticker) {
             const price = priceOf(to.ticker, destAssets, ctx);
             if (!(price > 0)) return [];
@@ -595,8 +612,15 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
 
     const netProceeds = from.kind === 'cash' ? 0 : grossSold - tax - sellCommission;
     // Cash source: exactly what the destination needs plus the fee to get it there.
-    const cashDrawn = from.kind === 'cash' ? (to.kind === 'cash' ? netAmount : invested + buyCommission) : 0;
-    const netDelivered = to.kind === 'cash' ? (from.kind === 'cash' ? cashDrawn : netProceeds) : invested;
+    const cashDrawn = from.kind === 'cash' ? (to.kind === 'portfolio' ? invested + buyCommission : netAmount) : 0;
+    /** What the source actually put on the table, before the destination takes it. */
+    const raised = from.kind === 'cash' ? cashDrawn : netProceeds;
+    // A spend is for a stated amount: a car costs what it costs. Whole-share
+    // rounding can raise a little more than that, and the change stays in the
+    // account rather than being spent by accident — the opposite of a portfolio
+    // destination, where every euro raised is deployed.
+    const spent = to.kind === 'spend' ? Math.min(raised, netAmount) : 0;
+    const netDelivered = to.kind === 'portfolio' ? invested : (to.kind === 'spend' ? spent : raised);
     const friction = tax + sellCommission + buyCommission;
 
     // ── Warnings ──
@@ -609,7 +633,7 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
                     : `${sourcePortfolio!.name} holds nothing sellable with a valid price.`,
             });
         } else {
-            const deliverable = to.kind === 'cash' ? netProceeds : netProceeds - buyCommission;
+            const deliverable = to.kind === 'portfolio' ? netProceeds - buyCommission : netProceeds;
             const shortfall = netAmount - deliverable;
             if (shortfall > 1) {
                 warnings.push({
@@ -644,6 +668,17 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
         }
     }
 
+    if (to.kind === 'spend') {
+        const change = raised - spent;
+        if (change > 1) {
+            warnings.push({
+                kind: 'spend-residual',
+                message: `${eurLabel(change)} of change stays in cash: the sale cannot be sized to the euro in whole shares.`,
+                amount: change,
+            });
+        }
+    }
+
     // Legs settling at different brokers are not a warning by themselves — they
     // are an action, listed as transfers. Only the wires the buys cannot clear
     // without are worth flagging, and then with the euro figure.
@@ -672,6 +707,7 @@ export const planFundRelocation = (request: RelocationRequest, ctx: RelocationCo
         friction,
         spreadCost,
         netDelivered,
+        spent,
         netRequested: netAmount,
         transfers,
         frictionPercent: netDelivered > 0 ? (friction / netDelivered) * 100 : 0,
@@ -817,10 +853,34 @@ export const applyRelocationToState = (
     // too: debiting it again here would take the money out twice.
     plan.buys.forEach(b => bump(b.brokerId, -(b.gross + b.commission)));
 
+    // The spend itself: money debited and never credited anywhere, which is the
+    // whole point — net worth falls by it on top of the friction. It is taken
+    // from wherever the plan left it (the brokers the sales credited, or the
+    // cash source), so no broker is drained for cash it never held.
+    if (to.kind === 'spend' && plan.spent > 0) {
+        const pot: Record<string, number> = {};
+        if (from.kind === 'cash') {
+            if (from.brokerId) pot[from.brokerId] = 1;
+            else brokers.forEach(b => {
+                const cash = b.currentLiquidity ?? 0;
+                if (cash > 0) pot[b.id] = cash;
+            });
+        } else {
+            plan.sells.forEach(sell => {
+                const id = sell.brokerId ?? fallbackBrokerId;
+                if (id) pot[id] = (pot[id] ?? 0) + sell.net;
+            });
+        }
+        const weight = Object.values(pot).reduce((sum, v) => sum + v, 0);
+        if (weight > 0) Object.entries(pot).forEach(([id, w]) => bump(id, -plan.spent * (w / weight)));
+        else bump(from.kind === 'cash' ? from.brokerId : undefined, -plan.spent);
+    }
+
     // Nothing was bought and no wire was planned: a cash→cash move whose source
     // is the unassigned pot has no broker to wire FROM, so it stays what it
     // always was — a debit against the fallback broker and a matching credit.
-    if (from.kind === 'cash' && plan.buys.length === 0 && plan.transfers.length === 0) {
+    // A spend has already taken its own money out, just above.
+    if (from.kind === 'cash' && to.kind !== 'spend' && plan.buys.length === 0 && plan.transfers.length === 0) {
         bump(from.brokerId, -plan.cashDrawn);
         if (to.kind === 'cash' && to.brokerId) bump(to.brokerId, plan.netDelivered);
     }
@@ -893,6 +953,8 @@ export interface RelocationSequenceTotals {
     spreadCost: number;
     /** Sum of what each step delivers. Chained moves can hand the same euro on. */
     netDelivered: number;
+    /** € consumed by the chain's spends — out of the net worth, and not friction. */
+    spent: number;
     netRequested: number;
     /** friction / netRequested, as a %. */
     frictionPercent: number;
@@ -907,7 +969,7 @@ export interface RelocationSequence {
 
 /** Whether a plan actually changes the state — an empty one is a no-op to skip. */
 export const planHasEffect = (plan: RelocationPlan): boolean =>
-    plan.sells.length > 0 || plan.buys.length > 0 || plan.cashDrawn > 0;
+    plan.sells.length > 0 || plan.buys.length > 0 || plan.cashDrawn > 0 || plan.spent > 0;
 
 const sumTotals = (plans: RelocationPlan[]): RelocationSequenceTotals => {
     const sum = (pick: (p: RelocationPlan) => number) => plans.reduce((s, p) => s + pick(p), 0);
@@ -922,6 +984,7 @@ const sumTotals = (plans: RelocationPlan[]): RelocationSequenceTotals => {
         friction,
         spreadCost: sum(p => p.spreadCost),
         netDelivered: sum(p => p.netDelivered),
+        spent: sum(p => p.spent),
         netRequested,
         frictionPercent: netRequested > 0 ? (friction / netRequested) * 100 : 0,
     };

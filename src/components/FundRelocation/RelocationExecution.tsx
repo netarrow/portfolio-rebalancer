@@ -10,12 +10,32 @@ import type { ExecutionMove, ExecutionStep } from '../../utils/relocationExecuti
  * user has to go and do, not a footnote. Marking it executed records the trades
  * and settles the broker balances; the wire moves cash without ever becoming a
  * transaction.
+ *
+ * A move that ends in a spend is listed too, greyed and labelled: it is a
+ * what-if, so nothing about it is recorded — not the spend, and not the sale
+ * that would fund it. Executing writes the other moves and leaves it alone.
  */
 
 const eur = (v: number) => `€${v.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const eur0 = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
 
 const StepRow: React.FC<{ step: ExecutionStep; n: number }> = ({ step, n }) => {
+    if (step.kind === 'spend') {
+        return (
+            <div className="reloc-exec-step spend">
+                <span className="reloc-exec-num">{n}</span>
+                <span className="reloc-badge spend">SPEND</span>
+                <span className="reloc-exec-main">
+                    <span className="reloc-exec-title">Money spent</span>
+                    <span className="reloc-exec-sub">
+                        taken out of {step.fromLabel} and gone — simulated only, nothing is recorded
+                    </span>
+                </span>
+                <span className="reloc-exec-amount">−{eur0(step.amount)}</span>
+            </div>
+        );
+    }
+
     if (step.kind === 'transfer') {
         return (
             <div className={`reloc-exec-step transfer${step.required ? ' required' : ''}`}>
@@ -78,6 +98,8 @@ const RelocationExecution: React.FC<RelocationExecutionProps> = ({ moves, onExec
         }));
     }, [moves]);
     const total = numbered.reduce((s, m) => s + m.steps.length, 0);
+    // A queue of nothing but spends has plenty to show and nothing to write.
+    const committable = numbered.some(({ move }) => !move.simulationOnly && move.steps.length > 0);
     if (total === 0) return null;
 
     return (
@@ -87,17 +109,18 @@ const RelocationExecution: React.FC<RelocationExecutionProps> = ({ moves, onExec
                     Actions to perform
                     <span className="reloc-count-badge">{total}</span>
                 </h3>
-                <button type="button" className="reloc-btn primary" onClick={onExecute} disabled={busy}>
+                <button type="button" className="reloc-btn primary" onClick={onExecute} disabled={busy || !committable}>
                     ✓ Mark as executed
                 </button>
             </div>
 
             {numbered.map(({ move, steps }) => (
-                <div className="reloc-exec-move" key={move.index}>
+                <div className={`reloc-exec-move${move.simulationOnly ? ' simulated' : ''}`} key={move.index}>
                     <div className="reloc-exec-move-head">
                         Move {move.index} · {move.fromLabel}
                         <span className="reloc-exec-arrow" aria-hidden="true">→</span>
                         {move.toLabel}
+                        {move.simulationOnly && <span className="reloc-badge spend">SIMULATED</span>}
                         <span className="reloc-exec-move-amount">{eur0(move.netAmount)}</span>
                     </div>
                     {steps.map(({ step, n }, i) => (
@@ -111,6 +134,10 @@ const RelocationExecution: React.FC<RelocationExecutionProps> = ({ moves, onExec
                 up by what a sale actually credits (gross minus tax and fee), down and up again for each wire,
                 down by what a purchase costs. <strong>The wire is never written to the ledger</strong> — no
                 position changes and no gain is realised — so only the trades show up in Transactions.
+                {numbered.some(({ move }) => move.simulationOnly) && (
+                    <> A move marked <strong>simulated</strong> is skipped whole: a spend is a what-if, so
+                    neither it nor the sale funding it is recorded — it only shapes the before/after below.</>
+                )}
             </p>
         </div>
     );
