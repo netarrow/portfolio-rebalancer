@@ -3,8 +3,6 @@ import type {
   LiquidityTargetConfig,
   PortfolioTargetConfig,
   PortfolioTargetMode,
-  RatioGroupConfig,
-  RatioGroupTargetMode
 } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -19,18 +17,14 @@ const isFiniteNumber = (value: unknown): value is number =>
 const sanitizeNumber = (value: unknown, fallback = 0): number =>
   isFiniteNumber(value) ? value : fallback;
 
-const VALID_PORTFOLIO_MODES: PortfolioTargetMode[] = ['excluded', 'locked', 'fixed', 'percent', 'ratio'];
-const VALID_GROUP_MODES: RatioGroupTargetMode[] = ['fixed', 'percent', 'remainder'];
+const VALID_PORTFOLIO_MODES: PortfolioTargetMode[] = ['excluded', 'locked', 'fixed', 'percent'];
 
 // ---------------------------------------------------------------------------
 // Normalizer
 // ---------------------------------------------------------------------------
 
 export const normalizeAssetAllocationSettings = (raw: unknown): AssetAllocationSettings => {
-  const base: AssetAllocationSettings = {
-    portfolioTargets: {},
-    ratioGroups: []
-  };
+  const base: AssetAllocationSettings = { portfolioTargets: {} };
 
   if (!raw || typeof raw !== 'object') {
     return base;
@@ -49,40 +43,6 @@ export const normalizeAssetAllocationSettings = (raw: unknown): AssetAllocationS
     }
   }
 
-  // ratioGroups
-  const ratioGroups: RatioGroupConfig[] = [];
-  const seenGroupIds = new Set<string>();
-  let remainderGroupFound = false;
-  if (Array.isArray(src.ratioGroups)) {
-    for (const item of src.ratioGroups) {
-      if (!item || typeof item !== 'object') continue;
-      const g = item as Record<string, unknown>;
-      const id = typeof g.id === 'string' && g.id.trim() ? g.id : '';
-      const name = typeof g.name === 'string' && g.name.trim() ? g.name : '';
-      if (!id || !name || seenGroupIds.has(id)) continue;
-      const modeRaw = g.groupTargetMode;
-      if (!VALID_GROUP_MODES.includes(modeRaw as RatioGroupTargetMode)) continue;
-      let mode = modeRaw as RatioGroupTargetMode;
-      // Enforce "only one remainder group" rule during normalization
-      if (mode === 'remainder') {
-        if (remainderGroupFound) {
-          // Demote to percent 0 (effectively inert) to keep data resilient
-          mode = 'percent';
-        } else {
-          remainderGroupFound = true;
-        }
-      }
-      const value = Math.max(0, sanitizeNumber(g.groupTargetValue, 0));
-      seenGroupIds.add(id);
-      ratioGroups.push({
-        id,
-        name,
-        groupTargetMode: mode,
-        groupTargetValue: roundToCents(value)
-      });
-    }
-  }
-
   // portfolioTargets
   const portfolioTargets: Record<string, PortfolioTargetConfig> = {};
   if (src.portfolioTargets && typeof src.portfolioTargets === 'object') {
@@ -94,24 +54,11 @@ export const normalizeAssetAllocationSettings = (raw: unknown): AssetAllocationS
         : undefined;
       if (!mode) continue;
       const value = Math.max(0, sanitizeNumber(pt.value, 0));
-      let ratioGroupId: string | undefined;
-      if (mode === 'ratio') {
-        ratioGroupId = typeof pt.ratioGroupId === 'string' ? pt.ratioGroupId : undefined;
-        if (!ratioGroupId || !seenGroupIds.has(ratioGroupId)) {
-          // Orphaned ratio target -> treat as excluded
-          portfolioTargets[portfolioId] = { mode: 'excluded', value: 0 };
-          continue;
-        }
-      }
-      portfolioTargets[portfolioId] = {
-        mode,
-        value: roundToCents(value),
-        ...(ratioGroupId ? { ratioGroupId } : {})
-      };
+      portfolioTargets[portfolioId] = { mode, value: roundToCents(value) };
     }
   }
 
-  return { liquidityTarget, portfolioTargets, ratioGroups };
+  return { liquidityTarget, portfolioTargets };
 };
 
 // ---------------------------------------------------------------------------
@@ -186,21 +133,8 @@ export interface AssetAllocationPortfolioResult {
   targetValue: number;
   targetWeight: number;    // % on eligibleTotal
   delta: number;           // targetValue - currentValue
-  ratioGroupId?: string;
-  ratioValue?: number;     // relative weight for ratio mode
   fixedValue?: number;     // EUR for fixed mode
   percentValue?: number;   // % for percent mode
-}
-
-export interface AssetAllocationGroupResult {
-  id: string;
-  name: string;
-  groupTargetMode: RatioGroupTargetMode;
-  groupTargetValue: number;
-  budget: number;
-  members: string[];
-  memberWeightsSum: number;
-  orphan: boolean; // budget > 0 but no members
 }
 
 export type AssetAllocationAction =
@@ -219,7 +153,6 @@ export interface AssetAllocationResult {
     hasTarget: boolean;
   };
   portfolios: AssetAllocationPortfolioResult[];
-  ratioGroups: AssetAllocationGroupResult[];
   actions: AssetAllocationAction[];
   sustainability: {
     sustainable: boolean;
@@ -273,33 +206,11 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
       percentBudget += (Math.max(0, p.config.value) / 100) * eligibleTotal;
   }
 
-  // 4. Resolve ratio group budgets (fixed/percent first)
-  let groupFixedBudget = 0;
-  let groupPercentBudget = 0;
-  const groupBudgetById: Record<string, number> = {};
-  let remainderGroupId: string | null = null;
-
-  for (const g of settings.ratioGroups) {
-    if (g.groupTargetMode === 'fixed') {
-      const b = Math.max(0, g.groupTargetValue);
-      groupBudgetById[g.id] = b;
-      groupFixedBudget += b;
-    } else if (g.groupTargetMode === 'percent') {
-      const b = Math.max(0, (g.groupTargetValue / 100) * eligibleTotal);
-      groupBudgetById[g.id] = b;
-      groupPercentBudget += b;
-    } else if (g.groupTargetMode === 'remainder') {
-      groupBudgetById[g.id] = 0; // computed below
-      remainderGroupId = g.id;
-    }
-  }
-
-  // 5. Remainder
-  const totalAssigned =
-    liquidityBudget + lockedBudget + fixedBudget + percentBudget + groupFixedBudget + groupPercentBudget;
+  // 4. Remainder
+  const totalAssigned = liquidityBudget + lockedBudget + fixedBudget + percentBudget;
   const remainder = roundToCents(eligibleTotal - totalAssigned);
 
-  // 6. Sustainability & remainder group
+  // 5. Sustainability
   let sustainable = true;
   let shortfall = 0;
   let unallocatedRemainder = 0;
@@ -308,64 +219,10 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
     sustainable = false;
     shortfall = roundToCents(-remainder);
   } else if (remainder > 0.005) {
-    if (remainderGroupId) {
-      groupBudgetById[remainderGroupId] = remainder;
-    } else {
-      unallocatedRemainder = remainder;
-      warnings.push(
-        `€${remainder.toFixed(2)} non allocati: aggiungi un ratio group "remainder" o alza i target per assorbirli.`
-      );
-    }
-  } else if (remainderGroupId) {
-    groupBudgetById[remainderGroupId] = 0;
-  }
-
-  // 7. Distribute ratio group budgets across members via largest remainder
-  const membersByGroupId: Record<string, Array<{ portfolioId: string; weight: number }>> = {};
-  for (const p of includedPortfolios) {
-    if (p.config.mode === 'ratio' && p.config.ratioGroupId) {
-      const gid = p.config.ratioGroupId;
-      if (!groupBudgetById.hasOwnProperty(gid)) continue; // orphan reference (shouldn't happen after normalization)
-      if (!membersByGroupId[gid]) membersByGroupId[gid] = [];
-      membersByGroupId[gid].push({
-        portfolioId: p.portfolioId,
-        weight: Math.max(0, p.config.value)
-      });
-    }
-  }
-
-  const portfolioTargetById: Record<string, number> = {};
-  const groupResults: AssetAllocationGroupResult[] = [];
-  for (const g of settings.ratioGroups) {
-    const budget = Math.max(0, groupBudgetById[g.id] ?? 0);
-    const members = membersByGroupId[g.id] || [];
-    const memberWeightsSum = members.reduce((s, m) => s + m.weight, 0);
-    const orphan = budget > 0.005 && members.length === 0;
-    if (orphan) {
-      warnings.push(`Group "${g.name}" has a budget of €${budget.toFixed(2)} but no member portfolios.`);
-    }
-    if (members.length > 0 && memberWeightsSum > 0 && budget > 0) {
-      const alloc = allocateByLargestRemainder(
-        budget,
-        members.map((m) => ({ key: m.portfolioId, weight: m.weight }))
-      );
-      for (const [pid, val] of Object.entries(alloc)) {
-        portfolioTargetById[pid] = val;
-      }
-    } else if (members.length > 0) {
-      // Budget zero or all weights zero -> every member gets 0
-      for (const m of members) portfolioTargetById[m.portfolioId] = 0;
-    }
-    groupResults.push({
-      id: g.id,
-      name: g.name,
-      groupTargetMode: g.groupTargetMode,
-      groupTargetValue: g.groupTargetValue,
-      budget: roundToCents(budget),
-      members: members.map((m) => m.portfolioId),
-      memberWeightsSum,
-      orphan
-    });
+    unallocatedRemainder = remainder;
+    warnings.push(
+      `€${remainder.toFixed(2)} non allocati: alza i target dei portafogli o della liquidità per assorbirli.`
+    );
   }
 
   // 8. Compute targets for every portfolio (incl. excluded)
@@ -380,8 +237,6 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
       targetValue = Math.max(0, p.config.value);
     } else if (mode === 'percent') {
       targetValue = (Math.max(0, p.config.value) / 100) * eligibleTotal;
-    } else if (mode === 'ratio') {
-      targetValue = portfolioTargetById[p.portfolioId] ?? 0;
     }
     targetValue = roundToCents(targetValue);
     const currentValue = roundToCents(p.currentTotalValue);
@@ -398,8 +253,6 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
       targetValue,
       targetWeight,
       delta,
-      ratioGroupId: p.config.ratioGroupId,
-      ratioValue: mode === 'ratio' ? p.config.value : undefined,
       fixedValue: mode === 'fixed' ? p.config.value : undefined,
       percentValue: mode === 'percent' ? p.config.value : undefined
     };
@@ -465,7 +318,6 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
       hasTarget: liquidityHasTarget
     },
     portfolios: portfolioResults,
-    ratioGroups: groupResults,
     actions,
     sustainability: {
       sustainable,
@@ -475,4 +327,119 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
     warnings,
     unallocatedRemainder: roundToCents(unallocatedRemainder)
   };
+};
+
+// ---------------------------------------------------------------------------
+// Ratio-group removal (one-shot migration)
+// ---------------------------------------------------------------------------
+
+/**
+ * Rewrite the targets of a settings blob that still uses ratio groups.
+ *
+ * Ratio groups let several portfolios share one budget by relative weight.
+ * That was the only way to express a parent/child split before the ratio moved
+ * onto the portfolios themselves, and with it gone the mechanism has no job
+ * left — so it is removed rather than kept as a second, overlapping way to say
+ * the same thing.
+ *
+ * The conversion keeps each member's intent where the group stated a number:
+ *
+ *   - a `fixed` group of €F  → each member `fixed`, F × its share of the weights;
+ *   - a `percent` group of P% → each member `percent`, P × its share;
+ *   - a `remainder` group     → each member `locked`.
+ *
+ * The last one is a real loss and is deliberate: "whatever is left over" has no
+ * number of its own, and inventing one would quietly commit the user to a plan
+ * they never chose. `locked` keeps the portfolio counted in the total at
+ * exactly what it holds, so nothing is proposed until they say what they meant.
+ * `convertedFromRemainder` names those portfolios so the caller can say so.
+ *
+ * Takes the RAW stored object rather than a normalized one: by the time
+ * normalization runs, ratio modes are no longer valid and the information this
+ * needs is already gone.
+ */
+export interface RatioGroupMigrationResult {
+  portfolioTargets: Record<string, PortfolioTargetConfig>;
+  /** True when the input actually used ratio groups. */
+  changed: boolean;
+  /** Portfolio ids that fell back to `locked` for want of a stated budget. */
+  convertedFromRemainder: string[];
+}
+
+export const migrateRatioGroups = (raw: unknown): RatioGroupMigrationResult => {
+  const empty: RatioGroupMigrationResult = {
+    portfolioTargets: {},
+    changed: false,
+    convertedFromRemainder: []
+  };
+  if (!raw || typeof raw !== 'object') return empty;
+  const src = raw as Record<string, unknown>;
+
+  const rawTargets =
+    src.portfolioTargets && typeof src.portfolioTargets === 'object'
+      ? (src.portfolioTargets as Record<string, Record<string, unknown>>)
+      : {};
+
+  type GroupMode = 'fixed' | 'percent' | 'remainder';
+  const groups = new Map<string, { mode: GroupMode; value: number }>();
+  if (Array.isArray(src.ratioGroups)) {
+    for (const item of src.ratioGroups) {
+      if (!item || typeof item !== 'object') continue;
+      const g = item as Record<string, unknown>;
+      const id = typeof g.id === 'string' ? g.id : '';
+      const mode = g.groupTargetMode;
+      if (!id || (mode !== 'fixed' && mode !== 'percent' && mode !== 'remainder')) continue;
+      groups.set(id, { mode, value: Math.max(0, sanitizeNumber(g.groupTargetValue, 0)) });
+    }
+  }
+
+  // Weight totals per group, so a member's share is its weight over the rest.
+  const weightTotals = new Map<string, number>();
+  for (const cfg of Object.values(rawTargets)) {
+    if (!cfg || cfg.mode !== 'ratio') continue;
+    const gid = typeof cfg.ratioGroupId === 'string' ? cfg.ratioGroupId : '';
+    if (!groups.has(gid)) continue;
+    weightTotals.set(gid, (weightTotals.get(gid) ?? 0) + Math.max(0, sanitizeNumber(cfg.value, 0)));
+  }
+
+  const portfolioTargets: Record<string, PortfolioTargetConfig> = {};
+  const convertedFromRemainder: string[] = [];
+  let changed = groups.size > 0;
+
+  for (const [portfolioId, cfg] of Object.entries(rawTargets)) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    const mode = cfg.mode;
+    const value = Math.max(0, sanitizeNumber(cfg.value, 0));
+
+    if (mode !== 'ratio') {
+      if (mode === 'excluded' || mode === 'locked' || mode === 'fixed' || mode === 'percent') {
+        portfolioTargets[portfolioId] = { mode, value: roundToCents(value) };
+      }
+      continue;
+    }
+
+    changed = true;
+    const gid = typeof cfg.ratioGroupId === 'string' ? cfg.ratioGroupId : '';
+    const group = groups.get(gid);
+    const total = weightTotals.get(gid) ?? 0;
+    // An orphaned ratio target never had a budget to draw on, so it was already
+    // contributing nothing: excluded is what it effectively was.
+    if (!group || total <= 0) {
+      portfolioTargets[portfolioId] = { mode: 'excluded', value: 0 };
+      continue;
+    }
+
+    const share = value / total;
+    if (group.mode === 'remainder') {
+      portfolioTargets[portfolioId] = { mode: 'locked', value: 0 };
+      convertedFromRemainder.push(portfolioId);
+    } else {
+      portfolioTargets[portfolioId] = {
+        mode: group.mode,
+        value: roundToCents(group.value * share)
+      };
+    }
+  }
+
+  return { portfolioTargets, changed, convertedFromRemainder };
 };

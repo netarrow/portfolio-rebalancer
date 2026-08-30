@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import PortfolioForm from './PortfolioForm';
 import PortfolioAllocations from './PortfolioAllocations';
+import GroupRatioModal from './GroupRatioModal';
 import type { Portfolio } from '../../types';
 import Swal from 'sweetalert2';
 
@@ -13,6 +14,8 @@ const PortfolioList: React.FC = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingPortfolio, setEditingPortfolio] = useState<Portfolio | null>(null);
     const [allocatingPortfolioId, setAllocatingPortfolioId] = useState<string | null>(null);
+    /** Parent whose group ratio is being edited, if any. */
+    const [ratioParentId, setRatioParentId] = useState<string | null>(null);
 
     const handleCreate = (data: Omit<Portfolio, 'id'>) => {
         addPortfolio({
@@ -109,6 +112,16 @@ const PortfolioList: React.FC = () => {
                                     >
                                         📊
                                     </button>
+                                    {portfolios.some(p => p.parentId === portfolio.id) && (
+                                        <button
+                                            className="btn-icon"
+                                            onClick={() => setRatioParentId(portfolio.id)}
+                                            title="Group ratio (parent/child split)"
+                                            aria-label="Edit group ratio"
+                                        >
+                                            ⚖️
+                                        </button>
+                                    )}
                                     <button
                                         className="btn-icon delete"
                                         onClick={() => handleDelete(portfolio.id, portfolio.name)}
@@ -139,6 +152,17 @@ const PortfolioList: React.FC = () => {
                                         <span className="stat-pill stat-pill-parent">
                                             ⬡ Group
                                         </span>
+                                    )}
+                                    {(portfolio.parentId || portfolios.some(p => p.parentId === portfolio.id)) && (
+                                        portfolio.groupSharePercent !== undefined ? (
+                                            <span className="stat-pill stat-pill-ratio" title="Share of its parent/child group">
+                                                ⚖ {portfolio.groupSharePercent}%
+                                            </span>
+                                        ) : (
+                                            <span className="stat-pill stat-pill-ratio-off" title="No ratio set: keeps its current share of the group">
+                                                ⚖ by value
+                                            </span>
+                                        )
                                     )}
                                     {(() => {
                                         if (ynabGoals.length === 0) return null;
@@ -171,6 +195,13 @@ const PortfolioList: React.FC = () => {
                     onCancel={closeModal}
                 />
             )}
+
+            {ratioParentId && (() => {
+                const parent = portfolios.find(p => p.id === ratioParentId);
+                return parent ? (
+                    <GroupRatioModal parent={parent} onClose={() => setRatioParentId(null)} />
+                ) : null;
+            })()}
 
             {allocatingPortfolioId && (
                 <PortfolioAllocations
@@ -278,6 +309,16 @@ const PortfolioList: React.FC = () => {
                 .stat-pill-parent {
                     background-color: rgba(16, 185, 129, 0.12);
                     color: #10B981;
+                }
+
+                .stat-pill-ratio {
+                    background-color: rgba(139, 92, 246, 0.12);
+                    color: #8B5CF6;
+                }
+
+                .stat-pill-ratio-off {
+                    background-color: rgba(148, 163, 184, 0.12);
+                    color: var(--text-muted);
                 }
 
                 .stat-pill-alloc {

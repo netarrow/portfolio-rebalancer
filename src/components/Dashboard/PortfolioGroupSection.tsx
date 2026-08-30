@@ -30,11 +30,11 @@ import {
     type SellFriction,
     type SellLeg,
 } from '../../utils/rebalanceCosts';
-import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { computeGroupRebalance, type GroupRebalancePlan } from '../../utils/groupRebalance';
 import {
     mergedRatio,
     buildMergedGroup,
+    configuredShares,
     routeOrder,
     isMergedPortfolioId,
     type MemberValue,
@@ -304,9 +304,10 @@ const PortfolioGroupSection: React.FC<Props> = ({
 }) => {
     const [viewMode, setViewMode] = useState<'grouped' | 'individual' | 'merged'>('individual');
     const allPortfolios = useMemo(() => [parent, ...children], [parent, children]);
-    // Global Rebalancing settings + full portfolio list, needed to resolve the
-    // group members' configured proportions (e.g. Core 80% / Bond Buffer 20%).
-    const { portfolios: storedPortfolios, assetAllocationSettings } = usePortfolio();
+    // The full portfolio list, so the synthetic merged id cannot collide with
+    // a real one. The parent/child proportions themselves (e.g. Core 80% /
+    // Bond Buffer 20%) live on the portfolios, edited on the Portfolios page.
+    const { portfolios: storedPortfolios } = usePortfolio();
 
     const portfolioCalcs = useMemo((): PortfolioCalc[] => {
         return allPortfolios.map(portfolio => {
@@ -336,79 +337,40 @@ const PortfolioGroupSection: React.FC<Props> = ({
         return map;
     }, [allPortfolios]);
 
+    /** Parent/child proportions as configured on the Portfolios page. */
+    const shares = useMemo(() => configuredShares(allPortfolios), [allPortfolios]);
+
     /**
-     * Inter-portfolio rebalance plan from the Global Rebalancing targets.
+     * Inter-portfolio rebalance plan from the configured parent/child ratio.
      *
-     * Runs the same asset-allocation engine as the Global Rebalancing view over
-     * ALL portfolios (percent/ratio targets need the full eligible total), then
-     * normalizes the group members' target values within the group: the plan
-     * only moves value between parent and children — asset-level rebalancing
-     * inside each portfolio stays exactly as it is.
+     * The plan only moves value BETWEEN the group's portfolios — the
+     * asset-level rebalance inside each portfolio is a separate concern and
+     * stays untouched. `computeGroupRebalance` normalizes `targetBasis` over
+     * the members, so handing it the raw shares is enough: they need neither to
+     * sum to 100 nor to be expressed in euro.
      *
-     * Members without an active target (locked/excluded/unconfigured) are left
-     * out of the plan and listed in `uncovered`; the panel needs at least two
-     * covered members to be meaningful.
+     * Members without a configured share are left out of the plan and listed in
+     * `uncovered` — with nothing to aim at there is no drift to report. The
+     * panel needs at least two covered members to be meaningful, and no plan at
+     * all is shown until somebody has actually set a ratio.
      */
     const groupRebalance = useMemo((): (GroupRebalancePlan & { uncovered: string[] }) | null => {
-        const targets = assetAllocationSettings?.portfolioTargets ?? {};
-        const isActive = (pid: string) => {
-            const mode = targets[pid]?.mode;
-            return mode === 'percent' || mode === 'ratio' || mode === 'fixed';
-        };
-        const activeMembers = portfolioCalcs.filter(pc => isActive(pc.portfolio.id));
-        if (activeMembers.length < 2) return null;
+        const covered = portfolioCalcs.filter(pc => shares[pc.portfolio.id] !== undefined);
+        if (covered.length < 2) return null;
 
-        // Engine input over all portfolios, dashboard convention: invested assets
-        // + broker cash allocated to the portfolio (same as AllocationOverview).
-        const memberById = new Map(portfolioCalcs.map(pc => [pc.portfolio.id, pc]));
-        const inputs = storedPortfolios.map(p => {
-            const member = memberById.get(p.id);
-            let investedValue: number;
-            let totalValue: number;
-            if (member) {
-                investedValue = member.summary.totalValue;
-                totalValue = member.totalValue;
-            } else {
-                const txs = allTransactions.filter(t => t.portfolioId === p.id);
-                const { assets: rawAssets, summary } = calculateAssets(txs, assetSettings, marketData);
-                const cash = injectCashAssets(rawAssets, brokers, p.id)
-                    .filter(a => isCashTicker(a.ticker))
-                    .reduce((s, a) => s + a.currentValue, 0);
-                investedValue = summary.totalValue;
-                totalValue = summary.totalValue + cash;
-            }
-            return {
-                portfolioId: p.id,
-                name: p.name,
-                currentInvestedValue: investedValue,
-                currentPortfolioLiquidity: p.liquidity || 0,
-                currentTotalValue: totalValue,
-            };
-        });
-        const brokerLiquidity = brokers.reduce((s, b) => {
-            const alloc = b.liquidityAllocations || {};
-            return s + Object.values(alloc).reduce((a, v) => a + (v || 0), 0);
-        }, 0);
-        const result = calculateAssetAllocation({
-            portfolios: inputs,
-            brokerLiquidity,
-            settings: assetAllocationSettings,
-        });
-        const targetValueById = new Map(result.portfolios.map(r => [r.portfolioId, r.targetValue]));
-
-        const plan = computeGroupRebalance(activeMembers.map(pc => ({
+        const plan = computeGroupRebalance(covered.map(pc => ({
             portfolioId: pc.portfolio.id,
             name: pc.portfolio.name,
             currentValue: pc.totalValue,
-            targetBasis: targetValueById.get(pc.portfolio.id) ?? 0,
+            targetBasis: shares[pc.portfolio.id],
         })));
         if (!plan) return null;
 
         const uncovered = portfolioCalcs
-            .filter(pc => !isActive(pc.portfolio.id))
+            .filter(pc => shares[pc.portfolio.id] === undefined)
             .map(pc => pc.portfolio.name);
         return { ...plan, uncovered };
-    }, [portfolioCalcs, storedPortfolios, allTransactions, assetSettings, marketData, brokers, assetAllocationSettings]);
+    }, [portfolioCalcs, shares]);
 
     /**
      * The group rendered as ONE virtual portfolio (Merged view).
@@ -431,7 +393,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
             return { portfolio: pc.portfolio, totalValue: pc.totalValue, valueByTicker, quantityByTicker };
         });
 
-        const { members: ratio, ratioSource } = mergedRatio(memberValues, groupRebalance);
+        const { members: ratio, ratioSource } = mergedRatio(memberValues, shares);
         const group = buildMergedGroup({
             members: memberValues,
             ratio,
@@ -471,7 +433,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
         };
 
         return { group, context };
-    }, [portfolioCalcs, groupRebalance, allTransactions, brokers, storedPortfolios, parent.id]);
+    }, [portfolioCalcs, shares, allTransactions, brokers, storedPortfolios, parent.id]);
 
     /**
      * The merged portfolio is synthesized per render and has no row in storage,
@@ -749,15 +711,15 @@ const PortfolioGroupSection: React.FC<Props> = ({
                 </div>
             </div>
 
-            {/* Inter-portfolio rebalance (Global Rebalancing proportions).
-                Portfolio-level only: the asset tables below keep handling the
-                rebalance inside each portfolio. */}
+            {/* Inter-portfolio rebalance against the ratio set on the Portfolios
+                page. Portfolio-level only: the asset tables below keep handling
+                the rebalance inside each portfolio. */}
             {groupRebalance && (
                 <div className="group-rebal-panel">
                     <div className="group-rebal-header">
                         <span className="group-rebal-title">⚖ Portfolio rebalance</span>
                         <span className="group-rebal-targets">
-                            global targets: {groupRebalance.members.map(m => `${m.name} ${m.targetShare.toFixed(1).replace(/\.0$/, '')}%`).join(' / ')}
+                            configured ratio: {groupRebalance.members.map(m => `${m.name} ${m.targetShare.toFixed(1).replace(/\.0$/, '')}%`).join(' / ')}
                         </span>
                         {groupRebalance.balanced && (
                             <span className="group-rebal-ok">✓ balanced</span>
@@ -824,7 +786,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
                     )}
                     {groupRebalance.uncovered.length > 0 && (
                         <div className="group-rebal-muted">
-                            No global target (excluded from this plan): {groupRebalance.uncovered.join(', ')}
+                            No configured share (excluded from this plan): {groupRebalance.uncovered.join(', ')}
                         </div>
                     )}
                 </div>

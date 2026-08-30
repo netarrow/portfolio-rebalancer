@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
-import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeReturnStats } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeReturnStats, type PortfolioScope } from '../../utils/performanceCalculations';
+import { buildPortfolioTree } from '../../utils/portfolioGroups';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import '../Dashboard/Dashboard.css';
 
@@ -21,7 +22,7 @@ const PerformanceView: React.FC = () => {
     // Scoped: respects the family/illiquid asset-scope toggles
     const { scopedTransactions: transactions, priceHistory, portfolios, scopedBrokers: brokers, assetSettings, refreshHistory } = usePortfolio();
 
-    // Scope: 'networth' | 'p:<portfolioId>' | 'a:<ticker>'
+    // Scope: 'networth' | 'g:<parentId>' | 'p:<portfolioId>' | 'a:<ticker>'
     const [scope, setScope] = useState('networth');
     const [range, setRange] = useState<RangeKey>('1Y');
     const [includeLiquidity, setIncludeLiquidity] = useState(true);
@@ -32,6 +33,37 @@ const PerformanceView: React.FC = () => {
     const [riskFreeRate, setRiskFreeRate] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
 
     const hasHistory = Object.keys(priceHistory).length > 0;
+
+    // Parent/child groups, so a group can be measured as the single portfolio
+    // it effectively is. Every calculation below is already scope-aware
+    // (`PortfolioScope` takes a list of ids), so a group is just the list of
+    // its members — no separate code path, and no double counting: the select
+    // is single-choice, a group or a member, never both.
+    const groups = useMemo(() => buildPortfolioTree(portfolios).groups, [portfolios]);
+
+    /** The portfolios the current scope covers, or undefined for the whole account. */
+    const scopeIds = useMemo((): PortfolioScope | undefined => {
+        if (scope.startsWith('p:')) return scope.slice(2);
+        if (scope.startsWith('g:')) {
+            const group = groups.find(g => g.parent.id === scope.slice(2));
+            // A group that no longer exists (re-parented while selected) would
+            // otherwise silently widen to the whole account.
+            return group ? group.members.map(m => m.id) : [];
+        }
+        return undefined;
+    }, [scope, groups]);
+
+    const scopeLabel = useMemo(() => {
+        if (scope === 'networth') return 'Net Worth';
+        if (scope.startsWith('g:')) {
+            const group = groups.find(g => g.parent.id === scope.slice(2));
+            return group ? `${group.parent.name} (group)` : 'Group';
+        }
+        if (scope.startsWith('p:')) {
+            return portfolios.find(p => p.id === scope.slice(2))?.name || 'Portfolio';
+        }
+        return scope.slice(2);
+    }, [scope, groups, portfolios]);
 
     // Broker cash only — single source of truth for liquidity, matching the
     // Dashboard Net Worth card. Per-portfolio liquidity is rebalancing-only and
@@ -61,17 +93,11 @@ const PerformanceView: React.FC = () => {
     // this one, because a constant cash overlay has no history and would dampen
     // every percentage toward zero.
     const baseSeries = useMemo(() => {
-        if (scope === 'networth') {
-            return getPortfolioValueSeries(transactions, priceHistory, { from });
+        if (scope.startsWith('a:')) {
+            return getAssetPriceSeries(scope.slice(2), priceHistory, { from });
         }
-        if (scope.startsWith('p:')) {
-            return getPortfolioValueSeries(transactions, priceHistory, {
-                portfolioId: scope.slice(2),
-                from,
-            });
-        }
-        return getAssetPriceSeries(scope.slice(2), priceHistory, { from });
-    }, [scope, from, transactions, priceHistory]);
+        return getPortfolioValueSeries(transactions, priceHistory, { portfolioId: scopeIds, from });
+    }, [scope, scopeIds, from, transactions, priceHistory]);
 
     // Chart series: net worth optionally overlays today's liquidity as a constant.
     const series = useMemo(() => {
@@ -89,32 +115,37 @@ const PerformanceView: React.FC = () => {
 
     // Tickers held in the selected scope but with no price history yet (their
     // value falls back to the last transaction price → a flat line).
+    // A Set rather than a predicate closure: the scope is consulted inside two
+    // hot loops, and memoizing the data keeps the React Compiler able to track it.
+    // null = no scoping at all, every transaction counts.
+    const scopeIdSet = useMemo(() => (
+        scopeIds === undefined ? null : new Set(Array.isArray(scopeIds) ? scopeIds : [scopeIds])
+    ), [scopeIds]);
+
     const missingHistoryTickers = useMemo(() => {
         if (isAssetScope) return [];
-        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const tickers = new Set<string>();
         for (const tx of transactions) {
-            if (portfolioId && tx.portfolioId !== portfolioId) continue;
+            if (scopeIdSet && !(tx.portfolioId && scopeIdSet.has(tx.portfolioId))) continue;
             const t = tx.ticker.toUpperCase();
             if (!t.startsWith('_') && !tickersWithHistory.has(t)) tickers.add(t);
         }
         return Array.from(tickers).sort();
-    }, [scope, isAssetScope, transactions, tickersWithHistory]);
+    }, [isAssetScope, scopeIdSet, transactions, tickersWithHistory]);
 
     // Tickers in scope whose history is the clean price (corso secco): their
     // series value excludes accrued interest, while the Dashboard values them
     // at the tel-quel live price — totals can differ by the accrued part.
     const cleanBasisTickers = useMemo(() => {
         if (isAssetScope) return [];
-        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const tickers = new Set<string>();
         for (const tx of transactions) {
-            if (portfolioId && tx.portfolioId !== portfolioId) continue;
+            if (scopeIdSet && !(tx.portfolioId && scopeIdSet.has(tx.portfolioId))) continue;
             const t = tx.ticker.toUpperCase();
             if (priceHistory[t]?.priceBasis === 'clean') tickers.add(t);
         }
         return Array.from(tickers).sort();
-    }, [scope, isAssetScope, transactions, priceHistory]);
+    }, [isAssetScope, scopeIdSet, transactions, priceHistory]);
 
     const chartOptions = {
         chart: {
@@ -157,11 +188,7 @@ const PerformanceView: React.FC = () => {
     };
 
     const chartSeries = [{
-        name: scope === 'networth'
-            ? 'Net Worth'
-            : scope.startsWith('p:')
-                ? (portfolios.find(p => p.id === scope.slice(2))?.name || 'Portfolio')
-                : scope.slice(2),
+        name: scopeLabel,
         data: series.map(p => ({ x: p.date, y: Math.round(p.value * 100) / 100 }))
     }];
 
@@ -172,10 +199,9 @@ const PerformanceView: React.FC = () => {
 
     const twrPct = useMemo(() => {
         if (isAssetScope) return null;
-        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
-        const cashFlows = getCashFlowsByDate(transactions, portfolioId, { includeDistributions });
+        const cashFlows = getCashFlowsByDate(transactions, scopeIds, { includeDistributions });
         return computeTWR(baseSeries, cashFlows);
-    }, [baseSeries, scope, isAssetScope, transactions, includeDistributions]);
+    }, [baseSeries, scopeIds, isAssetScope, transactions, includeDistributions]);
 
     // Risk metrics on the flow-adjusted return stream: deposits/withdrawals
     // are stripped from daily returns, so a disinvestment doesn't read as a
@@ -183,14 +209,13 @@ const PerformanceView: React.FC = () => {
     // total-return toggle is off → price-only). Asset scope uses per-unit
     // distribution flows on top of the close-price series.
     const returnStats = useMemo(() => {
-        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const cashFlows = isAssetScope
             ? (includeDistributions
                 ? getAssetDistributionFlows(transactions, scope.slice(2))
                 : new Map<string, number>())
-            : getCashFlowsByDate(transactions, portfolioId, { includeDistributions });
+            : getCashFlowsByDate(transactions, scopeIds, { includeDistributions });
         return computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate });
-    }, [baseSeries, scope, isAssetScope, transactions, riskFreeRate, includeDistributions]);
+    }, [baseSeries, scope, scopeIds, isAssetScope, transactions, riskFreeRate, includeDistributions]);
 
     // Money-Weighted Return: net gain (value change minus net contributions)
     // over capital deployed (initial value + buys in range). On MAX this matches
@@ -198,13 +223,12 @@ const PerformanceView: React.FC = () => {
     // capital invested); distributions are tracked separately in the Dashboard.
     const mwr = useMemo(() => {
         if (isAssetScope || baseSeries.length === 0) return null;
-        const portfolioId = scope.startsWith('p:') ? scope.slice(2) : undefined;
         const first = baseSeries[0];
         const last = baseSeries[baseSeries.length - 1];
         let netFlows = 0;
         let buys = 0;
         for (const tx of transactions) {
-            if (portfolioId && tx.portfolioId !== portfolioId) continue;
+            if (scopeIdSet && !(tx.portfolioId && scopeIdSet.has(tx.portfolioId))) continue;
             const direction = tx.direction || 'Buy';
             if (direction !== 'Buy' && direction !== 'Sell') continue;
             const date = (tx.date || '').slice(0, 10);
@@ -216,7 +240,7 @@ const PerformanceView: React.FC = () => {
         const gain = last.value - first.value - netFlows;
         const capital = first.value + buys;
         return { gain, pct: capital > 0 ? (gain / capital) * 100 : 0 };
-    }, [baseSeries, scope, isAssetScope, transactions]);
+    }, [baseSeries, isAssetScope, scopeIdSet, transactions]);
 
     if (!hasHistory) {
         return (
@@ -277,6 +301,15 @@ const PerformanceView: React.FC = () => {
                     }}
                 >
                     <option value="networth">Net Worth (all portfolios)</option>
+                    {groups.length > 0 && (
+                        <optgroup label="Groups (parent + children)">
+                            {groups.map(g => (
+                                <option key={g.parent.id} value={`g:${g.parent.id}`}>
+                                    {g.parent.name} ({g.members.length} portfolios)
+                                </option>
+                            ))}
+                        </optgroup>
+                    )}
                     <optgroup label="Portfolios">
                         {portfolios.map(p => (
                             <option key={p.id} value={`p:${p.id}`}>{p.name}</option>

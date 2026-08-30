@@ -1,12 +1,14 @@
-// Known-answer checks for the Dashboard's Merged parent/child view: the
-// parent/child shares, the blended target vector and its two identities (the
-// per-member ratio and the members' internal proportions), the synthetic
-// portfolio / transactions / brokers, and the order routing.
+// Known-answer checks for the Merged parent/child view: the parent/child shares
+// (now read from the ratio configured on the Portfolios page), the blended
+// target vector and its two identities (the per-member ratio and the members'
+// internal proportions), the synthetic portfolio / transactions / brokers, and
+// the order routing.
 // Run with: npx esbuild scripts/verify-merged-group.ts --bundle --format=esm | node --input-type=module
 import type { Broker, Portfolio, Transaction } from '../src/types';
 import { computeGroupRebalance } from '../src/utils/groupRebalance';
 import {
     mergedRatio,
+    configuredShares,
     buildMergedGroup,
     routeOrder,
     isMergedPortfolioId,
@@ -49,15 +51,21 @@ const coreValue = member(core, 8400, { VWCE: { qty: 84, value: 6000 }, XMAU: { q
 const bufValue = member(buffer, 1600, { BTP: { qty: 16, value: 1600 } });
 const members = [coreValue, bufValue];
 
-const plan = computeGroupRebalance([
-    { portfolioId: 'core', name: 'Core', currentValue: 8400, targetBasis: 8000 },
-    { portfolioId: 'buf', name: 'Bond Buffer', currentValue: 1600, targetBasis: 2000 },
-])!;
+/** Core 80 / Bond Buffer 20, as set on the Portfolios page. */
+const plan = { core: 80, buf: 20 };
 
-// ── 1. Shares from the configured global ratio ──
+// ── 1. Shares from the ratio configured on the Portfolios page ──
 {
     const { members: ratio, ratioSource } = mergedRatio(members, plan);
-    assertStr('r1 ratio source', ratioSource, 'global');
+    assertStr('r1 ratio source', ratioSource, 'config');
+
+    // The same answer whether the shares are read off the portfolios or handed
+    // in directly — `configuredShares` is the only way the app builds them.
+    const fromPortfolios = configuredShares([
+        pf({ id: 'core', groupSharePercent: 80 }),
+        pf({ id: 'buf', groupSharePercent: 20 }),
+    ]);
+    assertEq('r1 core share via configuredShares', mergedRatio(members, fromPortfolios).members[0].share, 0.8);
     assertEq('r1 core share', ratio[0].share, 0.8);
     assertEq('r1 buffer share', ratio[1].share, 0.2);
     assertEq('r1 shares sum to 1', ratio.reduce((s, r) => s + r.share, 0), 1);
@@ -82,13 +90,19 @@ const plan = computeGroupRebalance([
     // value at target is groupTotal × share — exactly the ⚖ panel's target.
     assertEq('t2 core block = share × 100', alloc.VWCE + alloc.XMAU, 80);
     assertEq('t2 buffer block = share × 100', alloc.BTP, 20);
+    // The ⚖ panel plans against the same configured shares, so rebalancing to
+    // the merged targets and rebalancing to the panel must land on the same €.
     const groupTotal = 10000;
-    assertEq('t2 core target value == plan target value',
+    const panel = computeGroupRebalance([
+        { portfolioId: 'core', name: 'Core', currentValue: 8400, targetBasis: plan.core },
+        { portfolioId: 'buf', name: 'Bond Buffer', currentValue: 1600, targetBasis: plan.buf },
+    ])!;
+    assertEq('t2 core target value == panel target value',
         groupTotal * ((alloc.VWCE + alloc.XMAU) / 100),
-        plan.members.find(m => m.portfolioId === 'core')!.targetValue);
-    assertEq('t2 buffer target value == plan target value',
+        panel.members.find(m => m.portfolioId === 'core')!.targetValue);
+    assertEq('t2 buffer target value == panel target value',
         groupTotal * (alloc.BTP / 100),
-        plan.members.find(m => m.portfolioId === 'buf')!.targetValue);
+        panel.members.find(m => m.portfolioId === 'buf')!.targetValue);
 
     // IDENTITY B (internal): proportions inside a member are untouched.
     assertEq('t2 core internal ratio preserved', alloc.VWCE / alloc.XMAU, 70 / 30);
@@ -117,7 +131,7 @@ const plan = computeGroupRebalance([
     const ms = [coreValue, { ...bufValue, portfolio: untargeted }];
     const { members: ratio } = mergedRatio(ms, plan);
     const merged = buildMergedGroup({
-        members: ms, ratio, ratioSource: 'global',
+        members: ms, ratio, ratioSource: 'config',
         transactions: [], brokers: [], existingPortfolioIds: ['core', 'buf'],
     });
     const alloc = merged.portfolio.allocations || {};
@@ -125,23 +139,23 @@ const plan = computeGroupRebalance([
     assertEq('t4 total still 100', Object.values(alloc).reduce((s, v) => s + v, 0), 100);
 }
 
-// ── 5. A member with no ACTIVE global target keeps its current share ──
+// ── 5. A member with no configured share keeps its current share ──
 {
-    // Only two members are covered by a plan; here the Buffer is left out.
-    const soloPlan = computeGroupRebalance([
-        { portfolioId: 'core', name: 'Core', currentValue: 6000, targetBasis: 6000 },
-        { portfolioId: 'sat', name: 'Satellite', currentValue: 2400, targetBasis: 1200 },
-    ])!;
+    // Only two members carry a ratio; the Buffer is left blank on purpose.
+    const soloShares = { core: 2, sat: 1 };
     const satellite = member(pf({ id: 'sat', name: 'Satellite', allocations: { NDX: 100 } }), 2400, {
         NDX: { qty: 12, value: 2400 },
     });
     const ms = [member(core, 6000, { VWCE: { qty: 60, value: 4200 }, XMAU: { qty: 18, value: 1800 } }), satellite, bufValue];
-    const { members: ratio } = mergedRatio(ms, soloPlan);
-    // Covered block = (6000+2400)/10000 = 0.84, split 66.67/33.33 by the plan.
-    assertEq('t5 core share', ratio[0].share, 0.84 * (soloPlan.members[0].targetShare / 100));
-    assertEq('t5 satellite share', ratio[1].share, 0.84 * (soloPlan.members[1].targetShare / 100));
-    assertEq('t5 uncovered buffer keeps its value share', ratio[2].share, 0.16);
+    const { members: ratio } = mergedRatio(ms, soloShares);
+    // Configured block = (6000+2400)/10000 = 0.84, split 2:1 between its members.
+    assertEq('t5 core share', ratio[0].share, 0.84 * (2 / 3));
+    assertEq('t5 satellite share', ratio[1].share, 0.84 * (1 / 3));
+    assertEq('t5 unconfigured buffer keeps its value share', ratio[2].share, 0.16);
     assertEq('t5 shares sum to 1', ratio.reduce((s, r) => s + r.share, 0), 1);
+
+    // Shares need not be percentages: they are weights, so 80/20 and 8/2 agree.
+    assertEq('t5 weights are relative', mergedRatio(members, { core: 8, buf: 2 }).members[0].share, 0.8);
 }
 
 // ── 6. Synthetic portfolio, transactions and brokers ──
@@ -254,8 +268,8 @@ const plan = computeGroupRebalance([
 
 // ── 9. Degenerate inputs ──
 {
-    const { members: ratio, ratioSource } = mergedRatio(members, null);
-    assertStr('t9 no plan → value source', ratioSource, 'value');
+    const { members: ratio, ratioSource } = mergedRatio(members, {});
+    assertStr('t9 no ratio → value source', ratioSource, 'value');
     assertEq('t9 core value share', ratio[0].share, 0.84);
     assertEq('t9 buffer value share', ratio[1].share, 0.16);
 
@@ -263,11 +277,23 @@ const plan = computeGroupRebalance([
         member(pf({ id: 'a' }), 0, {}),
         member(pf({ id: 'b' }), 0, {}),
     ];
-    const zero = mergedRatio(empty, null);
+    const zero = mergedRatio(empty, {});
     assertEq('t9 zero group → equal weights', zero.members[0].share, 0.5);
     assertEq('t9 zero group → shares sum to 1', zero.members.reduce((s, r) => s + r.share, 0), 1);
 
-    assertEq('t9 no members → empty', mergedRatio([], null).members.length, 0);
+    // Nothing invested yet but a ratio IS set: the ratio is the answer, not 50/50.
+    const zeroConfigured = mergedRatio(empty, { a: 75, b: 25 });
+    assertStr('t9 zero group with ratio → config source', zeroConfigured.ratioSource, 'config');
+    assertEq('t9 zero group honours the ratio', zeroConfigured.members[0].share, 0.75);
+
+    // Shares that are all zero carry no proportion: fall back to value.
+    assertStr('t9 all-zero shares → value source', mergedRatio(members, { core: 0, buf: 0 }).ratioSource, 'value');
+
+    // A share left behind by a re-parented portfolio must not steer this group.
+    const stale = mergedRatio(members, { core: 80, buf: 20, somebodyElse: 500 });
+    assertEq('t9 foreign share ignored', stale.members[0].share, 0.8);
+
+    assertEq('t9 no members → empty', mergedRatio([], {}).members.length, 0);
 }
 
 // ── 10. A ticker grouped in one member and standalone in another ──

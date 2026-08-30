@@ -51,6 +51,13 @@
     max-width: 70ch;
 }
 
+/* Why one instruction became several moves, shown above the expanded legs. */
+.reloc-group-note {
+    margin: 0 0 var(--space-4);
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
 .reloc-draft-title {
     font-size: 0.8rem;
     font-weight: 600;

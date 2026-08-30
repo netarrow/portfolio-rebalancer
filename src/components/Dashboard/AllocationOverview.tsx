@@ -1078,7 +1078,7 @@ const AggregateRow: React.FC<AggregateRowProps> = ({
  */
 export interface MergedTableContext {
     members: MergedMemberRatio[];
-    ratioSource: 'global' | 'value';
+    ratioSource: import('../../utils/mergedGroup').RatioSource;
     /** Splits one whole-share order across the real member portfolios. */
     route: (unitKey: string, ticker: string, shares: number) => { portfolioId: string; shares: number }[];
     /** Member name by id, for the confirm dialog's breakdown. */
@@ -1110,9 +1110,9 @@ const MergedControlsStrip: React.FC<{ merged: MergedTableContext; liquidity: num
             Liquidity: <strong style={{ color: 'var(--text-secondary)' }}>{eur0(liquidity)}</strong> (pooled)
         </span>
         <span>
-            {merged.ratioSource === 'global'
-                ? 'targets blended by the configured global parent/child ratio'
-                : 'no global targets — blended by current value'}
+            {merged.ratioSource === 'config'
+                ? 'targets blended by the parent/child ratio set on the Portfolios page'
+                : 'no ratio set on the Portfolios page — blended by current value'}
         </span>
     </div>
 );
