@@ -238,4 +238,103 @@ const CASH = 0, GROWTH = 1, SECURITY = 2;
     assertEq('13 nothing is moved', plan.moves.length, 0);
 }
 
+// ── A parent/child group at a level ──────────────────────────────────────────
+// One block worth €10k (parent €8k at a 60% share, child €2k at 40% — so the
+// child is the one badly under the configured ratio) beside the €10k Security
+// goal. The group is ONE unit when the level's gap is shared out, and several
+// when the money is actually placed.
+const gParent: Portfolio = { id: 'gp', name: 'Group core', order: 0, goalId: 'g-growth', groupSharePercent: 60, allocations: { SWDA: 100 } };
+const gChild: Portfolio = { id: 'gs', name: 'Group sleeve', order: 1, goalId: 'g-growth', parentId: 'gp', groupSharePercent: 40, allocations: { AGGH: 100 } };
+const gSecurity: Portfolio = { id: 'gsec', name: 'Group bonds', order: 3, goalId: 'g-security', allocations: { AGGH: 100 } };
+
+const groupTransactions = [
+    buy('SWDA', 80, 100, 'gp'),
+    buy('AGGH', 40, 50, 'gs'),
+    buy('AGGH', 200, 50, 'gsec'),
+];
+
+const planGroup = (
+    targets: Record<string, number>,
+    over: Partial<Parameters<typeof buildGoalFlowPlan>[0]> = {},
+    members: Portfolio[] = [gParent, gChild],
+) => buildGoalFlowPlan({
+    goals,
+    portfolios: [...members, gSecurity],
+    transactions: groupTransactions,
+    brokers, assetSettings, marketData, targets, ...over,
+});
+
+const amountTo = (plan: ReturnType<typeof buildGoalFlowPlan>, portfolioId: string) =>
+    plan.moves.filter(m => m.to.portfolioId === portfolioId).reduce((s, m) => s + m.amount, 0);
+const amountFrom = (plan: ReturnType<typeof buildGoalFlowPlan>, portfolioId: string) =>
+    plan.moves.filter(m => m.from.portfolioId === portfolioId).reduce((s, m) => s + m.amount, 0);
+
+// ── 14. Money into the group closes the parent/child ratio ───────────────────
+{
+    // Growth 70% of €20k = €14k, so €4k arrives. At target the parent holds
+    // €8,400 and the child €5,600: the child is €3,600 short, the parent €400.
+    const plan = planGroup({ 'g-growth': 70, 'g-security': 30 });
+
+    assertEq('14 the level still counts the group as one', plan.goals[GROWTH].currentValue, 10_000);
+    assertEq('14 the whole gap is placed', plan.moves.reduce((s, m) => s + m.amount, 0), 4_000);
+    assertEq('14 the lightest member gets the most', amountTo(plan, 'gs'), 3_600);
+    assertEq('14 and the parent only its own gap', amountTo(plan, 'gp'), 400);
+    // What the old value-weighted split would have proposed — 80/20 of the gap,
+    // i.e. the ratio left exactly as wrong as it was.
+    assertTrue('14 not the proportion it is already wrong in', amountTo(plan, 'gp') !== 3_200);
+}
+
+// ── 15. Money out of the group is taken from the heaviest member ─────────────
+{
+    // Growth 30% of €20k = €6k, so €4k leaves. The parent is €4,400 over its
+    // share and the child €400 under it: only the parent may give.
+    const plan = planGroup({ 'g-growth': 30, 'g-security': 70 });
+
+    assertEq('15 the whole gap is raised', plan.moves.reduce((s, m) => s + m.amount, 0), 4_000);
+    assertEq('15 the heaviest member gives it all', amountFrom(plan, 'gp'), 4_000);
+    assertEq('15 the member under its share is left alone', amountFrom(plan, 'gs'), 0);
+}
+
+// ── 16. A group shares the level with a standalone as ONE block ──────────────
+{
+    // Growth holds the €10k group plus a €10k standalone, so its €4k gap splits
+    // €2k / €2k between the two blocks — not €4k over three portfolios by value.
+    // The group's €2k then goes entirely to the child, still the light one.
+    const standalone: Portfolio = { id: 'gt', name: 'Tilt', order: 2, goalId: 'g-growth', allocations: { SWDA: 100 } };
+    const plan = buildGoalFlowPlan({
+        goals,
+        portfolios: [gParent, gChild, standalone, gSecurity],
+        transactions: [...groupTransactions, buy('SWDA', 100, 100, 'gt')],
+        brokers, assetSettings, marketData,
+        targets: { 'g-growth': 80, 'g-security': 20 },
+    });
+
+    assertEq('16 the whole gap is placed', plan.moves.reduce((s, m) => s + m.amount, 0), 4_000);
+    assertEq('16 the standalone block takes half', amountTo(plan, 'gt'), 2_000);
+    assertEq('16 the group block takes the other half', amountTo(plan, 'gs') + amountTo(plan, 'gp'), 2_000);
+    assertEq('16 and places it on the light member', amountTo(plan, 'gs'), 2_000);
+}
+
+// ── 17. A frozen member is neither fed nor planned down ──────────────────────
+{
+    const plan = planGroup({ 'g-growth': 70, 'g-security': 30 }, { portfolioStates: { gs: 'frozen' } });
+
+    assertEq('17 the frozen member still counts', plan.goals[GROWTH].currentValue, 10_000);
+    assertEq('17 but never receives', amountTo(plan, 'gs'), 0);
+    assertEq('17 the movable member takes the lot', amountTo(plan, 'gp'), 4_000);
+}
+
+// ── 18. Without a configured ratio the split is still by value ───────────────
+{
+    // No `groupSharePercent` anywhere: the members' current shares ARE the
+    // ratio, so closing it means keeping the proportion — 80/20 of the €4k.
+    const plan = planGroup({ 'g-growth': 70, 'g-security': 30 }, {}, [
+        { ...gParent, groupSharePercent: undefined },
+        { ...gChild, groupSharePercent: undefined },
+    ]);
+
+    assertEq('18 the parent keeps its 80%', amountTo(plan, 'gp'), 3_200);
+    assertEq('18 the child its 20%', amountTo(plan, 'gs'), 800);
+}
+
 console.log('\nAll goal-flow checks passed.');

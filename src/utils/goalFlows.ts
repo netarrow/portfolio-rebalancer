@@ -1,6 +1,9 @@
 import type { AssetDefinition, Broker, Goal, GoalFlowPortfolioState, Portfolio, Transaction } from '../types';
 import { effectiveGoalIds, LIQUIDITY_COLOR, UNASSIGNED_LIQUIDITY_ID, unassignedLiquidityOf } from './goalDistribution';
 import { calculateAssets, injectCashAssets } from './portfolioCalculations';
+import { buildPortfolioTree } from './portfolioGroups';
+import { configuredShares, mergedRatio } from './mergedGroup';
+import { splitGroupAmount } from './mergedPortfolioView';
 
 /**
  * Goal-level flows: what has to move for the wealth split across the pyramid to
@@ -12,6 +15,14 @@ import { calculateAssets, injectCashAssets } from './portfolioCalculations';
  * that is over target. What each move then sells and buys inside those two
  * portfolios is the relocation planner's job, not this one's: here the unit is
  * the portfolio, and the answer is "move € from portfolio A to portfolio B".
+ *
+ * A parent/child group is one unit for the split and several for the moves: the
+ * level hands it its money as one pot, and the pot is then shared across its
+ * members by the configured parent/child ratio — from whoever is heaviest
+ * against it, to whoever is lightest. So closing a goal gap also closes the
+ * group's ratio, exactly as picking the group as an endpoint on the relocation
+ * form does, instead of handing a group its money in the proportion it is
+ * already wrong in.
  *
  * Each portfolio can be taken out of the planner's hands without leaving the
  * pyramid: 'frozen' keeps it in its goal's value but bars every move from
@@ -172,6 +183,126 @@ const spread = (
     return out;
 };
 
+/** A parent/child group counts as ONE unit at a level; a standalone is its own. */
+interface LevelBlock {
+    /** The group's parent id, or the standalone's own id. */
+    id: string;
+    /** The block's movable members, in the order they were given. */
+    members: GoalFlowPortfolio[];
+    value: number;
+}
+
+/** Resolution a level split needs: real portfolios, and who belongs to which group. */
+interface LevelSplitContext {
+    portfolioById: Map<string, Portfolio>;
+    /** portfolioId -> the id of the block it belongs to (its group's parent, or itself). */
+    blockIdOf: Map<string, string>;
+}
+
+/**
+ * Split an amount over the movable portfolios of one level. `amount` is
+ * positive for money arriving and negative for money leaving; the result is the
+ * positive magnitude each portfolio takes on, whichever way it flows.
+ *
+ * The level is split over BLOCKS first — a parent/child group being one block,
+ * the same unit the pyramid already counts it as — in proportion to what each
+ * one holds, so the mix between a level's independent pots survives the move.
+ * What lands on a group block is then split across its members by the
+ * configured parent/child ratio: taken from whoever is heaviest against it,
+ * given to whoever is lightest.
+ *
+ * That second stage is what makes this planner agree with a group endpoint on
+ * the relocation form. Weighting the members by what they hold instead — which
+ * is what this did before groups had a configured ratio — hands a group its
+ * money in exactly the proportion it is already wrong in, so the ratio survives
+ * the move untouched and the same page proposes two different answers.
+ */
+const splitOverLevel = (
+    free: GoalFlowPortfolio[],
+    amount: number,
+    ctx: LevelSplitContext,
+): Record<string, number> => {
+    const magnitude = Math.abs(amount);
+    if (free.length === 0 || magnitude <= 0) return {};
+    const outflow = amount < 0;
+
+    const byBlock = new Map<string, GoalFlowPortfolio[]>();
+    free.forEach(p => {
+        const key = ctx.blockIdOf.get(p.id) ?? p.id;
+        const members = byBlock.get(key);
+        if (members) members.push(p); else byBlock.set(key, [p]);
+    });
+    const blocks: LevelBlock[] = Array.from(byBlock, ([id, members]) => ({
+        id,
+        members,
+        value: members.reduce((s, m) => s + m.value, 0),
+    }));
+
+    // A level whose blocks are all worth nothing has no proportions to go by,
+    // so the amount is spread evenly instead — the same fallback the
+    // per-portfolio split used.
+    const anyValue = blocks.some(b => b.value > 0);
+    const perBlock = spread(magnitude, blocks.map(b => ({
+        id: b.id,
+        weight: anyValue ? b.value : 1,
+        // Only money leaving is capped: nothing limits what a block can receive.
+        max: outflow ? b.value : undefined,
+    })));
+
+    const out: Record<string, number> = {};
+    const add = (portfolioId: string, value: number) => {
+        if (!(value > 0)) return;
+        out[portfolioId] = (out[portfolioId] ?? 0) + value;
+    };
+
+    blocks.forEach(block => {
+        const share = perBlock[block.id] ?? 0;
+        if (!(share > 0)) return;
+        if (block.members.length === 1) { add(block.members[0].id, share); return; }
+
+        // Shares are resolved over the MOVABLE members only, so a frozen member
+        // neither receives nor is planned down: the ratio is closed among the
+        // portfolios this planner is actually allowed to touch.
+        const memberValues = block.members.flatMap(m => {
+            const portfolio = ctx.portfolioById.get(m.id);
+            // `mergedRatio` reads the portfolio and its value only, so the
+            // per-ticker maps it also takes are left empty here.
+            return portfolio
+                ? [{ portfolio, totalValue: m.value, valueByTicker: {}, quantityByTicker: {} }]
+                : [];
+        });
+        const { members: ratio } = mergedRatio(
+            memberValues,
+            configuredShares(memberValues.map(m => m.portfolio)),
+        );
+
+        const legs = splitGroupAmount(
+            {
+                memberIds: block.members.map(m => m.id),
+                members: ratio,
+                valueByMember: Object.fromEntries(block.members.map(m => [m.id, m.value])),
+            },
+            outflow ? -share : share,
+        );
+
+        // A block that cannot be split by ratio at all (every member worth
+        // nothing on the way out, say) still has to place its money, or the
+        // level would silently move less than its gap asks for.
+        if (legs.length === 0) {
+            const fallback = spread(share, block.members.map(m => ({
+                id: m.id,
+                weight: anyValue ? m.value : 1,
+                max: outflow ? m.value : undefined,
+            })));
+            Object.entries(fallback).forEach(([id, value]) => add(id, value));
+            return;
+        }
+        legs.forEach(leg => add(leg.portfolioId, Math.abs(leg.amount)));
+    });
+
+    return out;
+};
+
 /** The cash pot as an endpoint: one pot, no broker picked — the planner chooses. */
 const cashEndpoint = (): GoalFlowEndpoint => ({
     kind: 'cash',
@@ -210,6 +341,19 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
     // stay on real portfolios. A group is where the money IS; which member to
     // sell from is still a decision worth keeping.
     const levelOf = effectiveGoalIds(portfolios);
+
+    // ...but a group IS one unit when the level's gap is shared out: the block
+    // gets its money as one pot and then splits it across its members by the
+    // configured parent/child ratio, so the goal planner and a group endpoint on
+    // the relocation form propose the same thing.
+    const blockIdOf = new Map<string, string>();
+    buildPortfolioTree(portfolios).groups.forEach(group => {
+        group.members.forEach(m => blockIdOf.set(m.id, group.parent.id));
+    });
+    const splitCtx: LevelSplitContext = {
+        portfolioById: new Map(portfolios.map(p => [p.id, p])),
+        blockIdOf,
+    };
 
     const goalPortfolios = (goalId: string): GoalFlowPortfolio[] =>
         portfolios
@@ -263,8 +407,9 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
     const issues: GoalFlowIssue[] = [];
 
     // Donors: levels over target. A goal is drained proportionally to what each
-    // of its portfolios holds, so the mix inside the goal survives the move;
-    // the cash level is one pot and simply gives.
+    // of its BLOCKS holds, so the mix inside the goal survives the move, and a
+    // group block then gives from whichever member is heaviest against the
+    // parent/child ratio; the cash level is one pot and simply gives.
     const donors: { endpoint: GoalFlowEndpoint; amount: number }[] = [];
     const receivers: { endpoint: GoalFlowEndpoint; amount: number }[] = [];
 
@@ -288,7 +433,7 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
             if (capacity + 0.5 < need) {
                 issues.push({ kind: 'not-enough-to-drain', goalId: g.id, goalTitle: g.title, amount: need - capacity });
             }
-            const per = spread(Math.min(need, capacity), free.map(p => ({ id: p.id, weight: p.value, max: p.value })));
+            const per = splitOverLevel(free, -Math.min(need, capacity), splitCtx);
             free.forEach(p => {
                 const amount = per[p.id] ?? 0;
                 if (amount > 0.5) {
@@ -309,10 +454,7 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
                 });
                 return;
             }
-            // A goal held entirely in cash-less brand new portfolios has no
-            // weights to go by, so the gap is split evenly instead.
-            const anyValue = free.some(p => p.value > 0);
-            const per = spread(g.gap, free.map(p => ({ id: p.id, weight: anyValue ? p.value : 1 })));
+            const per = splitOverLevel(free, g.gap, splitCtx);
             free.forEach(p => {
                 const amount = per[p.id] ?? 0;
                 if (amount > 0.5) {
