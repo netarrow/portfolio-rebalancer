@@ -3,8 +3,11 @@ import Chart from 'react-apexcharts';
 import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
-import { calculateForecastWithState, runMonteCarloForecast, getAssetVolatility } from '../../utils/forecastCalculations';
+import { calculateForecastWithState, runMonteCarloForecast, runMonteCarloScenario, getAssetVolatility } from '../../utils/forecastCalculations';
 import type { ForecastResult } from '../../utils/forecastCalculations';
+import { buildCashflowTable } from '../../utils/forecastCashflow';
+import type { CashflowGranularity } from '../../utils/forecastCashflow';
+import ForecastCashflowTable from './ForecastCashflowTable';
 import { forecastYearForDate } from '../../utils/plannedForecastExpenses';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import {
@@ -25,6 +28,18 @@ const FAMILY_SOURCE = 'family';
 
 // Breathing room left under the chart so it stops just short of the fold.
 const CHART_BOTTOM_GAP = 24;
+
+// Segmented control button (chart/table, scenario, granularity).
+const segButtonStyle = (active: boolean): React.CSSProperties => ({
+    padding: '0.3rem 0.7rem',
+    background: active ? 'var(--color-primary)' : 'var(--bg-card)',
+    color: active ? 'white' : 'var(--text-secondary)',
+    border: '1px solid var(--border-color)',
+    borderRadius: 'var(--radius-md)',
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontSize: '0.75rem',
+});
 
 // Chip row picking which Goals — and so which portfolios — an expense may draw
 // from. Used both by the new-expense form and by the already-planned expenses.
@@ -207,6 +222,12 @@ const ForecastView: React.FC = () => {
     };
 
     // Monte Carlo (volatility) simulation
+    // Results area: the projection as a chart, or as a cash-flow table.
+    const [resultView, setResultView] = useState<'chart' | 'table'>('chart');
+    const [tableGranularity, setTableGranularity] = useState<CashflowGranularity>('year');
+    // Which simulated path the table walks through, once Monte Carlo is on.
+    const [scenarioKey, setScenarioKey] = useState<'p10' | 'p50' | 'p90'>('p50');
+
     const [monteCarloEnabled, setMonteCarloEnabled] = useState(false);
     const [mcSeed, setMcSeed] = useState(12345);
     const [volatilityOverrides, setVolatilityOverrides] = useState<Record<string, number | ''>>({});
@@ -457,39 +478,43 @@ const ForecastView: React.FC = () => {
         return volatilities;
     }, [portfolios, transactions, assetSettings, marketData, priceHistory, historicalCalibration]);
 
-    // Generate Forecast Data
-    const forecastData = useMemo(() => {
+    // What every simulation starts from — shared by the deterministic forecast,
+    // the Monte Carlo ensemble and the single path the cash-flow table replays,
+    // so the three can never drift apart.
+    const simulationInputs = useMemo(() => {
         const inputPortfolios = portfolios.map(p => ({
             ...p,
             currentValue: currentPortfolioValues[p.id] || 0
         }));
-
-        const returnsSearchMap: Record<string, number> = {};
+        const returns: Record<string, number> = {};
         portfolios.forEach(p => {
-            returnsSearchMap[p.id] = portfolioPerformance[p.id]?.cagr || 0;
+            returns[p.id] = portfolioPerformance[p.id]?.cagr || 0;
         });
+        const expenses = [
+            ...yearlyExpenses.map(e => ({
+                year: e.year,
+                amount: e.amount,
+                allowedGoalIds: e.allowedGoalIds,
+                allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
+                erosionAllowed: e.erosionAllowed
+            })),
+            ...ynabSimulationExpenses
+        ];
+        return { portfolios: inputPortfolios, returns, expenses, years: Number(timeHorizon) || 10 };
+    }, [portfolios, currentPortfolioValues, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, timeHorizon]);
 
-        return calculateForecastWithState(
-            inputPortfolios,
-            brokers,
-            effectiveMonthlyIncome,
-            effectiveMonthlyExpenses,
-            Number(timeHorizon) || 10,
-            returnsSearchMap,
-            [
-                ...yearlyExpenses.map(e => ({
-                    year: e.year,
-                    amount: e.amount,
-                    allowedGoalIds: e.allowedGoalIds,
-                    allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
-                    erosionAllowed: e.erosionAllowed
-                })),
-                ...ynabSimulationExpenses
-            ],
-            undefined,
-            { rebalanceToInitialWeights: rebalanceAnnually }
-        );
-    }, [portfolios, currentPortfolioValues, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, rebalanceAnnually]);
+    // Generate Forecast Data
+    const forecastData = useMemo(() => calculateForecastWithState(
+        simulationInputs.portfolios,
+        brokers,
+        effectiveMonthlyIncome,
+        effectiveMonthlyExpenses,
+        simulationInputs.years,
+        simulationInputs.returns,
+        simulationInputs.expenses,
+        undefined,
+        { rebalanceToInitialWeights: rebalanceAnnually }
+    ), [simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, rebalanceAnnually]);
 
     // Year 0 — the money as it stands today, before the first simulated month
     // runs. It is the very state the engine starts from, so plotting it makes
@@ -511,13 +536,15 @@ const ForecastView: React.FC = () => {
             liquidityValue: liquidity,
             portfolios: portfolioValues,
             cashflow: 0,
+            incomeFlow: 0,
+            plannedExpense: 0,
+            marketPnl: 0,
         };
     }, [portfolios, currentPortfolioValues, brokers]);
 
     // What the charts plot: the simulation with today prepended.
     const chartData = useMemo(() => [year0Point, ...forecastData], [year0Point, forecastData]);
 
-    // Effective volatility per portfolio (manual override wins over the estimate)
     const effectiveVolatilities = useMemo(() => {
         const vols: Record<string, number> = {};
         portfolios.forEach(p => {
@@ -528,51 +555,65 @@ const ForecastView: React.FC = () => {
     }, [portfolios, volatilityOverrides, estimatedVolatilities]);
 
     // Monte Carlo simulation (only when enabled)
+    // Calibration shared by the ensemble and the replayed single path.
+    const mcCalibration = useMemo(() => ({
+        monthlyLogReturnsByPortfolio: historicalCalibration.monthlyLogReturns,
+        // A manual volatility override means the user wants the
+        // lognormal model driven by that number, not the history.
+        forceLognormal: portfolios
+            .filter(p => volatilityOverrides[p.id] !== undefined && volatilityOverrides[p.id] !== '')
+            .map(p => p.id),
+        historicalMaxDrawdownPct: historicalCalibration.netWorthMaxDrawdownPct,
+    }), [historicalCalibration, portfolios, volatilityOverrides]);
+
     const monteCarloData = useMemo(() => {
         if (!monteCarloEnabled) return null;
 
-        const inputPortfolios = portfolios.map(p => ({
-            ...p,
-            currentValue: currentPortfolioValues[p.id] || 0
-        }));
-
-        const returnsMap: Record<string, number> = {};
-        portfolios.forEach(p => {
-            returnsMap[p.id] = portfolioPerformance[p.id]?.cagr || 0;
-        });
-
         return runMonteCarloForecast(
-            inputPortfolios,
+            simulationInputs.portfolios,
             brokers,
             effectiveMonthlyIncome,
             effectiveMonthlyExpenses,
-            Number(timeHorizon) || 10,
-            returnsMap,
+            simulationInputs.years,
+            simulationInputs.returns,
             effectiveVolatilities,
-            [
-                ...yearlyExpenses.map(e => ({
-                    year: e.year,
-                    amount: e.amount,
-                    allowedGoalIds: e.allowedGoalIds,
-                    allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
-                    erosionAllowed: e.erosionAllowed
-                })),
-                ...ynabSimulationExpenses
-            ],
+            simulationInputs.expenses,
             500,
             mcSeed,
             { rebalanceToInitialWeights: rebalanceAnnually },
-            {
-                monthlyLogReturnsByPortfolio: historicalCalibration.monthlyLogReturns,
-                // A manual volatility override means the user wants the
-                // lognormal model driven by that number, not the history.
-                forceLognormal: portfolios
-                    .filter(p => volatilityOverrides[p.id] !== undefined && volatilityOverrides[p.id] !== '')
-                    .map(p => p.id),
-                historicalMaxDrawdownPct: historicalCalibration.netWorthMaxDrawdownPct,
-            }
+            mcCalibration
         );
-    }, [monteCarloEnabled, portfolios, currentPortfolioValues, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, timeHorizon, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, effectiveVolatilities, mcSeed, rebalanceAnnually, historicalCalibration, volatilityOverrides]);
+    }, [monteCarloEnabled, simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, effectiveVolatilities, mcSeed, rebalanceAnnually, mcCalibration]);
+
+    // Cash-flow table: the deterministic path, or — with Monte Carlo on — one
+    // real simulated run replayed month by month. The percentile curves the
+    // chart draws are an envelope across runs, not a possible future, so they
+    // can't be broken down into cash flows; a single run can, drawdowns and all.
+    const scenarioResults = useMemo(() => {
+        if (resultView !== 'table' || !monteCarloData) return null;
+        return runMonteCarloScenario(
+            simulationInputs.portfolios,
+            brokers,
+            effectiveMonthlyIncome,
+            effectiveMonthlyExpenses,
+            simulationInputs.years,
+            simulationInputs.returns,
+            effectiveVolatilities,
+            simulationInputs.expenses,
+            mcSeed,
+            { rebalanceToInitialWeights: rebalanceAnnually },
+            mcCalibration,
+            monteCarloData.scenarioRuns[scenarioKey]
+        );
+    }, [resultView, monteCarloData, scenarioKey, simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, effectiveVolatilities, mcSeed, rebalanceAnnually, mcCalibration]);
+
+    const cashflowTable = useMemo(
+        () => buildCashflowTable(scenarioResults ?? forecastData, year0Point, tableGranularity),
+        [scenarioResults, forecastData, year0Point, tableGranularity]
+    );
+
+    // Effective volatility per portfolio (manual override wins over the estimate)
+
 
     // Chart Config
     const chartOptions = {
@@ -1402,8 +1443,67 @@ const ForecastView: React.FC = () => {
                     )}
                 </div>
 
+                {/* Chart or cash-flow table — same projection, two readings */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '0.3rem' }}>
+                        <button
+                            onClick={() => setResultView('chart')}
+                            style={segButtonStyle(resultView === 'chart')}
+                            title="The projection as a chart"
+                        >
+                            Chart
+                        </button>
+                        <button
+                            onClick={() => setResultView('table')}
+                            style={segButtonStyle(resultView === 'table')}
+                            title="The projection as a cash-flow table: net worth, income, planned expenses and market swings period by period"
+                        >
+                            Cash-flow table
+                        </button>
+                    </div>
+
+                    {resultView === 'table' && (
+                        <div style={{ display: 'flex', gap: '0.9rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            {monteCarloData && (
+                                <div style={{ display: 'flex', gap: '0.3rem', alignItems: 'center' }}>
+                                    <span style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>Scenario</span>
+                                    {([
+                                        ['p10', 'Pessimistic', 'The run whose final net worth lands on the 10th percentile'],
+                                        ['p50', 'Median', 'The run whose final net worth lands on the 50th percentile'],
+                                        ['p90', 'Optimistic', 'The run whose final net worth lands on the 90th percentile'],
+                                    ] as const).map(([key, label, tip]) => (
+                                        <button
+                                            key={key}
+                                            onClick={() => setScenarioKey(key)}
+                                            style={segButtonStyle(scenarioKey === key)}
+                                            title={`${tip} — a real simulated path, with the drawdowns it actually went through.`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
+                            <div style={{ display: 'flex', gap: '0.3rem' }}>
+                                <button onClick={() => setTableGranularity('year')} style={segButtonStyle(tableGranularity === 'year')}>Yearly</button>
+                                <button onClick={() => setTableGranularity('month')} style={segButtonStyle(tableGranularity === 'month')}>Monthly</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 <div ref={chartCardRef} className="card forecast-chart-card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', flex: 'none', height: chartHeight ?? 'calc(100vh - 280px)', minHeight: '320px' }}>
-                    {monteCarloData ? (
+                    {resultView === 'table' ? (
+                        <ForecastCashflowTable
+                            table={cashflowTable}
+                            granularity={tableGranularity}
+                            sourceLabel={monteCarloData
+                                ? `Monte Carlo · ${scenarioKey === 'p10' ? 'pessimistic' : scenarioKey === 'p90' ? 'optimistic' : 'median'} run out of ${monteCarloData.simulations} — one simulated future, month by month: returns are drawn at random (block-bootstrapped from your real monthly history where there is enough of it), so the dips below are drawdowns this path actually went through.`
+                                : 'Deterministic projection — every portfolio grows at its historical CAGR, month after month, with no volatility. Switch Monte Carlo on to see a path with real ups and downs.'}
+                            note={monteCarloData
+                                ? `across all runs, cash flows included (so planned spending counts too): median max drawdown ${monteCarloData.maxDrawdownP50.toFixed(1)}%, worst 10% ${monteCarloData.maxDrawdownP90.toFixed(1)}% — the Dip column below is market-only`
+                                : undefined}
+                        />
+                    ) : monteCarloData ? (
                         <Chart
                             key="mc"
                             options={mcChartOptions}
