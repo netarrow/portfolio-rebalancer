@@ -341,6 +341,10 @@ Project net worth and liquidity over a configurable horizon.
 
 ![Forecast — Monte Carlo](screenshots/forecast_montecarlo.png)
 
+**Cash-flow table** — a toggle next to the chart swaps the projection for a table that follows the money instead of drawing it: per year (or per month) it shows the **income flow**, the **planned expenses** that erode liquidity, the **market P/L**, the deepest **dip** below the high-water mark and the resulting **net worth**, with a totals row over the whole horizon. Each row reconciles exactly — opening + income − expenses + market = closing — and the dip is measured flow-adjusted, so spending 30k is never mistaken for a 30k crash. With Monte Carlo on, the table walks one **real simulated path** (pessimistic / median / optimistic, picked by final net worth) rather than the percentile envelope: the ups and downs in the rows are the random returns and drawdowns that path actually went through.
+
+![Forecast — cash-flow table](screenshots/forecast_cashflow_table.png)
+
 Risky and failed plans:
 
 ![Forecast — risky](screenshots/forecast_riskyplan.png)
