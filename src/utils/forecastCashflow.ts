@@ -4,14 +4,22 @@ import type { ForecastResult } from './forecastCalculations';
 // from and where it went in each period, and what net worth was left. The
 // engine already books every movement into one of three buckets, so each row
 // reconciles exactly: opening + income − planned expenses + market P/L = closing.
+//
+// The table opens on YEAR 0 — the money as it stands today, before the first
+// simulated month. It is the same point the chart plots first, and it carries no
+// flows of its own: it is there so the first projected year is read against
+// today's figure in the row above it rather than against a caption, and so the
+// two views are numbered the same way.
 
 export type CashflowGranularity = 'year' | 'month';
 
 export interface CashflowRow {
     key: string;
-    /** 'Year 3' or 'Year 3 · M07' */
+    /** 'Year 0', 'Year 3' or 'Year 3 · M07' */
     label: string;
     year: number;
+    /** Today's opening row: a starting point, not a period. Carries no flows. */
+    isOpening: boolean;
     /** Month within the year (monthly granularity only) */
     monthOfYear?: number;
     openingValue: number;
@@ -61,11 +69,12 @@ const EMPTY_TOTALS = {
 /**
  * @param results monthly forecast (month 1..N), deterministic or one Monte
  *                Carlo run replayed with `runMonteCarloScenario`
- * @param start   net worth and liquidity at month 0 — the opening of the first row
+ * @param start   net worth and liquidity at month 0 — Year 0, the row the table
+ *                opens on and the opening of the first projected period
  */
 export function buildCashflowTable(
     results: ForecastResult[],
-    start: { totalValue: number; liquidityValue: number },
+    start: { totalValue: number; liquidityValue: number; investedValue?: number },
     granularity: CashflowGranularity = 'year'
 ): CashflowTable {
     const startValue = start.totalValue;
@@ -98,7 +107,27 @@ export function buildCashflowTable(
     let worstDrawdownPct = 0;
     let worstDrawdownLabel: string | null = null;
 
-    const rows: CashflowRow[] = [];
+    // Year 0: today. It opens and closes on the same figure, so it changes no
+    // total — it only gives the first projected year something to be read
+    // against, in the table itself.
+    const rows: CashflowRow[] = [{
+        key: 'y0',
+        label: 'Year 0',
+        year: 0,
+        isOpening: true,
+        openingValue: startValue,
+        income: 0,
+        plannedExpenses: 0,
+        marketPnl: 0,
+        closingValue: startValue,
+        investedValue: start.investedValue ?? startValue - start.liquidityValue,
+        liquidityValue: start.liquidityValue,
+        liquidityDelta: 0,
+        drawdownPct: 0,
+        troughValue: startValue,
+        insolvencyStarts: false,
+        ruleBreachStarts: false,
+    }];
     const totals = { ...EMPTY_TOTALS, openingValue: startValue };
 
     for (const key of order) {
@@ -139,6 +168,7 @@ export function buildCashflowTable(
             key,
             label,
             year,
+            isOpening: false,
             monthOfYear: granularity === 'month' ? monthOfYear : undefined,
             openingValue: opening,
             income,

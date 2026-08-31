@@ -1,8 +1,9 @@
 /**
- * Known-answer checks for the Forecast cash-flow table: that every row
- * reconciles (opening + income − planned expenses + market P/L = closing),
- * that the money lands in the period it is due, and that a Monte Carlo run
- * replayed on its own is the very run the ensemble scored.
+ * Known-answer checks for the Forecast cash-flow table: that it opens on Year 0
+ * (today, no flows), that every row reconciles (opening + income − planned
+ * expenses + market P/L = closing), that the money lands in the period it is
+ * due, and that a Monte Carlo run replayed on its own is the very run the
+ * ensemble scored.
  * Run with: npx tsx scripts/verify-forecast-cashflow.ts
  */
 import type { Broker } from '../src/types';
@@ -41,43 +42,54 @@ const start = { totalValue: 120000, liquidityValue: 20000 };
     );
     const table = buildCashflowTable(results, start, 'year');
 
-    checkTrue('one row per year', table.rows.length === 3);
-    check('income flow per year = 12 × (1500 − 500)', table.rows[0].income, 12000);
-    check('planned expense booked in year 2', table.rows[1].plannedExpenses, 30000);
-    check('no planned expense in year 1', table.rows[0].plannedExpenses, 0);
+    // Year 0 (today) plus one row per projected year.
+    checkTrue('the table opens on Year 0', table.rows[0].isOpening && table.rows[0].year === 0);
+    checkTrue('one row per year after it', table.rows.length === 4);
+    checkTrue('Year 0 carries no flows',
+        table.rows[0].income === 0 && table.rows[0].plannedExpenses === 0 && table.rows[0].marketPnl === 0);
+    check('Year 0 opens and closes on today\'s net worth', table.rows[0].closingValue, 120000);
+    check('Year 0 shows today\'s liquidity', table.rows[0].liquidityValue, 20000);
+    checkTrue('and only that first row is the opening one',
+        table.rows.slice(1).every(r => !r.isOpening));
+    check('income flow per year = 12 × (1500 − 500)', table.rows[1].income, 12000);
+    check('planned expense booked in year 2', table.rows[2].plannedExpenses, 30000);
+    check('no planned expense in year 1', table.rows[1].plannedExpenses, 0);
     // 12% on the 100k already invested, plus the compounding of each of the
     // twelve 1000€ contributions over the months left in the year.
     const r = Math.pow(1.12, 1 / 12) - 1;
     const contributionGain = 1000 * (((1 + r) * (Math.pow(1 + r, 12) - 1)) / r - 12);
     check('year-1 market P/L = 12% of the invested 100k plus growth on the new money',
-        table.rows[0].marketPnl, 12000 + contributionGain, 1);
+        table.rows[1].marketPnl, 12000 + contributionGain, 1);
 
     // The reconciliation the table promises, row by row and in total.
     table.rows.forEach((r, i) => {
         const closes = r.openingValue + r.income - r.plannedExpenses + r.marketPnl;
-        check(`row ${i + 1} reconciles`, closes, r.closingValue, 1e-6);
+        check(`row ${i} reconciles`, closes, r.closingValue, 1e-6);
     });
-    check('first row opens at today\'s net worth', table.rows[0].openingValue, 120000);
+    check('year 1 opens where Year 0 left off', table.rows[1].openingValue, table.rows[0].closingValue);
+    check('and that is today\'s net worth', table.rows[1].openingValue, 120000);
     check('rows chain: year 2 opens where year 1 closed',
-        table.rows[1].openingValue, table.rows[0].closingValue);
+        table.rows[2].openingValue, table.rows[1].closingValue);
     check('totals reconcile',
         table.totals.openingValue + table.totals.income - table.totals.plannedExpenses + table.totals.marketPnl,
         table.totals.closingValue, 1e-6);
 
     // Erosion: the 30k comes out of liquidity first, so liquidity drops.
-    checkTrue('planned expense erodes liquidity in its year', table.rows[1].liquidityDelta < 0);
+    checkTrue('planned expense erodes liquidity in its year', table.rows[2].liquidityDelta < 0);
 
     // Monthly granularity: same money, finer rows.
     const monthly = buildCashflowTable(results, start, 'month');
-    checkTrue('monthly granularity yields 36 rows', monthly.rows.length === 36);
+    checkTrue('monthly granularity yields Year 0 plus 36 months', monthly.rows.length === 37);
+    checkTrue('and it opens on Year 0 too', monthly.rows[0].isOpening);
     check('monthly totals match yearly totals', monthly.totals.marketPnl, table.totals.marketPnl, 1e-6);
-    check('the expense sits in the first month of year 2', monthly.rows[12].plannedExpenses, 30000);
-    check('a plain month carries no planned expense', monthly.rows[13].plannedExpenses, 0);
+    check('Year 0 changes no total', monthly.totals.openingValue, table.totals.openingValue);
+    check('the expense sits in the first month of year 2', monthly.rows[13].plannedExpenses, 30000);
+    check('a plain month carries no planned expense', monthly.rows[14].plannedExpenses, 0);
 
     // A rising deterministic path never dips: the 30k expense is a cash flow,
     // not a market loss, so it must not show up as a drawdown.
     checkTrue('spending 30k is not a drawdown', table.worstDrawdownPct === 0);
-    checkTrue('the expense still lands in its row', table.rows[1].plannedExpenses === 30000);
+    checkTrue('the expense still lands in its row', table.rows[2].plannedExpenses === 30000);
 }
 
 // --- Monte Carlo scenarios --------------------------------------------------
@@ -115,8 +127,10 @@ const start = { totalValue: 120000, liquidityValue: 20000 };
     const table = buildCashflowTable(a, start, 'year');
     table.rows.forEach((r, i) => {
         const closes = r.openingValue + r.income - r.plannedExpenses + r.marketPnl;
-        check(`MC row ${i + 1} reconciles`, closes, r.closingValue, 1e-6);
+        check(`MC row ${i} reconciles`, closes, r.closingValue, 1e-6);
     });
+    checkTrue('a Monte Carlo table opens on Year 0 as well', table.rows[0].isOpening);
+    checkTrue('and Year 0 is never the worst dip', table.rows[0].drawdownPct === 0);
     checkTrue('MC rows carry the random ups and downs',
         table.rows.some(r => r.marketPnl < 0) || table.worstDrawdownPct < 0);
     checkTrue('dips are never positive', table.rows.every(r => r.drawdownPct <= 0));
