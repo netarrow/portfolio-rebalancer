@@ -52,6 +52,10 @@ const tf: React.CSSProperties = {
  * the money actually moves — what you started with, what the income added, what
  * the planned expenses took, what the market did, and what is left. The four
  * middle columns reconcile to the closing value exactly.
+ *
+ * The first row is Year 0: today, before the first simulated month. It has no
+ * flows of its own — every flow column is a dash — and it is there so the jump
+ * to Year 1 is read against a figure in the table rather than against a caption.
  */
 const ForecastCashflowTable: React.FC<Props> = ({ table, granularity, sourceLabel, note }) => {
     const { rows, totals } = table;
@@ -68,7 +72,7 @@ const ForecastCashflowTable: React.FC<Props> = ({ table, granularity, sourceLabe
     return (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.6rem', lineHeight: 1.45 }}>
-                Starting net worth today: <strong style={{ color: 'var(--text-secondary)' }}>{fmt(totals.openingValue)}</strong>. {sourceLabel}
+                Starting net worth today, in the Year 0 row: <strong style={{ color: 'var(--text-secondary)' }}>{fmt(totals.openingValue)}</strong>. {sourceLabel}
                 {note && <> · {note}</>}
             </div>
 
@@ -88,6 +92,28 @@ const ForecastCashflowTable: React.FC<Props> = ({ table, granularity, sourceLabe
                     <tbody>
                         {rows.map(r => {
                             const flagged = r.insolvencyStarts || r.ruleBreachStarts;
+                            // Today: nothing has happened yet, so the flow columns
+                            // are dashes rather than a row of zeros pretending to
+                            // be a period.
+                            if (r.isOpening) {
+                                return (
+                                    <tr key={r.key} style={{ borderBottom: '1px solid var(--border-color)', background: 'var(--bg-surface)' }}>
+                                        <td style={{ ...td, textAlign: 'left', color: 'var(--text-secondary)' }}>
+                                            {r.label}
+                                            <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', color: 'var(--text-muted)' }}>today</span>
+                                        </td>
+                                        <td colSpan={4} style={{ ...td, color: 'var(--text-muted)', fontSize: '0.75rem', textAlign: 'right' }}>
+                                            where the money stands before the first simulated month
+                                        </td>
+                                        <td style={{ ...td, fontSize: '0.78rem', color: 'var(--text-secondary)' }} title="Broker liquidity today">
+                                            {fmt(r.liquidityValue)}
+                                        </td>
+                                        <td style={{ ...td, fontWeight: 600 }} title="Net worth today — every row below builds on this">
+                                            {fmt(r.closingValue)}
+                                        </td>
+                                    </tr>
+                                );
+                            }
                             return (
                                 <tr
                                     key={r.key}
