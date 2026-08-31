@@ -7,6 +7,15 @@ export interface ForecastResult {
     liquidityValue: number;
     portfolios: Record<string, number>;
     cashflow: number;
+    /**
+     * Where the month's change in net worth came from. The three add up
+     * exactly: closing = opening + incomeFlow − plannedExpense + marketPnl.
+     * `cashflow` above is what is *left* of the income after the planned
+     * expenses took their share, so it can't be used for that reconciliation.
+     */
+    incomeFlow: number;      // recurring income − recurring expenses
+    plannedExpense: number;  // one-off expenses due this month (full amount)
+    marketPnl: number;       // value change from returns (± )
     insolvent?: boolean;
     ruleBreach?: boolean;
     failureReason?: string;
@@ -91,6 +100,11 @@ export const calculateForecastWithState = (
         if (isStartOfYear) {
             expensesForMonth = yearlyExpenses.filter(e => e.year === currentYear);
         }
+
+        // Booked before anything is paid: whoever ends up funding it (income,
+        // liquidity, portfolios or broker debt), net worth drops by this much.
+        const plannedExpenseTotal = expensesForMonth.reduce((sum, e) => sum + e.amount, 0);
+        const incomeFlow = monthlySavings - monthlyExpenses;
 
         // Process Yearly Expenses
         for (const expense of expensesForMonth) {
@@ -266,6 +280,7 @@ export const calculateForecastWithState = (
         }
 
         // 4. Compound Growth
+        let marketPnl = 0;
         portfolioState.forEach(p => {
             let monthlyRate: number;
             if (monthlyReturnSampler) {
@@ -274,7 +289,9 @@ export const calculateForecastWithState = (
                 const annualRate = portfolioReturns[p.id] || 0; // %
                 monthlyRate = Math.pow(1 + annualRate / 100, 1 / 12) - 1;
             }
-            p.value = p.value * (1 + monthlyRate);
+            const gain = p.value * monthlyRate;
+            marketPnl += gain;
+            p.value = p.value + gain;
         });
 
         // 4b. Annual rebalance back to the year-0 mix (end of each year)
@@ -299,6 +316,9 @@ export const calculateForecastWithState = (
                 return acc;
             }, {} as Record<string, number>),
             cashflow: currentCashflow,
+            incomeFlow,
+            plannedExpense: plannedExpenseTotal,
+            marketPnl,
             insolvent: hasInsolvency,
             ruleBreach: hasRuleBreach,
             failureReason: failureReason || undefined
@@ -357,6 +377,12 @@ export interface MonteCarloSummary {
     historicalMaxDrawdownPct: number | null;
     /** Sampling model actually used per portfolio (for UI display) */
     modelByPortfolio: Record<string, 'bootstrap' | 'lognormal'>;
+    /**
+     * Indexes of the runs whose final net worth lands on the 10th / 50th / 90th
+     * percentile. Replay one with `runMonteCarloScenario` to walk a real path
+     * month by month instead of the percentile envelope.
+     */
+    scenarioRuns: { p10: number; p50: number; p90: number };
 }
 
 // Calibration from real history (Performance data). Portfolios with at least
@@ -395,25 +421,66 @@ const percentile = (sorted: number[], p: number): number => {
     return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 };
 
-export const runMonteCarloForecast = (
+interface McPreparation {
+    /** Lognormal params per portfolio: monthly return = exp(m + s·Z) − 1 */
+    params: Record<string, { m: number; s: number }>;
+    modelByPortfolio: Record<string, 'bootstrap' | 'lognormal'>;
+    historyByPortfolio: Record<string, number[]>;
+    blockMonths: number;
+}
+
+/** Sampling model and parameters per portfolio — identical for every run. */
+const prepareMonteCarlo = (
     portfolios: ForecastPortfolioInput[],
-    brokers: Broker[],
-    monthlySavings: number,
-    monthlyExpenses: number,
-    timeHorizonYears: number,
     portfolioReturns: Record<string, number>,
-    portfolioVolatilities: Record<string, number>, // annualized %
-    yearlyExpenses: ForecastExpense[] = [],
-    simulations: number = 500,
-    seed: number = 12345,
-    options: ForecastOptions = {},
-    calibration: MonteCarloCalibration = {}
-): MonteCarloSummary => {
-    const months = timeHorizonYears * 12;
-    const rng = mulberry32(seed);
+    portfolioVolatilities: Record<string, number>,
+    calibration: MonteCarloCalibration
+): McPreparation => {
     const minBootstrapMonths = calibration.minBootstrapMonths ?? 10;
     const blockMonths = Math.max(1, calibration.blockMonths ?? 3);
     const forceLognormal = new Set(calibration.forceLognormal ?? []);
+    const historyByPortfolio = calibration.monthlyLogReturnsByPortfolio ?? {};
+
+    // Pre-compute lognormal params per portfolio:
+    // monthly return = exp(m + s*Z) - 1, with median compounding to the CAGR
+    const params: Record<string, { m: number; s: number }> = {};
+    portfolios.forEach(p => {
+        const mu = (portfolioReturns[p.id] || 0) / 100;
+        const sigma = Math.max(0, portfolioVolatilities[p.id] || 0) / 100;
+        const s = sigma / Math.sqrt(12);
+        const m = Math.log(1 + Math.max(mu, -0.99)) / 12;
+        params[p.id] = { m, s };
+    });
+
+    // Pick the sampling model per portfolio: historical bootstrap when enough
+    // monthly returns exist (and not overridden), lognormal otherwise.
+    const modelByPortfolio: Record<string, 'bootstrap' | 'lognormal'> = {};
+    portfolios.forEach(p => {
+        const hist = historyByPortfolio[p.id];
+        modelByPortfolio[p.id] =
+            !forceLognormal.has(p.id) && hist && hist.length >= minBootstrapMonths
+                ? 'bootstrap'
+                : 'lognormal';
+    });
+
+    return { params, modelByPortfolio, historyByPortfolio, blockMonths };
+};
+
+/**
+ * Return sampler for ONE run. Each run draws from its own PRNG stream, derived
+ * from (seed, runIndex), so a single run can be replayed later in isolation and
+ * come out identical — that is how the cash-flow table shows one scenario month
+ * by month while the chart shows the whole ensemble.
+ */
+const buildRunSampler = (
+    portfolios: ForecastPortfolioInput[],
+    prep: McPreparation,
+    months: number,
+    seed: number,
+    runIndex: number
+): MonthlyReturnSampler => {
+    // Golden-ratio stride keeps consecutive runs far apart in the seed space.
+    const rng = mulberry32((seed + runIndex * 0x9E3779B1) >>> 0);
 
     // Box-Muller transform, caching the spare deviate
     let spare: number | null = null;
@@ -431,28 +498,77 @@ export const runMonteCarloForecast = (
         return mag * Math.cos(2 * Math.PI * v);
     };
 
-    // Pre-compute lognormal params per portfolio:
-    // monthly return = exp(m + s*Z) - 1, with median compounding to the CAGR
-    const params: Record<string, { m: number; s: number }> = {};
+    // Bootstrap portfolios: pre-draw the whole path as wraparound blocks of
+    // consecutive historical months, so bad streaks stay together.
+    const bootstrapSeq: Record<string, number[]> = {};
     portfolios.forEach(p => {
-        const mu = (portfolioReturns[p.id] || 0) / 100;
-        const sigma = Math.max(0, portfolioVolatilities[p.id] || 0) / 100;
-        const s = sigma / Math.sqrt(12);
-        const m = Math.log(1 + Math.max(mu, -0.99)) / 12;
-        params[p.id] = { m, s };
+        if (prep.modelByPortfolio[p.id] !== 'bootstrap') return;
+        const src = prep.historyByPortfolio[p.id]!;
+        const seq: number[] = [];
+        while (seq.length < months) {
+            const start = Math.floor(rng() * src.length);
+            for (let k = 0; k < prep.blockMonths && seq.length < months; k++) {
+                seq.push(src[(start + k) % src.length]);
+            }
+        }
+        bootstrapSeq[p.id] = seq;
     });
 
-    // Pick the sampling model per portfolio: historical bootstrap when enough
-    // monthly returns exist (and not overridden), lognormal otherwise.
-    const historyByPortfolio = calibration.monthlyLogReturnsByPortfolio ?? {};
-    const modelByPortfolio: Record<string, 'bootstrap' | 'lognormal'> = {};
-    portfolios.forEach(p => {
-        const hist = historyByPortfolio[p.id];
-        modelByPortfolio[p.id] =
-            !forceLognormal.has(p.id) && hist && hist.length >= minBootstrapMonths
-                ? 'bootstrap'
-                : 'lognormal';
-    });
+    return (pid, month) => {
+        const seq = bootstrapSeq[pid];
+        if (seq) return Math.exp(seq[month - 1]) - 1;
+        const { m, s } = prep.params[pid] || { m: 0, s: 0 };
+        if (s === 0) return Math.exp(m) - 1;
+        return Math.exp(m + s * gaussian()) - 1;
+    };
+};
+
+/**
+ * Replays a single Monte Carlo run month by month. Same arguments as
+ * `runMonteCarloForecast` plus the index of the run to replay — pass one of the
+ * indexes reported in `MonteCarloSummary.scenarioRuns` to get the full path
+ * behind the pessimistic / median / optimistic outcome, cash flows included.
+ */
+export const runMonteCarloScenario = (
+    portfolios: ForecastPortfolioInput[],
+    brokers: Broker[],
+    monthlySavings: number,
+    monthlyExpenses: number,
+    timeHorizonYears: number,
+    portfolioReturns: Record<string, number>,
+    portfolioVolatilities: Record<string, number>,
+    yearlyExpenses: ForecastExpense[] = [],
+    seed: number = 12345,
+    options: ForecastOptions = {},
+    calibration: MonteCarloCalibration = {},
+    runIndex: number = 0
+): ForecastResult[] => {
+    const months = timeHorizonYears * 12;
+    const prep = prepareMonteCarlo(portfolios, portfolioReturns, portfolioVolatilities, calibration);
+    const sampler = buildRunSampler(portfolios, prep, months, seed, runIndex);
+    return calculateForecastWithState(
+        portfolios, brokers, monthlySavings, monthlyExpenses,
+        timeHorizonYears, portfolioReturns, yearlyExpenses, sampler, options
+    );
+};
+
+export const runMonteCarloForecast = (
+    portfolios: ForecastPortfolioInput[],
+    brokers: Broker[],
+    monthlySavings: number,
+    monthlyExpenses: number,
+    timeHorizonYears: number,
+    portfolioReturns: Record<string, number>,
+    portfolioVolatilities: Record<string, number>, // annualized %
+    yearlyExpenses: ForecastExpense[] = [],
+    simulations: number = 500,
+    seed: number = 12345,
+    options: ForecastOptions = {},
+    calibration: MonteCarloCalibration = {}
+): MonteCarloSummary => {
+    const months = timeHorizonYears * 12;
+    const prep = prepareMonteCarlo(portfolios, portfolioReturns, portfolioVolatilities, calibration);
+    const { modelByPortfolio } = prep;
 
     const startValue =
         portfolios.reduce((sum, p) => sum + p.currentValue, 0) +
@@ -463,31 +579,10 @@ export const runMonteCarloForecast = (
     let successes = 0;
     let insolvencies = 0;
     const runMaxDrawdowns: number[] = []; // ≤ 0, fraction
+    const finalByRun: Array<{ run: number; value: number }> = [];
 
     for (let sim = 0; sim < simulations; sim++) {
-        // Bootstrap portfolios: pre-draw the whole path as wraparound blocks of
-        // consecutive historical months, so bad streaks stay together.
-        const bootstrapSeq: Record<string, number[]> = {};
-        portfolios.forEach(p => {
-            if (modelByPortfolio[p.id] !== 'bootstrap') return;
-            const src = historyByPortfolio[p.id]!;
-            const seq: number[] = [];
-            while (seq.length < months) {
-                const start = Math.floor(rng() * src.length);
-                for (let k = 0; k < blockMonths && seq.length < months; k++) {
-                    seq.push(src[(start + k) % src.length]);
-                }
-            }
-            bootstrapSeq[p.id] = seq;
-        });
-
-        const sampler: MonthlyReturnSampler = (pid, month) => {
-            const seq = bootstrapSeq[pid];
-            if (seq) return Math.exp(seq[month - 1]) - 1;
-            const { m, s } = params[pid] || { m: 0, s: 0 };
-            if (s === 0) return Math.exp(m) - 1;
-            return Math.exp(m + s * gaussian()) - 1;
-        };
+        const sampler = buildRunSampler(portfolios, prep, months, seed, sim);
 
         const run = calculateForecastWithState(
             portfolios, brokers, monthlySavings, monthlyExpenses,
@@ -510,6 +605,7 @@ export const runMonteCarloForecast = (
         runMaxDrawdowns.push(maxDD);
 
         const last = run[run.length - 1];
+        finalByRun.push({ run: sim, value: last?.totalValue ?? 0 });
         if (last?.insolvent) insolvencies++;
         if (last && !last.insolvent && last.totalValue >= startValue) successes++;
     }
@@ -539,6 +635,16 @@ export const runMonteCarloForecast = (
         ? runMaxDrawdowns.filter(d => d * 100 < histDD).length / simulations
         : null;
 
+    // Representative runs: the actual paths whose final net worth lands on the
+    // 10th / 50th / 90th percentile. Percentile *curves* are an envelope, not a
+    // possible future — these three are real runs, drawdowns and all, and can
+    // be replayed with `runMonteCarloScenario`.
+    const rankedByFinal = [...finalByRun].sort((a, b) => a.value - b.value);
+    const runAt = (q: number) => rankedByFinal.length > 0
+        ? rankedByFinal[Math.round((rankedByFinal.length - 1) * q)].run
+        : 0;
+    const scenarioRuns = { p10: runAt(0.10), p50: runAt(0.50), p90: runAt(0.90) };
+
     return {
         months: monthIdx,
         p10, p25, p50, p75, p90,
@@ -553,6 +659,7 @@ export const runMonteCarloForecast = (
         maxDrawdownP90,
         probExceedHistoricalMaxDD,
         historicalMaxDrawdownPct: histDD,
-        modelByPortfolio
+        modelByPortfolio,
+        scenarioRuns
     };
 };
