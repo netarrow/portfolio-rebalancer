@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
-import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeReturnStats, type PortfolioScope } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeReturnStats, computeDrawdownAnalysis, type PortfolioScope } from '../../utils/performanceCalculations';
 import { buildPortfolioTree } from '../../utils/portfolioGroups';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import '../Dashboard/Dashboard.css';
@@ -29,6 +29,8 @@ const PerformanceView: React.FC = () => {
     const [returnMode, setReturnMode] = useState<'mwr' | 'twr'>('twr');
     // Total return (coupons/dividends credited on pay date) vs price-only.
     const [includeDistributions, setIncludeDistributions] = useState(true);
+    // Underwater (distance-from-peak) chart under the value chart.
+    const [showUnderwater, setShowUnderwater] = useState(false);
     // Annual risk-free rate (%) used for Sharpe; persisted locally.
     const [riskFreeRate, setRiskFreeRate] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
 
@@ -208,14 +210,67 @@ const PerformanceView: React.FC = () => {
     // drawdown, while coupons/dividends are credited as return (unless the
     // total-return toggle is off → price-only). Asset scope uses per-unit
     // distribution flows on top of the close-price series.
-    const returnStats = useMemo(() => {
-        const cashFlows = isAssetScope
+    const cashFlows = useMemo(() => (
+        isAssetScope
             ? (includeDistributions
                 ? getAssetDistributionFlows(transactions, scope.slice(2))
                 : new Map<string, number>())
-            : getCashFlowsByDate(transactions, scopeIds, { includeDistributions });
-        return computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate });
-    }, [baseSeries, scope, scopeIds, isAssetScope, transactions, riskFreeRate, includeDistributions]);
+            : getCashFlowsByDate(transactions, scopeIds, { includeDistributions })
+    ), [scope, scopeIds, isAssetScope, transactions, includeDistributions]);
+
+    const returnStats = useMemo(
+        () => computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate }),
+        [baseSeries, cashFlows, riskFreeRate]
+    );
+
+    // Distance from the high-water mark, measured on the same flow-adjusted
+    // index: money paid in never sets a new peak and money taken out never digs
+    // a drawdown, so these numbers answer "how far am I from my best moment"
+    // rather than "how much has my balance changed".
+    const drawdown = useMemo(
+        () => computeDrawdownAnalysis(baseSeries, cashFlows),
+        [baseSeries, cashFlows]
+    );
+
+    // Underwater curve: 0% on every new high, negative in between. Same axis
+    // as the value chart, so the two read together.
+    const underwaterOptions = {
+        chart: {
+            id: 'underwater-chart',
+            background: 'transparent',
+            toolbar: { show: false },
+            animations: { enabled: false },
+            zoom: { enabled: false, allowMouseWheelZoom: false },
+            selection: { enabled: false }
+        },
+        theme: { mode: 'dark' as const },
+        colors: ['#ef4444'],
+        fill: {
+            type: 'gradient',
+            gradient: { shadeIntensity: 0.6, opacityFrom: 0.4, opacityTo: 0.03 }
+        },
+        dataLabels: { enabled: false },
+        stroke: { curve: 'straight' as const, width: 2 },
+        xaxis: { type: 'datetime' as const, labels: { style: { colors: '#9ca3af' } } },
+        yaxis: {
+            max: 0,
+            labels: { formatter: (val: number) => `${val.toFixed(1)}%`, style: { colors: '#9ca3af' } }
+        },
+        tooltip: {
+            theme: 'dark',
+            x: { format: 'dd MMM yyyy' },
+            y: { formatter: (val: number) => `${val.toFixed(2)}% from peak` }
+        }
+    };
+
+    const underwaterSeries = [{
+        name: 'From peak',
+        data: (drawdown?.curve ?? []).map(p => ({ x: p.date, y: Math.round(p.ddPct * 100) / 100 }))
+    }];
+
+    const fmtEur = (v: number) => `€${v.toLocaleString(undefined, { maximumFractionDigits: isAssetScope ? 2 : 0 })}`;
+    // 0.005% below the mark still rounds to 0.00%: call that a new high.
+    const atNewHigh = !!drawdown && drawdown.currentDrawdownPct > -0.005;
 
     // Money-Weighted Return: net gain (value change minus net contributions)
     // over capital deployed (initial value + buys in range). On MAX this matches
@@ -460,12 +515,6 @@ const PerformanceView: React.FC = () => {
                                     </div>
                                 </div>
                             )}
-                            <div title={`Largest peak-to-trough loss of the flow-adjusted return index${returnStats.maxDrawdownDate ? ` (trough on ${returnStats.maxDrawdownDate})` : ''} — withdrawals don't count as losses`}>
-                                <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Max drawdown</div>
-                                <div style={{ color: returnStats.maxDrawdownPct < 0 ? 'var(--color-danger)' : 'var(--text-primary)', fontWeight: 700, fontSize: '1.3rem' }}>
-                                    {returnStats.maxDrawdownPct.toFixed(2)}%
-                                </div>
-                            </div>
                             {returnStats.sharpe !== null && (
                                 <div title={`Annualized excess return (over the ${riskFreeRate}% risk-free rate) divided by annualized volatility`}>
                                     <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Sharpe (rf {riskFreeRate}%)</div>
@@ -475,6 +524,85 @@ const PerformanceView: React.FC = () => {
                                 </div>
                             )}
                         </>
+                    )}
+                </div>
+            )}
+
+            {/* Distance from the high-water mark: gains/losses only, flows removed */}
+            {drawdown && (
+                <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-md)', padding: '0.9rem 1.1rem', marginBottom: '0.75rem' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.7rem' }}>
+                        <div
+                            style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}
+                            title="Measured on the flow-adjusted return index, the same one behind TWR: money paid in never sets a new peak and money taken out never digs a drawdown, so only real gains and losses move these numbers."
+                        >
+                            Distance from peak — {range === 'MAX' ? 'peak over all history' : `peak within the last ${range}`}
+                        </div>
+                        <button
+                            onClick={() => setShowUnderwater(v => !v)}
+                            style={{
+                                padding: '0.2rem 0.7rem',
+                                background: showUnderwater ? 'var(--color-primary)' : 'transparent',
+                                color: showUnderwater ? 'white' : 'var(--text-secondary)',
+                                border: '1px solid var(--border-color)', borderRadius: '999px',
+                                cursor: 'pointer', fontWeight: 600, fontSize: '0.7rem'
+                            }}
+                            title="Show the underwater curve: how far below the running peak the scope sat on every date"
+                        >
+                            {showUnderwater ? '▾' : '▸'} Underwater chart
+                        </button>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+                        <div title="How far the scope sits below its best moment, deposits and withdrawals excluded.">
+                            <div style={ddLabelStyle}>From peak</div>
+                            <div style={{ ...ddValueStyle, color: atNewHigh ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                                {atNewHigh ? 'At new high' : `${drawdown.currentDrawdownPct.toFixed(2)}%`}
+                            </div>
+                            <div style={ddSubStyle}>
+                                {drawdown.peakDate ? `peak on ${drawdown.peakDate}` : ''}
+                            </div>
+                        </div>
+
+                        <div title={isAssetScope
+                            ? 'Gain still needed to get back to the peak, and what it is worth on one unit at today\'s price.'
+                            : 'Gain still needed to get back to the peak, and what it is worth on the invested value of today (liquidity excluded) — comparing raw euro against an old peak would be meaningless once the capital changed.'}>
+                            <div style={ddLabelStyle}>To recover</div>
+                            <div style={{ ...ddValueStyle, color: atNewHigh ? 'var(--text-primary)' : 'var(--color-warning)' }}>
+                                {atNewHigh ? '—' : `+${drawdown.recoveryNeededPct.toFixed(2)}%`}
+                            </div>
+                            <div style={ddSubStyle}>
+                                {!atNewHigh && drawdown.recoveryNeededEur !== null
+                                    ? `${fmtEur(drawdown.recoveryNeededEur)} to go${isAssetScope ? ' per unit' : ''}`
+                                    : 'nothing to recover'}
+                            </div>
+                        </div>
+
+                        <div title="Days spent below the current high-water mark, and the longest such stretch in the range.">
+                            <div style={ddLabelStyle}>Under water</div>
+                            <div style={{ ...ddValueStyle, color: drawdown.underwaterDays > 0 ? 'var(--text-primary)' : 'var(--color-success)' }}>
+                                {drawdown.underwaterDays} {drawdown.underwaterDays === 1 ? 'day' : 'days'}
+                            </div>
+                            <div style={ddSubStyle}>longest {drawdown.longestUnderwaterDays}d</div>
+                        </div>
+
+                        <div title="Largest peak-to-trough loss in the range, on the same flow-adjusted index.">
+                            <div style={ddLabelStyle}>Max drawdown</div>
+                            <div style={{ ...ddValueStyle, color: drawdown.maxDrawdownPct < 0 ? 'var(--color-danger)' : 'var(--text-primary)' }}>
+                                {drawdown.maxDrawdownPct.toFixed(2)}%
+                            </div>
+                            <div style={ddSubStyle}>
+                                {drawdown.maxDrawdownDate
+                                    ? `${drawdown.maxDrawdownPeakDate} → ${drawdown.maxDrawdownDate} · ${drawdown.maxDrawdownRecoveryDate ? `recovered ${drawdown.maxDrawdownRecoveryDate}` : 'not recovered'}`
+                                    : 'never below a peak'}
+                            </div>
+                        </div>
+                    </div>
+
+                    {showUnderwater && (
+                        <div style={{ marginTop: '0.75rem' }}>
+                            <Chart options={underwaterOptions} series={underwaterSeries} type="area" height={180} />
+                        </div>
                     )}
                 </div>
             )}
@@ -520,6 +648,23 @@ const PerformanceView: React.FC = () => {
             )}
         </div>
     );
+};
+
+const ddLabelStyle: React.CSSProperties = {
+    color: 'var(--text-muted)',
+    fontSize: '0.75rem',
+};
+
+const ddValueStyle: React.CSSProperties = {
+    fontWeight: 700,
+    fontSize: '1.3rem',
+    fontVariantNumeric: 'tabular-nums',
+};
+
+const ddSubStyle: React.CSSProperties = {
+    color: 'var(--text-muted)',
+    fontSize: '0.7rem',
+    marginTop: '0.1rem',
 };
 
 const badgeStyle: React.CSSProperties = {

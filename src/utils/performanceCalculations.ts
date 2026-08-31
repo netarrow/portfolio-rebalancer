@@ -257,6 +257,12 @@ export interface ReturnStats {
     sharpe: number | null;                  // null when volatility is 0/unknown
     maxDrawdownPct: number;                 // ≤ 0
     maxDrawdownDate: string | null;
+    /** Distance (%) from the high-water mark right now; ≤ 0, 0 at a new high. */
+    currentDrawdownPct: number;
+    /** Date of the current high-water mark. */
+    peakDate: string | null;
+    /** Days spent below that mark. */
+    underwaterDays: number;
     years: number;
 }
 
@@ -306,6 +312,129 @@ export function aggregateMonthlyLogReturns(factors: number[], dates: string[]): 
     return trimmed.filter(m => !skipMonths.has(m)).map(m => byMonth.get(m)!);
 }
 
+/** One point of the underwater curve: distance (%) from the running peak. */
+export interface DrawdownPoint {
+    date: string;
+    /** ≤ 0; exactly 0 on a new high-water mark. */
+    ddPct: number;
+}
+
+export interface DrawdownAnalysis {
+    /** Underwater curve over the whole series, first point included (0%). */
+    curve: DrawdownPoint[];
+    /** Distance (%) of the last point from its high-water mark. ≤ 0. */
+    currentDrawdownPct: number;
+    /** Date the current high-water mark was set (null on an empty stream). */
+    peakDate: string | null;
+    /** Days since that peak; 0 when the last point *is* the peak. */
+    underwaterDays: number;
+    /** Longest stretch (days) spent below a peak before getting back to it. */
+    longestUnderwaterDays: number;
+    /** Gain (%) still needed to climb back to the peak. ≥ 0. */
+    recoveryNeededPct: number;
+    /** Largest peak-to-trough loss (%), ≤ 0. */
+    maxDrawdownPct: number;
+    /** Trough date of the largest drawdown. */
+    maxDrawdownDate: string | null;
+    /** Date of the peak the largest drawdown fell from. */
+    maxDrawdownPeakDate: string | null;
+    /** Date that drawdown was fully recovered; null while still under water. */
+    maxDrawdownRecoveryDate: string | null;
+}
+
+const MS_PER_DAY = 86400000;
+
+function daysBetween(from: string, to: string): number {
+    const diff = Date.parse(to) - Date.parse(from);
+    return Number.isFinite(diff) ? Math.max(0, Math.round(diff / MS_PER_DAY)) : 0;
+}
+
+/**
+ * Walks the flow-adjusted return index and measures every distance from the
+ * running high-water mark. Because the index is built from the same factors
+ * TWR links (external flows removed), money paid in or taken out never moves
+ * the peak nor opens a drawdown: only actual gains and losses do.
+ */
+function walkDrawdown(factors: number[], dates: string[], startDate: string): DrawdownAnalysis {
+    const empty: DrawdownAnalysis = {
+        curve: [], currentDrawdownPct: 0, peakDate: null, underwaterDays: 0,
+        longestUnderwaterDays: 0, recoveryNeededPct: 0, maxDrawdownPct: 0,
+        maxDrawdownDate: null, maxDrawdownPeakDate: null, maxDrawdownRecoveryDate: null,
+    };
+    if (factors.length === 0) return empty;
+
+    const curve: DrawdownPoint[] = [{ date: startDate, ddPct: 0 }];
+    let index = 1, peak = 1;
+    let peakDate = startDate;
+    let maxDD = 0, maxDDDate: string | null = null, maxDDPeakDate: string | null = null;
+    let maxDDRecoveryDate: string | null = null;
+    // Set while the max drawdown found so far is still under water, so a later
+    // return to that peak can stamp the recovery date.
+    let awaitingRecovery = false;
+    let longestUnderwaterDays = 0;
+
+    for (let i = 0; i < factors.length; i++) {
+        index *= factors[i];
+        const date = dates[i];
+        if (index >= peak) {
+            longestUnderwaterDays = Math.max(longestUnderwaterDays, daysBetween(peakDate, date));
+            if (awaitingRecovery) { maxDDRecoveryDate = date; awaitingRecovery = false; }
+            peak = index;
+            peakDate = date;
+        }
+        const dd = index / peak - 1;
+        if (dd < maxDD) {
+            maxDD = dd;
+            maxDDDate = date;
+            maxDDPeakDate = peakDate;
+            maxDDRecoveryDate = null;
+            awaitingRecovery = true;
+        }
+        curve.push({ date, ddPct: dd * 100 });
+    }
+
+    const lastDate = dates[dates.length - 1];
+    const currentDD = index / peak - 1;
+    return {
+        curve,
+        currentDrawdownPct: currentDD * 100,
+        peakDate,
+        underwaterDays: daysBetween(peakDate, lastDate),
+        longestUnderwaterDays: Math.max(longestUnderwaterDays, daysBetween(peakDate, lastDate)),
+        recoveryNeededPct: (peak / index - 1) * 100,
+        maxDrawdownPct: maxDD * 100,
+        maxDrawdownDate: maxDDDate,
+        maxDrawdownPeakDate: maxDDPeakDate,
+        maxDrawdownRecoveryDate: maxDDRecoveryDate,
+    };
+}
+
+/**
+ * Drawdown view of a value series: how far the flow-adjusted return index sits
+ * below its high-water mark, now and over time. Deposits and withdrawals are
+ * stripped exactly as in TWR — new money invested doesn't set a new peak, and
+ * disinvesting doesn't dig a drawdown — so the numbers answer "how much have I
+ * lost from my best moment", not "how much has my balance changed".
+ *
+ * `recoveryNeededEur` converts the missing gain into euro at today's capital:
+ * what the scope must earn *from here* to be back at the mark (comparing raw
+ * euro against the peak would be meaningless once the capital base changed).
+ */
+export function computeDrawdownAnalysis(
+    series: ValuePoint[],
+    cashFlows: Map<string, number>
+): (DrawdownAnalysis & { recoveryNeededEur: number | null }) | null {
+    if (series.length < 2) return null;
+    const { factors, dates } = computeFlowAdjustedFactors(series, cashFlows);
+    if (factors.length === 0) return null;
+    const analysis = walkDrawdown(factors, dates, series[0].date);
+    const lastValue = series[series.length - 1].value;
+    return {
+        ...analysis,
+        recoveryNeededEur: lastValue > 0 ? lastValue * (analysis.recoveryNeededPct / 100) : null,
+    };
+}
+
 /**
  * Return/risk metrics on the flow-adjusted return stream (same daily factors
  * TWR links, so deposits/withdrawals don't show up as gains or losses):
@@ -328,14 +457,7 @@ export function computeReturnStats(
         1 / 365.25
     );
 
-    let index = 1, peak = 1, maxDD = 0;
-    let maxDDDate: string | null = null;
-    for (let i = 0; i < factors.length; i++) {
-        index *= factors[i];
-        if (index > peak) peak = index;
-        const dd = index / peak - 1;
-        if (dd < maxDD) { maxDD = dd; maxDDDate = dates[i]; }
-    }
+    const drawdown = walkDrawdown(factors, dates, series[0].date);
 
     const totalFactor = factors.reduce((a, b) => a * b, 1);
     const twrPct = (totalFactor - 1) * 100;
@@ -367,8 +489,11 @@ export function computeReturnStats(
         annualizedReturnPct,
         annualizedVolatilityPct,
         sharpe,
-        maxDrawdownPct: maxDD * 100,
-        maxDrawdownDate: maxDDDate,
+        maxDrawdownPct: drawdown.maxDrawdownPct,
+        maxDrawdownDate: drawdown.maxDrawdownDate,
+        currentDrawdownPct: drawdown.currentDrawdownPct,
+        peakDate: drawdown.peakDate,
+        underwaterDays: drawdown.underwaterDays,
         years,
     };
 }
