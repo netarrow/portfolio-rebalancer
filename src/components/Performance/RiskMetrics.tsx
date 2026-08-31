@@ -30,10 +30,11 @@ const valueStyle: React.CSSProperties = {
 };
 
 /**
- * Compact row of risk metric cards: annualized return, volatility, Sharpe and
- * max drawdown, read from the shared flow-adjusted ReturnStats. Renders nothing
- * when stats couldn't be computed (too little history). Shared by the
- * Performance view and the stats Overview tab, so both show identical numbers.
+ * Compact row of risk metric cards: annualized return, volatility, Sharpe, the
+ * current distance from the high-water mark and max drawdown, read from the
+ * shared flow-adjusted ReturnStats. Renders nothing when stats couldn't be
+ * computed (too little history). Shared by the Performance view and the stats
+ * Overview tab, so both show identical numbers.
  */
 const RiskMetricsRow: React.FC<RiskMetricsRowProps> = ({ stats, title, riskFreePct = 0 }) => {
     if (!stats) return null;
@@ -68,6 +69,15 @@ const RiskMetricsRow: React.FC<RiskMetricsRowProps> = ({ stats, title, riskFreeP
                         </div>
                     </div>
                 )}
+                <div
+                    style={cardStyle}
+                    title={`How far below its high-water mark the return index sits right now${stats.peakDate ? ` (peak on ${stats.peakDate}, ${stats.underwaterDays} day(s) under water)` : ''}. Deposits and withdrawals are stripped out, so only real gains and losses move it.`}
+                >
+                    <div style={labelStyle}>From peak</div>
+                    <div style={{ ...valueStyle, color: stats.currentDrawdownPct < -0.005 ? 'var(--color-danger)' : 'var(--color-success)' }}>
+                        {stats.currentDrawdownPct < -0.005 ? `${stats.currentDrawdownPct.toFixed(1)}%` : 'At high'}
+                    </div>
+                </div>
                 <div style={cardStyle} title="Largest peak-to-trough loss, measured on the flow-adjusted return index (a withdrawal does not count as a loss).">
                     <div style={labelStyle}>Max Drawdown</div>
                     <div style={{ ...valueStyle, color: stats.maxDrawdownPct < 0 ? 'var(--color-danger)' : 'var(--text-primary)' }}>

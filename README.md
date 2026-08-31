@@ -139,9 +139,14 @@ Historical net-worth and price charts, powered by the **daily price history** th
 - **Net worth** can optionally overlay today's liquidity as a constant line.
 - **Return toggle** — switch between **TWR** (Time-Weighted Return, strips out deposits/withdrawals) and **MWR** (Money-Weighted Return, which on MAX matches the Dashboard's Total Appreciation).
 - **Risk metrics** — flow-adjusted **annualised return**, **annualised volatility**, **Sharpe ratio** (with a configurable risk-free rate) and **max drawdown**, all computed on the return stream net of deposits/withdrawals so a withdrawal never counts as a "loss". A **liquidity overlay** tracks uninvested sale proceeds, so the chart doesn't show fake crashes when you sell.
+- **Distance from peak** — a dedicated row measuring the scope against its **high-water mark** instead of against the invested capital: how far below the peak it sits **right now**, the gain (**% and €, at today's capital**) still needed to get back, the **days under water** (and the longest such stretch), and the **max drawdown** with its peak → trough → recovery dates. Built on the same flow-adjusted index as the other risk metrics, so new money paid in never sets a fake peak and a disinvestment never digs a fake drawdown. A toggle opens the **underwater chart**, the whole curve of distance-from-peak over time.
 - **Caveat badges** flag where history isn't directly comparable — e.g. bonds held at *corso secco* (clean price, no accrued interest), monthly-NAV sources, or assets with no history yet.
 
 ![Performance — risk metrics](screenshots/performance_risk_metrics.png)
+
+Distance from the high-water mark, with the underwater curve open:
+
+![Performance — distance from peak](screenshots/performance_drawdown.png)
 
 Per-asset view, here a long-duration govt bond priced at *corso secco*:
 

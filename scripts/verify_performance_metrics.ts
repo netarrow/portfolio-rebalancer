@@ -6,6 +6,7 @@
 import {
     computeTWR,
     computeReturnStats,
+    computeDrawdownAnalysis,
     computeRealizedVolatility,
     getUninvestedProceedsTimeline,
     getNetWorthSeries,
@@ -204,6 +205,86 @@ check('TWR withdrawal stripped: 100→55 with -50 flow = +5%',
         { date: '2026-01-03', value: 100 },
     ];
     check('Asset-scope TWR with coupon = +2%', computeTWR(priceSeries, flows), 2, 1e-9);
+}
+
+// --- Drawdown from the high-water mark ---------------------------------------
+// Rise then fall: peak on day 2, current distance -25%, +33.3% needed to recover.
+{
+    const series: ValuePoint[] = [
+        { date: '2026-01-01', value: 100 },
+        { date: '2026-01-02', value: 120 },
+        { date: '2026-01-05', value: 90 },
+    ];
+    const dd = computeDrawdownAnalysis(series, new Map())!;
+    check('Current drawdown = -25%', dd.currentDrawdownPct, -25, 1e-9);
+    check('Recovery needed = +33.33%', dd.recoveryNeededPct, 100 / 3, 1e-9);
+    check('Recovery needed in € on 90 = 30', dd.recoveryNeededEur, 30, 1e-9);
+    check('Underwater for 3 days', dd.underwaterDays, 3);
+    check('Curve has one point per date', dd.curve.length, series.length);
+    check('Curve ends at the current drawdown', dd.curve[dd.curve.length - 1].ddPct, -25, 1e-9);
+    if (dd.peakDate !== '2026-01-02') { failures++; console.log(`FAIL  peak date, got ${dd.peakDate}`); }
+    else console.log('PASS  peak date = 2026-01-02');
+}
+
+// New money invested must not set a peak nor open a drawdown: +50 deposit on
+// day 2 (value 100→150 with no market move), then a real -10% move.
+{
+    const series: ValuePoint[] = [
+        { date: '2026-01-01', value: 100 },
+        { date: '2026-01-02', value: 150 },
+        { date: '2026-01-03', value: 135 },
+    ];
+    const dd = computeDrawdownAnalysis(series, new Map([['2026-01-02', 50]]))!;
+    check('Deposit day is flat, drawdown only from the real -10%', dd.currentDrawdownPct, -10, 1e-9);
+    check('Deposit: recovery needed = +11.11%', dd.recoveryNeededPct, 100 / 9, 1e-9);
+    check('Deposit: max drawdown = -10%', dd.maxDrawdownPct, -10, 1e-9);
+    check('Deposit: € gap on 135 = 15', dd.recoveryNeededEur, 15, 1e-9);
+}
+
+// Disinvesting is not a drawdown: half the portfolio sold, nothing else moves.
+{
+    const series: ValuePoint[] = [
+        { date: '2026-01-01', value: 100 },
+        { date: '2026-01-02', value: 50 },
+    ];
+    const dd = computeDrawdownAnalysis(series, new Map([['2026-01-02', -50]]))!;
+    check('Withdrawal: current drawdown = 0', dd.currentDrawdownPct, 0, 1e-9);
+    check('Withdrawal: nothing to recover', dd.recoveryNeededPct, 0, 1e-9);
+    check('Withdrawal: no days under water', dd.underwaterDays, 0);
+}
+
+// Peak → trough → recovery → new high: dates and streaks.
+{
+    const series: ValuePoint[] = [
+        { date: '2026-01-01', value: 100 },
+        { date: '2026-01-02', value: 80 },
+        { date: '2026-01-03', value: 100 },
+        { date: '2026-01-04', value: 110 },
+    ];
+    const dd = computeDrawdownAnalysis(series, new Map())!;
+    check('Recovered: current drawdown = 0', dd.currentDrawdownPct, 0, 1e-9);
+    check('Recovered: max drawdown = -20%', dd.maxDrawdownPct, -20, 1e-9);
+    check('Longest underwater stretch = 2 days', dd.longestUnderwaterDays, 2);
+    check('Underwater days now = 0', dd.underwaterDays, 0);
+    const dates = [dd.maxDrawdownPeakDate, dd.maxDrawdownDate, dd.maxDrawdownRecoveryDate].join(' → ');
+    if (dates !== '2026-01-01 → 2026-01-02 → 2026-01-03') { failures++; console.log(`FAIL  drawdown dates, got ${dates}`); }
+    else console.log('PASS  drawdown peak → trough → recovery dates');
+}
+
+// Still under water: no recovery date, and ReturnStats carries the same numbers.
+{
+    const series: ValuePoint[] = [
+        { date: '2026-01-01', value: 100 },
+        { date: '2026-01-02', value: 70 },
+        { date: '2026-01-03', value: 80 },
+    ];
+    const dd = computeDrawdownAnalysis(series, new Map())!;
+    if (dd.maxDrawdownRecoveryDate !== null) { failures++; console.log('FAIL  unrecovered drawdown must have no recovery date'); }
+    else console.log('PASS  unrecovered drawdown has no recovery date');
+    check('Still under water: current = -20%', dd.currentDrawdownPct, -20, 1e-9);
+    const stats = computeReturnStats(series, new Map())!;
+    check('ReturnStats mirrors current drawdown', stats.currentDrawdownPct, -20, 1e-9);
+    check('ReturnStats underwater days', stats.underwaterDays, 2);
 }
 
 console.log(failures === 0 ? '\nAll checks passed.' : `\n${failures} check(s) FAILED.`);
