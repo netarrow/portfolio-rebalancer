@@ -310,7 +310,8 @@ async function scrollAndShoot(page, base) {
     [...document.querySelectorAll('.stats-tab')].map((b) => b.textContent.trim())
   );
   console.log('  stats tabs found:', statsTabs);
-  for (const label of ['Overview', 'By Portfolio', 'By Broker']) {
+  // Overview is the default tab, already covered by scrollAndShoot above.
+  for (const label of ['By Portfolio', 'By Broker']) {
     const clicked = await page.evaluate((label) => {
       const btn = [...document.querySelectorAll('button,a')].find(
         (b) => b.textContent.trim().toLowerCase() === label.toLowerCase()
@@ -322,7 +323,11 @@ async function scrollAndShoot(page, base) {
       return false;
     }, label);
     if (clicked) {
-      await sleep(600);
+      // scrollAndShoot left the page at the bottom: come back up so the shot
+      // starts at the tab bar, and give the pies time to finish drawing —
+      // caught mid-animation they render as slivers.
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await sleep(2200);
       const slug = label.toLowerCase().replace(/\s+/g, '_');
       await shot(page, `stats_${slug}`);
     }
