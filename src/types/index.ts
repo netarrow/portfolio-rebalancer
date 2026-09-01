@@ -27,6 +27,30 @@ export interface Broker {
   commissionPercent?: number;  // % of transaction value (percent mode)
   commissionMin?: number;      // optional minimum fee (percent mode)
   commissionMax?: number;      // optional maximum fee (percent mode)
+  // Interest paid on the cash sitting at this broker. Absent = no remuneration.
+  remuneration?: BrokerRemuneration;
+}
+
+// How often the accrued interest is actually credited to the account.
+export type RemunerationFrequency = 'daily' | 'monthly' | 'quarterly' | 'semiannual' | 'annual';
+
+// Which slice of the liquidity earns the rate: everything, everything up to a
+// ceiling (the usual "remunerated up to €100,000" offer), or a fixed share.
+export type RemunerationBaseType = 'all' | 'capped' | 'percent';
+
+// A broker's cash remuneration plan, plus the watermark of what has already
+// been credited so the same period is never counted twice.
+export interface BrokerRemuneration {
+  annualRatePercent: number;        // gross annual rate on the remunerated base
+  frequency: RemunerationFrequency;
+  creditDay?: number;               // 1–31, day of the month interest lands; ignored when daily
+  baseType?: RemunerationBaseType;  // defaults to 'all'
+  baseCap?: number;                 // € remunerated at most, when 'capped'
+  basePercent?: number;             // % of the liquidity remunerated, when 'percent'
+  withholdingPercent?: number;      // tax withheld at source on the interest (26% in Italy); absent = paid gross
+  startDate: string;                // ISO date interest starts accruing from; also anchors the schedule
+  lastCreditDate?: string;          // ISO date of the last period already credited
+  totalAccrued?: number;            // € credited so far by the liquidity update
 }
 
 // A household member a personal broker can be attributed to. Managed in
@@ -300,22 +324,49 @@ export interface YnabAccountMapping {
 // id in a different budget is a different account and maps independently.
 export type YnabAccountMappings = Record<string, YnabAccountMapping>;
 
-// One row of the "update broker liquidity from YNAB" preview.
+// One row of the "update broker liquidity" preview. A row is one operation on
+// one broker: either its YNAB account balance (kind 'ynab') or the interest its
+// own remuneration plan has accrued (kind 'interest'). A broker with both
+// produces two rows, picked independently — the modal lists them in separate
+// sections so it is plain which figure comes from where.
 export interface BrokerLiquiditySyncRow {
+  id: string;             // `${kind}:${brokerId}` — brokerId alone is not unique
   brokerId: string;
   brokerName: string;
-  ynabBudgetId: string;
-  ynabBudgetName: string;
-  ynabAccountId: string;
-  ynabAccountName: string;
+  kind: 'ynab' | 'interest';
+  // The same broker also has a row in the other section: taking both means the
+  // interest is added on top of a bank balance that likely already contains it.
+  overlaps: boolean;
+  // YNAB side — set on 'ynab' rows only.
+  ynabBudgetId?: string;
+  ynabBudgetName?: string;
+  ynabAccountId?: string;
+  ynabAccountName?: string;
+  // Interest earned since the last credited period, when the broker is remunerated.
+  interest?: BrokerAccrual;
   currentLiquidity: number;
-  newLiquidity: number;
+  newLiquidity: number;   // result of THIS row alone, ignoring the broker's other row
   delta: number;
   // 'account-missing' = the mapped account is gone/closed in YNAB;
   // 'budget-missing' = its budget is unreachable with the current token.
-  // Both are shown for context but can never be applied.
+  // Both are shown for context but can never be applied. Always 'ok' on
+  // 'interest' rows, which need nothing external.
   status: 'ok' | 'account-missing' | 'budget-missing';
   allocatedTotal: number; // sum of liquidityAllocations, to warn on shortfalls
+}
+
+// Interest a remunerated broker has earned over the credit dates that fell
+// between its watermark and today. Produced by utils/brokerRemuneration.
+export interface BrokerAccrual {
+  fromDate: string;          // ISO date the window starts from (exclusive)
+  toDate: string;            // ISO date of the last credit inside the window
+  amount: number;            // € actually credited across the window, net of tax
+  grossAmount: number;       // € earned before the withholding
+  withheld: number;          // € of tax withheld (grossAmount − amount)
+  credits: number;           // how many credit dates it covers
+  base: number;              // remunerated slice of the liquidity
+  annualRatePercent: number;
+  withholdingPercent: number;
 }
 
 export interface YnabCategory {

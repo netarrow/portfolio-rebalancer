@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Broker, Portfolio, CommissionType, Person } from '../../types';
+import type { Broker, Portfolio, CommissionType, Person, BrokerRemuneration, RemunerationBaseType, RemunerationFrequency } from '../../types';
+import { FREQUENCY_LABELS, describeRemuneration, todayIso } from '../../utils/brokerRemuneration';
+
+// Tax withheld at source on deposit interest in Italy; the usual case, so it is
+// what a new remuneration plan starts from.
+const DEFAULT_WITHHOLDING = 26;
 
 // Personal vs family is exclusive: a family asset belongs to the household, a
 // personal one optionally to a specific person.
@@ -28,6 +33,17 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
 
     // Liquidity Allocations to Portfolios
     const [liquidityAllocations, setLiquidityAllocations] = useState<Record<string, number | ''>>({});
+
+    // Cash Remuneration (interest paid on the liquidity parked here)
+    const [remunerationOn, setRemunerationOn] = useState(false);
+    const [remunerationRate, setRemunerationRate] = useState<number | ''>('');
+    const [remunerationFrequency, setRemunerationFrequency] = useState<RemunerationFrequency>('monthly');
+    const [remunerationCreditDay, setRemunerationCreditDay] = useState<number | ''>('');
+    const [remunerationBaseType, setRemunerationBaseType] = useState<RemunerationBaseType>('all');
+    const [remunerationBaseCap, setRemunerationBaseCap] = useState<number | ''>('');
+    const [remunerationBasePercent, setRemunerationBasePercent] = useState<number | ''>('');
+    const [remunerationWithholding, setRemunerationWithholding] = useState<number | ''>(DEFAULT_WITHHOLDING);
+    const [remunerationStartDate, setRemunerationStartDate] = useState<string>(todayIso());
 
     // Commission Plan
     const [commissionType, setCommissionType] = useState<CommissionType | ''>('');
@@ -59,6 +75,17 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
             }
             setLiquidityAllocations(allocs);
 
+            const rem = initialData.remuneration;
+            setRemunerationOn(!!rem);
+            setRemunerationRate(rem?.annualRatePercent ?? '');
+            setRemunerationFrequency(rem?.frequency || 'monthly');
+            setRemunerationCreditDay(rem?.creditDay ?? '');
+            setRemunerationBaseType(rem?.baseType || 'all');
+            setRemunerationBaseCap(rem?.baseCap ?? '');
+            setRemunerationBasePercent(rem?.basePercent ?? '');
+            setRemunerationWithholding(rem?.withholdingPercent ?? DEFAULT_WITHHOLDING);
+            setRemunerationStartDate(rem?.startDate?.slice(0, 10) || todayIso());
+
             setCommissionType(initialData.commissionType || '');
             setCommissionFixed(initialData.commissionFixed !== undefined ? initialData.commissionFixed : '');
             setCommissionPercent(initialData.commissionPercent !== undefined ? initialData.commissionPercent : '');
@@ -75,6 +102,15 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
             setMinLiquidityPercentage('');
             setMinLiquidityAmount('');
             setLiquidityAllocations({});
+            setRemunerationOn(false);
+            setRemunerationRate('');
+            setRemunerationFrequency('monthly');
+            setRemunerationCreditDay('');
+            setRemunerationBaseType('all');
+            setRemunerationBaseCap('');
+            setRemunerationBasePercent('');
+            setRemunerationWithholding(DEFAULT_WITHHOLDING);
+            setRemunerationStartDate(todayIso());
             setCommissionType('');
             setCommissionFixed('');
             setCommissionPercent('');
@@ -108,6 +144,29 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
         }));
     };
 
+    // The plan as edited, keeping the accrual watermark of the saved one: editing
+    // the rate must never re-credit a period the liquidity update already paid.
+    const remunerationPlan = useMemo<BrokerRemuneration | undefined>(() => {
+        if (!remunerationOn || remunerationRate === '' || Number(remunerationRate) <= 0) return undefined;
+        const saved = initialData?.remuneration;
+        return {
+            annualRatePercent: Number(remunerationRate),
+            frequency: remunerationFrequency,
+            creditDay: remunerationFrequency === 'daily' || remunerationCreditDay === ''
+                ? undefined
+                : Number(remunerationCreditDay),
+            baseType: remunerationBaseType,
+            baseCap: remunerationBaseType === 'capped' && remunerationBaseCap !== '' ? Number(remunerationBaseCap) : undefined,
+            basePercent: remunerationBaseType === 'percent' && remunerationBasePercent !== '' ? Number(remunerationBasePercent) : undefined,
+            withholdingPercent: remunerationWithholding === '' ? undefined : Number(remunerationWithholding),
+            startDate: remunerationStartDate || todayIso(),
+            lastCreditDate: saved?.lastCreditDate,
+            totalAccrued: saved?.totalAccrued,
+        };
+    }, [remunerationOn, remunerationRate, remunerationFrequency, remunerationCreditDay,
+        remunerationBaseType, remunerationBaseCap, remunerationBasePercent, remunerationWithholding,
+        remunerationStartDate, initialData]);
+
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -136,6 +195,7 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
             commissionPercent: commissionType === 'percent' && commissionPercent !== '' ? Number(commissionPercent) : undefined,
             commissionMin: commissionType === 'percent' && commissionMin !== '' ? Number(commissionMin) : undefined,
             commissionMax: commissionType === 'percent' && commissionMax !== '' ? Number(commissionMax) : undefined,
+            remuneration: remunerationPlan,
         });
     };
 
@@ -449,6 +509,184 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
                                         </div>
                                     </div>
                                 </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Cash Remuneration */}
+                    <div className="form-group">
+                        <label style={{ display: 'block', marginBottom: '0.5rem' }}>Cash Remuneration</label>
+                        <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+                            <input
+                                type="checkbox"
+                                checked={remunerationOn}
+                                onChange={e => setRemunerationOn(e.target.checked)}
+                            />
+                            <span>💰 This broker pays interest on the liquidity held here</span>
+                        </label>
+
+                        {remunerationOn && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.75rem' }}>
+                                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Gross annual rate</label>
+                                        <div className="input-with-suffix">
+                                            <input
+                                                type="number"
+                                                value={remunerationRate}
+                                                onChange={e => setRemunerationRate(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 3.00"
+                                                step="0.01"
+                                                min="0"
+                                                className="form-input"
+                                                style={{ width: '100%' }}
+                                            />
+                                            <span className="input-suffix">%</span>
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Credited</label>
+                                        <select
+                                            className="form-input"
+                                            value={remunerationFrequency}
+                                            onChange={e => setRemunerationFrequency(e.target.value as RemunerationFrequency)}
+                                            style={{ width: '100%' }}
+                                        >
+                                            {(Object.keys(FREQUENCY_LABELS) as RemunerationFrequency[]).map(f => (
+                                                <option key={f} value={f}>{FREQUENCY_LABELS[f]}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                    {remunerationFrequency !== 'daily' && (
+                                        <div style={{ flex: 1 }}>
+                                            <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Day of credit</label>
+                                            <input
+                                                type="number"
+                                                value={remunerationCreditDay}
+                                                onChange={e => setRemunerationCreditDay(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 1"
+                                                step="1"
+                                                min="1"
+                                                max="31"
+                                                className="form-input"
+                                                style={{ width: '100%' }}
+                                            />
+                                        </div>
+                                    )}
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Accrues from</label>
+                                        <input
+                                            type="date"
+                                            value={remunerationStartDate}
+                                            onChange={e => setRemunerationStartDate(e.target.value)}
+                                            className="form-input"
+                                            style={{ width: '100%' }}
+                                        />
+                                    </div>
+                                </div>
+                                <small style={{ color: 'var(--text-muted)', marginTop: '-0.35rem' }}>
+                                    {remunerationFrequency === 'daily'
+                                        ? 'Interest lands every day. Nothing is credited before the accrual start date.'
+                                        : 'Interest lands on that day of the month, on a schedule anchored to the month it starts accruing in. A day past the end of a month falls back to its last day.'}
+                                </small>
+
+                                <div style={{ maxWidth: '50%' }}>
+                                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Withholding tax</label>
+                                    <div className="input-with-suffix">
+                                        <input
+                                            type="number"
+                                            value={remunerationWithholding}
+                                            onChange={e => setRemunerationWithholding(e.target.value === '' ? '' : Number(e.target.value))}
+                                            placeholder="e.g. 26"
+                                            step="0.5"
+                                            min="0"
+                                            max="100"
+                                            className="form-input"
+                                            style={{ width: '100%' }}
+                                        />
+                                        <span className="input-suffix">%</span>
+                                    </div>
+                                </div>
+                                <small style={{ color: 'var(--text-muted)', marginTop: '-0.35rem' }}>
+                                    Tax withheld at source on the interest — 26% on Italian deposit accounts. Only the net is credited, and only the net compounds. Leave it at 0 to be paid gross.
+                                </small>
+
+                                <div>
+                                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.35rem' }}>Remunerated liquidity</label>
+                                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
+                                        {([
+                                            ['all', 'All of it'],
+                                            ['capped', 'Up to an amount'],
+                                            ['percent', 'A share of it'],
+                                        ] as [RemunerationBaseType, string][]).map(([value, label]) => (
+                                            <label key={value} style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                                <input
+                                                    type="radio"
+                                                    name="remunerationBaseType"
+                                                    value={value}
+                                                    checked={remunerationBaseType === value}
+                                                    onChange={() => setRemunerationBaseType(value)}
+                                                />
+                                                {label}
+                                            </label>
+                                        ))}
+                                    </div>
+
+                                    {remunerationBaseType === 'capped' && (
+                                        <div className="input-with-suffix">
+                                            <span className="input-prefix">€</span>
+                                            <input
+                                                type="number"
+                                                value={remunerationBaseCap}
+                                                onChange={e => setRemunerationBaseCap(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 100000"
+                                                step="1"
+                                                min="0"
+                                                className="form-input"
+                                                style={{ paddingLeft: '1.8rem', width: '100%' }}
+                                            />
+                                        </div>
+                                    )}
+                                    {remunerationBaseType === 'percent' && (
+                                        <div className="input-with-suffix">
+                                            <input
+                                                type="number"
+                                                value={remunerationBasePercent}
+                                                onChange={e => setRemunerationBasePercent(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 50"
+                                                step="1"
+                                                min="0"
+                                                max="100"
+                                                className="form-input"
+                                                style={{ width: '100%' }}
+                                            />
+                                            <span className="input-suffix">%</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {remunerationPlan && (
+                                    <div style={{ padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--bg-background)', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                                        {describeRemuneration(remunerationPlan)}
+                                        {initialData?.remuneration?.lastCreditDate && (
+                                            <div style={{ marginTop: '0.25rem' }}>
+                                                €{(initialData.remuneration.totalAccrued || 0).toLocaleString('en-IE', { minimumFractionDigits: 2 })} credited net so far,
+                                                last up to {initialData.remuneration.lastCreditDate}.
+                                            </div>
+                                        )}
+                                        <div style={{ marginTop: '0.25rem', color: 'var(--text-muted)' }}>
+                                            Interest is credited by “Update liquidity”, which pays every period that has come due since then.
+                                        </div>
+                                    </div>
+                                )}
+                                {remunerationOn && !remunerationPlan && (
+                                    <div style={{ color: '#F59E0B', fontSize: '0.8rem' }}>
+                                        Set a rate above zero, otherwise the plan is dropped on save.
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>

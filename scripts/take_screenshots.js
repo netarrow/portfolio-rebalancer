@@ -128,6 +128,20 @@ async function loadMock(page) {
   await sleep(800);
 }
 
+// Modals here have no Escape handler: dismiss the topmost one through its own
+// close/cancel control so the next screenshot is not shot through an overlay.
+async function closeTopModal(page) {
+  await page.evaluate(() => {
+    const modal = [...document.querySelectorAll('.modal-content')].pop();
+    if (!modal) return;
+    const btn =
+      modal.querySelector('.modal-close-btn') ||
+      [...modal.querySelectorAll('button')].find((b) => /^\s*(cancel|close)\s*$/i.test(b.textContent));
+    if (btn) btn.click();
+  });
+  await sleep(400);
+}
+
 async function scrollAndShoot(page, base) {
   await page.evaluate(() => window.scrollTo(0, 0));
   await sleep(400);
@@ -674,6 +688,22 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'Brokers');
   await sleep(700);
   await shot(page, 'brokers_page');
+  // Update liquidity — YNAB balances and accrued interest in one preview
+  const liquidityUpdateClicked = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) =>
+      /update liquidity/i.test(b.textContent)
+    );
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  });
+  if (liquidityUpdateClicked) {
+    await sleep(800);
+    await shot(page, 'brokers_update_liquidity_modal');
+    await closeTopModal(page);
+  }
   // Edit Broker modal — shows commission plan & minimum liquidity settings
   const brokerEditClicked = await page.evaluate(() => {
     const btn = document.querySelector('button[title*="Edit" i], button[aria-label*="Edit" i]');
@@ -686,8 +716,29 @@ async function scrollAndShoot(page, base) {
   if (brokerEditClicked) {
     await sleep(500);
     await shot(page, 'brokers_edit_modal_commission');
-    await page.keyboard.press('Escape');
-    await sleep(300);
+    await closeTopModal(page);
+  }
+  // Same modal on a remunerated broker, scrolled to its cash remuneration plan
+  const remuneratedEditClicked = await page.evaluate(() => {
+    const card = [...document.querySelectorAll('.broker-card')].find((c) =>
+      c.textContent.includes('\u{1F4B0}')
+    );
+    const btn = card?.querySelector('button[title*="Edit" i], button[aria-label*="Edit" i]');
+    if (btn) {
+      btn.click();
+      return true;
+    }
+    return false;
+  });
+  if (remuneratedEditClicked) {
+    await sleep(500);
+    await page.evaluate(() => {
+      const modal = [...document.querySelectorAll('.modal-content')].pop();
+      if (modal) modal.scrollTop = modal.scrollHeight;
+    });
+    await sleep(400);
+    await shot(page, 'brokers_edit_modal_remuneration');
+    await closeTopModal(page);
   }
 
   // ---------- FORECAST ----------
