@@ -345,6 +345,10 @@ Project net worth and liquidity over a configurable horizon.
 
 ![Forecast — cash-flow table](screenshots/forecast_cashflow_table.png)
 
+**⚡ Simulate drawdown** — the deterministic projection only ever grows, so the *Market* column never takes money away and a plan is never read against a bad decade. This button drops a **named crash** into it, and the severity belongs to the **asset class**, not to the portfolio: equity falls 20 / 35 / 50 / 80% depending on the scenario, bonds move by **duration and by which way rates went** (a flight to quality lifts the long end, a *rate & inflation shock* takes 30% off it), the money market barely registers — a couple of tenths of a percent, and only in a systemic freeze — while gold and crypto go wherever the scenario sends them. Each portfolio then falls by **its own mix**: 40% equity and 60% short bonds cannot lose 50%, and the simulation will not pretend it can.
+
+It is a path, not a step. The fall is spread over months, the classes share the *timing* of the event but not its depth or its shape, and a Brownian bridge pinned to the trough gives bear-market rallies and green months inside a red year — while the trough and the exit level still land exactly where the scenario says. The crash is applied **on top of the drift**, so a money-market bucket keeps earning through it and the years outside the window are euro-for-euro identical to the undisturbed plan. The panel states the assumptions before the chart moves (what each class you hold does, what that blends to for your capital) and the consequences after (where net worth bottoms, measured **against the same plan with no crash** so a house deposit due that year is not charged to the crash, and how much compounding is never made back). Monte Carlo pauses while a crash is scripted: one is a random ensemble, the other a single written future.
+
 Risky and failed plans:
 
 ![Forecast — risky](screenshots/forecast_riskyplan.png)

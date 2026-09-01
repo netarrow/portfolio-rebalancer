@@ -6,8 +6,13 @@ import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import { calculateForecastWithState, runMonteCarloForecast, runMonteCarloScenario, getAssetVolatility } from '../../utils/forecastCalculations';
 import type { ForecastResult } from '../../utils/forecastCalculations';
 import { buildCashflowTable } from '../../utils/forecastCashflow';
+import {
+    buildDrawdownSampler, heldClasses, scenarioById, shockMixOf, summarizeDrawdown,
+    type ShockMix,
+} from '../../utils/drawdownScenarios';
 import type { CashflowGranularity } from '../../utils/forecastCashflow';
 import ForecastCashflowTable from './ForecastCashflowTable';
+import ForecastDrawdownPanel, { type DrawdownTrough } from './ForecastDrawdownPanel';
 import { forecastYearForDate } from '../../utils/plannedForecastExpenses';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import {
@@ -230,6 +235,12 @@ const ForecastView: React.FC = () => {
 
     const [monteCarloEnabled, setMonteCarloEnabled] = useState(false);
     const [mcSeed, setMcSeed] = useState(12345);
+
+    // Scripted drawdown: a named crash dropped into the projection. null = none.
+    const [drawdownId, setDrawdownId] = useState<string | null>(null);
+    const [drawdownStartYear, setDrawdownStartYear] = useState(1);
+    const [drawdownSeed, setDrawdownSeed] = useState(20260901);
+    const [drawdownOpen, setDrawdownOpen] = useState(false);
     const [volatilityOverrides, setVolatilityOverrides] = useState<Record<string, number | ''>>({});
 
     // Contribution strategy: false = momentum (current weights), true = year-0 mix + annual rebalance
@@ -503,6 +514,34 @@ const ForecastView: React.FC = () => {
         return { portfolios: inputPortfolios, returns, expenses, years: Number(timeHorizon) || 10 };
     }, [portfolios, currentPortfolioValues, portfolioPerformance, yearlyExpenses, ynabSimulationExpenses, goalTitleById, timeHorizon]);
 
+    // What each portfolio is actually made of, as the shock classes a crash
+    // distinguishes. This is what makes a scripted drawdown fit the plan instead
+    // of hitting everything with the same stick: a money-market bucket cannot
+    // fall 50% because equities did.
+    const shockMixByPortfolio = useMemo(() => {
+        const mixes: Record<string, ShockMix> = {};
+        portfolios.forEach(p => {
+            const { assets } = calculateAssets(
+                transactions.filter(t => t.portfolioId === p.id), assetSettings, marketData
+            );
+            mixes[p.id] = shockMixOf(assets);
+        });
+        return mixes;
+    }, [portfolios, transactions, assetSettings, marketData]);
+
+    const drawdownScenario = drawdownId ? scenarioById(drawdownId) : undefined;
+
+    /** The crash as a return sampler, or nothing when no scenario is picked. */
+    const drawdownSampler = useMemo(() => {
+        if (!drawdownScenario) return undefined;
+        return buildDrawdownSampler(
+            shockMixByPortfolio,
+            simulationInputs.returns,
+            drawdownScenario,
+            { startMonth: (Math.max(1, drawdownStartYear) - 1) * 12 + 1, seed: drawdownSeed }
+        );
+    }, [drawdownScenario, shockMixByPortfolio, simulationInputs.returns, drawdownStartYear, drawdownSeed]);
+
     // Generate Forecast Data
     const forecastData = useMemo(() => calculateForecastWithState(
         simulationInputs.portfolios,
@@ -512,9 +551,9 @@ const ForecastView: React.FC = () => {
         simulationInputs.years,
         simulationInputs.returns,
         simulationInputs.expenses,
-        undefined,
+        drawdownSampler,
         { rebalanceToInitialWeights: rebalanceAnnually }
-    ), [simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, rebalanceAnnually]);
+    ), [simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, rebalanceAnnually, drawdownSampler]);
 
     // Year 0 — the money as it stands today, before the first simulated month
     // runs. It is the very state the engine starts from, so plotting it makes
@@ -567,7 +606,10 @@ const ForecastView: React.FC = () => {
     }), [historicalCalibration, portfolios, volatilityOverrides]);
 
     const monteCarloData = useMemo(() => {
-        if (!monteCarloEnabled) return null;
+        // A scripted crash and a random ensemble answer different questions, and
+        // one drawn over the other reads as neither: the scenario wins while it
+        // is on, and the panel says so.
+        if (!monteCarloEnabled || drawdownId) return null;
 
         return runMonteCarloForecast(
             simulationInputs.portfolios,
@@ -583,7 +625,52 @@ const ForecastView: React.FC = () => {
             { rebalanceToInitialWeights: rebalanceAnnually },
             mcCalibration
         );
-    }, [monteCarloEnabled, simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, effectiveVolatilities, mcSeed, rebalanceAnnually, mcCalibration]);
+    }, [monteCarloEnabled, drawdownId, simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses, effectiveVolatilities, mcSeed, rebalanceAnnually, mcCalibration]);
+
+    /**
+     * What the scripted crash does to THIS plan, in the panel's own words: the
+     * mix-weighted severity per class, and what the projection actually did with
+     * it — the net-worth trough, and the compounding the crash costs by the end.
+     *
+     * The severity comes off the scenario's anchors, the trough off the
+     * simulated path: one is the assumption, the other the consequence.
+     */
+    const drawdownReadout = useMemo(() => {
+        if (!drawdownScenario) return null;
+        const impact = summarizeDrawdown(shockMixByPortfolio, currentPortfolioValues, drawdownScenario);
+        const nameOf = (id: string) => portfolios.find(p => p.id === id)?.name ?? id;
+        const worst = impact.worst
+            .filter(w => (currentPortfolioValues[w.portfolioId] || 0) > 0)
+            .map(w => ({ name: nameOf(w.portfolioId), shock: w.shock }));
+
+        const startMonth = (Math.max(1, drawdownStartYear) - 1) * 12 + 1;
+        const endMonth = startMonth + drawdownScenario.crashMonths + drawdownScenario.recoveryMonths;
+        const window = forecastData.filter(r => r.month >= startMonth && r.month <= endMonth);
+        let trough: DrawdownTrough | null = null;
+        if (window.length > 0 && forecastData.length > 0) {
+            const bottom = window.reduce((lo, r) => (r.totalValue < lo.totalValue ? r : lo), window[0]);
+            // The same plan with the crash taken out. It is the only honest
+            // yardstick: both paths pay the same planned expenses and collect the
+            // same contributions, so the gap between them is the crash and
+            // nothing else. Measuring the trough against the value just before it
+            // would charge the crash for a house deposit that was always due.
+            const calm = calculateForecastWithState(
+                simulationInputs.portfolios, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses,
+                simulationInputs.years, simulationInputs.returns, simulationInputs.expenses,
+                undefined, { rebalanceToInitialWeights: rebalanceAnnually }
+            );
+            trough = {
+                value: bottom.totalValue,
+                year: Math.ceil(bottom.month / 12),
+                calmAtTrough: calm.find(r => r.month === bottom.month)?.totalValue ?? bottom.totalValue,
+                endValue: forecastData[forecastData.length - 1].totalValue,
+                endValueCalm: calm[calm.length - 1]?.totalValue ?? 0,
+            };
+        }
+        return { held: heldClasses(shockMixByPortfolio), blended: impact.blended, worst, trough };
+    }, [drawdownScenario, shockMixByPortfolio, currentPortfolioValues, portfolios, drawdownStartYear,
+        forecastData, simulationInputs, brokers, effectiveMonthlyIncome, effectiveMonthlyExpenses,
+        rebalanceAnnually]);
 
     // Cash-flow table: the deterministic path, or — with Monte Carlo on — one
     // real simulated run replayed month by month. The percentile curves the
@@ -1460,6 +1547,22 @@ const ForecastView: React.FC = () => {
                         >
                             Cash-flow table
                         </button>
+
+                        <button
+                            onClick={() => setDrawdownOpen(v => !v)}
+                            style={{
+                                ...segButtonStyle(!!drawdownId),
+                                marginLeft: '0.6rem',
+                                borderColor: drawdownId ? 'var(--color-danger)' : 'var(--border-color)',
+                                background: drawdownId ? 'var(--color-danger)' : 'var(--bg-card)',
+                            }}
+                            title="Drop a named crash into the projection — each asset class falls by what that scenario does to it, and each portfolio by its own mix"
+                        >
+                            ⚡ Simulate drawdown
+                            {drawdownScenario && (
+                                <span style={{ fontWeight: 500, opacity: 0.9 }}> · {drawdownScenario.label}</span>
+                            )}
+                        </button>
                     </div>
 
                     {resultView === 'table' && (
@@ -1491,6 +1594,28 @@ const ForecastView: React.FC = () => {
                     )}
                 </div>
 
+                {/* The crash picker sits under the button that opens it and above
+                    both readings: it changes the projection itself, so it cannot
+                    live inside either of the two views. */}
+                {(drawdownOpen || drawdownId) && (
+                    <ForecastDrawdownPanel
+                        scenario={drawdownScenario}
+                        onPick={id => {
+                            setDrawdownId(id);
+                            if (id) setDrawdownOpen(true);
+                        }}
+                        startYear={drawdownStartYear}
+                        onStartYear={setDrawdownStartYear}
+                        maxYears={simulationInputs.years}
+                        onReroll={() => setDrawdownSeed(Math.floor(Math.random() * 1_000_000))}
+                        held={drawdownReadout?.held ?? []}
+                        blended={drawdownReadout?.blended ?? 0}
+                        worst={drawdownReadout?.worst ?? []}
+                        trough={drawdownReadout?.trough ?? null}
+                        monteCarloOn={monteCarloEnabled}
+                    />
+                )}
+
                 <div ref={chartCardRef} className="card forecast-chart-card" style={{ padding: '1.5rem', background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', flex: 'none', height: chartHeight ?? 'calc(100vh - 280px)', minHeight: '320px' }}>
                     {resultView === 'table' ? (
                         <ForecastCashflowTable
@@ -1498,7 +1623,9 @@ const ForecastView: React.FC = () => {
                             granularity={tableGranularity}
                             sourceLabel={monteCarloData
                                 ? `Monte Carlo · ${scenarioKey === 'p10' ? 'pessimistic' : scenarioKey === 'p90' ? 'optimistic' : 'median'} run out of ${monteCarloData.simulations} — one simulated future, month by month: returns are drawn at random (block-bootstrapped from your real monthly history where there is enough of it), so the dips below are drawdowns this path actually went through.`
-                                : 'Deterministic projection — every portfolio grows at its historical CAGR, month after month, with no volatility. Switch Monte Carlo on to see a path with real ups and downs.'}
+                                : drawdownScenario
+                                    ? `Deterministic projection with a scripted ${drawdownScenario.label.toLowerCase()} from year ${drawdownStartYear}: each class falls by what that scenario does to it, so the Market column goes red for as long as the crash lasts and back to the CAGR after it.`
+                                    : 'Deterministic projection — every portfolio grows at its historical CAGR, month after month, with no volatility. Switch Monte Carlo on to see a path with real ups and downs.'}
                             note={monteCarloData
                                 ? `across all runs, cash flows included (so planned spending counts too): median max drawdown ${monteCarloData.maxDrawdownP50.toFixed(1)}%, worst 10% ${monteCarloData.maxDrawdownP90.toFixed(1)}% — the Dip column below is market-only`
                                 : undefined}
