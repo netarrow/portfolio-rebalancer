@@ -3,6 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import BrokerForm from './BrokerForm';
 import BrokerLiquiditySyncModal from './BrokerLiquiditySyncModal';
 import type { Broker, BrokerLiquiditySyncRow } from '../../types';
+import { describeRemuneration, isRemunerationActive } from '../../utils/brokerRemuneration';
 import Swal from 'sweetalert2';
 
 const BrokerList: React.FC = () => {
@@ -15,7 +16,10 @@ const BrokerList: React.FC = () => {
     const [syncRows, setSyncRows] = useState<BrokerLiquiditySyncRow[] | null>(null);
 
     const personById = new Map(people.map(p => [p.id, p]));
-    const canSyncLiquidity = !!ynabConfig && Object.keys(ynabAccountMappings).length > 0;
+    // The update covers two sources, so either one is enough to offer it.
+    const hasYnabMappings = !!ynabConfig && Object.keys(ynabAccountMappings).length > 0;
+    const hasRemuneration = brokers.some(b => isRemunerationActive(b.remuneration));
+    const canSyncLiquidity = hasYnabMappings || hasRemuneration;
 
     // Name the budget on the badge: mappings can point at budgets other than the
     // one the rest of the YNAB integration reads from.
@@ -87,7 +91,16 @@ const BrokerList: React.FC = () => {
     const handleOpenLiquiditySync = async () => {
         const res = await prepareBrokerLiquiditySync();
         if (!res.ok || !res.rows) {
-            Swal.fire({ title: 'Unable to read YNAB', text: res.error, icon: 'error' });
+            const empty = res.reason === 'empty';
+            Swal.fire({
+                title: empty ? 'Nothing to update' : 'Unable to read YNAB',
+                text: res.error,
+                icon: empty ? 'info' : 'error',
+            });
+            return;
+        }
+        if (res.rows.length === 0) {
+            Swal.fire({ title: 'Nothing to update', text: 'No YNAB balance to copy and no interest due yet.', icon: 'info' });
             return;
         }
         setSyncRows(res.rows);
@@ -96,11 +109,16 @@ const BrokerList: React.FC = () => {
     const handleConfirmLiquiditySync = (rows: BrokerLiquiditySyncRow[]) => {
         const res = applyBrokerLiquiditySync(rows);
         setSyncRows(null);
+        const parts = [`${res.updated} broker${res.updated === 1 ? '' : 's'} updated.`];
+        if (res.fromYnab > 0) parts.push(`${res.fromYnab} balance${res.fromYnab === 1 ? '' : 's'} from YNAB.`);
+        if (res.credits > 0) {
+            parts.push(`€${res.interest.toLocaleString('en-IE', { minimumFractionDigits: 2 })} of interest credited, net of tax.`);
+        }
         Swal.fire({
             title: 'Liquidity updated',
-            text: `${res.updated} broker${res.updated === 1 ? '' : 's'} updated from YNAB.`,
+            text: parts.join(' '),
             icon: 'success',
-            timer: 2000,
+            timer: 2500,
             showConfirmButton: false,
         });
     };
@@ -115,9 +133,11 @@ const BrokerList: React.FC = () => {
                             className="btn btn-secondary"
                             onClick={handleOpenLiquiditySync}
                             disabled={brokerLiquiditySyncing}
-                            title="Read the mapped YNAB accounts and update each broker's liquidity"
+                            title={hasYnabMappings
+                                ? "Read the mapped YNAB accounts and credit the interest of every remunerated broker"
+                                : "Credit the interest every remunerated broker has earned since the last update"}
                         >
-                            {brokerLiquiditySyncing ? 'Reading YNAB…' : '🔄 Update liquidity from YNAB'}
+                            {brokerLiquiditySyncing ? 'Reading YNAB…' : '🔄 Update liquidity'}
                         </button>
                     )}
                     <button className="btn btn-primary" onClick={openCreateModal}>
@@ -159,7 +179,7 @@ const BrokerList: React.FC = () => {
                                 {broker.description && (
                                     <p className="description">{broker.description}</p>
                                 )}
-                                {(broker.familyAsset || broker.illiquid || broker.ownerId || ynabAccountMappings[broker.id]) && (
+                                {(broker.familyAsset || broker.illiquid || broker.ownerId || ynabAccountMappings[broker.id] || isRemunerationActive(broker.remuneration)) && (
                                     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                                         {!broker.familyAsset && broker.ownerId && personById.has(broker.ownerId) && (
                                             <span title="Personal asset — views can filter by person" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#0EA5E920', color: '#0EA5E9', border: '1px solid #0EA5E950' }}>
@@ -169,6 +189,14 @@ const BrokerList: React.FC = () => {
                                         {ynabAccountMappings[broker.id] && (
                                             <span title={ynabBadgeTitle(broker.id)} style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#10B98120', color: '#10B981', border: '1px solid #10B98150' }}>
                                                 🔗 YNAB
+                                            </span>
+                                        )}
+                                        {isRemunerationActive(broker.remuneration) && (
+                                            <span
+                                                title={`${describeRemuneration(broker.remuneration)}${broker.remuneration.totalAccrued ? ` — €${broker.remuneration.totalAccrued.toLocaleString('en-IE', { minimumFractionDigits: 2 })} credited so far` : ''}`}
+                                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#22C55E20', color: '#16A34A', border: '1px solid #22C55E50' }}
+                                            >
+                                                💰 {broker.remuneration.annualRatePercent}%
                                             </span>
                                         )}
                                         {broker.familyAsset && (
