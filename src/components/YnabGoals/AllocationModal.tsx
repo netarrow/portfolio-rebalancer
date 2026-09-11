@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { YnabGoal, YnabGoalAllocation } from '../../types';
+import { getVirtualBondTicker, getVirtualBondId, isVirtualBondTicker } from '../../types';
 
 interface Props {
     ynabGoal: YnabGoal;
@@ -18,10 +19,40 @@ const AllocationModal: React.FC<Props> = ({ ynabGoal, editing, onClose }) => {
         updateAllocation,
         getPortfolioAllocationSummary,
         ynabGoalAllocations,
+        assetSettings,
+        virtualBonds,
     } = usePortfolio();
 
     const [portfolioId, setPortfolioId] = useState<string>(editing?.portfolioId ?? '');
+    const [ticker, setTicker] = useState<string>(editing?.ticker ?? '');
     const [amount, setAmount] = useState<string>(editing ? String(editing.amount) : '');
+
+    const selectedPortfolio = portfolios.find(p => p.id === portfolioId);
+
+    // Rows of the chosen portfolio a goal can be pinned to: its targets, its
+    // market groups and every virtual bond still waiting to be concretized.
+    const rowOptions = useMemo(() => {
+        if (!selectedPortfolio) return [];
+        const keys = new Set<string>([
+            ...Object.keys(selectedPortfolio.allocations || {}),
+            ...Object.keys(selectedPortfolio.amountTargets || {}),
+            ...(selectedPortfolio.allocationGroups || []).map(g => g.id),
+            ...virtualBonds.filter(vb => !vb.resolvedIsin).map(vb => getVirtualBondTicker(vb.id)),
+        ]);
+        if (editing?.ticker) keys.add(editing.ticker);
+        return Array.from(keys).map(key => {
+            const group = selectedPortfolio.allocationGroups?.find(g => g.id === key);
+            const vb = isVirtualBondTicker(key) ? virtualBonds.find(b => b.id === getVirtualBondId(key)) : undefined;
+            const label = group ? `${group.label} (group)`
+                : vb ? `${vb.label} (virtual bond, ${vb.targetMaturityDate})`
+                : `${assetSettings.find(s => s.ticker.toUpperCase() === key.toUpperCase())?.label || key} (${key})`;
+            return { key, label };
+        }).sort((a, b) => a.label.localeCompare(b.label));
+    }, [selectedPortfolio, virtualBonds, assetSettings, editing]);
+
+    // On a row of an amount-mode portfolio the amount is that row's € target,
+    // so it isn't capped by what the portfolio holds today.
+    const isRowTarget = !!ticker && selectedPortfolio?.targetMode === 'amount';
     const [allowOver, setAllowOver] = useState<boolean>(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +68,7 @@ const AllocationModal: React.FC<Props> = ({ ynabGoal, editing, onClose }) => {
     }, [portfolioId, ynabGoalAllocations, editing]);
 
     const amountNumber = parseFloat(amount);
-    const overAlloc = summary !== null && isFinite(amountNumber) && amountNumber > summary.available;
+    const overAlloc = !isRowTarget && summary !== null && isFinite(amountNumber) && amountNumber > summary.available;
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -50,8 +81,8 @@ const AllocationModal: React.FC<Props> = ({ ynabGoal, editing, onClose }) => {
             return;
         }
         const result = editing
-            ? updateAllocation(editing.id, { amount: amountNumber, allowOverallocation: allowOver })
-            : addAllocation({ portfolioId, ynabGoalId: ynabGoal.id, amount: amountNumber, allowOverallocation: allowOver });
+            ? updateAllocation(editing.id, { amount: amountNumber, ticker: ticker || undefined, allowOverallocation: allowOver })
+            : addAllocation({ portfolioId, ynabGoalId: ynabGoal.id, amount: amountNumber, ticker: ticker || undefined, allowOverallocation: allowOver });
         if (!result.ok) {
             setError(result.error || 'Save failed.');
             return;
@@ -83,7 +114,7 @@ const AllocationModal: React.FC<Props> = ({ ynabGoal, editing, onClose }) => {
                         <select
                             className="form-select"
                             value={portfolioId}
-                            onChange={e => { setPortfolioId(e.target.value); setError(null); }}
+                            onChange={e => { setPortfolioId(e.target.value); setTicker(''); setError(null); }}
                             disabled={!!editing}
                         >
                             <option value="">— Select portfolio —</option>
@@ -92,8 +123,28 @@ const AllocationModal: React.FC<Props> = ({ ynabGoal, editing, onClose }) => {
                             ))}
                         </select>
                     </div>
+                    {selectedPortfolio && (
+                        <div className="form-group">
+                            <label className="form-label">Covering asset</label>
+                            <select
+                                className="form-select"
+                                value={ticker}
+                                onChange={e => { setTicker(e.target.value); setError(null); }}
+                            >
+                                <option value="">Whole portfolio</option>
+                                {rowOptions.map(o => (
+                                    <option key={o.key} value={o.key}>{o.label}</option>
+                                ))}
+                            </select>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                {selectedPortfolio.targetMode === 'amount'
+                                    ? 'Goal matching portfolio: the asset\'s € target becomes the sum of the goals pinned to it, due by the nearest goal date.'
+                                    : 'Switch this portfolio to "Target in €" to plan buys from the goals pinned to its assets.'}
+                            </div>
+                        </div>
+                    )}
                     <div className="form-group">
-                        <label className="form-label">Amount (€)</label>
+                        <label className="form-label">{isRowTarget ? 'Target for this asset (€)' : 'Amount (€)'}</label>
                         <input
                             type="number"
                             step="0.01"
@@ -102,7 +153,7 @@ const AllocationModal: React.FC<Props> = ({ ynabGoal, editing, onClose }) => {
                             onChange={e => { setAmount(e.target.value); setError(null); }}
                             autoFocus
                         />
-                        {summary !== null && (
+                        {summary !== null && !isRowTarget && (
                             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                                 Available: <strong>{formatCurrency(summary.available)}</strong> of {formatCurrency(summary.currentValue)}
                                 {summary.allocated > 0 && (

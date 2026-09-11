@@ -3,6 +3,8 @@ import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '
 import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState } from '../types';
 import { getVirtualBondTicker, getVirtualBondId } from '../types';
+import type { PortfolioTargetUnit } from '../types';
+import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
 import { fetchAssetHistory } from '../services/marketData';
@@ -51,6 +53,8 @@ interface PortfolioContextType {
     deleteTransaction: (id: string) => void;
     updateAssetSettings: (ticker: string, source?: PriceSource, label?: string, assetClass?: AssetClass, assetSubClass?: AssetSubClass) => void;
     updatePortfolioAllocation: (portfolioId: string, ticker: string, percentage: number) => void;
+    setPortfolioTargetMode: (portfolioId: string, mode: PortfolioTargetUnit) => void;
+    updatePortfolioAmountTarget: (portfolioId: string, key: string, amount: number) => void;
     upsertAllocationGroup: (portfolioId: string, group: AllocationGroup) => void;
     deleteAllocationGroup: (portfolioId: string, groupId: string) => void;
     updateMacroAllocation: (allocations: MacroAllocation) => void;
@@ -127,8 +131,8 @@ interface PortfolioContextType {
     prepareYnabGoalsSync: () => Promise<{ ok: boolean; candidates?: YnabGoalSyncCandidate[]; error?: string }>;
     applyYnabGoalsSync: (candidates: YnabGoalSyncCandidate[]) => { ok: boolean; report?: YnabGoalSyncReport; goals?: YnabGoal[]; error?: string };
     deleteYnabGoal: (ynabGoalId: string) => { ok: boolean; error?: string };
-    addAllocation: (input: { portfolioId: string; ynabGoalId: string; amount: number; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
-    updateAllocation: (allocationId: string, input: { amount: number; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
+    addAllocation: (input: { portfolioId: string; ynabGoalId: string; amount: number; ticker?: string; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
+    updateAllocation: (allocationId: string, input: { amount: number; ticker?: string; allowOverallocation?: boolean }) => { ok: boolean; error?: string };
     removeAllocation: (allocationId: string) => void;
     getPortfolioAllocationSummary: (portfolioId: string) => { allocated: number; available: number; drift: number; currentValue: number };
     getYnabGoalAllocations: (ynabGoalId: string) => YnabGoalAllocation[];
@@ -1485,6 +1489,51 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }));
     };
 
+    // Switching to 'amount' seeds each row's € target from what its weight is
+    // worth today, so the switch itself plans no trade; switching back keeps
+    // the derived weights and leaves the € targets stored for a later return.
+    const setPortfolioTargetMode = (portfolioId: string, mode: PortfolioTargetUnit) => {
+        setPortfolios(prev => prev.map(p => {
+            if (p.id !== portfolioId) return p;
+            if (mode === 'percent') return { ...p, targetMode: 'percent' };
+            const hasAmounts = Object.values(p.amountTargets || {}).some(v => v > 0);
+            if (hasAmounts) return { ...p, targetMode: 'amount' };
+            const value = portfolioCurrentValue.get(p.id) || 0;
+            const amountTargets: Record<string, number> = {};
+            Object.entries(p.allocations || {}).forEach(([key, pct]) => {
+                if (pct > 0) amountTargets[key] = Math.round(value * pct / 100);
+            });
+            return { ...p, targetMode: 'amount', amountTargets };
+        }));
+    };
+
+    const updatePortfolioAmountTarget = (portfolioId: string, key: string, amount: number) => {
+        setPortfolios(prev => prev.map(p => {
+            if (p.id !== portfolioId) return p;
+            const amountTargets = { ...(p.amountTargets || {}) };
+            if (amount > 0) amountTargets[key] = amount;
+            else delete amountTargets[key];
+            return { ...p, amountTargets };
+        }));
+    };
+
+    // Amount-mode portfolios keep `allocations` as the weights their € targets
+    // imply, so every view that reads weights (charts, merged groups, Fund
+    // Relocation) sees the right mix. Goal allocations and virtual bonds can
+    // move a target from outside the portfolio, hence an effect rather than a
+    // recompute inside each setter; it only writes when the weights differ.
+    useEffect(() => {
+        const stale = portfolios.some(p => p.targetMode === 'amount' &&
+            !sameAllocations(p.allocations || {}, derivePercentAllocations(resolveAmountTargets(p, ynabGoalAllocations, ynabGoals, virtualBonds))));
+        if (!stale) return;
+        setPortfolios(prev => prev.map(p => {
+            if (p.targetMode !== 'amount') return p;
+            const derived = derivePercentAllocations(resolveAmountTargets(p, ynabGoalAllocations, ynabGoals, virtualBonds));
+            return sameAllocations(p.allocations || {}, derived) ? p : { ...p, allocations: derived };
+        }));
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [portfolios, ynabGoalAllocations, ynabGoals, virtualBonds]);
+
     const upsertAllocationGroup = (portfolioId: string, group: AllocationGroup) => {
         setPortfolios(prev => prev.map(p => {
             if (p.id !== portfolioId) return p;
@@ -1495,8 +1544,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 : [...existing, group];
             // Members live under the group, never as standalone allocation keys.
             const allocations = { ...(p.allocations || {}) };
-            group.members.forEach(m => { delete allocations[m]; delete allocations[m.toUpperCase()]; });
-            return { ...p, allocationGroups: groups, allocations };
+            const amountTargets = { ...(p.amountTargets || {}) };
+            group.members.forEach(m => {
+                delete allocations[m]; delete allocations[m.toUpperCase()];
+                delete amountTargets[m]; delete amountTargets[m.toUpperCase()];
+            });
+            return { ...p, allocationGroups: groups, allocations, amountTargets };
         }));
     };
 
@@ -3207,13 +3260,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return ynabGoalAllocations.filter(a => a.ynabGoalId === ynabGoalId);
     };
 
-    const addAllocation = (input: { portfolioId: string; ynabGoalId: string; amount: number; allowOverallocation?: boolean }) => {
-        const { portfolioId, ynabGoalId, amount, allowOverallocation } = input;
+    const addAllocation = (input: { portfolioId: string; ynabGoalId: string; amount: number; ticker?: string; allowOverallocation?: boolean }) => {
+        const { portfolioId, ynabGoalId, amount, ticker, allowOverallocation } = input;
         if (!(amount > 0)) return { ok: false as const, error: 'Amount must be greater than zero.' };
         if (!portfolios.some(p => p.id === portfolioId)) return { ok: false as const, error: 'Portfolio not found.' };
         if (!ynabGoals.some(g => g.id === ynabGoalId)) return { ok: false as const, error: 'YNAB goal not found.' };
         const summary = getPortfolioAllocationSummary(portfolioId);
-        if (amount > summary.available && !allowOverallocation) {
+        // On a row of an amount-mode portfolio the amount is the € the row must
+        // reach, not value set aside today — it may well exceed what is held.
+        const isRowTarget = !!ticker && portfolios.find(p => p.id === portfolioId)?.targetMode === 'amount';
+        if (!isRowTarget && amount > summary.available && !allowOverallocation) {
             return {
                 ok: false as const,
                 error: `Available: €${summary.available.toFixed(2)} of €${summary.currentValue.toFixed(2)} (already allocated €${summary.allocated.toFixed(2)} on other YNAB goals).`,
@@ -3225,6 +3281,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             portfolioId,
             ynabGoalId,
             amount,
+            ...(ticker ? { ticker } : {}),
             createdAt: now,
             updatedAt: now,
         };
@@ -3232,21 +3289,28 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ok: true as const };
     };
 
-    const updateAllocation = (allocationId: string, input: { amount: number; allowOverallocation?: boolean }) => {
-        const { amount, allowOverallocation } = input;
+    const updateAllocation = (allocationId: string, input: { amount: number; ticker?: string; allowOverallocation?: boolean }) => {
+        const { amount, ticker, allowOverallocation } = input;
         if (!(amount > 0)) return { ok: false as const, error: 'Amount must be greater than zero.' };
         const existing = ynabGoalAllocations.find(a => a.id === allocationId);
         if (!existing) return { ok: false as const, error: 'Allocation not found.' };
         const summary = getPortfolioAllocationSummary(existing.portfolioId);
         const availableForUpdate = summary.available + existing.amount;
-        if (amount > availableForUpdate && !allowOverallocation) {
+        const isRowTarget = !!ticker && portfolios.find(p => p.id === existing.portfolioId)?.targetMode === 'amount';
+        if (!isRowTarget && amount > availableForUpdate && !allowOverallocation) {
             return {
                 ok: false as const,
                 error: `Available: €${availableForUpdate.toFixed(2)} of €${summary.currentValue.toFixed(2)}.`,
             };
         }
         const now = new Date().toISOString();
-        setYnabGoalAllocations(prev => prev.map(a => a.id === allocationId ? { ...a, amount, updatedAt: now } : a));
+        setYnabGoalAllocations(prev => prev.map(a => {
+            if (a.id !== allocationId) return a;
+            const next: YnabGoalAllocation = { ...a, amount, updatedAt: now };
+            if (ticker) next.ticker = ticker;
+            else delete next.ticker;
+            return next;
+        }));
         return { ok: true as const };
     };
 
@@ -3270,7 +3334,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setPortfolios(prev => prev.map(p => {
             const allocs = p.allocations ? { ...p.allocations } : {};
             delete allocs[vbTicker];
-            return { ...p, allocations: allocs };
+            const amountTargets = { ...(p.amountTargets || {}) };
+            delete amountTargets[vbTicker];
+            return { ...p, allocations: allocs, amountTargets };
+        }));
+        // Goals it covered fall back to covering their portfolio as a whole.
+        setYnabGoalAllocations(prev => prev.map(a => {
+            if (a.ticker !== vbTicker) return a;
+            const next = { ...a };
+            delete next.ticker;
+            return next;
         }));
         setVirtualBonds(prev => prev.filter(vb => vb.id !== id));
     };
@@ -3331,8 +3404,18 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 delete allocs[vbTicker];
                 allocs[fill.isin.toUpperCase()] = pct;
             }
-            return { ...p, allocations: allocs };
+            const amountTargets = { ...(p.amountTargets || {}) };
+            if (vbTicker in amountTargets) {
+                amountTargets[fill.isin.toUpperCase()] = amountTargets[vbTicker];
+                delete amountTargets[vbTicker];
+            }
+            return { ...p, allocations: allocs, amountTargets };
         }));
+
+        // The goals the placeholder covered now point at the real bond.
+        setYnabGoalAllocations(prev => prev.map(a =>
+            a.ticker === vbTicker ? { ...a, ticker: fill.isin.toUpperCase(), updatedAt: new Date().toISOString() } : a
+        ));
 
         setVirtualBonds(prev => prev.map(vb2 =>
             vb2.id === id ? { ...vb2, resolvedIsin: fill.isin.toUpperCase(), resolvedAt: new Date().toISOString() } : vb2
@@ -3355,6 +3438,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateTarget,
         updateAssetSettings,
         updatePortfolioAllocation,
+        setPortfolioTargetMode,
+        updatePortfolioAmountTarget,
         upsertAllocationGroup,
         deleteAllocationGroup,
         updateMacroAllocation,

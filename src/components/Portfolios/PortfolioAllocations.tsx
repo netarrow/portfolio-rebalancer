@@ -5,6 +5,7 @@ import type { AssetClass, AssetSubClass, AllocationGroup, BondUniverse } from '.
 import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { getCashTicker, isCashTicker, makeGroupId } from '../../utils/portfolioCalculations';
 import { groupWeightConfig, isFullyFrozen } from '../../utils/allocationGroups';
+import { resolveAmountTargets } from '../../utils/amountTargets';
 
 interface PortfolioAllocationsProps {
     portfolioId: string;
@@ -12,7 +13,7 @@ interface PortfolioAllocationsProps {
 }
 
 const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId, onClose }) => {
-    const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup, virtualBonds, addVirtualBond, deleteVirtualBond } = usePortfolio();
+    const { portfolios, brokers, assetSettings, updatePortfolioAllocation, updateAssetSettings, upsertAllocationGroup, deleteAllocationGroup, virtualBonds, addVirtualBond, deleteVirtualBond, setPortfolioTargetMode, updatePortfolioAmountTarget, ynabGoals, ynabGoalAllocations } = usePortfolio();
 
     // On mobile the three "add" entry points (asset / group / bond) are hidden
     // behind this toggle so they don't eat vertical space until needed.
@@ -45,6 +46,15 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
         groups.forEach(g => g.members.forEach(m => set.add(m.toUpperCase())));
         return set;
     }, [groups]);
+
+    // Amount mode: € target per row, from linked YNAB goals or typed in here.
+    const isAmount = portfolio?.targetMode === 'amount';
+    const amountRows = useMemo(
+        () => portfolio ? resolveAmountTargets(portfolio, ynabGoalAllocations, ynabGoals, virtualBonds) : [],
+        [portfolio, ynabGoalAllocations, ynabGoals, virtualBonds]
+    );
+    const amountRowFor = (key: string) => amountRows.find(r =>
+        isVirtualBondTicker(key) ? r.key === key : r.key.toUpperCase() === key.toUpperCase());
 
     // Compute virtual cash tickers from brokers that have liquidity allocated to this portfolio
     const cashTickers = useMemo(() => {
@@ -90,10 +100,56 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
     if (!portfolio) return null;
 
     const total = Object.values(allocations).reduce((sum, val) => sum + val, 0);
+    const totalAmount = amountRows.reduce((sum, r) => sum + r.target, 0);
 
     const handleUpdate = (ticker: string, value: string) => {
         const num = parseFloat(value);
-        updatePortfolioAllocation(portfolioId, ticker, isNaN(num) ? 0 : num);
+        if (isAmount) updatePortfolioAmountTarget(portfolioId, ticker, isNaN(num) ? 0 : num);
+        else updatePortfolioAllocation(portfolioId, ticker, isNaN(num) ? 0 : num);
+    };
+
+    // The target cell: a % input, or in amount mode a € input — read-only when
+    // YNAB goals are linked to the row, since their sum is the target.
+    const renderTargetInput = (key: string) => {
+        if (!isAmount) {
+            return (
+                <input
+                    type="number"
+                    className="form-input"
+                    value={allocations[key] || 0}
+                    onChange={(e) => handleUpdate(key, e.target.value)}
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    style={{ textAlign: 'right' }}
+                />
+            );
+        }
+        const row = amountRowFor(key);
+        if (row?.source === 'goals') {
+            return (
+                <div
+                    style={{ textAlign: 'right', fontWeight: 600 }}
+                    title={row.goals.map(g => `${g.goalName}: €${g.amount.toLocaleString('en-IE')}`).join('\n')}
+                >
+                    €{row.target.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                    <div style={{ fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-muted)' }}>
+                        {row.goals.length} goal{row.goals.length > 1 ? 's' : ''}
+                    </div>
+                </div>
+            );
+        }
+        return (
+            <input
+                type="number"
+                className="form-input"
+                value={portfolio.amountTargets?.[key] || 0}
+                onChange={(e) => handleUpdate(key, e.target.value)}
+                min="0"
+                step="100"
+                style={{ textAlign: 'right' }}
+            />
+        );
     };
 
     const handleAddAsset = () => {
@@ -237,8 +293,27 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                     <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>&times;</button>
                 </div>
 
+                <div style={{ display: 'inline-flex', alignSelf: 'flex-start', flexShrink: 0, border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', overflow: 'hidden', marginBottom: 'var(--space-3)' }} role="group" aria-label="Target unit">
+                    {(['percent', 'amount'] as const).map(mode => {
+                        const active = (portfolio.targetMode || 'percent') === mode;
+                        return (
+                            <button
+                                key={mode}
+                                type="button"
+                                aria-pressed={active}
+                                onClick={() => setPortfolioTargetMode(portfolioId, mode)}
+                                style={{ padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, background: active ? 'var(--color-primary)' : 'transparent', color: active ? '#fff' : 'var(--text-secondary)' }}
+                            >
+                                {mode === 'percent' ? 'Target in %' : 'Target in € (goal matching)'}
+                            </button>
+                        );
+                    })}
+                </div>
+
                 <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-6)' }}>
-                    Set target percentages for this portfolio. Total should be 100%.
+                    {isAmount
+                        ? 'Give each asset the € it must reach. Rows linked to YNAB goals (YNAB Goals → Allocations → covering asset) take the sum of those goals. Liquidity fills the gaps nearest due date first; nothing is ever sold.'
+                        : 'Set target percentages for this portfolio. Total should be 100%.'}
                 </p>
 
                 <div className="alloc-list-scroll" style={{ maxHeight: '50vh', overflowY: 'auto', paddingRight: 'var(--space-2)' }}>
@@ -250,13 +325,12 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 <div>Ticker</div>
                                 <div>Asset</div>
                                 <div>Class</div>
-                                <div>Target %</div>
+                                <div>{isAmount ? 'Target €' : 'Target %'}</div>
                             </div>
 
                             {/* Market group rows */}
                             {groups.map(group => {
                                 const expanded = !!expandedGroups[group.id];
-                                const groupPerc = allocations[group.id] || 0;
                                 const wcfg = groupWeightConfig(group.members, group.memberRules);
                                 return (
                                     <div key={group.id} style={{ border: '1px solid var(--color-primary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
@@ -277,17 +351,8 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                             <div className="alloc-cell alloc-cell-grouptag" style={{ fontSize: '0.8rem', color: 'var(--color-primary)', fontWeight: 600 }}>
                                                 Group
                                             </div>
-                                            <div className="alloc-cell alloc-cell-target" data-label="Target %">
-                                                <input
-                                                    type="number"
-                                                    className="form-input"
-                                                    value={groupPerc}
-                                                    onChange={(e) => handleUpdate(group.id, e.target.value)}
-                                                    min="0"
-                                                    max="100"
-                                                    step="0.1"
-                                                    style={{ textAlign: 'right' }}
-                                                />
+                                            <div className="alloc-cell alloc-cell-target" data-label={isAmount ? 'Target €' : 'Target %'}>
+                                                {renderTargetInput(group.id)}
                                             </div>
                                         </div>
 
@@ -387,7 +452,6 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 const vb = isVBond ? vbondFor(ticker) : null;
                                 const setting = assetSettings.find(s => s.ticker === ticker);
                                 const cashInfo = cashTickers.find(c => c.ticker === ticker);
-                                const currentPerc = allocations[ticker] || 0;
 
                                 return (
                                     <div key={ticker} className="alloc-modal-row alloc-asset-row" data-ticker={isCash ? 'CASH' : isVBond ? 'VBOND' : ticker} style={{ display: 'grid', gridTemplateColumns: '1fr 2fr 1fr 100px', gap: 'var(--space-4)', alignItems: 'center' }}>
@@ -414,17 +478,8 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                                 </>
                                             )}
                                         </div>
-                                        <div className="alloc-cell alloc-cell-target" data-label="Target %">
-                                            <input
-                                                type="number"
-                                                className="form-input"
-                                                value={currentPerc}
-                                                onChange={(e) => handleUpdate(ticker, e.target.value)}
-                                                min="0"
-                                                max="100"
-                                                step="0.1"
-                                                style={{ textAlign: 'right' }}
-                                            />
+                                        <div className="alloc-cell alloc-cell-target" data-label={isAmount ? 'Target €' : 'Target %'}>
+                                            {renderTargetInput(ticker)}
                                         </div>
                                     </div>
                                 );
@@ -658,13 +713,19 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                     alignItems: 'center',
                     fontWeight: 600
                 }}>
-                    <span>Total Allocation</span>
-                    <span style={{
-                        color: Math.abs(total - 100) < 0.1 ? 'var(--color-success)' : 'var(--color-warning)',
-                        fontSize: '1.1rem'
-                    }}>
-                        {total.toFixed(1)}%
-                    </span>
+                    <span>{isAmount ? 'Total Target' : 'Total Allocation'}</span>
+                    {isAmount ? (
+                        <span style={{ fontSize: '1.1rem' }}>
+                            €{totalAmount.toLocaleString('en-IE', { maximumFractionDigits: 0 })}
+                        </span>
+                    ) : (
+                        <span style={{
+                            color: Math.abs(total - 100) < 0.1 ? 'var(--color-success)' : 'var(--color-warning)',
+                            fontSize: '1.1rem'
+                        }}>
+                            {total.toFixed(1)}%
+                        </span>
+                    )}
                 </div>
 
                 <div className="form-actions" style={{ marginTop: 'var(--space-6)' }}>
