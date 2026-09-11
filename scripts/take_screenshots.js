@@ -790,6 +790,35 @@ async function scrollAndShoot(page, base) {
     });
     await sleep(500);
   }
+  // Simulate drawdown: script a bear market into the deterministic projection
+  // so the panel (assumptions per class, trough vs the undisturbed plan) and
+  // the dented chart are both in the shot.
+  const clickButton = (text) =>
+    page.evaluate((text) => {
+      const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim().startsWith(text));
+      if (btn) { btn.click(); return true; }
+      return false;
+    }, text);
+  if (await clickButton('⚡ Simulate drawdown')) {
+    await sleep(500);
+    if (await clickButton('Bear market')) {
+      await sleep(1500);
+      await page.setViewport({ width: VIEW.width, height: 1300 });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await sleep(1200);
+      await shot(page, 'forecast_drawdown');
+      await page.setViewport(VIEW);
+      await sleep(300);
+      // Toggle the scenario off and close the panel: the risky/failed shots
+      // below are tuned on the undisturbed plan.
+      await clickButton('Bear market');
+      await sleep(400);
+      await clickButton('⚡ Simulate drawdown');
+      await sleep(600);
+    } else {
+      console.warn('  !! drawdown scenario "Bear market" not found');
+    }
+  }
   // Push the plan into risky/failed by inflating the monthly expense. The field
   // is disabled while the YNAB averages drive the cashflow, so untick those
   // first — otherwise the typing is a no-op and both shots stay "Sustainable".
@@ -1094,6 +1123,33 @@ async function scrollAndShoot(page, base) {
   });
   await sleep(500);
   await shot(page, 'mobile_transactions_expanded');
+
+  // ---------- LOCK SCREEN (local encryption) ----------
+  // Last on purpose: once encryption is on, every load stops at the passphrase
+  // prompt. The Puppeteer profile is throwaway, so nothing outlives the run.
+  console.log('Lock screen');
+  await page.setViewport(VIEW);
+  await navTo(page, 'Settings');
+  const encryptionStarted = await page.evaluate(() => {
+    const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Enable encryption');
+    if (btn) { btn.scrollIntoView({ block: 'center' }); btn.click(); return true; }
+    return false;
+  });
+  if (encryptionStarted) {
+    // Two SweetAlert prompts: choose the passphrase, then confirm it.
+    for (let i = 0; i < 2; i++) {
+      await page.waitForSelector('.swal2-input', { visible: true, timeout: 5000 });
+      await page.type('.swal2-input', 'demo-passphrase');
+      await page.click('.swal2-confirm');
+      await sleep(900);
+    }
+    await sleep(2200);
+    await page.reload({ waitUntil: 'networkidle2' });
+    await sleep(800);
+    await shot(page, 'unlock_screen');
+  } else {
+    console.warn('  !! "Enable encryption" button not found');
+  }
 
   await browser.close();
   console.log('Done.');
