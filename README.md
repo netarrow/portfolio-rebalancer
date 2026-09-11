@@ -70,6 +70,9 @@ The home hub: the financial summary, broker performance, allocation charts and p
 - **Single / Merged / Group** — a portfolio with sub-portfolios gets a three-way switch. *Single* is one table per member; *Group* is the comparison matrix, one column per member; **Merged** folds the whole group into a single table, as if parent and children were one portfolio. Each member's targets are normalized and scaled by its share of the group (taken from the [Asset Allocation](#asset-allocation-global-rebalancing) parent/child ratio, e.g. *Core 80% / Bond Buffer 20%*), so as long as parent and children hold different assets one merged rebalance closes both things at once: each member's own internal allocation *and* the ratio between them. Orders are booked against whichever member actually holds the asset, and the confirm dialog shows the split before anything is written.
 - **∑ Aggregate** — every holding across every portfolio in one table: value, gain, actual weight and the value-weighted target the per-portfolio allocations add up to. It is a **readout, not a rebalancer** — a global order would have to be split across portfolios that answer to different goals, so acting happens in the per-portfolio tables above and, at goal level, in [Fund Relocation](#fund-relocation).
 - **Sell friction** — a full rebalance sizes its buys on the *net* proceeds of the sales it proposes: the sale commissions come out first, so the plan stays payable. Each table's **Broker** selector picks the portfolio's *broker di appoggio*: with one selected, every leg is priced against that broker's commission plan and checked against its available cash; left on *Multi broker* (for a portfolio spread across several) the per-ticker heuristic applies and no cash check is made.
+- **Goal matching** — a portfolio whose targets are set **in €** (see [Portfolios](#targets-in--goal-matching)) gets a different table: one row per target, ordered by **due date**, with what is held, the € target, the gap and what the **Liquidity** buys toward it. The nearest deadline is filled first; single bonds on the MOT are bought in **€1,000-nominal lots** (a lot the cash can't pay for doesn't block a cheaper row further down, and a gap under half a lot buys nothing); nothing is ever sold — a row above its target is only flagged *held*. *Exec Goal Buys* books the orders; virtual bonds are bought at price 1, i.e. the cash is parked on them. The demo's *Goal Ladder* shows a BTP funded to its house deposit, a 2029 rung partly funded before the cash runs out, and an overnight row still waiting:
+
+![Goal matching table](screenshots/dashboard_goal_matching.png)
 
 **Trade cost popover** — every Action / Buy Only cell reveals, on hover or tap, what that trade would actually cost: the implicit **bid/ask spread cost** plus the **simulated commission for every broker** (from each broker's commission plan), a **free-buy promo toggle** that waives the buy fee, and a **break-even holding time** — how long the asset's own historical return needs to offset a full buy→sell round trip including taxes. This makes two interchangeable instruments comparable: e.g. a commission-bearing ETF vs a commission-free one with a wider spread.
 
@@ -271,13 +274,24 @@ Each portfolio has its own **target allocation**, edited from the *Manage alloca
 - **Parking** — cash earmarked for it is parked on the placeholder (valued 1:1) so the rebalancer stops trying to deploy it elsewhere; the demo's *Safety Net* has €3,000 parked on its 2032 rung.
 - **Bond proposals** — when the maturity window opens, the app suggests real bonds (from public bond lists) matching the target maturity, and **concretising** the placeholder swaps it for the chosen ISIN, migrating target % and parked cash into a real Buy.
 
-**Concretising** happens from the *Concretizza* button on the placeholder's Dashboard row: the modal lists real bonds whose maturity falls inside the configured window (sorted by yield), picking one pre-fills ISIN and label, and you complete the fill with quantity, price, broker and portfolio:
+**Concretising** happens from the *Concretizza* button on the placeholder's Dashboard row: the modal lists real bonds whose maturity falls inside the configured window (sorted by yield), picking one pre-fills ISIN and label, and you complete the fill with quantity, price, broker and portfolio. When the rung has a **€ target**, entering the price is enough: the modal proposes the quantity in whole €1,000-nominal lots, what it costs and how that compares with the cash already parked — *Use* copies it into the form. The rung's target and the goals pinned to it move over to the real ISIN:
 
 ![Concretize modal with bond proposals](screenshots/dashboard_concretize_modal.png)
 
 The *New Virtual Bond* form, from the allocations dialog:
 
 ![New virtual bond form](screenshots/portfolio_virtual_bond_form.png)
+
+#### Targets in € (goal matching)
+
+A portfolio doesn't have to be a mix of weights. When it exists to pay for **dated goals** — the house deposit in 2027, the wedding in 2029 — what matters is that each chosen instrument holds a precise amount by a precise date: asset-liability matching. The switch at the top of *Manage allocations* turns the portfolio to **Target in €**:
+
+![Targets in €](screenshots/portfolio_amount_targets.png)
+
+- Every row — a ticker, a market group or a virtual bond — gets the **€ it must reach** (market value, i.e. quantity × price).
+- A row can be fed by **YNAB goals**: pin one or more goals to it from [YNAB Goals](#ynab-goals) and its target becomes their sum, due by the nearest goal date (a virtual bond with no goal falls back to its target maturity). Rows no goal is pinned to keep a manual amount.
+- Switching from % seeds each row with what its weight is worth today, so the switch itself plans no trade; switching back keeps the equivalent weights.
+- Everywhere else — charts, merged groups, Fund Relocation — the portfolio reads as the weights its € targets imply (each target over their sum), so nothing downstream has to know.
 
 ### Asset Allocation (Global Rebalancing)
 
@@ -404,6 +418,9 @@ Sync a chosen "Investment Goals" YNAB category group and fund each goal from one
 
 - Each goal card shows the YNAB **target**, **target date**, **cash coverage** and **total covered** (cash + earmarked investments).
 - **Allocations** link portfolios to a goal with an amount; **suggested monthly funding** is compared against YNAB's own monthly funding, with warnings when they drift apart.
+- An allocation can also name its **covering asset** inside the portfolio. On a portfolio with [targets in €](#targets-in--goal-matching) that amount becomes the asset's target, so several goals can share one bond; the goal then counts as covered only by its share of what the asset actually holds (*€3,000 of €8,000*), not by the target itself.
+
+![Pinning a goal to a covering asset](screenshots/ynab_goal_pin_modal.png)
 
 ### Settings
 

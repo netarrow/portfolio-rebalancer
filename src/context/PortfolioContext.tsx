@@ -1841,8 +1841,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const pIdMainTilt = 'mock-p-main-tilt';
         const pIdBonds = 'mock-p-bonds';
         const pIdSafe = 'mock-p-safe';
+        const pIdLadder = 'mock-p-ladder';
 
-        // 1. Define Assets — ETFs and bond ETFs only (no crypto by design).
+        // 1. Define Assets — ETFs and bond ETFs only (no crypto by design),
+        // plus one single BTP on the MOT for the goal-matching portfolio.
         const mockAssets = [
             // Growth (Stocks)
             { ticker: 'IE00B4L5Y983', name: 'iShares Core MSCI World', class: 'Stock', subClass: 'International', source: 'ETF', goal: 'Growth' }, // SWDA
@@ -1858,6 +1860,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
             // Pension fund held at the illiquid mock broker (scope-flag coverage)
             { ticker: 'COMETA-CRESCITA', name: 'Cometa Crescita (TFR)', class: 'PensionFund', subClass: 'Balanced', source: 'COMETA', goal: 'Security' },
+
+            // Single BTP held to maturity (MOT: price per 100 nominal, €1,000 lots)
+            { ticker: 'IT0005534141', name: 'BTP Dec-2027', class: 'Bond', subClass: 'Short', source: 'MOT', goal: 'Security' },
         ];
 
         // 2. Generate Transactions (History)
@@ -1909,6 +1914,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // counting views via the asset-scope chips.
         addTx(pIdMain, 'IE00B3RBWM25', 150, 30, 108.00, 'Buy', 'Conto Cointestato');
         addTx(pIdSafe, 'COMETA-CRESCITA', 180, 500, 26.00, 'Buy', 'Fondo Pensione');
+
+        // --- SCENARIO 4c: Goal Ladder (targets in €, asset-liability matching) ---
+        // 3 lots (€3,000 nominal) of a BTP covering the house deposit, some
+        // overnight cash with a manual target, and a virtual bond (below) that
+        // already holds part of the wedding + sabbatical money.
+        addTx(pIdLadder, 'IT0005534141', 150, 30, 98.60, 'Buy', 'Directa');
+        addTx(pIdLadder, 'LU0290358497', 40, 20, 141.20, 'Buy', 'Directa');
 
         // --- SCENARIO 5: Feature coverage transactions ---
         // Free-commission Buy (Trade Republic style)
@@ -1970,6 +1982,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             ticker: getVirtualBondTicker('mock-vb-1'),
             date: new Date(today - (20 * ONE_DAY)).toISOString().split('T')[0],
             amount: 3000,
+            price: 1,
+            direction: 'Buy',
+            brokerId: 'b2'
+        } as any);
+        txs.push({
+            id: `mock-tx-${idCounter++}`,
+            portfolioId: pIdLadder,
+            ticker: getVirtualBondTicker('mock-vb-2'),
+            date: new Date(today - (25 * ONE_DAY)).toISOString().split('T')[0],
+            amount: 2000,
             price: 1,
             direction: 'Buy',
             brokerId: 'b2'
@@ -2084,6 +2106,22 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     'IE00B1FZS798': 30, // IGLT
                     [getVirtualBondTicker('mock-vb-1')]: 20
                 }
+            },
+            {
+                id: pIdLadder,
+                name: 'Goal Ladder',
+                description: 'Dated goals matched to bonds held to maturity (targets in €)',
+                goalId: 'goal-security',
+                order: 4,
+                preferredBrokerId: 'b2',
+                liquidity: 5000,
+                // Asset-liability matching: each row must reach a € amount. The
+                // BTP and the 2029 virtual bond take theirs from the YNAB goals
+                // pinned to them (see the goal allocations below); XEON has a
+                // manual one. The weights are derived from these by the context.
+                targetMode: 'amount',
+                amountTargets: { 'LU0290358497': 5000 },
+                allocations: {}
             }
         ];
 
@@ -2170,7 +2208,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             'IE00BDBRDM35': { price: 5.10, lastUpdated: timestamp, spreadPercent: 0.06, volatility: 5.1 },  // Profit
             'IE00B1FZS798': { price: 175.50, lastUpdated: timestamp, spreadPercent: null, volatility: 11.0 }, // Loss
             'LU0290358497': { price: 142.10, lastUpdated: timestamp, spreadPercent: 0.02, volatility: 0.4 },  // Profit
-            'COMETA-CRESCITA': { price: 28.40, lastUpdated: timestamp, spreadPercent: null, volatility: null } // Pension fund (illiquid broker)
+            'COMETA-CRESCITA': { price: 28.40, lastUpdated: timestamp, spreadPercent: null, volatility: null }, // Pension fund (illiquid broker)
+            'IT0005534141': { price: 99.80, lastUpdated: timestamp, spreadPercent: 0.15, volatility: 1.8 } // BTP on the MOT (price per 100)
         };
 
         // 5b. Price History — daily close series from each asset's first purchase
@@ -2186,6 +2225,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             'IE00B1FZS798': { days: 120, start: 180.00, end: 175.50, vol: 0.007, basis: 'clean' },
             'LU0290358497': { days: 60, start: 139.50, end: 142.10, vol: 0.001 },
             'COMETA-CRESCITA': { days: 180, start: 26.00, end: 28.40, vol: 0.003 },
+            'IT0005534141': { days: 150, start: 98.60, end: 99.80, vol: 0.002 },
         };
         const priceHistoryMap: PriceHistoryMap = {};
         for (const [ticker, cfg] of Object.entries(histConfig)) {
@@ -2367,7 +2407,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 // group. How that target is shared between them is the ratio on
                 // the portfolios (75/20/5), not three rows in this table.
                 [`${MERGED_PORTFOLIO_PREFIX}${pIdMain}`]: { mode: 'percent', value: 75 },
-                [pIdSafe]: { mode: 'percent', value: 15 }
+                [pIdSafe]: { mode: 'percent', value: 15 },
+                // Goal Ladder answers to its dated goals, not to a share of the
+                // wealth: it counts in the total but is never moved from here.
+                [pIdLadder]: { mode: 'locked', value: 0 }
             }
         });
         // 7a-bis. Household members: personal brokers are split between two
@@ -2390,6 +2433,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 universe: 'IT',
                 minMonthsBefore: 6,
                 maxMonthsBefore: 18,
+                createdAt: timestamp
+            },
+            // Goal Ladder rung covering two YNAB goals (wedding + sabbatical).
+            {
+                id: 'mock-vb-2',
+                label: 'BTP ~2029 (Wedding)',
+                targetMaturityDate: '2029-06-01',
+                universe: 'IT',
+                minMonthsBefore: 1,
+                maxMonthsBefore: 12,
                 createdAt: timestamp
             }
         ]);
@@ -2470,6 +2523,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             { id: 'yga-1', portfolioId: pIdSafe, ynabGoalId: 'yg-house', amount: 12000, createdAt: timestamp, updatedAt: timestamp },
             { id: 'yga-2', portfolioId: pIdBonds, ynabGoalId: 'yg-house', amount: 2000, createdAt: timestamp, updatedAt: timestamp },
             { id: 'yga-3', portfolioId: pIdSafe, ynabGoalId: 'yg-car', amount: 6000, createdAt: timestamp, updatedAt: timestamp },
+            // Pinned to a row of the goal-matching portfolio: these are the €
+            // targets of those rows, not value set aside today.
+            { id: 'yga-4', portfolioId: pIdLadder, ynabGoalId: 'yg-house', amount: 6000, ticker: 'IT0005534141', createdAt: timestamp, updatedAt: timestamp },
+            { id: 'yga-5', portfolioId: pIdLadder, ynabGoalId: 'yg-wedding', amount: 8000, ticker: getVirtualBondTicker('mock-vb-2'), createdAt: timestamp, updatedAt: timestamp },
+            { id: 'yga-6', portfolioId: pIdLadder, ynabGoalId: 'yg-sabbatical', amount: 4000, ticker: getVirtualBondTicker('mock-vb-2'), createdAt: timestamp, updatedAt: timestamp },
         ]);
 
         // 8c. Rolling-year spending history + macro-class mappings — drives the

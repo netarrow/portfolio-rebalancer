@@ -176,6 +176,17 @@ async function scrollAndShoot(page, base) {
   await sleep(800);
   await scrollAndShoot(page, 'dashboard');
 
+  // Goal matching: the table of the portfolio whose targets are in €
+  const goalMatchingFound = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h3')].find((e) => /^goal matching:/i.test(e.textContent.trim()));
+    if (h) { h.scrollIntoView({ block: 'start' }); window.scrollBy(0, -80); return true; }
+    return false;
+  });
+  if (goalMatchingFound) {
+    await sleep(500);
+    await shot(page, 'dashboard_goal_matching');
+  }
+
   // Withdrawal simulation: open the "Simulate Withdrawal" popup
   const withdrawalClicked = await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')].find((b) =>
@@ -251,10 +262,13 @@ async function scrollAndShoot(page, base) {
 
   // Concretize a virtual bond: the "Concretizza" button on the placeholder's
   // row opens the proposal modal with real bonds matching the maturity window.
+  // Prefer the goal-matching table's rung: its modal also proposes how many
+  // units to buy to reach the rung's € target.
   const concretizeClicked = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('button')].find(
+    const all = [...document.querySelectorAll('button')].filter(
       (b) => b.textContent.trim() === 'Concretizza'
     );
+    const btn = all.find((b) => /goal matching:/i.test(b.closest('.allocation-card')?.textContent || '')) || all[0];
     if (btn) {
       btn.scrollIntoView({ block: 'center' });
       btn.click();
@@ -272,22 +286,20 @@ async function scrollAndShoot(page, base) {
       if (loaded) break;
       await sleep(1000);
     }
-    // Select the top proposal (fills ISIN + label), then fill quantity/price
+    // Select the top proposal (fills ISIN + label), enter the price and take
+    // the suggested lot quantity ("Use"), so the shot shows the proposal.
     await page.evaluate(() => {
       const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
       const row = overlay?.querySelector('tbody tr');
       if (row) row.click();
     });
     await sleep(300);
-    const numInputs = await page.$$('.modal-overlay input[type="number"]');
-    if (numInputs.length >= 2) {
-      await numInputs[0].type('3000');
-      await numInputs[1].type('0.95');
-    }
-    // Destination of the concretized bond — the same broker/portfolio the
-    // placeholder was parked on.
-    await fillField(page, '^broker$', 'b2');
-    await fillField(page, '^portfolio$', 'mock-p-safe');
+    await fillField(page, 'price per unit', '99.40');
+    await page.evaluate(() => {
+      const overlay = [...document.querySelectorAll('.modal-overlay')].pop();
+      const use = [...(overlay?.querySelectorAll('button') ?? [])].find((b) => b.textContent.trim() === 'Use');
+      if (use) use.click();
+    });
     await sleep(300);
     await shot(page, 'dashboard_concretize_modal');
     await page.evaluate(() => {
@@ -645,6 +657,13 @@ async function scrollAndShoot(page, base) {
     await closeAllocationsModal();
   }
 
+  // Goal Ladder → targets in € (goal-matching mode), rows fed by YNAB goals
+  if (await openAllocationsFor('Goal Ladder')) {
+    await sleep(700);
+    await shot(page, 'portfolio_amount_targets');
+    await closeAllocationsModal();
+  }
+
   // Tactical Tilt → weighted allocation group (intra-group weight %)
   if (await openAllocationsFor('Tactical Tilt')) {
     await sleep(700);
@@ -895,6 +914,21 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'YNAB Goals');
   await sleep(800);
   await shot(page, 'ynab_goals');
+  // Edit an allocation pinned to an asset of the goal-matching portfolio:
+  // the dialog shows the covering asset and the row's € target.
+  const pinOpened = await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.goal-allocation-row')].find((r) =>
+      r.textContent.includes('Goal Ladder') && r.textContent.includes('›')
+    );
+    const btn = row?.querySelector('button[title="Edit"]');
+    if (btn) { btn.scrollIntoView({ block: 'center' }); btn.click(); return true; }
+    return false;
+  });
+  if (pinOpened) {
+    await sleep(600);
+    await shot(page, 'ynab_goal_pin_modal');
+    await closeTopModal(page);
+  }
 
   // ---------- SETTINGS ----------
   console.log('Settings');
