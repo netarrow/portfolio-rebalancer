@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import type { VirtualBond, BondProposal, Broker, Portfolio } from '../../types';
 import { fetchBondProposals } from '../../services/bondProposals';
+import { BOND_LOT_NOMINAL, suggestLotQuantity } from '../../utils/amountTargets';
 import '../Dashboard/Dashboard.css';
 
 interface Props {
@@ -13,9 +14,15 @@ interface Props {
         source?: 'ETF' | 'MOT'; label?: string;
     }) => void;
     onClose: () => void;
+    /** € the bond should hold once bought (amount-mode portfolios). */
+    targetAmount?: number;
+    /** € already parked on the placeholder. */
+    parkedAmount?: number;
+    defaultPortfolioId?: string;
+    defaultBrokerId?: string;
 }
 
-const ConcretizeModal: React.FC<Props> = ({ bond, brokers, portfolios, onConfirm, onClose }) => {
+const ConcretizeModal: React.FC<Props> = ({ bond, brokers, portfolios, onConfirm, onClose, targetAmount, parkedAmount = 0, defaultPortfolioId, defaultBrokerId }) => {
     const [proposals, setProposals] = useState<BondProposal[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -25,8 +32,8 @@ const ConcretizeModal: React.FC<Props> = ({ bond, brokers, portfolios, onConfirm
     const [quantity, setQuantity] = useState('');
     const [price, setPrice] = useState('');
     const [label, setLabel] = useState('');
-    const [brokerId, setBrokerId] = useState('');
-    const [portfolioId, setPortfolioId] = useState('');
+    const [brokerId, setBrokerId] = useState(defaultBrokerId || '');
+    const [portfolioId, setPortfolioId] = useState(defaultPortfolioId || '');
     const [source, setSource] = useState<'ETF' | 'MOT'>(bond.universe === 'IT' ? 'MOT' : 'ETF');
 
     useEffect(() => {
@@ -55,6 +62,13 @@ const ConcretizeModal: React.FC<Props> = ({ bond, brokers, portfolios, onConfirm
     const effectiveIsin = selectedIsin || manualIsin;
     const selectedProposal = proposals.find(p => p.isin === effectiveIsin);
     const effectiveLabel = label || selectedProposal?.name || '';
+
+    // What to buy so the bond holds its € target: whole €1,000-nominal lots on
+    // the MOT (price per 100 → 10 units a lot), whole units otherwise.
+    const priceNum = Number(price);
+    const lotUnits = source === 'MOT' ? (priceNum >= 5 ? BOND_LOT_NOMINAL / 100 : BOND_LOT_NOMINAL) : 1;
+    const suggestedQty = targetAmount ? suggestLotQuantity(targetAmount, priceNum, lotUnits) : 0;
+    const suggestedCost = suggestedQty * priceNum;
 
     const handleConfirm = () => {
         if (!effectiveIsin || !quantity || !price) return;
@@ -203,6 +217,32 @@ const ConcretizeModal: React.FC<Props> = ({ bond, brokers, portfolios, onConfirm
                         </select>
                     </div>
                 </div>
+
+                {targetAmount != null && targetAmount > 0 && (
+                    <div style={{ marginBottom: 'var(--space-3)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', background: 'rgba(139, 92, 246, 0.08)', border: '1px solid rgba(139, 92, 246, 0.35)', fontSize: '0.85rem' }}>
+                        Target <strong>€{targetAmount.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</strong>
+                        {parkedAmount > 0 && <> · parked €{parkedAmount.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</>}
+                        {suggestedQty > 0 ? (
+                            <div style={{ marginTop: '6px', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+                                <span>
+                                    Buy <strong>{suggestedQty}</strong> units
+                                    {lotUnits > 1 && <> ({suggestedQty / lotUnits} × €{BOND_LOT_NOMINAL.toLocaleString('en-IE')} nominal)</>}
+                                    {' '}≈ <strong>€{suggestedCost.toLocaleString('en-IE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                                    {parkedAmount > 0 && (
+                                        <span style={{ color: 'var(--text-secondary)' }}>
+                                            {' '}— {suggestedCost >= parkedAmount
+                                                ? `€${(suggestedCost - parkedAmount).toLocaleString('en-IE', { maximumFractionDigits: 2 })} on top of the parked cash`
+                                                : `€${(parkedAmount - suggestedCost).toLocaleString('en-IE', { maximumFractionDigits: 2 })} of the parked cash left over`}
+                                        </span>
+                                    )}
+                                </span>
+                                <button type="button" className="btn" style={{ padding: '2px 10px', fontSize: '0.8rem' }} onClick={() => setQuantity(String(suggestedQty))}>Use</button>
+                            </div>
+                        ) : (
+                            <div style={{ marginTop: '6px', color: 'var(--text-secondary)' }}>Enter the price per unit to see how many units to buy.</div>
+                        )}
+                    </div>
+                )}
 
                 <div style={{ marginBottom: 'var(--space-3)' }}>
                     <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '4px' }}>Portfolio</label>

@@ -137,12 +137,22 @@ export interface AllocationGroup {
   memberRules?: Record<string, AllocationMemberRule>;
 }
 
+export type PortfolioTargetUnit = 'percent' | 'amount';
+
 export interface Portfolio {
   id: string;
   name: string;
   description?: string;
   allocations?: Record<string, number>; // Ticker | groupId -> Percentage (0-100)
   allocationGroups?: AllocationGroup[];  // multi-asset "market" groups (target stored in allocations[groupId])
+  // How targets are expressed. 'percent' (default) keeps the portfolio at a mix
+  // of weights. 'amount' is asset-liability matching: every row gets a fixed
+  // € target — typically the YNAB goals it covers — and the plan only buys
+  // toward those gaps, nearest due date first, never selling. In 'amount' mode
+  // `allocations` still holds the equivalent weights (each target over the sum
+  // of targets), derived on every change, so views reading weights keep working.
+  targetMode?: PortfolioTargetUnit;
+  amountTargets?: Record<string, number>; // Ticker | groupId -> € target, for rows no goal is linked to
   liquidity?: number; // Cash available for rebalancing
   // Broker this portfolio trades through ("broker di appoggio"). When set, the
   // full rebalance prices every leg against this broker's commission plan,
@@ -420,6 +430,10 @@ export interface YnabGoalAllocation {
   portfolioId: string;
   ynabGoalId: string;
   amount: number;
+  // Row of the portfolio that covers the goal (ticker, `_GRP_` or `_VBOND_`
+  // key). Absent = the portfolio as a whole. In an amount-mode portfolio the
+  // allocations pointing at a row add up to that row's € target.
+  ticker?: string;
   createdAt: string;
   updatedAt: string;
 }

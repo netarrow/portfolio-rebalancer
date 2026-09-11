@@ -1,6 +1,10 @@
 import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { YnabGoal, YnabGoalAllocation } from '../../types';
+import { isVirtualBondTicker, getVirtualBondId } from '../../types';
+import { calculateAssets } from '../../utils/portfolioCalculations';
+import { resolveGroups } from '../../utils/allocationGroups';
+import { resolveAmountTargets } from '../../utils/amountTargets';
 import AllocationModal from './AllocationModal';
 import Swal from 'sweetalert2';
 
@@ -32,7 +36,43 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
         getYnabGoalAllocations,
         removeAllocation,
         deleteYnabGoal,
+        ynabGoalAllocations,
+        transactions,
+        effectiveAssetSettings,
+        marketData,
+        virtualBonds,
     } = usePortfolio();
+
+    // An allocation pinned to an asset of a goal-matching portfolio is a
+    // target, not money set aside: what it actually covers is its share of
+    // what the asset holds today (the asset's goals are funded pro rata).
+    const pinnedCoverage = useMemo(() => {
+        const out = new Map<string, number>();
+        portfolios.filter(p => p.targetMode === 'amount').forEach(p => {
+            const { assets } = calculateAssets(transactions.filter(t => t.portfolioId === p.id), effectiveAssetSettings, marketData);
+            const { groupById } = resolveGroups(p);
+            const valueOf = (key: string) => {
+                const tickers = groupById[key]?.members ?? [key];
+                return tickers.reduce((s, t) => s + (assets.find(a =>
+                    isVirtualBondTicker(t) ? a.ticker === t : a.ticker.toUpperCase() === t.toUpperCase())?.currentValue || 0), 0);
+            };
+            resolveAmountTargets(p, ynabGoalAllocations, ynabGoals, virtualBonds).forEach(row => {
+                const ratio = row.target > 0 ? Math.min(1, valueOf(row.key) / row.target) : 0;
+                row.goals.forEach(g => out.set(g.allocationId, g.amount * ratio));
+            });
+        });
+        return out;
+    }, [portfolios, transactions, effectiveAssetSettings, marketData, ynabGoalAllocations, ynabGoals, virtualBonds]);
+
+    const coveredBy = (a: YnabGoalAllocation) => pinnedCoverage.get(a.id) ?? a.amount;
+
+    const rowLabel = (a: YnabGoalAllocation) => {
+        if (!a.ticker) return null;
+        const group = portfolios.find(p => p.id === a.portfolioId)?.allocationGroups?.find(g => g.id === a.ticker);
+        if (group) return group.label;
+        if (isVirtualBondTicker(a.ticker)) return virtualBonds.find(b => b.id === getVirtualBondId(a.ticker!))?.label || 'Virtual bond';
+        return effectiveAssetSettings.find(s => s.ticker.toUpperCase() === a.ticker!.toUpperCase())?.label || a.ticker;
+    };
 
     const [dialog, setDialog] = useState<AllocationDialogState | null>(null);
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
@@ -116,7 +156,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
             <div className="ynab-goals-grid">
                 {sortedGoals.map(g => {
                     const allocations = getYnabGoalAllocations(g.id);
-                    const investmentCoverage = allocations.reduce((s, a) => s + a.amount, 0);
+                    const investmentCoverage = allocations.reduce((s, a) => s + coveredBy(a), 0);
                     const totalCoverage = (g.cashCoverage || 0) + investmentCoverage;
                     const target = g.targetAmount ?? 0;
                     const gap = target > 0 ? Math.max(0, target - totalCoverage) : 0;
@@ -282,8 +322,15 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                                     <ul className="goal-allocations-list">
                                         {allocations.map(a => (
                                             <li key={a.id} className="goal-allocation-row">
-                                                <span className="goal-allocation-portfolio">{portfolioName(a.portfolioId)}</span>
-                                                <span className="goal-allocation-amount">{formatCurrencyExact(a.amount, currencyIso)}</span>
+                                                <span className="goal-allocation-portfolio">
+                                                    {portfolioName(a.portfolioId)}
+                                                    {rowLabel(a) && <span style={{ color: 'var(--text-muted)' }}> › {rowLabel(a)}</span>}
+                                                </span>
+                                                <span className="goal-allocation-amount">
+                                                    {pinnedCoverage.has(a.id) && Math.abs(coveredBy(a) - a.amount) > 0.5
+                                                        ? <>{formatCurrencyExact(coveredBy(a), currencyIso)} <small style={{ color: 'var(--text-muted)' }}>of {formatCurrencyExact(a.amount, currencyIso)}</small></>
+                                                        : formatCurrencyExact(a.amount, currencyIso)}
+                                                </span>
                                                 <div className="goal-allocation-actions">
                                                     <button
                                                         type="button"

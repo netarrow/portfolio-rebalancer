@@ -9,6 +9,7 @@ import { resolveGroups, distributeGroupDelta, largestRemainderBuyOnly, buyRecipi
 import { isFreeBuyIsin, currentMonthKey } from '../../utils/freeCommissions';
 import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate, resolveAssetClass, projectBrokerCash, type CashProjection, type SellFriction, type SellLeg } from '../../utils/rebalanceCosts';
 import ConcretizeModal from '../modals/ConcretizeModal';
+import AmountTargetTable from './AmountTargetTable';
 import { calculateAssetAllocation } from '../../utils/assetAllocation';
 import { buildPortfolioTree, GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
 import type { MergedMemberRatio } from '../../utils/mergedGroup';
@@ -1128,7 +1129,30 @@ interface AllocationTableProps {
     merged?: MergedTableContext;
 }
 
-export const PortfolioAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions, merged }) => {
+/**
+ * Per-portfolio rebalancing table. An amount-mode portfolio gets the goal
+ * matching table (€ targets, buys only); a merged view always plans on the
+ * weights, which amount-mode members keep derived for exactly this reason.
+ */
+export const PortfolioAllocationTable: React.FC<AllocationTableProps> = (props) => {
+    if (props.portfolio.targetMode === 'amount' && !props.merged) {
+        return (
+            <AmountTargetTable
+                portfolio={props.portfolio}
+                allTransactions={props.allTransactions}
+                assetSettings={props.assetSettings}
+                marketData={props.marketData}
+                brokers={props.brokers}
+                onUpdatePortfolio={props.onUpdatePortfolio}
+                onAddTransactions={props.onAddTransactions}
+                brokerPicker={<BrokerPicker portfolio={props.portfolio} brokers={props.brokers} onUpdatePortfolio={props.onUpdatePortfolio} />}
+            />
+        );
+    }
+    return <PercentAllocationTable {...props} />;
+};
+
+const PercentAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, allTransactions, assetSettings, marketData, brokers, onUpdatePortfolio, onAddTransactions, merged }) => {
     const [isWithdrawalModalOpen, setIsWithdrawalModalOpen] = React.useState(false);
     const [expandedGroupRows, setExpandedGroupRows] = React.useState<Record<string, boolean>>({});
 
