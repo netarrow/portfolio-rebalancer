@@ -373,6 +373,8 @@ Project net worth and liquidity over a configurable horizon.
 
 It is a path, not a step. The fall is spread over months, the classes share the *timing* of the event but not its depth or its shape, and a Brownian bridge pinned to the trough gives bear-market rallies and green months inside a red year — while the trough and the exit level still land exactly where the scenario says. The crash is applied **on top of the drift**, so a money-market bucket keeps earning through it and the years outside the window are euro-for-euro identical to the undisturbed plan. The panel states the assumptions before the chart moves (what each class you hold does, what that blends to for your capital) and the consequences after (where net worth bottoms, measured **against the same plan with no crash** so a house deposit due that year is not charged to the crash, and how much compounding is never made back). Monte Carlo pauses while a crash is scripted: one is a random ensemble, the other a single written future.
 
+![Forecast — simulated bear market](screenshots/forecast_drawdown.png)
+
 Risky and failed plans:
 
 ![Forecast — risky](screenshots/forecast_riskyplan.png)
@@ -429,7 +431,9 @@ The control room for data, sync, price refresh and integrations.
 ![Settings — private tier & encryption](screenshots/settings_private_tier.png)
 
 - **Private Update Price** — paste a private-tier key to unlock unlimited real-time price updates; without it, *Update Price* uses the throttled, cached public tier. The key is not something you buy: it is configured by whoever runs the instance (server env var `PREMIUM_KEYS`, kept under its original name for deployment compatibility) to reserve the scraper for their own use. It is stored only in this browser and is never uploaded with the Azure backup.
-- **Local data encryption** — optional second-layer AES encryption for everything stored in this browser (transactions, portfolios, YNAB key, Azure passphrase…). When enabled, the app asks for your passphrase on every load. **If you forget it and have no Azure backup, the data is unrecoverable.**
+- **Local data encryption** — optional second-layer AES encryption for everything stored in this browser (transactions, portfolios, YNAB key, Azure passphrase…). When enabled, **the app opens locked**: nothing is decrypted or shown until you enter your passphrase on the lock screen, at every load, and an **auto-lock** (configurable, in minutes of inactivity) brings the lock screen back when you leave it open. The lock screen also offers *Reset & wipe local data* (double confirmation) for a forgotten passphrase. **If you forget it and have no Azure backup, the data is unrecoverable.**
+
+![Lock screen — passphrase at app start](screenshots/unlock_screen.png)
 
 ![Settings — price history](screenshots/settings_price_history.png)
 
@@ -492,7 +496,7 @@ This reflects how the app actually handles data today.
 
 - **What is stored, and where.** All portfolio data — transactions (including broker details and fees), portfolios and allocation groups, targets, market data, daily price history, goals, broker liquidity, and YNAB configuration/mappings — is stored **only in your browser's `localStorage`** (keys such as `portfolio_transactions`, `portfolio_targets_v2`, `portfolio_market_data`, `portfolio_price_history`, `portfolio_goals`, `portfolio_ynab_*`). None of it is sent to our server or to third parties as part of normal use.
 
-- **Optional local encryption.** You may enable second-layer AES encryption so that everything above is encrypted at rest in the browser, gated by a passphrase requested on every load. The passphrase is never transmitted; if lost, encrypted local data cannot be recovered without an Azure backup.
+- **Optional local encryption.** You may enable second-layer AES encryption so that everything above is encrypted at rest in the browser, gated by a passphrase requested on every load — the app opens on a lock screen and locks itself again after a configurable idle time. The passphrase is never transmitted; if lost, encrypted local data cannot be recovered without an Azure backup.
 
 - **Optional cloud sync (Azure).** If you enable Azure Blob sync, the data is encrypted with **AES-256-GCM in the browser** using a passphrase you choose, and only the resulting **opaque ciphertext blob** is uploaded to your own Azure container via a SAS URL. The passphrase is never sent to Azure. **YNAB credentials and the private-tier price key are intentionally excluded from the Azure payload**; price history is backed up separately.
 
