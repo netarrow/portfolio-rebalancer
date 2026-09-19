@@ -937,6 +937,20 @@ async function scrollAndShoot(page, base) {
   await navTo(page, 'YNAB');
   await sleep(700);
   await shot(page, 'ynab_import');
+  // The funding plan card on its own: the wire per broker and the orders it
+  // pays for, which sit below the fold of the page shot.
+  const planCard = await page.$('.ynab-plan-card');
+  if (planCard) {
+    await page.evaluate(() =>
+      document.querySelector('.ynab-plan-card')?.scrollIntoView({ block: 'start' })
+    );
+    await sleep(400);
+    const file = path.join(OUT, 'ynab_funding_plan.png');
+    await planCard.screenshot({ path: file });
+    console.log('  ->', path.relative(ROOT, file));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await sleep(200);
+  }
 
   // ---------- YNAB GOALS ----------
   console.log('YNAB Goals');

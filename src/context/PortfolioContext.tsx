@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState } from '../types';
-import { getVirtualBondTicker, getVirtualBondId } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState } from '../types';
+import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS } from '../types';
 import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
@@ -16,6 +16,8 @@ import { getExcludedBrokerIds, hasScopeFlags } from '../utils/assetScope';
 import { parseGoalDescriptor, nativeGoalTarget } from '../utils/ynabGoalParser';
 import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
 import { mergeYnabGoalsFromCandidates, resolveGoalTarget } from '../utils/ynabGoalSync';
+import { isRegisterableOrder, roundCents } from '../utils/ynabFundingPlan';
+import type { FundingOrder, FundingTransfer } from '../utils/ynabFundingPlan';
 import type { YnabGoalSyncReport } from '../utils/ynabGoalSync';
 import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
@@ -112,6 +114,14 @@ interface PortfolioContextType {
     ynabListBudgets: (apiKey: string) => Promise<{ ok: boolean; budgets?: YnabBudgetSummary[]; error?: string }>;
     syncYnabBudget: () => Promise<{ ok: boolean; error?: string }>;
     setYnabMapping: (categoryId: string, target: YnabMappingTarget) => void;
+    // Funding plan: how the mapped categories are turned into wires and orders,
+    // and the one-click registration of the orders it proposes.
+    ynabFundingSettings: YnabFundingSettings;
+    setYnabFundingSettings: (settings: YnabFundingSettings | ((prev: YnabFundingSettings) => YnabFundingSettings)) => void;
+    registerYnabFundingOrders: (
+        orders: FundingOrder[],
+        opts?: { date?: string; creditTransfers?: FundingTransfer[] },
+    ) => { ok: boolean; registered: number; skipped: number; error?: string };
     disconnectYnab: () => void;
     ynabSyncing: boolean;
     // Broker ↔ YNAB account mapping (1:1 per budget) and liquidity refresh from
@@ -260,6 +270,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabConfig, setYnabConfigState] = useLocalStorage<YnabConfig | null>('portfolio_ynab_config', null);
     const [ynabCategories, setYnabCategories] = useLocalStorage<YnabCategory[]>('portfolio_ynab_categories', []);
     const [ynabMappings, setYnabMappings] = useLocalStorage<YnabCategoryMapping[]>('portfolio_ynab_mappings', []);
+    const [ynabFundingSettings, setYnabFundingSettings] = useLocalStorage<YnabFundingSettings>('portfolio_ynab_funding', DEFAULT_YNAB_FUNDING_SETTINGS);
     const [ynabAccountMappings, setYnabAccountMappings] = useLocalStorage<YnabAccountMappings>('portfolio_ynab_account_mappings', {});
     const [ynabSyncing, setYnabSyncing] = useState(false);
     const [brokerLiquiditySyncing, setBrokerLiquiditySyncing] = useState(false);
@@ -986,6 +997,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 macroAllocations, goalAllocations, goals,
                 aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
                 ynabMappings,
+                ynabFundingSettings,
                 ynabAccountMappings,
                 ynabGoals,
                 ynabGoalAllocations,
@@ -1021,7 +1033,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
-        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates, ynabMappings, ynabAccountMappings,
+        storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates, ynabMappings, ynabFundingSettings, ynabAccountMappings,
         ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
 
     // On mount: check if Azure has newer data and offer restore
@@ -1042,6 +1054,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         macroAllocations, goalAllocations, goals,
                         aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
                         ynabMappings,
+                        ynabFundingSettings,
                         ynabAccountMappings,
                         ynabGoals,
                         ynabGoalAllocations,
@@ -2499,12 +2512,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             { id: 'ynab-cat-13', groupId: 'ynab-grp-hous', groupName: 'Housing', name: 'Utilities (gas, electric, water)', balanceMilliunits: 60000, budgetedMilliunits: 150000, avgBudgetedMilliunits: 140000, avgMonthsCount: 6 },
             { id: 'ynab-cat-14', groupId: 'ynab-grp-hous', groupName: 'Housing', name: 'Internet & Phone', balanceMilliunits: 20000, budgetedMilliunits: 50000, avgBudgetedMilliunits: 50000, avgMonthsCount: 6 },
         ]);
+        // Each investment category names the asset its money becomes, plus the
+        // broker and portfolio the order belongs to — which is what the funding
+        // plan needs to price the commission and book the trade. Between them
+        // they cover every case the plan handles: a free-buy promo (SWDA at
+        // Trade Republic), a flat fee (Degiro), a percent plan with a minimum
+        // (Directa), a bond that trades in €1,000 lots (the BTP) and money that
+        // simply stays liquid at a broker.
         setYnabMappings([
-            { categoryId: 'ynab-cat-1', target: { kind: 'asset', ticker: 'IE00B4L5Y983' } },
-            { categoryId: 'ynab-cat-2', target: { kind: 'asset', ticker: 'IE00BDBRDM35' } },
-            { categoryId: 'ynab-cat-3', target: { kind: 'asset', ticker: 'LU0290358497' } },
+            { categoryId: 'ynab-cat-1', target: { kind: 'asset', ticker: 'IE00B4L5Y983', brokerId: 'b3', portfolioId: pIdMain } },
+            { categoryId: 'ynab-cat-2', target: { kind: 'asset', ticker: 'IE00BDBRDM35', brokerId: 'b1', portfolioId: pIdBonds } },
+            { categoryId: 'ynab-cat-3', target: { kind: 'asset', ticker: 'LU0290358497', brokerId: 'b2', portfolioId: pIdSafe } },
             { categoryId: 'ynab-cat-5', target: { kind: 'cash', brokerId: 'b1' } },
-            { categoryId: 'ynab-cat-7', target: { kind: 'cash', brokerId: 'b2' } },
+            { categoryId: 'ynab-cat-7', target: { kind: 'asset', ticker: 'IT0005534141', brokerId: 'b2', portfolioId: pIdLadder } },
             // cat-4 (Crypto) and housing/expenses remain unmapped
         ]);
 
@@ -2634,6 +2654,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const goalModeTargets = (data.goalModeTargets && typeof data.goalModeTargets === 'object') ? data.goalModeTargets : {};
             const goalFlowPortfolioStates = (data.goalFlowPortfolioStates && typeof data.goalFlowPortfolioStates === 'object') ? data.goalFlowPortfolioStates : {};
             const importedYnabMappings: YnabCategoryMapping[] = Array.isArray(data.ynabMappings) ? data.ynabMappings : [];
+            // Absent in older backups: fall back to the defaults rather than an
+            // empty object, which would leave the funding plan without a source field.
+            const importedYnabFundingSettings: YnabFundingSettings = (data.ynabFundingSettings && typeof data.ynabFundingSettings === 'object')
+                ? { ...DEFAULT_YNAB_FUNDING_SETTINGS, ...data.ynabFundingSettings }
+                : DEFAULT_YNAB_FUNDING_SETTINGS;
             const importedYnabGoals: YnabGoal[] = Array.isArray(data.ynabGoals) ? data.ynabGoals : [];
             const importedYnabGoalAllocations: YnabGoalAllocation[] = Array.isArray(data.ynabGoalAllocations) ? data.ynabGoalAllocations : [];
             const importedYnabMacroMappings: YnabMacroMappings = (data.ynabMacroMappings && typeof data.ynabMacroMappings === 'object')
@@ -2713,6 +2738,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setGoalModeTargets(goalModeTargets);
             setGoalFlowPortfolioStates(goalFlowPortfolioStates);
             setYnabMappings(importedYnabMappings);
+            setYnabFundingSettings(importedYnabFundingSettings);
             setYnabGoals(importedYnabGoals);
             setYnabGoalAllocations(importedYnabGoalAllocations);
             setYnabMacroMappings(importedYnabMacroMappings);
@@ -2757,6 +2783,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 macroAllocations, goalAllocations, goals,
                 aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
                 ynabMappings,
+                ynabFundingSettings,
                 ynabAccountMappings,
                 ynabGoals,
                 ynabGoalAllocations,
@@ -2883,6 +2910,60 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             copy[idx] = next;
             return copy;
         });
+    };
+
+    /**
+     * Books the funding plan's orders as real Buy transactions.
+     *
+     * The cash side is applied here rather than left to the per-trade sync: the
+     * plan knows each order's commission and, when the caller passes its wires,
+     * the money that arrives to pay for them — letting the gross-only sync run
+     * as well would move the money twice. Orders that are not fully specified
+     * (no price, broker or portfolio) are skipped and reported, never guessed at.
+     */
+    const registerYnabFundingOrders = (
+        orders: FundingOrder[],
+        opts?: { date?: string; creditTransfers?: FundingTransfer[] },
+    ): { ok: boolean; registered: number; skipped: number; error?: string } => {
+        const date = opts?.date || currentIsoDate();
+        const registerable = orders.filter(isRegisterableOrder);
+        const skipped = orders.length - registerable.length;
+        if (registerable.length === 0) {
+            return {
+                ok: false,
+                registered: 0,
+                skipped,
+                error: 'No order is ready to register: each one needs a price, a broker and a portfolio.',
+            };
+        }
+
+        const stamp = Date.now();
+        const txs: Transaction[] = registerable.map((order, i) => ({
+            id: `ynab-fund-${stamp}-${i}`,
+            ticker: order.ticker,
+            amount: order.quantity,
+            price: order.price as number,
+            date,
+            direction: 'Buy',
+            portfolioId: order.portfolioId,
+            brokerId: order.brokerId,
+            freeCommission: order.commission === 0 ? true : undefined,
+        }));
+
+        const deltas: Record<string, number> = {};
+        const move = (brokerId: string, amount: number) => {
+            deltas[brokerId] = roundCents((deltas[brokerId] ?? 0) + amount);
+        };
+        for (const transfer of opts?.creditTransfers ?? []) {
+            if (transfer.brokerId && transfer.transfer > 0) move(transfer.brokerId, transfer.transfer);
+        }
+        for (const order of registerable) {
+            if (order.brokerId) move(order.brokerId, -order.outlay);
+        }
+
+        addTransactionsBulk(txs, { skipCashSync: true });
+        adjustBrokerLiquidity(deltas);
+        return { ok: true, registered: txs.length, skipped };
     };
 
     // ── Broker ↔ YNAB account mapping ──────────────────────────────────
@@ -3549,6 +3630,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ynabListBudgets: handleYnabListBudgets,
         syncYnabBudget,
         setYnabMapping,
+        ynabFundingSettings,
+        setYnabFundingSettings,
+        registerYnabFundingOrders,
         disconnectYnab,
         ynabSyncing,
         ynabAccountMappings,

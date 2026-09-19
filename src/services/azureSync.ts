@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -25,6 +25,9 @@ export interface SyncPayload {
     // A planner preference, not a counting one — no other view reads it.
     goalFlowPortfolioStates?: Record<string, GoalFlowPortfolioState>;
     ynabMappings?: YnabCategoryMapping[];
+    // How the funding plan sizes the orders and the wires it asks for. A
+    // preference, like the mappings it reads.
+    ynabFundingSettings?: YnabFundingSettings;
     // brokerId -> { budgetId, accountId }: a mapping, not a credential, so it
     // travels. Older payloads hold a bare account id and are normalized on read.
     ynabAccountMappings?: YnabAccountMappings;

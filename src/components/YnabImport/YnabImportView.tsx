@@ -3,6 +3,8 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import type { YnabCategoryGroupSummary, YnabGoalSyncCandidate } from '../../types';
 import Swal from 'sweetalert2';
 import YnabGoalsSyncModal from './YnabGoalsSyncModal';
+import YnabCategoryMappings from './YnabCategoryMappings';
+import YnabFundingPlanView from './YnabFundingPlanView';
 
 interface Props {
     onNavigateToSettings?: () => void;
@@ -157,6 +159,9 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                 </div>
             </div>
 
+
+            <YnabCategoryMappings />
+            <YnabFundingPlanView />
 
             {syncCandidates !== null && (
                 <YnabGoalsSyncModal

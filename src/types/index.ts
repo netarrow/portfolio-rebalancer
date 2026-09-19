@@ -491,8 +491,13 @@ export interface PlannedForecastExpense {
   importedAt: string;
 }
 
+// Where the money a YNAB category holds is meant to end up. An 'asset' target
+// may also name the broker the purchase goes through and the portfolio it
+// belongs to: both are optional (the funding plan falls back to the portfolio's
+// preferred broker, then to the broker that last bought the ticker), but naming
+// them is what lets the plan price the commission and register the trade.
 export type YnabMappingTarget =
-  | { kind: 'asset'; ticker: string }
+  | { kind: 'asset'; ticker: string; brokerId?: string; portfolioId?: string }
   | { kind: 'cash'; brokerId: string }
   | { kind: 'unmapped' };
 
@@ -500,6 +505,44 @@ export interface YnabCategoryMapping {
   categoryId: string;
   target: YnabMappingTarget;
 }
+
+// ── YNAB funding plan ───────────────────────────────────────────────
+// Turns the mapped categories into "wire this much to the broker, then place
+// these orders". Every figure comes from data already in the app: the category
+// balances, the broker commission plans, the free-buy promos and the last known
+// prices.
+
+// Which YNAB figure funds the plan: the money actually sitting in the category
+// ('balance') or only what was budgeted to it this month ('budgeted').
+export type YnabFundingSourceField = 'balance' | 'budgeted';
+
+// 'lot' buys whole units only — and whole €1,000 lots for single bonds on the
+// MOT — leaving the residue as cash; 'fractional' buys the exact share count.
+export type YnabFundingRounding = 'lot' | 'fractional';
+
+export interface YnabFundingSettings {
+  source: YnabFundingSourceField;
+  rounding: YnabFundingRounding;
+  // true: the commission is paid out of the category's own money (less is
+  // invested); false: it is an outlay on top, so the wire has to cover it.
+  feesFromBudget: boolean;
+  // Count the cash already at the broker (net of its minimum liquidity and of
+  // what other portfolios have earmarked) against the amount to wire.
+  useBrokerCash: boolean;
+  // Round each wire up to a whole multiple of this many € (0 = to the cent).
+  transferRoundingStep: number;
+  // Flag an order whose commission eats more than this % of the trade value.
+  feeWarnPercent: number;
+}
+
+export const DEFAULT_YNAB_FUNDING_SETTINGS: YnabFundingSettings = {
+  source: 'balance',
+  rounding: 'lot',
+  feesFromBudget: true,
+  useBrokerCash: true,
+  transferRoundingStep: 10,
+  feeWarnPercent: 1,
+};
 
 // ── YNAB spending analysis (rolling 12 months) ──────────────────────
 
