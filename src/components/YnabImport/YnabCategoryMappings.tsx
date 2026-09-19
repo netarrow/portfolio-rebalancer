@@ -160,14 +160,14 @@ const YnabCategoryMappings: React.FC = () => {
                                     const available = milliunitsToEur(category.balanceMilliunits);
                                     return (
                                         <tr key={category.id} className={target && target.kind !== 'unmapped' ? 'mapped-row' : undefined}>
-                                            <td>{category.name}</td>
-                                            <td style={{ textAlign: 'right', color: available < 0 ? 'var(--color-danger)' : undefined }}>
+                                            <td className="map-cell-name">{category.name}</td>
+                                            <td className="map-cell-avail" data-label="Available" style={{ textAlign: 'right', color: available < 0 ? 'var(--color-danger)' : undefined }}>
                                                 {eur(available)}
                                             </td>
-                                            <td style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
+                                            <td className="map-cell-budgeted" data-label="Budgeted" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                                                 {eur(milliunitsToEur(category.budgetedMilliunits ?? 0))}
                                             </td>
-                                            <td>
+                                            <td className="map-cell-dest" data-label="Destination">
                                                 <select
                                                     className="form-select"
                                                     value={selectValue(target)}
@@ -187,7 +187,10 @@ const YnabCategoryMappings: React.FC = () => {
                                                     </optgroup>
                                                 </select>
                                             </td>
-                                            <td>
+                                            {/* `is-empty` marks the cells a non-asset row has nothing to
+                                                say in: on mobile, where every cell becomes its own line,
+                                                they are hidden instead of printing a labelled dash. */}
+                                            <td className={`map-cell-broker${isAsset ? '' : ' is-empty'}`} data-label="Broker">
                                                 {isAsset ? (
                                                     <select
                                                         className="form-select"
@@ -201,7 +204,7 @@ const YnabCategoryMappings: React.FC = () => {
                                                     <span className="muted-cell">—</span>
                                                 )}
                                             </td>
-                                            <td>
+                                            <td className={`map-cell-portfolio${isAsset ? '' : ' is-empty'}`} data-label="Portfolio">
                                                 {isAsset ? (
                                                     <select
                                                         className="form-select"

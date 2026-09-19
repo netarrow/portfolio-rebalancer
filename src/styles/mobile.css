@@ -527,114 +527,217 @@
         width: 100% !important;
     }
 
-    /* Hide desktop column-header labels — replaced by data-col-label in each cell */
-    .ynab-col-headers,
-    .ynab-summary-col-headers {
-        display: none !important;
-    }
-
-    /* Group header: stack name on first row, amounts on second row */
-    .ynab-group-header {
-        grid-template-columns: 1fr 1fr !important;
-        grid-template-rows: auto auto !important;
-        gap: var(--space-1) var(--space-2) !important;
+    .ynab-map-card,
+    .ynab-plan-card {
         padding: var(--space-3) !important;
     }
 
-    .ynab-group-name {
-        grid-column: 1 / -1 !important;
-        grid-row: 1 !important;
-    }
-
-    .ynab-group-current {
-        grid-column: 1 !important;
-        grid-row: 2 !important;
-        text-align: left !important;
-    }
-
-    .ynab-group-avg {
-        grid-column: 2 !important;
-        grid-row: 2 !important;
-        text-align: right !important;
-    }
-
-    .ynab-group-spacer {
-        display: none !important;
-    }
-
-    /* Category row: name full-width, amounts side-by-side, dropdown full-width */
-    .ynab-category-row {
-        grid-template-columns: 1fr 1fr !important;
-        grid-template-rows: auto auto auto !important;
-        gap: var(--space-1) var(--space-2) !important;
-        padding: var(--space-3) !important;
-    }
-
-    .ynab-cat-name {
-        grid-column: 1 / -1 !important;
-        grid-row: 1 !important;
-        font-weight: 500 !important;
-    }
-
-    .ynab-cat-current {
-        grid-column: 1 !important;
-        grid-row: 2 !important;
-        text-align: left !important;
-        font-size: 0.9rem !important;
-    }
-
-    .ynab-cat-avg {
-        grid-column: 2 !important;
-        grid-row: 2 !important;
-        text-align: right !important;
-        font-size: 0.9rem !important;
-    }
-
-    .ynab-cat-mapping {
-        grid-column: 1 / -1 !important;
-        grid-row: 3 !important;
+    /* "Register N purchases" is the card's action: give it the full width
+       rather than leaving it floating at half. */
+    .ynab-plan-card > div:first-child > div:last-child {
         width: 100% !important;
     }
 
-    /* Small label above each amount cell (uses data-col-label attribute) */
-    .ynab-cat-current::before,
-    .ynab-cat-avg::before,
-    .ynab-group-current::before,
-    .ynab-group-avg::before {
-        content: attr(data-col-label);
-        display: block;
+    .ynab-plan-card > div:first-child > div:last-child .btn {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+
+    /* ---- Category mappings & funding plan: tables become stacked cards ----
+       Both tables are wider than a phone, and their desktop fallback is a
+       horizontal scroll — which on the mapping table hides the three dropdowns
+       that are the whole point of it. Each row becomes a card instead, with
+       every cell on its own line labelled from its data-label. */
+    .ynab-map-table,
+    .ynab-map-table tbody,
+    .ynab-map-table tr,
+    .ynab-map-table td,
+    .plan-table,
+    .plan-table tbody,
+    .plan-table tfoot,
+    .plan-table tr,
+    .plan-table td {
+        display: block !important;
+        width: auto !important;
+    }
+
+    /* The column headers are replaced by the per-cell labels below. */
+    .ynab-map-table thead,
+    .plan-table thead {
+        display: none !important;
+    }
+
+    /* One scroll container per page: an inner scrolling box inside a scrolling
+       page traps touch gestures on iOS. */
+    .ynab-map-wrap {
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    .ynab-map-wrap,
+    .plan-table-wrap {
+        overflow-x: visible !important;
+    }
+
+    .ynab-map-table td,
+    .plan-table td {
+        white-space: normal !important;
+        max-width: none !important;
+        padding: 0.2rem 0 !important;
+        border-bottom: none !important;
+        text-align: left !important;
+    }
+
+    /* A labelled figure reads as "label ......... value" on one line. */
+    .ynab-map-table td[data-label],
+    .plan-table td[data-label] {
+        display: flex !important;
+        align-items: baseline !important;
+        justify-content: space-between !important;
+        gap: var(--space-3) !important;
+    }
+
+    .ynab-map-table td[data-label]::before,
+    .plan-table td[data-label]::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
         font-size: 0.7rem;
-        font-family: var(--font-sans, sans-serif);
-        font-weight: 400;
-        color: var(--text-muted);
+        font-weight: 500;
         text-transform: uppercase;
         letter-spacing: 0.05em;
+        color: var(--text-muted);
+    }
+
+    /* Cells a row has nothing to say in — a cash mapping has no broker or
+       portfolio — would otherwise print a labelled dash. Selector kept at
+       least as specific as the per-cell rules below, which set `display`. */
+    .ynab-map-table tbody td.is-empty[data-label],
+    .ynab-map-table tbody td.is-empty,
+    .plan-table tbody td.is-empty,
+    .plan-table tfoot td.is-empty {
+        display: none !important;
+    }
+
+    /* ---- Category mappings ---- */
+    .ynab-map-table tbody tr {
+        padding: var(--space-3) !important;
+        border-bottom: 1px solid var(--border-color) !important;
+    }
+
+    .ynab-map-table tbody tr.group-row {
+        padding: var(--space-2) var(--space-3) !important;
+    }
+
+    /* The accent that marks a mapped category moves from the first cell to the
+       whole card, which is what the row now is. */
+    .ynab-map-table .mapped-row td:first-child {
+        border-left: none !important;
+    }
+
+    .ynab-map-table tbody tr.mapped-row {
+        border-left: 3px solid var(--color-primary) !important;
+    }
+
+    .ynab-map-table .map-cell-name {
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        padding-bottom: var(--space-2) !important;
+    }
+
+    /* The three dropdowns are the form: label above, full width below. */
+    .ynab-map-table td.map-cell-dest[data-label],
+    .ynab-map-table td.map-cell-broker[data-label],
+    .ynab-map-table td.map-cell-portfolio[data-label] {
+        display: block !important;
+        padding-top: var(--space-2) !important;
+    }
+
+    .ynab-map-table td.map-cell-dest[data-label]::before,
+    .ynab-map-table td.map-cell-broker[data-label]::before,
+    .ynab-map-table td.map-cell-portfolio[data-label]::before {
+        display: block;
         margin-bottom: 2px;
     }
 
-    /* Summary section: stack label + amounts into 1 column */
-    .ynab-summary {
+    .ynab-map-table .form-select {
+        width: 100% !important;
+        min-width: 0 !important;
+        font-size: 16px !important; /* iOS zooms into anything smaller */
+        padding: var(--space-2) !important;
+    }
+
+    /* ---- Funding plan ---- */
+    .plan-headline {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: var(--space-2) !important;
+    }
+
+    .plan-figure strong {
+        font-size: 1.05rem !important;
+        overflow-wrap: anywhere;
+    }
+
+    .plan-options {
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: var(--space-3) var(--space-2) !important;
+    }
+
+    .plan-options .plan-check {
+        grid-column: 1 / -1 !important;
+        padding-bottom: 0 !important;
+    }
+
+    .plan-table-wrap {
+        border: none !important;
+    }
+
+    .plan-table tbody tr,
+    .plan-table tfoot tr {
         padding: var(--space-3) !important;
+        margin-bottom: var(--space-2) !important;
+        background: var(--bg-app) !important;
+        border: 1px solid var(--border-color) !important;
+        border-radius: var(--radius-md) !important;
     }
 
-    .ynab-summary-row {
-        grid-template-columns: 1fr !important;
-        gap: var(--space-1) !important;
-        padding: var(--space-3) 0 !important;
+    .plan-table .plan-total-row {
+        border-color: var(--color-primary) !important;
     }
 
-    .ynab-summary-current,
-    .ynab-summary-avg {
-        text-align: left !important;
-        font-size: 0.9rem !important;
+    /* Broker name and asset name are the card titles. */
+    .plan-table .tr-cell-broker,
+    .plan-table .ord-cell-asset {
+        font-size: 0.95rem !important;
+        padding-bottom: var(--space-2) !important;
+        border-bottom: 1px solid var(--border-color) !important;
+        margin-bottom: var(--space-2) !important;
     }
 
-    .ynab-summary-current::before,
-    .ynab-summary-avg::before {
-        content: attr(data-col-label) ': ';
-        font-family: var(--font-sans, sans-serif);
-        font-weight: 400;
-        color: var(--text-muted);
-        font-size: 0.85em;
+    .plan-table .ord-cell-where {
+        padding-bottom: var(--space-2) !important;
+    }
+
+    /* A cell that carries a footnote under its figure (a %, a residual, a
+       warning pill) wraps it onto its own line rather than letting it share
+       the line and push the figure away from the right edge. */
+    .plan-table td[data-label] {
+        flex-wrap: wrap !important;
+    }
+
+    .plan-table td[data-label] > .cell-note,
+    .plan-table td[data-label] > .warning-pills {
+        flex: 1 0 100% !important;
+        text-align: right !important;
+        justify-content: flex-end !important;
+    }
+
+    .plan-table .sources-row {
+        background: var(--bg-card) !important;
+    }
+
+    .plan-table .sources-row ul {
+        padding-left: 1rem !important;
     }
 }

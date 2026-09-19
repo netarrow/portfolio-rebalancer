@@ -1148,6 +1148,28 @@ async function scrollAndShoot(page, base) {
   });
   await sleep(500);
   await shot(page, 'mobile_transactions_expanded');
+  // The YNAB funding plan: on a phone its two tables become stacked cards, so
+  // the mapping dropdowns and the wire figures stay on screen.
+  await navTo(page, 'YNAB');
+  await sleep(900);
+  await page.evaluate(() => {
+    const row = [...document.querySelectorAll('.ynab-map-table tbody tr')].find((r) =>
+      r.querySelector('.map-cell-broker:not(.is-empty)')
+    );
+    if (row) row.scrollIntoView({ block: 'center' });
+  });
+  await sleep(400);
+  await shot(page, 'mobile_ynab_mappings');
+  await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.plan-section-title')].find((e) =>
+      /transfers/i.test(e.textContent)
+    );
+    if (t) t.scrollIntoView({ block: 'start' });
+  });
+  // The navbar is sticky: back off so the section title is not behind it.
+  await page.evaluate(() => window.scrollBy(0, -80));
+  await sleep(400);
+  await shot(page, 'mobile_ynab_funding_plan');
 
   // ---------- LOCK SCREEN (local encryption) ----------
   // Last on purpose: once encryption is on, every load stops at the passphrase

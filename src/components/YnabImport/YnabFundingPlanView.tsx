@@ -249,8 +249,8 @@ const YnabFundingPlanView: React.FC = () => {
                     </thead>
                     <tbody>
                         {transfers.map(t => (
-                            <tr key={t.brokerId ?? 'unknown'}>
-                                <td>
+                            <tr key={t.brokerId ?? 'unknown'} className="plan-transfer-row">
+                                <td className="tr-cell-broker">
                                     <strong>{t.brokerName}</strong>
                                     {t.warnings.includes('unknown-broker') && (
                                         <span className="pill pill-warn" title="These orders have no broker: pick one on the mapping.">
@@ -266,19 +266,19 @@ const YnabFundingPlanView: React.FC = () => {
                                         <div className="cell-note">min liquidity {eur(t.minLiquidity, 0)}</div>
                                     )}
                                 </td>
-                                <td style={{ textAlign: 'right' }}>{eur(t.ordersOutlay)}</td>
-                                <td style={{ textAlign: 'right' }}>{t.deposits > 0 ? eur(t.deposits) : '—'}</td>
-                                <td style={{ textAlign: 'right' }}>{eur(t.required)}</td>
-                                <td style={{ textAlign: 'right' }}>
+                                <td className="num-cell" data-label="Orders" style={{ textAlign: 'right' }}>{eur(t.ordersOutlay)}</td>
+                                <td className="num-cell" data-label="Cash top-up" style={{ textAlign: 'right' }}>{t.deposits > 0 ? eur(t.deposits) : '—'}</td>
+                                <td className="num-cell" data-label="Needed" style={{ textAlign: 'right' }}>{eur(t.required)}</td>
+                                <td className="num-cell" data-label="Usable cash" style={{ textAlign: 'right' }}>
                                     {eur(t.usableCash)}
                                     {t.surplus > 0 && <div className="cell-note">{eur(t.surplus, 0)} left after</div>}
                                 </td>
-                                <td style={{ textAlign: 'right' }}>
+                                <td className="num-cell" data-label="To wire" style={{ textAlign: 'right' }}>
                                     <strong className={t.transfer > 0 ? 'wire-amount' : 'muted-cell'}>
                                         {t.transfer > 0 ? eur(t.transfer) : 'covered'}
                                     </strong>
                                 </td>
-                                <td style={{ textAlign: 'right' }}>
+                                <td className="num-cell" data-label="Wire cost" style={{ textAlign: 'right' }}>
                                     {t.transfer === 0 ? (
                                         <span className="muted-cell">—</span>
                                     ) : t.cost === 0 ? (
@@ -301,14 +301,14 @@ const YnabFundingPlanView: React.FC = () => {
                         ))}
                     </tbody>
                     <tfoot>
-                        <tr>
-                            <td>Total</td>
-                            <td style={{ textAlign: 'right' }}>{eur(totals.outlay)}</td>
-                            <td style={{ textAlign: 'right' }}>{totals.deposits > 0 ? eur(totals.deposits) : '—'}</td>
-                            <td style={{ textAlign: 'right' }}>{eur(totals.outlay + totals.deposits)}</td>
-                            <td />
-                            <td style={{ textAlign: 'right' }}><strong className="wire-amount">{eur(totals.transfer)}</strong></td>
-                            <td style={{ textAlign: 'right' }}>{totals.transferCost > 0 ? eur(totals.transferCost) : '—'}</td>
+                        <tr className="plan-total-row">
+                            <td className="tr-cell-broker">Total</td>
+                            <td className="num-cell" data-label="Orders" style={{ textAlign: 'right' }}>{eur(totals.outlay)}</td>
+                            <td className="num-cell" data-label="Cash top-up" style={{ textAlign: 'right' }}>{totals.deposits > 0 ? eur(totals.deposits) : '—'}</td>
+                            <td className="num-cell" data-label="Needed" style={{ textAlign: 'right' }}>{eur(totals.outlay + totals.deposits)}</td>
+                            <td className="is-empty" />
+                            <td className="num-cell" data-label="To wire" style={{ textAlign: 'right' }}><strong className="wire-amount">{eur(totals.transfer)}</strong></td>
+                            <td className="num-cell" data-label="Wire cost" style={{ textAlign: 'right' }}>{totals.transferCost > 0 ? eur(totals.transferCost) : '—'}</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -334,8 +334,8 @@ const YnabFundingPlanView: React.FC = () => {
                     <tbody>
                         {orders.map(order => (
                             <React.Fragment key={order.id}>
-                                <tr className={order.quantity > 0 ? undefined : 'row-idle'}>
-                                    <td>
+                                <tr className={`plan-order-row${order.quantity > 0 ? '' : ' row-idle'}`}>
+                                    <td className="ord-cell-asset">
                                         <button
                                             type="button"
                                             className="link-btn"
@@ -346,18 +346,18 @@ const YnabFundingPlanView: React.FC = () => {
                                         </button>
                                         <div className="cell-note">{order.ticker}</div>
                                     </td>
-                                    <td>
+                                    <td className="ord-cell-where">
                                         {order.brokerName ?? <span className="muted-cell">no broker</span>}
                                         <div className="cell-note">{order.portfolioName ?? 'no portfolio'}</div>
                                     </td>
-                                    <td style={{ textAlign: 'right' }}>{eur(order.budget)}</td>
-                                    <td style={{ textAlign: 'right' }}>{order.price !== undefined ? eur(order.price) : '—'}</td>
-                                    <td style={{ textAlign: 'right' }}>
+                                    <td className="num-cell" data-label="Budget" style={{ textAlign: 'right' }}>{eur(order.budget)}</td>
+                                    <td className="num-cell" data-label="Price" style={{ textAlign: 'right' }}>{order.price !== undefined ? eur(order.price) : '—'}</td>
+                                    <td className="num-cell" data-label="Quantity" style={{ textAlign: 'right' }}>
                                         {order.quantity > 0 ? units(order.quantity) : '—'}
                                         {order.lotUnits > 1 && <div className="cell-note">lots of {order.lotUnits}</div>}
                                     </td>
-                                    <td style={{ textAlign: 'right' }}>{eur(order.gross)}</td>
-                                    <td style={{ textAlign: 'right' }}>
+                                    <td className="num-cell" data-label="Trade value" style={{ textAlign: 'right' }}>{eur(order.gross)}</td>
+                                    <td className="num-cell" data-label="Commission" style={{ textAlign: 'right' }}>
                                         {order.commissionFree && order.quantity > 0 ? (
                                             <span
                                                 className="pill pill-ok"
@@ -376,8 +376,8 @@ const YnabFundingPlanView: React.FC = () => {
                                             </>
                                         )}
                                     </td>
-                                    <td style={{ textAlign: 'right' }}>{eur(order.outlay)}</td>
-                                    <td style={{ textAlign: 'right' }}>
+                                    <td className="num-cell" data-label="Total cost" style={{ textAlign: 'right' }}>{eur(order.outlay)}</td>
+                                    <td className="num-cell" data-label="Residue" style={{ textAlign: 'right' }}>
                                         {eur(order.leftover)}
                                         {order.topUpForNextUnit !== undefined && (
                                             <div

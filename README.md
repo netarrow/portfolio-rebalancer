@@ -498,6 +498,13 @@ Every list view has a **dense expandable layout** on small screens — compact r
   <img src="screenshots/mobile_transactions_expanded.png" width="30%" alt="Mobile dense transaction list" />
 </p>
 
+The [YNAB](#ynab) page follows the same rule. Its two tables are wider than a phone, and the mapping one is a *form*: left to scroll sideways it would hide the very dropdowns it exists for. On a phone each row becomes a card instead — the category name as its title, its figures as labelled lines, and the destination / broker / portfolio dropdowns full-width underneath, with the lines a row has nothing to say in simply left out. The funding plan does the same, so each broker's wire and each order reads top to bottom:
+
+<p>
+  <img src="screenshots/mobile_ynab_mappings.png" width="30%" alt="Mobile YNAB category mappings" />
+  <img src="screenshots/mobile_ynab_funding_plan.png" width="30%" alt="Mobile YNAB funding plan" />
+</p>
+
 ### Disclaimer
 
 A dedicated page documenting local-only storage, data usage and the non-commercial nature of the tool.
