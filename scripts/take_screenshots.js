@@ -728,7 +728,8 @@ async function scrollAndShoot(page, base) {
     await shot(page, 'brokers_update_liquidity_modal');
     await closeTopModal(page);
   }
-  // Edit Broker modal — shows commission plan & minimum liquidity settings
+  // Edit Broker modal — shows the commission plan, the minimum liquidity and
+  // what a wire into this broker costs
   const brokerEditClicked = await page.evaluate(() => {
     const btn = document.querySelector('button[title*="Edit" i], button[aria-label*="Edit" i]');
     if (btn) {
@@ -739,6 +740,16 @@ async function scrollAndShoot(page, base) {
   });
   if (brokerEditClicked) {
     await sleep(500);
+    // The transfer cost sits just below the commission plan: scroll it into
+    // view so one shot covers both.
+    await page.evaluate(() => {
+      const modal = [...document.querySelectorAll('.modal-content')].pop();
+      const label = [...(modal?.querySelectorAll('label') ?? [])].find((l) =>
+        l.textContent.trim().startsWith('Transfer Cost')
+      );
+      if (label) label.scrollIntoView({ block: 'center' });
+    });
+    await sleep(400);
     await shot(page, 'brokers_edit_modal_commission');
     await closeTopModal(page);
   }

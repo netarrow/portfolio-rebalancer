@@ -15,7 +15,9 @@
  *    categories hold;
  *  - a broker with no commission plan configured is treated as free (that is
  *    what a zero-commission plan looks like in this app), and flagged as such
- *    rather than guessed at.
+ *    rather than guessed at;
+ *  - the bank fee on the wire itself is estimated but never added to the wire:
+ *    it is charged on the sending side, which this app does not model.
  */
 import type {
     AssetDefinition,
@@ -93,6 +95,13 @@ export interface FundingOrder {
     outlay: number;
     /** Money of the categories this order does not manage to invest. */
     leftover: number;
+    /**
+     * € to add to this order's budget to fit one more whole unit (or bond lot),
+     * commission included. Absent when the size is not rounded, when there is no
+     * price, or when nothing would be gained. This is the figure to look at
+     * before deciding to wire a little more than the plan asks.
+     */
+    topUpForNextUnit?: number;
     sources: FundingSource[];
     warnings: FundingOrderWarning[];
 }
@@ -106,8 +115,9 @@ export interface FundingDeposit {
 }
 
 export type FundingTransferWarning =
-    | 'unknown-broker'   // orders with no broker: the wire cannot be addressed
-    | 'earmark-shortfall'; // the broker's usable cash is held back by other portfolios
+    | 'unknown-broker'     // orders with no broker: the wire cannot be addressed
+    | 'earmark-shortfall'  // the broker's usable cash is held back by other portfolios
+    | 'costly-transfer';   // the bank fee on the wire is a large slice of it
 
 export interface FundingTransfer {
     brokerId?: string;
@@ -130,6 +140,10 @@ export interface FundingTransfer {
     transfer: number;
     /** Usable cash left over once the plan settles. */
     surplus: number;
+    /** Bank fee on this wire, per the broker's transfer cost. Never added to it. */
+    cost: number;
+    /** cost as a % of the wire, 0 when nothing is wired. */
+    costPercent: number;
     warnings: FundingTransferWarning[];
 }
 
@@ -150,6 +164,8 @@ export interface FundingTotals {
     deposits: number;
     /** Σ of the wires, after rounding. */
     transfer: number;
+    /** Σ of the bank fees on those wires — paid on the sending side. */
+    transferCost: number;
     /** Money the orders cannot invest (flooring residue and unsized orders). */
     leftover: number;
     orders: number;
@@ -203,6 +219,21 @@ const feeFor = (broker: Broker | undefined, tradeValue: number): { fee: number; 
     return { fee: fee === undefined ? 0 : roundCents(fee), hasPlan: fee !== undefined };
 };
 
+/**
+ * € the bank charges to wire `amount` to this broker. A broker with no transfer
+ * cost configured is treated as free — saying "I do not know" here would only
+ * add a number nobody asked for.
+ */
+export const transferCostFor = (broker: Broker | undefined, amount: number): number => {
+    const cost = broker?.transferCost;
+    if (!cost || cost.type === 'free' || !(amount > 0)) return 0;
+    if (cost.type === 'fixed') return roundCents(Math.max(0, cost.fixed ?? 0));
+    let fee = amount * (Math.max(0, cost.percent ?? 0) / 100);
+    if (cost.min !== undefined) fee = Math.max(fee, cost.min);
+    if (cost.max !== undefined) fee = Math.min(fee, cost.max);
+    return roundCents(Math.max(0, fee));
+};
+
 /** The broker that last bought this ticker — the app's usual fallback. */
 const lastBrokerForTicker = (transactions: Transaction[], ticker: string): string | undefined => {
     const upper = ticker.toUpperCase();
@@ -253,7 +284,7 @@ const sizeOrder = (params: {
     broker: Broker | undefined;
     free: boolean;
     settings: YnabFundingSettings;
-}): { quantity: number; gross: number; commission: number; hasPlan: boolean } => {
+}): { quantity: number; gross: number; commission: number; hasPlan: boolean; topUpForNextUnit?: number } => {
     const { budget, price, lotUnits, broker, free, settings } = params;
     const fee = (value: number) => (free ? { fee: 0, hasPlan: feeFor(broker, value).hasPlan } : feeFor(broker, value));
 
@@ -283,7 +314,21 @@ const sizeOrder = (params: {
     }
     const gross = roundCents(lots * lotCost);
     const priced = fee(gross);
-    return { quantity: lots * lotUnits, gross, commission: lots > 0 ? priced.fee : 0, hasPlan: priced.hasPlan };
+
+    // What one more lot would cost over the budget — the "is it worth wiring a
+    // bit more?" figure. The fee is recomputed at the larger size, since a
+    // percent plan charges more on a bigger trade.
+    const nextGross = roundCents((lots + 1) * lotCost);
+    const nextTotal = settings.feesFromBudget ? roundCents(nextGross + fee(nextGross).fee) : nextGross;
+    const topUp = roundCents(Math.max(0, nextTotal - budget));
+
+    return {
+        quantity: lots * lotUnits,
+        gross,
+        commission: lots > 0 ? priced.fee : 0,
+        hasPlan: priced.hasPlan,
+        topUpForNextUnit: topUp > 0 ? topUp : undefined,
+    };
 };
 
 /**
@@ -412,6 +457,7 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
             feePercent,
             outlay,
             leftover,
+            topUpForNextUnit: sized.topUpForNextUnit,
             warnings,
         };
     }).sort((a, b) => (b.outlay - a.outlay) || a.ticker.localeCompare(b.ticker));
@@ -445,11 +491,17 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
         const shortfall = roundCents(Math.max(0, required - usableCash));
         const transfer = roundUpTo(shortfall, settings.transferRoundingStep);
 
+        const cost = transferCostFor(broker, transfer);
+        const costPercent = transfer > 0 ? (cost / transfer) * 100 : 0;
+
         const warnings: FundingTransferWarning[] = [];
         if (!broker) warnings.push('unknown-broker');
         if (settings.useBrokerCash && earmarkedElsewhere > 0 && currentLiquidity - minLiquidity > usableCash) {
             warnings.push('earmark-shortfall');
         }
+        // Same yardstick as a trade commission: a wire that costs more than the
+        // configured share of itself is worth batching instead of repeating.
+        if (cost > 0 && costPercent > settings.feeWarnPercent) warnings.push('costly-transfer');
 
         return {
             brokerId,
@@ -464,6 +516,8 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
             shortfall,
             transfer,
             surplus: roundCents(Math.max(0, usableCash - required)),
+            cost,
+            costPercent,
             warnings,
         };
     }).sort((a, b) => (b.transfer - a.transfer) || a.brokerName.localeCompare(b.brokerName));
@@ -477,6 +531,7 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
         outlay: sum(orders.map(o => o.outlay)),
         deposits: depositTotal,
         transfer: sum(transfers.map(t => t.transfer)),
+        transferCost: sum(transfers.map(t => t.cost)),
         leftover: sum(orders.map(o => o.leftover)),
         orders: orders.filter(o => o.quantity > 0).length,
         // What the same orders would have cost at the broker's standard plan.

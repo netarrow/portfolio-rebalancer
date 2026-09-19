@@ -4,6 +4,18 @@ import BrokerForm from './BrokerForm';
 import BrokerLiquiditySyncModal from './BrokerLiquiditySyncModal';
 import type { Broker, BrokerLiquiditySyncRow } from '../../types';
 import { describeRemuneration, isRemunerationActive } from '../../utils/brokerRemuneration';
+import type { BrokerTransferCost } from '../../types';
+
+/** Short label for a wire fee, e.g. "€0.95" or "0.10% (€1–€5)". */
+const describeTransferCost = (cost: BrokerTransferCost): string => {
+    if (cost.type === 'fixed') return `€${(cost.fixed ?? 0).toFixed(2)}`;
+    const bounds = [
+        cost.min !== undefined ? `€${cost.min.toFixed(2)}` : null,
+        cost.max !== undefined ? `€${cost.max.toFixed(2)}` : null,
+    ];
+    const range = bounds[0] || bounds[1] ? ` (${bounds[0] ?? '—'}–${bounds[1] ?? '—'})` : '';
+    return `${cost.percent ?? 0}%${range}`;
+};
 import Swal from 'sweetalert2';
 
 const BrokerList: React.FC = () => {
@@ -179,7 +191,7 @@ const BrokerList: React.FC = () => {
                                 {broker.description && (
                                     <p className="description">{broker.description}</p>
                                 )}
-                                {(broker.familyAsset || broker.illiquid || broker.ownerId || ynabAccountMappings[broker.id] || isRemunerationActive(broker.remuneration)) && (
+                                {(broker.familyAsset || broker.illiquid || broker.ownerId || ynabAccountMappings[broker.id] || isRemunerationActive(broker.remuneration) || broker.transferCost) && (
                                     <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
                                         {!broker.familyAsset && broker.ownerId && personById.has(broker.ownerId) && (
                                             <span title="Personal asset — views can filter by person" style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#0EA5E920', color: '#0EA5E9', border: '1px solid #0EA5E950' }}>
@@ -197,6 +209,14 @@ const BrokerList: React.FC = () => {
                                                 style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#22C55E20', color: '#16A34A', border: '1px solid #22C55E50' }}
                                             >
                                                 💰 {broker.remuneration.annualRatePercent}%
+                                            </span>
+                                        )}
+                                        {broker.transferCost && broker.transferCost.type !== 'free' && (
+                                            <span
+                                                title={`Wiring money to this broker costs ${describeTransferCost(broker.transferCost)}. Counted by the YNAB funding plan.`}
+                                                style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#F9731620', color: '#EA580C', border: '1px solid #F9731650' }}
+                                            >
+                                                🏧 {describeTransferCost(broker.transferCost)}
                                             </span>
                                         )}
                                         {broker.familyAsset && (

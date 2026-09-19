@@ -137,6 +137,11 @@ const YnabFundingPlanView: React.FC = () => {
                 <div className="plan-figure">
                     <span className="plan-figure-label">To wire to the brokers</span>
                     <strong>{eur(totals.transfer)}</strong>
+                    {totals.transferCost > 0 && (
+                        <span className="plan-figure-note" title="Bank fees on the wires, charged on the sending side — not added to the amounts above.">
+                            + {eur(totals.transferCost)} of bank fees
+                        </span>
+                    )}
                 </div>
                 <div className="plan-figure">
                     <span className="plan-figure-label">Purchases</span>
@@ -239,6 +244,7 @@ const YnabFundingPlanView: React.FC = () => {
                             <th style={{ textAlign: 'right' }}>Needed</th>
                             <th style={{ textAlign: 'right' }}>Usable cash</th>
                             <th style={{ textAlign: 'right' }}>To wire</th>
+                            <th style={{ textAlign: 'right' }}>Wire cost</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -272,6 +278,25 @@ const YnabFundingPlanView: React.FC = () => {
                                         {t.transfer > 0 ? eur(t.transfer) : 'covered'}
                                     </strong>
                                 </td>
+                                <td style={{ textAlign: 'right' }}>
+                                    {t.transfer === 0 ? (
+                                        <span className="muted-cell">—</span>
+                                    ) : t.cost === 0 ? (
+                                        <span className="pill pill-ok" title="This broker's wires are free.">free</span>
+                                    ) : (
+                                        <>
+                                            {eur(t.cost)}
+                                            <div className="cell-note">{t.costPercent.toFixed(2)}% of the wire</div>
+                                        </>
+                                    )}
+                                    {t.warnings.includes('costly-transfer') && (
+                                        <div className="warning-pills">
+                                            <span className="pill pill-warn" title="The bank fee is a large slice of this wire — batching a bigger one costs proportionally less.">
+                                                costly wire
+                                            </span>
+                                        </div>
+                                    )}
+                                </td>
                             </tr>
                         ))}
                     </tbody>
@@ -283,6 +308,7 @@ const YnabFundingPlanView: React.FC = () => {
                             <td style={{ textAlign: 'right' }}>{eur(totals.outlay + totals.deposits)}</td>
                             <td />
                             <td style={{ textAlign: 'right' }}><strong className="wire-amount">{eur(totals.transfer)}</strong></td>
+                            <td style={{ textAlign: 'right' }}>{totals.transferCost > 0 ? eur(totals.transferCost) : '—'}</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -353,6 +379,14 @@ const YnabFundingPlanView: React.FC = () => {
                                     <td style={{ textAlign: 'right' }}>{eur(order.outlay)}</td>
                                     <td style={{ textAlign: 'right' }}>
                                         {eur(order.leftover)}
+                                        {order.topUpForNextUnit !== undefined && (
+                                            <div
+                                                className="cell-note"
+                                                title={`Add this to the order's budget — by wiring a little more — and one more ${order.lotUnits > 1 ? 'lot' : 'unit'} fits, commission included.`}
+                                            >
+                                                +{eur(order.topUpForNextUnit)} → 1 more
+                                            </div>
+                                        )}
                                         {order.warnings.length > 0 && (
                                             <div className="warning-pills">
                                                 {order.warnings.map(w => (
@@ -366,7 +400,7 @@ const YnabFundingPlanView: React.FC = () => {
                                 </tr>
                                 {expanded === order.id && (
                                     <tr className="sources-row">
-                                        <td colSpan={9}>
+                                        <td colSpan={10}>
                                             <span className="cell-note">Funded by</span>
                                             <ul>
                                                 {order.sources.map(source => (

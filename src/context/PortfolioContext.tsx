@@ -2152,7 +2152,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ownerId: 'person-a',
                 commissionType: 'fixed',
                 commissionFixed: 2.5,
-                currentLiquidity: 1500
+                currentLiquidity: 1500,
+                // A percent wire fee with a floor and a cap: the shape that makes
+                // one big transfer cheaper than several small ones.
+                transferCost: { type: 'percent', percent: 0.1, min: 1, max: 5 }
             },
             {
                 id: 'b2',
@@ -2166,7 +2169,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 currentLiquidity: 8000,
                 minLiquidityType: 'fixed',
                 minLiquidityAmount: 5000,
-                liquidityAllocations: { [pIdSafe]: 5000 }
+                liquidityAllocations: { [pIdSafe]: 5000 },
+                transferCost: { type: 'fixed', fixed: 0.95 }
             },
             {
                 id: 'b3',
