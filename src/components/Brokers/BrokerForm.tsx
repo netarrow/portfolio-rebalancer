@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import type { Broker, Portfolio, CommissionType, Person, BrokerRemuneration, RemunerationBaseType, RemunerationFrequency } from '../../types';
+import type { Broker, Portfolio, CommissionType, Person, BrokerRemuneration, RemunerationBaseType, RemunerationFrequency, TransferCostType } from '../../types';
 import { FREQUENCY_LABELS, describeRemuneration, todayIso } from '../../utils/brokerRemuneration';
 
 // Tax withheld at source on deposit interest in Italy; the usual case, so it is
@@ -52,6 +52,13 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
     const [commissionMin, setCommissionMin] = useState<number | ''>('');
     const [commissionMax, setCommissionMax] = useState<number | ''>('');
 
+    // Transfer cost: what the bank charges to wire money into this broker.
+    const [transferCostType, setTransferCostType] = useState<TransferCostType>('free');
+    const [transferCostFixed, setTransferCostFixed] = useState<number | ''>('');
+    const [transferCostPercent, setTransferCostPercent] = useState<number | ''>('');
+    const [transferCostMin, setTransferCostMin] = useState<number | ''>('');
+    const [transferCostMax, setTransferCostMax] = useState<number | ''>('');
+
     useEffect(() => {
         if (initialData) {
             setName(initialData.name);
@@ -91,6 +98,11 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
             setCommissionPercent(initialData.commissionPercent !== undefined ? initialData.commissionPercent : '');
             setCommissionMin(initialData.commissionMin !== undefined ? initialData.commissionMin : '');
             setCommissionMax(initialData.commissionMax !== undefined ? initialData.commissionMax : '');
+            setTransferCostType(initialData.transferCost?.type || 'free');
+            setTransferCostFixed(initialData.transferCost?.fixed !== undefined ? initialData.transferCost.fixed : '');
+            setTransferCostPercent(initialData.transferCost?.percent !== undefined ? initialData.transferCost.percent : '');
+            setTransferCostMin(initialData.transferCost?.min !== undefined ? initialData.transferCost.min : '');
+            setTransferCostMax(initialData.transferCost?.max !== undefined ? initialData.transferCost.max : '');
         } else {
             setName('');
             setDescription('');
@@ -196,6 +208,14 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
             commissionMin: commissionType === 'percent' && commissionMin !== '' ? Number(commissionMin) : undefined,
             commissionMax: commissionType === 'percent' && commissionMax !== '' ? Number(commissionMax) : undefined,
             remuneration: remunerationPlan,
+            // 'free' is the default, so it is stored as "nothing configured".
+            transferCost: transferCostType === 'free' ? undefined : {
+                type: transferCostType,
+                fixed: transferCostType === 'fixed' && transferCostFixed !== '' ? Number(transferCostFixed) : undefined,
+                percent: transferCostType === 'percent' && transferCostPercent !== '' ? Number(transferCostPercent) : undefined,
+                min: transferCostType === 'percent' && transferCostMin !== '' ? Number(transferCostMin) : undefined,
+                max: transferCostType === 'percent' && transferCostMax !== '' ? Number(transferCostMax) : undefined,
+            },
         });
     };
 
@@ -501,6 +521,97 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
                                                 value={commissionMax}
                                                 onChange={e => setCommissionMax(e.target.value === '' ? '' : Number(e.target.value))}
                                                 placeholder="e.g. 10.00"
+                                                step="0.01"
+                                                min="0"
+                                                className="form-input"
+                                                style={{ paddingLeft: '1.8rem' }}
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Transfer cost: priced by the YNAB funding plan on the wire it asks for */}
+                    <div className="form-group">
+                        <label style={{ display: 'block', marginBottom: '0.25rem' }}>Transfer Cost</label>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 0.5rem' }}>
+                            What the bank charges to wire money into this broker. Used to estimate what moving the
+                            money out costs; it is never added to the amount wired.
+                        </p>
+
+                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>
+                            {(['free', 'fixed', 'percent'] as const).map(type => (
+                                <label key={type} style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+                                    <input
+                                        type="radio"
+                                        name="transferCostType"
+                                        value={type}
+                                        checked={transferCostType === type}
+                                        onChange={() => setTransferCostType(type)}
+                                    />
+                                    {type === 'free' ? 'Free' : type === 'fixed' ? 'Fixed' : 'Percentage'}
+                                </label>
+                            ))}
+                        </div>
+
+                        {transferCostType === 'fixed' && (
+                            <div className="input-with-suffix">
+                                <span className="input-prefix">€</span>
+                                <input
+                                    type="number"
+                                    value={transferCostFixed}
+                                    onChange={e => setTransferCostFixed(e.target.value === '' ? '' : Number(e.target.value))}
+                                    placeholder="e.g. 0.95"
+                                    step="0.01"
+                                    min="0"
+                                    className="form-input"
+                                    style={{ paddingLeft: '1.8rem' }}
+                                />
+                            </div>
+                        )}
+
+                        {transferCostType === 'percent' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <div className="input-with-suffix">
+                                    <input
+                                        type="number"
+                                        value={transferCostPercent}
+                                        onChange={e => setTransferCostPercent(e.target.value === '' ? '' : Number(e.target.value))}
+                                        placeholder="e.g. 0.10"
+                                        step="0.01"
+                                        min="0"
+                                        className="form-input"
+                                    />
+                                    <span className="input-suffix">%</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Min fee (optional)</label>
+                                        <div className="input-with-suffix">
+                                            <span className="input-prefix">€</span>
+                                            <input
+                                                type="number"
+                                                value={transferCostMin}
+                                                onChange={e => setTransferCostMin(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 1.00"
+                                                step="0.01"
+                                                min="0"
+                                                className="form-input"
+                                                style={{ paddingLeft: '1.8rem' }}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.25rem' }}>Max fee (optional)</label>
+                                        <div className="input-with-suffix">
+                                            <span className="input-prefix">€</span>
+                                            <input
+                                                type="number"
+                                                value={transferCostMax}
+                                                onChange={e => setTransferCostMax(e.target.value === '' ? '' : Number(e.target.value))}
+                                                placeholder="e.g. 5.00"
                                                 step="0.01"
                                                 min="0"
                                                 className="form-input"

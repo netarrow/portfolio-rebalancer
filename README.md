@@ -337,6 +337,7 @@ Manage brokers, their commission model and their cash positions.
 ![Brokers](screenshots/brokers_page.png)
 
 - **Commission models** — fixed, or percentage with min/max.
+- **Transfer cost** — what the bank charges to wire money *into* this broker: free, a flat fee, or a percentage with an optional floor and ceiling. The [YNAB funding plan](#funding-plan) prices each wire with it, so a €0.95 flat fee and a 0.1% one are told apart before the money moves. It is an estimate of what the sending side pays: it is never added to the amount wired, and never touches the broker's liquidity.
 - **Liquidity tracking** — available cash per broker, with an optional **minimum threshold** the forecast and rebalancer respect. New Buy/Sell transactions adjust the broker's cash automatically.
 - **Liquidity allocations** — earmark part of a broker's cash to specific portfolios.
 - **Cash remuneration** — a broker that pays interest on the cash parked there gets a gross **annual rate**, a **credit frequency** (daily, monthly, quarterly, every 6 months, yearly), the **day of the month** the interest lands on and the date it starts accruing from. Optionally only part of the liquidity is remunerated: *up to an amount* (the usual "remunerated up to €100,000" offer) or *a share of it*. A **withholding tax** (26% on Italian deposit interest, and what a new plan starts from) is taken off at source: only the net is credited, and only the net compounds — set it to 0 to be paid gross. Interest is ACT/365 on the remunerated slice, and the plan remembers what has already been credited so a period is never paid twice.
@@ -345,9 +346,9 @@ Manage brokers, their commission model and their cash positions.
 
 ![Update liquidity — the interest section, with the period covered and gross → tax → net per broker](screenshots/brokers_update_liquidity_modal.png)
 
-Editing a broker lets you configure its **ownership** (personal/person or family), its **commission rules** (fixed fee, or percentage with optional min/max), the **minimum liquidity** to keep on hand — either as a percentage of the broker's value or a fixed amount, optionally split across portfolios — and its **cash remuneration**:
+Editing a broker lets you configure its **ownership** (personal/person or family), its **commission rules** (fixed fee, or percentage with optional min/max), the cost of a **wire into it**, the **minimum liquidity** to keep on hand — either as a percentage of the broker's value or a fixed amount, optionally split across portfolios — and its **cash remuneration**:
 
-![Edit broker — commission & minimum liquidity](screenshots/brokers_edit_modal_commission.png)
+![Edit broker — commission, transfer cost & minimum liquidity](screenshots/brokers_edit_modal_commission.png)
 
 ![Edit broker — cash remuneration](screenshots/brokers_edit_modal_remuneration.png)
 
@@ -420,7 +421,9 @@ Everything below is computed from data the app already holds — the category ba
 
 - **Transfers to make**: one row per broker with what its orders and cash top-ups need, the cash it already holds — net of its **minimum liquidity** and of what *other* portfolios have earmarked — and the difference to wire, rounded up to the step you choose. A broker with enough cash reads *covered*.
 - **Purchases to execute**: categories pointing at the same ticker, broker and portfolio are merged into **one order**, so one commission is paid instead of one per category. Orders are sized in whole units, or in whole **€1,000 lots** for a single bond on the MOT, and the residue is reported rather than hidden.
-- **Commissions** are priced against the broker's own plan (flat, or percent with a floor and a cap). An ISIN covered by a **free-buy promotion** at that broker this month, and a broker with no commission plan at all, are both priced as **free** and labelled with which of the two it is. The headline shows what the free plans waived.
+- **Commissions** are priced per order, on that order's own trade value — not on the plan's total — against the broker's own plan (flat, or percent with a floor and a cap). An ISIN covered by a **free-buy promotion** at that broker this month, and a broker with no commission plan at all, are both priced as **free** and labelled with which of the two it is. The headline shows what the free plans waived.
+- **Worth wiring a little more?** Each order says what it would take to fit **one more whole unit** (or one more bond lot) — commission included, recomputed at the larger size. *+€0.30 → 1 more* means thirty cents of extra wire buys another share instead of leaving the money idle.
+- **Wire cost**: each transfer is priced with the destination broker's own [transfer cost](#brokers) — free, flat, or a percentage with a floor and a ceiling — shown per broker and totalled next to the wire itself. A fee that eats more than the flag threshold of its own wire is marked *costly wire*, the hint that batching one bigger transfer is cheaper than repeating small ones. The fee is an estimate of what the sending side pays: it is never added to the amount wired, and never moves the broker's cash.
 - Whether the fee comes **out of the category's money** (one share less is bought) or is an **extra outlay the wire has to cover** is a toggle — as is funding from *available* rather than *budgeted this month*, fractional instead of whole shares, and whether the cash already at the broker counts.
 - Orders that cannot be placed say why: no known price, no broker, no portfolio, or not enough money for one unit yet. A commission that eats more than a configurable share of the trade is flagged too.
 - **Register purchases** books the ready orders as real Buy transactions — free ones flagged as such — and moves the broker cash by the exact amounts: the wire in, the orders and their fees out. The YNAB side stays yours to record.

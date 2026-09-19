@@ -7,7 +7,9 @@ import type {
     YnabCategory, YnabCategoryMapping, YnabFundingSettings,
 } from '../src/types';
 import { DEFAULT_YNAB_FUNDING_SETTINGS } from '../src/types';
-import { buildYnabFundingPlan, isRegisterableOrder, roundUpTo, YNAB_FUNDING_TX_PREFIX } from '../src/utils/ynabFundingPlan';
+import {
+    buildYnabFundingPlan, isRegisterableOrder, roundUpTo, transferCostFor, YNAB_FUNDING_TX_PREFIX,
+} from '../src/utils/ynabFundingPlan';
 
 let failures = 0;
 
@@ -29,14 +31,20 @@ const TODAY = '2026-09-19';
 // Degiro charges €2.50 flat; Directa 0.19% with a €2.95 floor; Trade Republic
 // runs a free-buy promo on SWDA this month; Banca Semplice has no plan at all.
 const brokers: Broker[] = [
-    { id: 'b-degiro', name: 'Degiro', commissionType: 'fixed', commissionFixed: 2.5, currentLiquidity: 300 },
+    {
+        id: 'b-degiro', name: 'Degiro', commissionType: 'fixed', commissionFixed: 2.5, currentLiquidity: 300,
+        transferCost: { type: 'percent', percent: 0.1, min: 1, max: 5 },
+    },
     {
         id: 'b-directa', name: 'Directa', commissionType: 'percent', commissionPercent: 0.19,
         commissionMin: 2.95, commissionMax: 19, currentLiquidity: 6000,
         minLiquidityType: 'fixed', minLiquidityAmount: 5000,
         liquidityAllocations: { 'p-other': 400 },
     },
-    { id: 'b-tr', name: 'Trade Republic', commissionType: 'fixed', commissionFixed: 1, currentLiquidity: 0 },
+    {
+        id: 'b-tr', name: 'Trade Republic', commissionType: 'fixed', commissionFixed: 1, currentLiquidity: 0,
+        transferCost: { type: 'fixed', fixed: 0.95 },
+    },
     { id: 'b-plain', name: 'Banca Semplice', currentLiquidity: 0 },
 ];
 
@@ -252,6 +260,48 @@ const yesterday = build({}, {
     ],
 });
 check('yesterday\'s purchase does not block today\'s', orderOf(yesterday, 'IE00B4L5Y983').warnings, []);
+
+console.log('wire costs');
+
+check('a percent wire fee is charged on the amount wired',
+    transferOf(plan, 'b-degiro').cost, 1.1);   // 0.1% of €1,102.50
+check('a flat wire fee does not move with the amount',
+    transferOf(plan, 'b-tr').cost, 0.95);
+check('a broker that is already covered is wired nothing, so it costs nothing',
+    transferOf(plan, 'b-directa').cost, 0);
+
+check('the percent floor applies to a small wire', transferCostFor(brokers[0], 200), 1);
+check('and the cap to a large one', transferCostFor(brokers[0], 100000), 5);
+check('a broker with no transfer cost configured wires for free',
+    transferCostFor(brokers.find(b => b.id === 'b-plain'), 5000), 0);
+check('nothing wired costs nothing', transferCostFor(brokers[0], 0), 0);
+
+const costly = build({}, {
+    brokers: brokers.map(b => b.id === 'b-tr' ? { ...b, transferCost: { type: 'fixed' as const, fixed: 40 } } : b),
+});
+check('a wire fee larger than the configured share of itself is flagged',
+    transferOf(costly, 'b-tr').warnings, ['costly-transfer']);
+
+check('the totals carry the wire fees separately from the wires',
+    [plan.totals.transfer, plan.totals.transferCost],
+    [plan.transfers.reduce((s, t) => s + t.transfer, 0), 2.05]);
+
+console.log('topping up for one more unit');
+
+// €1,500 bought 14 shares of a €100 ETF with a €2.50 flat fee: €1,502.50 would
+// have bought 15, so €2.50 more is the whole difference.
+check('the plan says what one more share would cost over the budget',
+    orderOf(plan, 'IE00B4L5Y983').topUpForNextUnit, 2.5);
+// The €2,500 category buys 2 lots (€1,996); a third needs €2,994 of bonds plus
+// the €5.69 the percent plan charges at that size — €499.69 more than it holds.
+check('for a bond it is a whole lot, fee recomputed at the larger size',
+    orderOf(plan, 'IT0005534141').topUpForNextUnit, 499.69);
+check('with the fee on top, the top-up is the bare price of the next share',
+    orderOf(feesOnTop, 'IE00B4L5Y983').topUpForNextUnit, 100);
+check('an order too small to buy anything says what the first unit costs',
+    orderOf(tinyPlan, 'IE00B4L5Y983').topUpForNextUnit, 62.5);
+check('a fractional order has no next unit to reach for',
+    orderOf(fractional, 'IE00B4L5Y983').topUpForNextUnit, undefined);
 
 console.log('totals');
 

@@ -29,6 +29,21 @@ export interface Broker {
   commissionMax?: number;      // optional maximum fee (percent mode)
   // Interest paid on the cash sitting at this broker. Absent = no remuneration.
   remuneration?: BrokerRemuneration;
+  // What it costs to move money INTO this broker — the bank fee on the wire,
+  // charged by whoever sends it. Absent = never counted.
+  transferCost?: BrokerTransferCost;
+}
+
+// How a wire to a broker is priced: free, a flat bank fee, or a % of the amount
+// (usually with a floor and a ceiling).
+export type TransferCostType = 'free' | 'fixed' | 'percent';
+
+export interface BrokerTransferCost {
+  type: TransferCostType;
+  fixed?: number;    // € per wire, type 'fixed'
+  percent?: number;  // % of the amount wired, type 'percent'
+  min?: number;      // € floor, type 'percent'
+  max?: number;      // € ceiling, type 'percent'
 }
 
 // How often the accrued interest is actually credited to the account.
