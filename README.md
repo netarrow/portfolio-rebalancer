@@ -404,13 +404,26 @@ The plan form picks the asset from a dropdown that shows its **descriptive label
 
 ### YNAB
 
-Pull your [YNAB](https://www.youneedabudget.com/) budget category balances and map each one to an investment asset or to broker cash.
+Pull your [YNAB](https://www.youneedabudget.com/) budget category balances, say where each category's money should end up, and get back the two things that follow: **how much to wire to each broker** and **which orders to place**.
 
 ![YNAB import](screenshots/ynab_import.png)
 
-- **Current** vs **average N-month budgeted** columns (configurable window).
-- Per-category mapping to an asset or broker cash; search / filter; summary by mapped asset; *Sync now*.
+- **Available** vs **budgeted this month** per category, grouped as YNAB groups them; search / filter, *mapped only*, *Sync now*.
+- Each category points at an **asset** (its money becomes shares) or at a **broker's cash** (it stays liquid there). An asset mapping can also name the **broker** the order goes through and the **portfolio** it belongs to.
 - Credentials and mappings stay on the device.
+
+#### Funding plan
+
+![YNAB funding plan](screenshots/ynab_funding_plan.png)
+
+Everything below is computed from data the app already holds — the category balances, the broker commission plans, the [free-buy promotions](#settings) of the month and the last known prices.
+
+- **Transfers to make**: one row per broker with what its orders and cash top-ups need, the cash it already holds — net of its **minimum liquidity** and of what *other* portfolios have earmarked — and the difference to wire, rounded up to the step you choose. A broker with enough cash reads *covered*.
+- **Purchases to execute**: categories pointing at the same ticker, broker and portfolio are merged into **one order**, so one commission is paid instead of one per category. Orders are sized in whole units, or in whole **€1,000 lots** for a single bond on the MOT, and the residue is reported rather than hidden.
+- **Commissions** are priced against the broker's own plan (flat, or percent with a floor and a cap). An ISIN covered by a **free-buy promotion** at that broker this month, and a broker with no commission plan at all, are both priced as **free** and labelled with which of the two it is. The headline shows what the free plans waived.
+- Whether the fee comes **out of the category's money** (one share less is bought) or is an **extra outlay the wire has to cover** is a toggle — as is funding from *available* rather than *budgeted this month*, fractional instead of whole shares, and whether the cash already at the broker counts.
+- Orders that cannot be placed say why: no known price, no broker, no portfolio, or not enough money for one unit yet. A commission that eats more than a configurable share of the trade is flagged too.
+- **Register purchases** books the ready orders as real Buy transactions — free ones flagged as such — and moves the broker cash by the exact amounts: the wire in, the orders and their fees out. The YNAB side stays yours to record.
 
 ### YNAB Goals
 
