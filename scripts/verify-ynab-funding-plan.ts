@@ -1,6 +1,7 @@
 // Known-answer checks for the YNAB funding plan: order merging, commission
 // pricing (fixed, percent-with-minimum, free-buy promos, no-plan brokers), bond
-// lot sizing, and the wire each broker needs once its own cash is counted.
+// lot sizing, the wire each broker needs once its own cash is counted, and the
+// split of a category that funds a whole portfolio.
 // Run with: npx esbuild scripts/verify-ynab-funding-plan.ts --bundle --format=esm | node --input-type=module
 import type {
     AssetDefinition, Broker, FreeCommissionPeriod, Portfolio, Transaction,
@@ -10,6 +11,8 @@ import { DEFAULT_YNAB_FUNDING_SETTINGS } from '../src/types';
 import {
     buildYnabFundingPlan, isRegisterableOrder, roundUpTo, transferCostFor, YNAB_FUNDING_TX_PREFIX,
 } from '../src/utils/ynabFundingPlan';
+import { splitPortfolioBudget } from '../src/utils/ynabPortfolioSplit';
+import type { Asset } from '../src/types';
 
 let failures = 0;
 
@@ -302,6 +305,129 @@ check('an order too small to buy anything says what the first unit costs',
     orderOf(tinyPlan, 'IE00B4L5Y983').topUpForNextUnit, 62.5);
 check('a fractional order has no next unit to reach for',
     orderOf(fractional, 'IE00B4L5Y983').topUpForNextUnit, undefined);
+
+console.log('a portfolio as the destination');
+
+// A 60/40 portfolio holding €6,000 of World and €1,000 of EM: the EM row is the
+// underweight one, so a contribution goes mostly there.
+const tiltPortfolio: Portfolio = {
+    id: 'p-tilt', name: 'Tactical Tilt', order: 3, preferredBrokerId: 'b-degiro',
+    allocations: { IE00B4L5Y983: 60, IE00BKM4GZ66: 40 },
+};
+
+const tiltAssets: Asset[] = [
+    { ticker: 'IE00B4L5Y983', assetClass: 'Stock', quantity: 60, averagePrice: 90, currentPrice: 100, currentValue: 6000 },
+    { ticker: 'IE00BKM4GZ66', assetClass: 'Stock', quantity: 32, averagePrice: 30, currentPrice: 31.2, currentValue: 998.4 },
+];
+
+const split = splitPortfolioBudget({
+    portfolio: tiltPortfolio,
+    budget: 1000,
+    assets: tiltAssets,
+    marketData: prices,
+    assetSettings,
+});
+// Post-contribution total €7,998.40: World wants €4,799.04 (already over it, so
+// no gap), EM wants €3,199.36 against €998.40 — the whole €1,000 goes to EM.
+check('the money goes to the underweight row', split.lines.map(l => l.ticker), ['IE00BKM4GZ66']);
+// Not floored to 32 shares (€998.40) here: rounding happens once, downstream,
+// where the commission is known. The row's gap is far larger than €1,000, so it
+// takes all of it.
+check('the row is handed the whole contribution, unrounded', split.lines[0].eur, 1000);
+check('leaving nothing behind for the orders to miss', split.leftover, 0);
+
+const onTarget = splitPortfolioBudget({
+    portfolio: { ...tiltPortfolio, allocations: { IE00B4L5Y983: 100 } },
+    budget: 100,
+    assets: [tiltAssets[0]],
+    marketData: prices,
+    assetSettings,
+});
+// A single 100% row always has a gap once the money joins the pie, so being
+// "on target" only happens when a row is genuinely overweight.
+check('a lone row still absorbs the contribution', onTarget.lines.length, 1);
+
+// A row never takes more than its own gap, however much money arrives.
+const overflowing = splitPortfolioBudget({
+    portfolio: { ...tiltPortfolio, allocations: { IE00BKM4GZ66: 10, IE00B4L5Y983: 90 } },
+    budget: 100000,
+    assets: tiltAssets,
+    marketData: prices,
+    assetSettings,
+});
+const emLine = overflowing.lines.find(l => l.ticker === 'IE00BKM4GZ66');
+// EM's target is 10% of €106,998.40 = €10,699.84, against €998.40 held.
+check('a row is never handed more than its gap',
+    Math.round((emLine?.eur ?? 0) * 100) / 100 <= 9701.44 + 0.01, true);
+check('and what no row can absorb stays uninvested',
+    Math.round((overflowing.leftover + overflowing.lines.reduce((s, l) => s + l.eur, 0)) * 100) / 100,
+    100000);
+
+const noTargets = splitPortfolioBudget({
+    portfolio: { id: 'p-none', name: 'No targets', order: 9 },
+    budget: 500, assets: [], marketData: prices, assetSettings,
+});
+check('a portfolio with no targets places nothing and says so',
+    [noTargets.lines.length, noTargets.leftover, noTargets.reason], [0, 500, 'no-targets']);
+
+// Holdings with no price of their own and nothing in market data: the rows
+// exist but nothing can be sized against them.
+const pricelessSplit = splitPortfolioBudget({
+    portfolio: tiltPortfolio,
+    budget: 500,
+    assets: tiltAssets.map(a => ({ ...a, currentPrice: undefined })),
+    marketData: {},
+    assetSettings,
+});
+check('rows with no price cannot receive the money',
+    [pricelessSplit.lines.length, pricelessSplit.reason], [0, 'no-price']);
+
+// An amount-mode portfolio targets € figures instead of weights, and fills them
+// in whole bond lots.
+const ladderSplit = splitPortfolioBudget({
+    portfolio: {
+        id: 'p-ladder', name: 'Goal Ladder', order: 4, targetMode: 'amount',
+        amountTargets: { IT0005534141: 3000 },
+    },
+    budget: 1500,
+    assets: [],
+    marketData: prices,
+    assetSettings,
+});
+check('an amount-mode portfolio buys toward its € target in whole lots',
+    [ladderSplit.lines.map(l => l.ticker), ladderSplit.lines[0].eur], [['IT0005534141'], 998]);
+check('what a second lot would have needed stays uninvested', ladderSplit.leftover, 502);
+
+// The same portfolio, reached through a category mapped to it. The plan reads
+// the portfolio's holdings from its own transactions, so the fixture states
+// them as trades rather than as an assets array.
+const tiltTransactions: Transaction[] = [
+    { id: 'tt1', ticker: 'IE00B4L5Y983', amount: 60, price: 90, date: '2026-02-01', direction: 'Buy', brokerId: 'b-degiro', portfolioId: 'p-tilt' },
+    { id: 'tt2', ticker: 'IE00BKM4GZ66', amount: 32, price: 30, date: '2026-02-01', direction: 'Buy', brokerId: 'b-degiro', portfolioId: 'p-tilt' },
+];
+
+const viaPortfolio = build({}, {
+    portfolios: [...portfolios, tiltPortfolio],
+    categories: [cat('c-tilt', 'Tilt top-up', 1000)],
+    mappings: [{ categoryId: 'c-tilt', target: { kind: 'portfolio', portfolioId: 'p-tilt' } }],
+    transactions: tiltTransactions,
+});
+check('the split becomes an ordinary order', viaPortfolio.orders.length, 1);
+check('booked in the portfolio that was funded',
+    [orderOf(viaPortfolio, 'IE00BKM4GZ66').portfolioId, orderOf(viaPortfolio, 'IE00BKM4GZ66').brokerId],
+    ['p-tilt', 'b-degiro']);
+check('the source says which portfolio split it',
+    orderOf(viaPortfolio, 'IE00BKM4GZ66').sources[0].viaPortfolio, 'Tactical Tilt');
+// The split hands the order the full €1,000; Degiro's €2.50 flat fee comes out
+// of the same money, so 31 shares of €31.20 fit.
+check('the order is then sized with its commission like any other',
+    [orderOf(viaPortfolio, 'IE00BKM4GZ66').quantity, orderOf(viaPortfolio, 'IE00BKM4GZ66').commission],
+    [31, 2.5]);
+check('with the whole contribution placed, nothing is reported as unplaced',
+    viaPortfolio.ignored.length, 0);
+check('and it still adds up: gross + commission + leftover = the budget',
+    Math.round((viaPortfolio.totals.gross + viaPortfolio.totals.commission + viaPortfolio.totals.leftover) * 100) / 100,
+    viaPortfolio.totals.budget);
 
 console.log('totals');
 

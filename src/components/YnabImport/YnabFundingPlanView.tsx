@@ -3,6 +3,7 @@ import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { buildYnabFundingPlan, isRegisterableOrder } from '../../utils/ynabFundingPlan';
 import type { FundingOrderWarning } from '../../utils/ynabFundingPlan';
+import type { PortfolioSplitReason } from '../../utils/ynabPortfolioSplit';
 import { formatMonthKey } from '../../utils/freeCommissions';
 
 /**
@@ -39,11 +40,19 @@ const WARNING_SHORT: Record<FundingOrderWarning, string> = {
 
 const ROUNDING_STEPS = [0, 1, 10, 50, 100];
 
+// Why a portfolio destination could not place (all of) its money.
+const SPLIT_REASONS: Record<PortfolioSplitReason, string> = {
+    'no-targets': 'that portfolio has no targets to spread it over.',
+    'on-target': 'every row of that portfolio is already at or above its target.',
+    'no-price': 'none of that portfolio\'s rows has a known price.',
+    'too-small': 'what is left does not pay for one more share there.',
+};
+
 const YnabFundingPlanView: React.FC = () => {
     const {
         ynabCategories, ynabMappings, ynabFundingSettings, setYnabFundingSettings,
         registerYnabFundingOrders, brokers, portfolios, assetSettings, transactions,
-        marketData, freeCommissionPeriods,
+        marketData, freeCommissionPeriods, ynabGoalAllocations, ynabGoals, virtualBonds,
     } = usePortfolio();
 
     const [expanded, setExpanded] = useState<string | null>(null);
@@ -58,10 +67,18 @@ const YnabFundingPlanView: React.FC = () => {
         prices: marketData,
         transactions,
         freeCommissionPeriods,
+        goalAllocations: ynabGoalAllocations,
+        goals: ynabGoals,
+        virtualBonds,
         settings: ynabFundingSettings,
-    }), [ynabCategories, ynabMappings, brokers, portfolios, assetSettings, marketData, transactions, freeCommissionPeriods, ynabFundingSettings]);
+    }), [ynabCategories, ynabMappings, brokers, portfolios, assetSettings, marketData, transactions,
+        freeCommissionPeriods, ynabGoalAllocations, ynabGoals, virtualBonds, ynabFundingSettings]);
 
     const { orders, deposits, transfers, ignored, totals } = plan;
+    // Two different stories: a category with nothing in it, and money a
+    // portfolio split could not place.
+    const empties = ignored.filter(i => i.reason !== 'not-placed');
+    const unplaced = ignored.filter(i => i.reason === 'not-placed');
     const registerable = orders.filter(isRegisterableOrder);
     const repeated = registerable.filter(o => o.warnings.includes('already-registered')).length;
 
@@ -101,7 +118,8 @@ const YnabFundingPlanView: React.FC = () => {
             <div className="ynab-plan-card">
                 <h3 style={{ margin: 0 }}>Funding plan</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginBottom: 0 }}>
-                    Map a category to an asset above and this becomes the wire to send and the orders to place.
+                    Map a category to an asset — or to a whole portfolio — above, and this becomes the wire
+                    to send and the orders to place.
                     {ignored.length > 0 && ' Every mapped category is currently empty.'}
                 </p>
                 <style>{cardStyle}</style>
@@ -406,6 +424,9 @@ const YnabFundingPlanView: React.FC = () => {
                                                 {order.sources.map(source => (
                                                     <li key={source.categoryId}>
                                                         {source.groupName} › <strong>{source.categoryName}</strong> — {eur(source.amount)}
+                                                        {source.viaPortfolio && (
+                                                            <span className="cell-note"> · split by {source.viaPortfolio}'s targets</span>
+                                                        )}
                                                     </li>
                                                 ))}
                                             </ul>
@@ -432,11 +453,22 @@ const YnabFundingPlanView: React.FC = () => {
                 </>
             )}
 
-            {ignored.length > 0 && (
+            {empties.length > 0 && (
                 <p className="plan-footnote">
-                    {ignored.length} mapped categor{ignored.length === 1 ? 'y holds' : 'ies hold'} no money
-                    {ignored.some(i => i.reason === 'category-missing') && ' or no longer exist in YNAB'} and are left out:{' '}
-                    {ignored.map(i => i.categoryName).join(', ')}.
+                    {empties.length} mapped categor{empties.length === 1 ? 'y holds' : 'ies hold'} no money
+                    {empties.some(i => i.reason === 'category-missing') && ' or no longer exist in YNAB'} and are left out:{' '}
+                    {empties.map(i => i.categoryName).join(', ')}.
+                </p>
+            )}
+
+            {unplaced.length > 0 && (
+                <p className="plan-footnote">
+                    {unplaced.map(i => (
+                        <span key={i.categoryId} style={{ display: 'block' }}>
+                            {eur(i.amount)} of <strong>{i.categoryName}</strong> stays uninvested —{' '}
+                            {SPLIT_REASONS[i.splitReason ?? 'too-small']}
+                        </span>
+                    ))}
                 </p>
             )}
 
