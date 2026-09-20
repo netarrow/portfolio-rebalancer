@@ -74,7 +74,7 @@ const YnabFundingPlanView: React.FC = () => {
     }), [ynabCategories, ynabMappings, brokers, portfolios, assetSettings, marketData, transactions,
         freeCommissionPeriods, ynabGoalAllocations, ynabGoals, virtualBonds, ynabFundingSettings]);
 
-    const { orders, deposits, transfers, ignored, totals } = plan;
+    const { orders, deposits, transfers, sources, ignored, totals } = plan;
     // Two different stories: a category with nothing in it, and money a
     // portfolio split could not place.
     const empties = ignored.filter(i => i.reason !== 'not-placed');
@@ -156,7 +156,7 @@ const YnabFundingPlanView: React.FC = () => {
                     <span className="plan-figure-label">To wire to the brokers</span>
                     <strong>{eur(totals.transfer)}</strong>
                     {totals.transferCost > 0 && (
-                        <span className="plan-figure-note" title="Bank fees on the wires, charged on the sending side — not added to the amounts above.">
+                        <span className="plan-figure-note" title="What the sending accounts charge for these wires — paid by them, not added to the amounts above.">
                             + {eur(totals.transferCost)} of bank fees
                         </span>
                     )}
@@ -211,6 +211,17 @@ const YnabFundingPlanView: React.FC = () => {
                     </select>
                 </label>
                 <label>
+                    Wire from
+                    <select
+                        className="form-select"
+                        value={ynabFundingSettings.defaultSourceBrokerId || ''}
+                        onChange={e => patch({ defaultSourceBrokerId: e.target.value || undefined })}
+                    >
+                        <option value="">— Not set —</option>
+                        {brokers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                </label>
+                <label>
                     Round wires to
                     <select
                         className="form-select"
@@ -257,6 +268,7 @@ const YnabFundingPlanView: React.FC = () => {
                     <thead>
                         <tr>
                             <th>Broker</th>
+                            <th>From</th>
                             <th style={{ textAlign: 'right' }}>Orders</th>
                             <th style={{ textAlign: 'right' }}>Cash top-up</th>
                             <th style={{ textAlign: 'right' }}>Needed</th>
@@ -284,6 +296,25 @@ const YnabFundingPlanView: React.FC = () => {
                                         <div className="cell-note">min liquidity {eur(t.minLiquidity, 0)}</div>
                                     )}
                                 </td>
+                                <td className="tr-cell-from" data-label="From">
+                                    {t.legs.length === 0 ? (
+                                        <span className="muted-cell">—</span>
+                                    ) : (
+                                        t.legs.map(leg => (
+                                            <div key={leg.sourceBrokerId ?? 'unknown'} className={leg.sourceBrokerId ? undefined : 'muted-cell'}>
+                                                {leg.sourceBrokerName}
+                                                {t.legs.length > 1 && <span className="cell-note"> {eur(leg.amount, 0)}</span>}
+                                            </div>
+                                        ))
+                                    )}
+                                    {t.warnings.includes('unknown-source') && (
+                                        <div className="warning-pills">
+                                            <span className="pill pill-warn" title="No account named for that money: pick one on the mapping, or set a default below the headline.">
+                                                no source
+                                            </span>
+                                        </div>
+                                    )}
+                                </td>
                                 <td className="num-cell" data-label="Orders" style={{ textAlign: 'right' }}>{eur(t.ordersOutlay)}</td>
                                 <td className="num-cell" data-label="Cash top-up" style={{ textAlign: 'right' }}>{t.deposits > 0 ? eur(t.deposits) : '—'}</td>
                                 <td className="num-cell" data-label="Needed" style={{ textAlign: 'right' }}>{eur(t.required)}</td>
@@ -300,7 +331,7 @@ const YnabFundingPlanView: React.FC = () => {
                                     {t.transfer === 0 ? (
                                         <span className="muted-cell">—</span>
                                     ) : t.cost === 0 ? (
-                                        <span className="pill pill-ok" title="This broker's wires are free.">free</span>
+                                        <span className="pill pill-ok" title="The sending account charges nothing for this wire.">free</span>
                                     ) : (
                                         <>
                                             {eur(t.cost)}
@@ -321,6 +352,7 @@ const YnabFundingPlanView: React.FC = () => {
                     <tfoot>
                         <tr className="plan-total-row">
                             <td className="tr-cell-broker">Total</td>
+                            <td className="is-empty" />
                             <td className="num-cell" data-label="Orders" style={{ textAlign: 'right' }}>{eur(totals.outlay)}</td>
                             <td className="num-cell" data-label="Cash top-up" style={{ textAlign: 'right' }}>{totals.deposits > 0 ? eur(totals.deposits) : '—'}</td>
                             <td className="num-cell" data-label="Needed" style={{ textAlign: 'right' }}>{eur(totals.outlay + totals.deposits)}</td>
@@ -438,6 +470,70 @@ const YnabFundingPlanView: React.FC = () => {
                     </tbody>
                 </table>
             </div>
+
+            {sources.length > 0 && totals.transfer > 0 && (
+                <>
+                    <h4 className="plan-section-title">Leaving your accounts</h4>
+                    <div className="plan-table-wrap">
+                        <table className="plan-table">
+                            <thead>
+                                <tr>
+                                    <th>Account</th>
+                                    <th style={{ textAlign: 'right' }}>Wired out</th>
+                                    <th style={{ textAlign: 'right' }}>Bank fee</th>
+                                    <th style={{ textAlign: 'right' }}>Total out</th>
+                                    <th style={{ textAlign: 'right' }}>Available</th>
+                                    <th style={{ textAlign: 'right' }}>Left after</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sources.map(source => (
+                                    <tr key={source.brokerId ?? 'unknown'} className="plan-source-row">
+                                        <td className="tr-cell-broker">
+                                            <strong>{source.brokerName}</strong>
+                                            {source.minLiquidity > 0 && (
+                                                <div className="cell-note">min liquidity {eur(source.minLiquidity, 0)}</div>
+                                            )}
+                                            {source.earmarked > 0 && (
+                                                <div className="cell-note">{eur(source.earmarked, 0)} earmarked</div>
+                                            )}
+                                        </td>
+                                        <td className="num-cell" data-label="Wired out" style={{ textAlign: 'right' }}>{eur(source.amountOut)}</td>
+                                        <td className="num-cell" data-label="Bank fee" style={{ textAlign: 'right' }}>
+                                            {source.cost > 0 ? eur(source.cost) : <span className="pill pill-ok">free</span>}
+                                        </td>
+                                        <td className="num-cell" data-label="Total out" style={{ textAlign: 'right' }}>{eur(source.totalOut)}</td>
+                                        <td className="num-cell" data-label="Available" style={{ textAlign: 'right' }}>
+                                            {source.brokerId ? eur(source.availableCash) : <span className="muted-cell">—</span>}
+                                        </td>
+                                        <td className="num-cell" data-label="Left after" style={{ textAlign: 'right' }}>
+                                            {source.brokerId ? (
+                                                <strong className={source.remaining < 0 ? 'short-amount' : undefined}>
+                                                    {eur(source.remaining)}
+                                                </strong>
+                                            ) : <span className="muted-cell">—</span>}
+                                            {source.warnings.includes('insufficient') && (
+                                                <div className="warning-pills">
+                                                    <span className="pill pill-warn" title="This account does not hold enough free cash for what the plan asks it to send.">
+                                                        short {eur(-source.remaining)}
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {source.warnings.includes('unknown-source') && (
+                                                <div className="warning-pills">
+                                                    <span className="pill pill-warn" title="No account named: nothing is checked and no fee is priced for this money.">
+                                                        unassigned
+                                                    </span>
+                                                </div>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </>
+            )}
 
             {deposits.length > 0 && (
                 <>
@@ -575,6 +671,8 @@ const cardStyle = `
     .cell-note { font-size: 0.72rem; color: var(--text-muted); }
     .muted-cell { color: var(--text-muted); font-weight: 400; }
     .wire-amount { color: var(--color-primary); }
+    .short-amount { color: var(--color-danger); }
+    .plan-table .tr-cell-from { font-size: 0.85rem; }
     .warning-pills { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.2rem; justify-content: flex-end; }
     .pill {
         display: inline-block;

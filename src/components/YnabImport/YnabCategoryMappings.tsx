@@ -6,9 +6,10 @@ import { milliunitsToEur } from '../../services/ynabApi';
 /**
  * Where each YNAB category's money is meant to end up.
  *
- * One row per category, grouped as YNAB groups them. A category's money can
- * become shares of one asset, fund a whole portfolio (its own targets then
- * decide what to buy), or simply stay liquid at a broker. An asset row can also
+ * One row per category, grouped as YNAB groups them. Each mapped category says
+ * which account its money leaves from — a current account is a broker like any
+ * other — and where it ends up: shares of one asset, a whole portfolio (its own
+ * targets then decide what to buy), or simply cash at a broker. An asset row can also
  * name the broker the order goes through and the portfolio it belongs to — both
  * optional, but naming them is what lets the funding plan below price the
  * commission and register the trade.
@@ -23,17 +24,19 @@ const PORTFOLIO_PREFIX = 'portfolio:';
 
 const YnabCategoryMappings: React.FC = () => {
     const {
-        ynabCategories, ynabMappings, setYnabMapping,
-        assetSettings, brokers, portfolios,
+        ynabCategories, ynabMappings, setYnabMapping, setYnabMappingSource,
+        ynabFundingSettings, assetSettings, brokers, portfolios,
     } = usePortfolio();
 
     const [search, setSearch] = useState('');
     const [mappedOnly, setMappedOnly] = useState(false);
 
     const mappingByCategory = useMemo(
-        () => new Map(ynabMappings.map(m => [m.categoryId, m.target])),
+        () => new Map(ynabMappings.map(m => [m.categoryId, m])),
         [ynabMappings],
     );
+
+    const defaultSourceName = brokers.find(b => b.id === ynabFundingSettings.defaultSourceBrokerId)?.name;
 
     // Assets worth offering: everything in the registry except the cash and
     // group pseudo-tickers, ordered by label so the select reads like the app.
@@ -49,7 +52,7 @@ const YnabCategoryMappings: React.FC = () => {
         const needle = search.trim().toLowerCase();
         const byGroup = new Map<string, { name: string; categories: YnabCategory[] }>();
         for (const category of ynabCategories) {
-            const target = mappingByCategory.get(category.id);
+            const target = mappingByCategory.get(category.id)?.target;
             if (mappedOnly && (!target || target.kind === 'unmapped')) continue;
             if (needle && !`${category.name} ${category.groupName}`.toLowerCase().includes(needle)) continue;
             const entry = byGroup.get(category.groupId) ?? { name: category.groupName, categories: [] };
@@ -136,8 +139,9 @@ const YnabCategoryMappings: React.FC = () => {
                 <div>
                     <h3 style={{ margin: 0 }}>Category mappings</h3>
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                        Where each category's money should end up. {mappedCount} of {ynabCategories.length} mapped.
-                        Naming a broker and a portfolio lets the plan below price the commission and book the trade.
+                        Where each category's money starts and where it should end up. {mappedCount} of{' '}
+                        {ynabCategories.length} mapped. The <em>From</em> account pays the wire out of its own
+                        liquidity; naming a broker and a portfolio lets the plan price the commission and book the trade.
                     </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -163,6 +167,7 @@ const YnabCategoryMappings: React.FC = () => {
                             <th>Category</th>
                             <th style={{ textAlign: 'right' }}>Available</th>
                             <th style={{ textAlign: 'right' }}>Budgeted</th>
+                            <th>From</th>
                             <th>Destination</th>
                             <th>Broker</th>
                             <th>Portfolio</th>
@@ -172,12 +177,14 @@ const YnabCategoryMappings: React.FC = () => {
                         {groups.map(group => (
                             <React.Fragment key={group.name}>
                                 <tr className="group-row">
-                                    <td colSpan={6}>{group.name}</td>
+                                    <td colSpan={7}>{group.name}</td>
                                 </tr>
                                 {group.categories.map(category => {
-                                    const target = mappingByCategory.get(category.id);
+                                    const mapping = mappingByCategory.get(category.id);
+                                    const target = mapping?.target;
                                     const isAsset = target?.kind === 'asset';
                                     const isPortfolio = target?.kind === 'portfolio';
+                                    const isMapped = !!target && target.kind !== 'unmapped';
                                     // A portfolio destination buys through a broker too, so the
                                     // broker cell stays live; the portfolio cell instead explains
                                     // which rule will split the money.
@@ -186,13 +193,38 @@ const YnabCategoryMappings: React.FC = () => {
                                         : undefined;
                                     const available = milliunitsToEur(category.balanceMilliunits);
                                     return (
-                                        <tr key={category.id} className={target && target.kind !== 'unmapped' ? 'mapped-row' : undefined}>
+                                        <tr key={category.id} className={isMapped ? 'mapped-row' : undefined}>
                                             <td className="map-cell-name">{category.name}</td>
                                             <td className="map-cell-avail" data-label="Available" style={{ textAlign: 'right', color: available < 0 ? 'var(--color-danger)' : undefined }}>
                                                 {eur(available)}
                                             </td>
                                             <td className="map-cell-budgeted" data-label="Budgeted" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                                                 {eur(milliunitsToEur(category.budgetedMilliunits ?? 0))}
+                                            </td>
+                                            {/* Where the money starts: a real account, whose own
+                                                liquidity pays the wire and its outgoing fee. */}
+                                            <td className={`map-cell-source${isMapped ? '' : ' is-empty'}`} data-label="From">
+                                                {isMapped ? (
+                                                    <select
+                                                        className="form-select"
+                                                        value={mapping?.sourceBrokerId || ''}
+                                                        // The dense desktop table clips the option text; the
+                                                        // tooltip keeps the whole name reachable.
+                                                        title={mapping?.sourceBrokerId
+                                                            ? brokers.find(b => b.id === mapping.sourceBrokerId)?.name
+                                                            : defaultSourceName
+                                                                ? `Default account: ${defaultSourceName}`
+                                                                : 'No account set — the wire is not priced'}
+                                                        onChange={e => setYnabMappingSource(category.id, e.target.value || null)}
+                                                    >
+                                                        <option value="">
+                                                            {defaultSourceName ? `Default · ${defaultSourceName}` : 'Not set'}
+                                                        </option>
+                                                        {brokers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                                    </select>
+                                                ) : (
+                                                    <span className="muted-cell">—</span>
+                                                )}
                                             </td>
                                             <td className="map-cell-dest" data-label="Destination">
                                                 <select
@@ -268,7 +300,7 @@ const YnabCategoryMappings: React.FC = () => {
                         ))}
                         {groups.length === 0 && (
                             <tr>
-                                <td colSpan={6} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>
+                                <td colSpan={7} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>
                                     No category matches the filter.
                                 </td>
                             </tr>

@@ -65,6 +65,8 @@ export interface FundingSource {
     amount: number;
     /** Set when the category funded a whole portfolio and this is its slice. */
     viaPortfolio?: string;
+    /** Account this money leaves from, per the category's mapping. */
+    sourceBrokerId?: string;
 }
 
 export type FundingOrderWarning =
@@ -127,7 +129,17 @@ export interface FundingDeposit {
 export type FundingTransferWarning =
     | 'unknown-broker'     // orders with no broker: the wire cannot be addressed
     | 'earmark-shortfall'  // the broker's usable cash is held back by other portfolios
-    | 'costly-transfer';   // the bank fee on the wire is a large slice of it
+    | 'costly-transfer'    // the bank fee on the wire is a large slice of it
+    | 'unknown-source';    // no source account named: nothing pays the fee
+
+/** One wire: money leaving one account for the broker of its transfer. */
+export interface FundingTransferLeg {
+    sourceBrokerId?: string;
+    sourceBrokerName: string;
+    amount: number;
+    /** Fee of the SOURCE account's own plan — the sender pays it. */
+    cost: number;
+}
 
 export interface FundingTransfer {
     brokerId?: string;
@@ -150,11 +162,35 @@ export interface FundingTransfer {
     transfer: number;
     /** Usable cash left over once the plan settles. */
     surplus: number;
-    /** Bank fee on this wire, per the broker's transfer cost. Never added to it. */
+    /** The accounts this wire actually leaves from, one leg each. */
+    legs: FundingTransferLeg[];
+    /** Bank fee on this wire: the sum of its legs, charged by the senders. */
     cost: number;
     /** cost as a % of the wire, 0 when nothing is wired. */
     costPercent: number;
     warnings: FundingTransferWarning[];
+}
+
+/** What one account has to send out, and whether it can afford to. */
+export interface FundingSourceAccount {
+    brokerId?: string;
+    brokerName: string;
+    /** € wired out of this account across every destination. */
+    amountOut: number;
+    /** Fees this account's own plan charges on those wires. */
+    cost: number;
+    /** amountOut + cost: what actually leaves the balance. */
+    totalOut: number;
+    currentLiquidity: number;
+    minLiquidity: number;
+    /** Cash reserved here for portfolios, which the wires must not eat into. */
+    earmarked: number;
+    /** currentLiquidity − minLiquidity − earmarked, floored at 0. */
+    availableCash: number;
+    /** availableCash − totalOut; negative means the account is short. */
+    remaining: number;
+    /** 'insufficient' = this account cannot cover what it is asked to send. */
+    warnings: ('insufficient' | 'unknown-source')[];
 }
 
 /** A mapped category whose money never reaches the plan, and why. */
@@ -190,6 +226,8 @@ export interface YnabFundingPlan {
     orders: FundingOrder[];
     deposits: FundingDeposit[];
     transfers: FundingTransfer[];
+    /** One row per account the money leaves from. */
+    sources: FundingSourceAccount[];
     ignored: FundingIgnored[];
     totals: FundingTotals;
     /** Month the free-buy promos were evaluated for ('YYYY-MM'). */
@@ -418,6 +456,8 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
             categoryName: category.name,
             groupName: category.groupName,
             amount,
+            // The category's own account, or the plan's default one.
+            sourceBrokerId: mapping.sourceBrokerId ?? settings.defaultSourceBrokerId,
         };
         if (!(amount > 0)) {
             ignored.push({ categoryId: category.id, categoryName: category.name, amount, reason: 'no-funds' });
@@ -577,7 +617,48 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
         const shortfall = roundCents(Math.max(0, required - usableCash));
         const transfer = roundUpTo(shortfall, settings.transferRoundingStep);
 
-        const cost = transferCostFor(broker, transfer);
+        // Who sends the money: the accounts behind the categories that fund this
+        // broker, each taking the share of the wire its categories contribute.
+        // An account cannot wire to itself, so money already sitting at the
+        // destination funds nothing — it is what `usableCash` above counts.
+        const contributions = new Map<string | undefined, number>();
+        const contributors = [
+            ...brokerOrders.flatMap(o => o.sources),
+            ...deposits.filter(d => d.brokerId === brokerId).flatMap(d => d.sources),
+        ];
+        for (const c of contributors) {
+            const from = c.sourceBrokerId === brokerId ? undefined : c.sourceBrokerId;
+            contributions.set(from, roundCents((contributions.get(from) ?? 0) + c.amount));
+        }
+        const contributed = [...contributions.values()].reduce((s, v) => s + v, 0);
+
+        const legs: FundingTransferLeg[] = transfer <= 0 ? [] : [...contributions.entries()]
+            .map(([sourceBrokerId, share]) => {
+                const amount = contributed > 0
+                    ? roundCents(transfer * (share / contributed))
+                    : roundCents(transfer);
+                const sourceBroker = sourceBrokerId ? brokerById.get(sourceBrokerId) : undefined;
+                return {
+                    sourceBrokerId,
+                    sourceBrokerName: sourceBroker?.name ?? 'Unnamed account',
+                    amount,
+                    cost: transferCostFor(sourceBroker, amount),
+                };
+            })
+            .filter(leg => leg.amount > 0)
+            .sort((a, b) => b.amount - a.amount);
+
+        // Rounding the shares can lose or gain a cent against the wire itself.
+        const legTotal = roundCents(legs.reduce((s, l) => s + l.amount, 0));
+        if (legs.length > 0 && legTotal !== transfer) {
+            legs[0].amount = roundCents(legs[0].amount + (transfer - legTotal));
+            legs[0].cost = transferCostFor(
+                legs[0].sourceBrokerId ? brokerById.get(legs[0].sourceBrokerId) : undefined,
+                legs[0].amount,
+            );
+        }
+
+        const cost = roundCents(legs.reduce((s, l) => s + l.cost, 0));
         const costPercent = transfer > 0 ? (cost / transfer) * 100 : 0;
 
         const warnings: FundingTransferWarning[] = [];
@@ -585,6 +666,7 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
         if (settings.useBrokerCash && earmarkedElsewhere > 0 && currentLiquidity - minLiquidity > usableCash) {
             warnings.push('earmark-shortfall');
         }
+        if (legs.some(l => !l.sourceBrokerId)) warnings.push('unknown-source');
         // Same yardstick as a trade commission: a wire that costs more than the
         // configured share of itself is worth batching instead of repeating.
         if (cost > 0 && costPercent > settings.feeWarnPercent) warnings.push('costly-transfer');
@@ -602,11 +684,48 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
             shortfall,
             transfer,
             surplus: roundCents(Math.max(0, usableCash - required)),
+            legs,
             cost,
             costPercent,
             warnings,
         };
     }).sort((a, b) => (b.transfer - a.transfer) || a.brokerName.localeCompare(b.brokerName));
+
+    // ── What leaves each account ────────────────────────────────────────
+    // The mirror image of the wires: one row per sending account, so a plan
+    // that drains a current account says so before the money moves.
+    const sourceIds: (string | undefined)[] = [];
+    for (const t of transfers) {
+        for (const leg of t.legs) if (!sourceIds.includes(leg.sourceBrokerId)) sourceIds.push(leg.sourceBrokerId);
+    }
+
+    const sources: FundingSourceAccount[] = sourceIds.map(brokerId => {
+        const broker = brokerId ? brokerById.get(brokerId) : undefined;
+        const legs = transfers.flatMap(t => t.legs.filter(l => l.sourceBrokerId === brokerId));
+        const amountOut = roundCents(legs.reduce((s, l) => s + l.amount, 0));
+        const cost = roundCents(legs.reduce((s, l) => s + l.cost, 0));
+        const totalOut = roundCents(amountOut + cost);
+
+        const currentLiquidity = broker?.currentLiquidity ?? 0;
+        const minLiquidity = broker ? roundCents(minLiquidityOf(broker)) : 0;
+        // Whatever this account reserves for a portfolio is not free to leave.
+        const earmarked = roundCents(Object.values(broker?.liquidityAllocations || {})
+            .reduce((s, v) => s + (v || 0), 0));
+        const availableCash = roundCents(Math.max(0, currentLiquidity - minLiquidity - earmarked));
+
+        const warnings: FundingSourceAccount['warnings'] = [];
+        if (!broker) warnings.push('unknown-source');
+        else if (totalOut > availableCash) warnings.push('insufficient');
+
+        return {
+            brokerId,
+            brokerName: broker?.name ?? 'Unnamed account',
+            amountOut, cost, totalOut,
+            currentLiquidity, minLiquidity, earmarked, availableCash,
+            remaining: roundCents(availableCash - totalOut),
+            warnings,
+        };
+    }).sort((a, b) => b.totalOut - a.totalOut);
 
     const sum = (values: number[]) => roundCents(values.reduce((s, v) => s + v, 0));
     const depositTotal = sum(deposits.map(d => d.amount));
@@ -635,7 +754,7 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
             .map(o => feeFor(o.brokerId ? brokerById.get(o.brokerId) : undefined, o.gross).fee)),
     };
 
-    return { orders, deposits, transfers, ignored, totals, monthKey };
+    return { orders, deposits, transfers, sources, ignored, totals, monthKey };
 };
 
 /** True when an order can become a real transaction (sized, with a home). */

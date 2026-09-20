@@ -131,6 +131,7 @@ async function loadMock(page) {
 // Modals here have no Escape handler: dismiss the topmost one through its own
 // close/cancel control so the next screenshot is not shot through an overlay.
 async function closeTopModal(page) {
+  const before = await page.evaluate(() => document.querySelectorAll('.modal-overlay').length);
   await page.evaluate(() => {
     const modal = [...document.querySelectorAll('.modal-content')].pop();
     if (!modal) return;
@@ -139,7 +140,15 @@ async function closeTopModal(page) {
       [...modal.querySelectorAll('button')].find((b) => /^\s*(cancel|close)\s*$/i.test(b.textContent));
     if (btn) btn.click();
   });
-  await sleep(400);
+  // A modal left open swallows the next shot — the one after it then captures
+  // this dialog instead of its own. Wait for it to actually go, and say so if
+  // it does not, rather than shooting through it.
+  for (let i = 0; i < 10; i++) {
+    await sleep(200);
+    const now = await page.evaluate(() => document.querySelectorAll('.modal-overlay').length);
+    if (now < before) return;
+  }
+  console.warn('  !! a modal would not close');
 }
 
 async function scrollAndShoot(page, base) {
@@ -729,9 +738,12 @@ async function scrollAndShoot(page, base) {
     await closeTopModal(page);
   }
   // Edit Broker modal — shows the commission plan, the minimum liquidity and
-  // what a wire into this broker costs
+  // what wiring money out of this account costs.
+  // The title has to match exactly: a substring match on "edit" also catches
+  // the "Credit the interest…" tooltip on the Update liquidity button, which
+  // would re-open that dialog and shoot it instead.
   const brokerEditClicked = await page.evaluate(() => {
-    const btn = document.querySelector('button[title*="Edit" i], button[aria-label*="Edit" i]');
+    const btn = document.querySelector('.broker-card button[title="Edit"]');
     if (btn) {
       btn.click();
       return true;
@@ -745,7 +757,7 @@ async function scrollAndShoot(page, base) {
     await page.evaluate(() => {
       const modal = [...document.querySelectorAll('.modal-content')].pop();
       const label = [...(modal?.querySelectorAll('label') ?? [])].find((l) =>
-        l.textContent.trim().startsWith('Transfer Cost')
+        /transfer cost/i.test(l.textContent)
       );
       if (label) label.scrollIntoView({ block: 'center' });
     });
@@ -758,7 +770,7 @@ async function scrollAndShoot(page, base) {
     const card = [...document.querySelectorAll('.broker-card')].find((c) =>
       c.textContent.includes('\u{1F4B0}')
     );
-    const btn = card?.querySelector('button[title*="Edit" i], button[aria-label*="Edit" i]');
+    const btn = card?.querySelector('button[title="Edit"]');
     if (btn) {
       btn.click();
       return true;

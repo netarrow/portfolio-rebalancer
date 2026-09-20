@@ -49,6 +49,13 @@ const brokers: Broker[] = [
         transferCost: { type: 'fixed', fixed: 0.95 },
     },
     { id: 'b-plain', name: 'Banca Semplice', currentLiquidity: 0 },
+    // The current account the money is wired from: no commission plan (it trades
+    // nothing), a flat fee on what it sends, and a floor it must keep.
+    {
+        id: 'b-bank', name: 'Conto Corrente', currentLiquidity: 5000,
+        minLiquidityType: 'fixed', minLiquidityAmount: 1000,
+        transferCost: { type: 'fixed', fixed: 0.95 },
+    },
 ];
 
 const portfolios: Portfolio[] = [
@@ -217,7 +224,9 @@ const directa = transferOf(plan, 'b-directa');
 // €6,000 held − €5,000 minimum − €400 earmarked for a portfolio out of the plan.
 check('a minimum liquidity and other portfolios\' earmarks are not usable', directa.usableCash, 600);
 check('so the wire makes up the difference', directa.transfer, 1399.79);
-check('and the earmark is flagged', directa.warnings, ['earmark-shortfall']);
+// The base fixture names no source account, so every wire also carries
+// 'unknown-source' — checked on its own further down.
+check('and the earmark is flagged', directa.warnings.includes('earmark-shortfall'), true);
 
 const tr = transferOf(plan, 'b-tr');
 // The EM order landed here too (last-buy fallback), so this broker's wire has
@@ -264,30 +273,80 @@ const yesterday = build({}, {
 });
 check('yesterday\'s purchase does not block today\'s', orderOf(yesterday, 'IE00B4L5Y983').warnings, []);
 
-console.log('wire costs');
-
-check('a percent wire fee is charged on the amount wired',
-    transferOf(plan, 'b-degiro').cost, 1.1);   // 0.1% of €1,102.50
-check('a flat wire fee does not move with the amount',
-    transferOf(plan, 'b-tr').cost, 0.95);
-check('a broker that is already covered is wired nothing, so it costs nothing',
-    transferOf(plan, 'b-directa').cost, 0);
+console.log('where the money comes from, and what the sender pays');
 
 check('the percent floor applies to a small wire', transferCostFor(brokers[0], 200), 1);
 check('and the cap to a large one', transferCostFor(brokers[0], 100000), 5);
-check('a broker with no transfer cost configured wires for free',
+check('an account with no transfer cost configured sends for free',
     transferCostFor(brokers.find(b => b.id === 'b-plain'), 5000), 0);
 check('nothing wired costs nothing', transferCostFor(brokers[0], 0), 0);
 
-const costly = build({}, {
-    brokers: brokers.map(b => b.id === 'b-tr' ? { ...b, transferCost: { type: 'fixed' as const, fixed: 40 } } : b),
+// Every category funded from the current account, by default.
+const fromBank = build({ defaultSourceBrokerId: 'b-bank' });
+check('each wire names the account it leaves from',
+    transferOf(fromBank, 'b-degiro').legs.map(l => l.sourceBrokerName), ['Conto Corrente']);
+check('and is priced with THAT account\'s plan, not the destination\'s',
+    transferOf(fromBank, 'b-degiro').cost, 0.95);
+// A destination holding enough cash needs no wire at all, so nothing leaves.
+const covered = build({ defaultSourceBrokerId: 'b-bank' }, {
+    brokers: brokers.map(b => b.id === 'b-degiro' ? { ...b, currentLiquidity: 50000 } : b),
+});
+check('a destination that is already covered is wired nothing, so it has no legs',
+    [transferOf(covered, 'b-degiro').transfer, transferOf(covered, 'b-degiro').legs.length], [0, 0]);
+
+const bankRow = fromBank.sources.find(s => s.brokerId === 'b-bank')!;
+check('the sending account is summed up across every wire',
+    [bankRow.amountOut, bankRow.cost, bankRow.totalOut],
+    [
+        Math.round(fromBank.transfers.reduce((s, t) => s + t.transfer, 0) * 100) / 100,
+        2.85,  // three wires at €0.95
+        Math.round((fromBank.transfers.reduce((s, t) => s + t.transfer, 0) + 2.85) * 100) / 100,
+    ]);
+// €5,000 held less the €1,000 floor it has to keep.
+check('its free cash is what is left above its own floor', bankRow.availableCash, 4000);
+check('which covers what it is asked to send', [bankRow.warnings, bankRow.remaining > 0], [[], true]);
+
+// The same plan against a thinner balance: the account cannot cover it.
+const short = build({ defaultSourceBrokerId: 'b-bank' }, {
+    brokers: brokers.map(b => b.id === 'b-bank' ? { ...b, currentLiquidity: 2000 } : b),
+});
+const shortRow = short.sources.find(s => s.brokerId === 'b-bank')!;
+check('an account short of the money is flagged before anything moves',
+    [shortRow.availableCash, shortRow.warnings], [1000, ['insufficient']]);
+check('and by how much', Math.round(shortRow.remaining * 100) / 100 < 0, true);
+
+// A category can override the default with its own account.
+const mixed = build({ defaultSourceBrokerId: 'b-bank' }, {
+    mappings: mappings.map(m => m.categoryId === 'c-buffer' ? { ...m, sourceBrokerId: 'b-plain' } : m),
+});
+check('a category funded elsewhere splits its destination\'s wire in two',
+    transferOf(mixed, 'b-tr').legs.map(l => l.sourceBrokerName).sort(),
+    ['Banca Semplice', 'Conto Corrente']);
+check('and the legs still add up to the wire',
+    Math.round(transferOf(mixed, 'b-tr').legs.reduce((s, l) => s + l.amount, 0) * 100) / 100,
+    transferOf(mixed, 'b-tr').transfer);
+check('each leg paying its own account\'s fee',
+    transferOf(mixed, 'b-tr').legs.find(l => l.sourceBrokerId === 'b-plain')!.cost, 0);
+
+// Money already sitting at the destination cannot be wired to itself.
+const selfFunded = build({ defaultSourceBrokerId: 'b-degiro' });
+check('an account never wires to itself',
+    transferOf(selfFunded, 'b-degiro').legs.every(l => l.sourceBrokerId !== 'b-degiro'), true);
+
+const noSource = build();
+check('with no account named the wire is flagged rather than priced',
+    [transferOf(noSource, 'b-degiro').cost, transferOf(noSource, 'b-degiro').warnings.includes('unknown-source')],
+    [0, true]);
+
+const costly = build({ defaultSourceBrokerId: 'b-bank' }, {
+    brokers: brokers.map(b => b.id === 'b-bank' ? { ...b, transferCost: { type: 'fixed' as const, fixed: 40 } } : b),
 });
 check('a wire fee larger than the configured share of itself is flagged',
-    transferOf(costly, 'b-tr').warnings, ['costly-transfer']);
+    transferOf(costly, 'b-tr').warnings.includes('costly-transfer'), true);
 
 check('the totals carry the wire fees separately from the wires',
-    [plan.totals.transfer, plan.totals.transferCost],
-    [plan.transfers.reduce((s, t) => s + t.transfer, 0), 2.05]);
+    [fromBank.totals.transfer, fromBank.totals.transferCost],
+    [fromBank.transfers.reduce((s, t) => s + t.transfer, 0), 2.85]);
 
 console.log('topping up for one more unit');
 
