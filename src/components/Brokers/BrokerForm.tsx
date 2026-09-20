@@ -535,10 +535,10 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
 
                     {/* Transfer cost: priced by the YNAB funding plan on the wire it asks for */}
                     <div className="form-group">
-                        <label style={{ display: 'block', marginBottom: '0.25rem' }}>Transfer Cost</label>
+                        <label style={{ display: 'block', marginBottom: '0.25rem' }}>Outgoing Transfer Cost</label>
                         <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0 0 0.5rem' }}>
-                            What the bank charges to wire money into this broker. Used to estimate what moving the
-                            money out costs; it is never added to the amount wired.
+                            What this account charges to wire money out of it — the sender pays the bank. The YNAB
+                            funding plan prices every wire leaving this account with it.
                         </p>
 
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.75rem' }}>

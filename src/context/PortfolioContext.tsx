@@ -114,6 +114,8 @@ interface PortfolioContextType {
     ynabListBudgets: (apiKey: string) => Promise<{ ok: boolean; budgets?: YnabBudgetSummary[]; error?: string }>;
     syncYnabBudget: () => Promise<{ ok: boolean; error?: string }>;
     setYnabMapping: (categoryId: string, target: YnabMappingTarget) => void;
+    /** The account a category's money leaves from; null clears it. */
+    setYnabMappingSource: (categoryId: string, brokerId: string | null) => void;
     // Funding plan: how the mapped categories are turned into wires and orders,
     // and the one-click registration of the orders it proposes.
     ynabFundingSettings: YnabFundingSettings;
@@ -2169,8 +2171,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 currentLiquidity: 8000,
                 minLiquidityType: 'fixed',
                 minLiquidityAmount: 5000,
-                liquidityAllocations: { [pIdSafe]: 5000 },
-                transferCost: { type: 'fixed', fixed: 0.95 }
+                liquidityAllocations: { [pIdSafe]: 5000 }
             },
             {
                 id: 'b3',
@@ -2205,6 +2206,19 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     withholdingPercent: 26,
                     startDate: remunerationStartIso,
                 }
+            },
+            {
+                // The current account the wires leave from: a broker like any
+                // other, with no commission plan (it trades nothing) and a flat
+                // SEPA fee on the money it sends out.
+                id: 'b6',
+                name: 'Conto Corrente',
+                description: 'Everyday bank account — funds the brokers',
+                ownerId: 'person-a',
+                currentLiquidity: 12000,
+                minLiquidityAmount: 2000,
+                minLiquidityType: 'fixed',
+                transferCost: { type: 'fixed', fixed: 0.95 }
             },
             {
                 id: 'b5',
@@ -2524,9 +2538,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // (Directa), a bond that trades in €1,000 lots (the BTP), a category that
         // funds a whole portfolio and lets its weights choose, and money that
         // simply stays liquid at a broker.
+        // Wires leave the current account unless a category says otherwise.
+        setYnabFundingSettings({ ...DEFAULT_YNAB_FUNDING_SETTINGS, defaultSourceBrokerId: 'b6' });
         setYnabMappings([
             { categoryId: 'ynab-cat-1', target: { kind: 'asset', ticker: 'IE00B4L5Y983', brokerId: 'b3', portfolioId: pIdMain } },
-            { categoryId: 'ynab-cat-2', target: { kind: 'asset', ticker: 'IE00BDBRDM35', brokerId: 'b1', portfolioId: pIdBonds } },
+            // Funded by the joint account instead of the default one, so the wire
+            // to Degiro leaves from two accounts at once.
+            { categoryId: 'ynab-cat-2', target: { kind: 'asset', ticker: 'IE00BDBRDM35', brokerId: 'b1', portfolioId: pIdBonds }, sourceBrokerId: 'b4' },
             { categoryId: 'ynab-cat-3', target: { kind: 'asset', ticker: 'LU0290358497', brokerId: 'b2', portfolioId: pIdSafe } },
             // A whole portfolio as the destination: the Tactical Tilt's own
             // weights decide which of its rows this money buys.
@@ -2912,7 +2930,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 if (idx === -1) return prev;
                 return prev.filter(m => m.categoryId !== categoryId);
             }
-            const next = { categoryId, target };
+            // Re-pointing a category keeps the account its money comes from:
+            // where it goes and where it starts are independent choices.
+            const next = { ...prev[idx], categoryId, target };
             if (idx === -1) return [...prev, next];
             const copy = prev.slice();
             copy[idx] = next;
@@ -2920,13 +2940,21 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
+    const setYnabMappingSource = (categoryId: string, brokerId: string | null) => {
+        setYnabMappings(prev => prev.map(m =>
+            m.categoryId === categoryId
+                ? { ...m, sourceBrokerId: brokerId || undefined }
+                : m));
+    };
+
     /**
      * Books the funding plan's orders as real Buy transactions.
      *
      * The cash side is applied here rather than left to the per-trade sync: the
      * plan knows each order's commission and, when the caller passes its wires,
-     * the money that arrives to pay for them — letting the gross-only sync run
-     * as well would move the money twice. Orders that are not fully specified
+     * both ends of every transfer — the money arriving at the broker and leaving
+     * the account that sent it, fee included. Letting the gross-only sync run as
+     * well would move the money twice. Orders that are not fully specified
      * (no price, broker or portfolio) are skipped and reported, never guessed at.
      */
     const registerYnabFundingOrders = (
@@ -2962,8 +2990,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const move = (brokerId: string, amount: number) => {
             deltas[brokerId] = roundCents((deltas[brokerId] ?? 0) + amount);
         };
+        // A wire has two ends: the money lands at the destination and leaves the
+        // account that sent it, which also pays the bank's fee out of its own
+        // balance. An account the plan could not name sends nothing here — there
+        // is no balance to debit.
         for (const transfer of opts?.creditTransfers ?? []) {
             if (transfer.brokerId && transfer.transfer > 0) move(transfer.brokerId, transfer.transfer);
+            for (const leg of transfer.legs) {
+                if (leg.sourceBrokerId) move(leg.sourceBrokerId, -(leg.amount + leg.cost));
+            }
         }
         for (const order of registerable) {
             if (order.brokerId) move(order.brokerId, -order.outlay);
@@ -3638,6 +3673,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ynabListBudgets: handleYnabListBudgets,
         syncYnabBudget,
         setYnabMapping,
+        setYnabMappingSource,
         ynabFundingSettings,
         setYnabFundingSettings,
         registerYnabFundingOrders,

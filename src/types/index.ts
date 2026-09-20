@@ -29,13 +29,14 @@ export interface Broker {
   commissionMax?: number;      // optional maximum fee (percent mode)
   // Interest paid on the cash sitting at this broker. Absent = no remuneration.
   remuneration?: BrokerRemuneration;
-  // What it costs to move money INTO this broker — the bank fee on the wire,
-  // charged by whoever sends it. Absent = never counted.
+  // What this account charges to wire money OUT of it. The fee is the sender's,
+  // so it is read from the broker the money leaves — a current account modelled
+  // as a broker, typically. Absent = free.
   transferCost?: BrokerTransferCost;
 }
 
-// How a wire to a broker is priced: free, a flat bank fee, or a % of the amount
-// (usually with a floor and a ceiling).
+// How a wire out of an account is priced: free, a flat bank fee, or a % of the
+// amount (usually with a floor and a ceiling).
 export type TransferCostType = 'free' | 'fixed' | 'percent';
 
 export interface BrokerTransferCost {
@@ -523,6 +524,11 @@ export type YnabMappingTarget =
 export interface YnabCategoryMapping {
   categoryId: string;
   target: YnabMappingTarget;
+  // Account the money leaves from — a broker like any other (a current account
+  // is modelled as one). It pays the wire's fee out of its own liquidity, and
+  // the plan checks it can actually afford the transfer. Absent = the funding
+  // plan's default source, and failing that an unnamed account.
+  sourceBrokerId?: string;
 }
 
 // ── YNAB funding plan ───────────────────────────────────────────────
@@ -552,6 +558,8 @@ export interface YnabFundingSettings {
   transferRoundingStep: number;
   // Flag an order whose commission eats more than this % of the trade value.
   feeWarnPercent: number;
+  // Account the wires leave from unless a category names its own.
+  defaultSourceBrokerId?: string;
 }
 
 export const DEFAULT_YNAB_FUNDING_SETTINGS: YnabFundingSettings = {

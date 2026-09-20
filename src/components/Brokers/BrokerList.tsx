@@ -6,7 +6,7 @@ import type { Broker, BrokerLiquiditySyncRow } from '../../types';
 import { describeRemuneration, isRemunerationActive } from '../../utils/brokerRemuneration';
 import type { BrokerTransferCost } from '../../types';
 
-/** Short label for a wire fee, e.g. "€0.95" or "0.10% (€1–€5)". */
+/** Short label for an outgoing wire fee, e.g. "€0.95" or "0.10% (€1–€5)". */
 const describeTransferCost = (cost: BrokerTransferCost): string => {
     if (cost.type === 'fixed') return `€${(cost.fixed ?? 0).toFixed(2)}`;
     const bounds = [
@@ -213,7 +213,7 @@ const BrokerList: React.FC = () => {
                                         )}
                                         {broker.transferCost && broker.transferCost.type !== 'free' && (
                                             <span
-                                                title={`Wiring money to this broker costs ${describeTransferCost(broker.transferCost)}. Counted by the YNAB funding plan.`}
+                                                title={`Wiring money out of this account costs ${describeTransferCost(broker.transferCost)}. Counted by the YNAB funding plan.`}
                                                 style={{ fontSize: '0.7rem', padding: '0.15rem 0.5rem', borderRadius: '10px', background: '#F9731620', color: '#EA580C', border: '1px solid #F9731650' }}
                                             >
                                                 🏧 {describeTransferCost(broker.transferCost)}
