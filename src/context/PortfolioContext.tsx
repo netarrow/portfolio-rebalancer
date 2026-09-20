@@ -2521,12 +2521,16 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // plan needs to price the commission and book the trade. Between them
         // they cover every case the plan handles: a free-buy promo (SWDA at
         // Trade Republic), a flat fee (Degiro), a percent plan with a minimum
-        // (Directa), a bond that trades in €1,000 lots (the BTP) and money that
+        // (Directa), a bond that trades in €1,000 lots (the BTP), a category that
+        // funds a whole portfolio and lets its weights choose, and money that
         // simply stays liquid at a broker.
         setYnabMappings([
             { categoryId: 'ynab-cat-1', target: { kind: 'asset', ticker: 'IE00B4L5Y983', brokerId: 'b3', portfolioId: pIdMain } },
             { categoryId: 'ynab-cat-2', target: { kind: 'asset', ticker: 'IE00BDBRDM35', brokerId: 'b1', portfolioId: pIdBonds } },
             { categoryId: 'ynab-cat-3', target: { kind: 'asset', ticker: 'LU0290358497', brokerId: 'b2', portfolioId: pIdSafe } },
+            // A whole portfolio as the destination: the Tactical Tilt's own
+            // weights decide which of its rows this money buys.
+            { categoryId: 'ynab-cat-6', target: { kind: 'portfolio', portfolioId: pIdMainTilt, brokerId: 'b1' } },
             { categoryId: 'ynab-cat-5', target: { kind: 'cash', brokerId: 'b1' } },
             { categoryId: 'ynab-cat-7', target: { kind: 'asset', ticker: 'IT0005534141', brokerId: 'b2', portfolioId: pIdLadder } },
             // cat-4 (Crypto) and housing/expenses remain unmapped

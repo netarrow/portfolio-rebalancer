@@ -18,6 +18,10 @@
  *    rather than guessed at;
  *  - the bank fee on the wire itself is estimated but never added to the wire:
  *    it is charged on the sending side, which this app does not model.
+ *
+ * A category may also name a whole portfolio rather than one asset; the money
+ * is then spread over that portfolio's own targets (see utils/ynabPortfolioSplit)
+ * and each resulting slice enters the same order pipeline as any other.
  */
 import type {
     AssetDefinition,
@@ -25,11 +29,15 @@ import type {
     FreeCommissionPeriod,
     Portfolio,
     Transaction,
+    VirtualBond,
     YnabCategory,
     YnabCategoryMapping,
     YnabFundingSettings,
+    YnabGoal,
+    YnabGoalAllocation,
 } from '../types';
-import { calculateCommission } from './portfolioCalculations';
+import { calculateAssets, calculateCommission } from './portfolioCalculations';
+import { splitPortfolioBudget, type PortfolioSplitReason } from './ynabPortfolioSplit';
 import { currentMonthKey, isFreeBuyIsin } from './freeCommissions';
 import { lotUnitsFor } from './amountTargets';
 
@@ -55,6 +63,8 @@ export interface FundingSource {
     categoryName: string;
     groupName: string;
     amount: number;
+    /** Set when the category funded a whole portfolio and this is its slice. */
+    viaPortfolio?: string;
 }
 
 export type FundingOrderWarning =
@@ -152,7 +162,10 @@ export interface FundingIgnored {
     categoryId: string;
     categoryName: string;
     amount: number;
-    reason: 'no-funds' | 'category-missing';
+    /** 'not-placed' = a portfolio split could not put this money anywhere. */
+    reason: 'no-funds' | 'category-missing' | 'not-placed';
+    /** Why the split placed nothing, on a 'not-placed' row. */
+    splitReason?: PortfolioSplitReason;
 }
 
 export interface FundingTotals {
@@ -193,6 +206,10 @@ export interface YnabFundingPlanInput {
     prices: Record<string, { price: number } | number>;
     transactions?: Transaction[];
     freeCommissionPeriods?: FreeCommissionPeriod[];
+    /** Read by a portfolio destination: an amount-mode portfolio targets these. */
+    goalAllocations?: YnabGoalAllocation[];
+    goals?: YnabGoal[];
+    virtualBonds?: VirtualBond[];
     settings: YnabFundingSettings;
     /** Defaults to the current month; injectable so the checks stay stable. */
     monthKey?: string;
@@ -339,6 +356,7 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
     const {
         categories, mappings, brokers, portfolios, assetSettings, prices,
         transactions = [], freeCommissionPeriods = [], settings,
+        goalAllocations = [], goals = [], virtualBonds = [],
     } = input;
     const monthKey = input.monthKey ?? currentMonthKey();
     const today = input.today ?? new Date().toISOString().slice(0, 10);
@@ -356,6 +374,36 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
     const ignored: FundingIgnored[] = [];
     const drafts = new Map<string, OrderDraft>();
     const depositsByBroker = new Map<string, FundingDeposit>();
+
+    /** Adds money to the order for this ticker/broker/portfolio, creating it if new. */
+    const addToDraft = (
+        ticker: string,
+        brokerId: string | undefined,
+        portfolioId: string | undefined,
+        amount: number,
+        source: FundingSource,
+    ) => {
+        const id = `${ticker.toUpperCase()}|${brokerId ?? ''}|${portfolioId ?? ''}`;
+        const draft = drafts.get(id) ?? { ticker, brokerId, portfolioId, budget: 0, sources: [] };
+        draft.budget = roundCents(draft.budget + amount);
+        draft.sources.push(source);
+        drafts.set(id, draft);
+    };
+
+    // A portfolio's holdings are needed to know how far each of its rows is
+    // from target. Computed once per portfolio, however many categories fund it.
+    const holdingsCache = new Map<string, ReturnType<typeof calculateAssets>['assets']>();
+    const holdingsOf = (portfolioId: string) => {
+        const cached = holdingsCache.get(portfolioId);
+        if (cached) return cached;
+        const { assets } = calculateAssets(
+            transactions.filter(t => t.portfolioId === portfolioId),
+            assetSettings,
+            prices as Record<string, { price: number; lastUpdated: string }>,
+        );
+        holdingsCache.set(portfolioId, assets);
+        return assets;
+    };
 
     for (const mapping of mappings) {
         if (mapping.target.kind === 'unmapped') continue;
@@ -390,16 +438,54 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
             continue;
         }
 
+        // A whole portfolio as the destination: its own targets decide what the
+        // money buys, and each slice becomes an ordinary order from here on.
+        if (mapping.target.kind === 'portfolio') {
+            const portfolioId = mapping.target.portfolioId;
+            const portfolio = portfolioById.get(portfolioId);
+            if (!portfolio) {
+                ignored.push({ categoryId: category.id, categoryName: category.name, amount, reason: 'not-placed', splitReason: 'no-targets' });
+                continue;
+            }
+            const split = splitPortfolioBudget({
+                portfolio,
+                budget: amount,
+                assets: holdingsOf(portfolioId),
+                marketData: prices as Record<string, { price: number }>,
+                assetSettings,
+                goalAllocations,
+                goals,
+                virtualBonds,
+            });
+            for (const line of split.lines) {
+                const brokerId = mapping.target.brokerId
+                    ?? portfolio.preferredBrokerId
+                    ?? lastBrokerForTicker(transactions, line.ticker);
+                addToDraft(line.ticker, brokerId, portfolioId, line.eur, {
+                    ...source,
+                    amount: line.eur,
+                    viaPortfolio: portfolio.name,
+                });
+            }
+            // Money the split could not place is reported, never quietly dropped.
+            if (split.leftover > 0) {
+                ignored.push({
+                    categoryId: category.id,
+                    categoryName: category.name,
+                    amount: split.leftover,
+                    reason: 'not-placed',
+                    splitReason: split.reason,
+                });
+            }
+            continue;
+        }
+
         const ticker = mapping.target.ticker;
         const portfolioId = mapping.target.portfolioId;
         const brokerId = mapping.target.brokerId
             ?? (portfolioId ? portfolioById.get(portfolioId)?.preferredBrokerId : undefined)
             ?? lastBrokerForTicker(transactions, ticker);
-        const id = `${ticker.toUpperCase()}|${brokerId ?? ''}|${portfolioId ?? ''}`;
-        const draft = drafts.get(id) ?? { ticker, brokerId, portfolioId, budget: 0, sources: [] };
-        draft.budget = roundCents(draft.budget + amount);
-        draft.sources.push(source);
-        drafts.set(id, draft);
+        addToDraft(ticker, brokerId, portfolioId, amount, source);
     }
 
     const orders: FundingOrder[] = [...drafts.entries()].map(([id, draft]) => {
@@ -525,14 +611,23 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
     const sum = (values: number[]) => roundCents(values.reduce((s, v) => s + v, 0));
     const depositTotal = sum(deposits.map(d => d.amount));
     const totals: FundingTotals = {
-        budget: sum([...orders.map(o => o.budget), depositTotal]),
+        budget: sum([
+            ...orders.map(o => o.budget),
+            ...ignored.filter(i => i.reason === 'not-placed').map(i => i.amount),
+            depositTotal,
+        ]),
         gross: sum(orders.map(o => o.gross)),
         commission: sum(orders.map(o => o.commission)),
         outlay: sum(orders.map(o => o.outlay)),
         deposits: depositTotal,
         transfer: sum(transfers.map(t => t.transfer)),
         transferCost: sum(transfers.map(t => t.cost)),
-        leftover: sum(orders.map(o => o.leftover)),
+        // Includes what a portfolio split could not place, so budget still
+        // equals gross + commission + leftover (+ deposits).
+        leftover: sum([
+            ...orders.map(o => o.leftover),
+            ...ignored.filter(i => i.reason === 'not-placed').map(i => i.amount),
+        ]),
         orders: orders.filter(o => o.quantity > 0).length,
         // What the same orders would have cost at the broker's standard plan.
         feesSaved: sum(orders

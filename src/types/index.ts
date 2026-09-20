@@ -511,8 +511,12 @@ export interface PlannedForecastExpense {
 // belongs to: both are optional (the funding plan falls back to the portfolio's
 // preferred broker, then to the broker that last bought the ticker), but naming
 // them is what lets the plan price the commission and register the trade.
+// A 'portfolio' target names the destination without naming the instrument:
+// the money is for that portfolio, and the funding plan spreads it over the
+// portfolio's own targets (by weight, or by € target on an amount-mode one).
 export type YnabMappingTarget =
   | { kind: 'asset'; ticker: string; brokerId?: string; portfolioId?: string }
+  | { kind: 'portfolio'; portfolioId: string; brokerId?: string }
   | { kind: 'cash'; brokerId: string }
   | { kind: 'unmapped' };
 
