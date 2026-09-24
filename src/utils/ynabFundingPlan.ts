@@ -21,7 +21,10 @@
  *
  * A category may also name a whole portfolio rather than one asset; the money
  * is then spread over that portfolio's own targets (see utils/ynabPortfolioSplit)
- * and each resulting slice enters the same order pipeline as any other.
+ * and each resulting slice enters the same order pipeline as any other. Naming
+ * the root of a parent/child group funds the whole group: the money is shared
+ * out over its members first (see splitGroupAmount), then over each member's
+ * targets.
  */
 import type {
     AssetDefinition,
@@ -40,6 +43,9 @@ import { calculateAssets, calculateCommission } from './portfolioCalculations';
 import { splitPortfolioBudget, type PortfolioSplitReason } from './ynabPortfolioSplit';
 import { currentMonthKey, isFreeBuyIsin } from './freeCommissions';
 import { lotUnitsFor } from './amountTargets';
+import { buildPortfolioTree, type PortfolioGroup } from './portfolioGroups';
+import { configuredShares, mergedRatio, type MemberValue } from './mergedGroup';
+import { splitGroupAmount } from './mergedPortfolioView';
 
 /**
  * Id prefix of the transactions the plan books. The plan cannot see what was
@@ -443,6 +449,28 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
         return assets;
     };
 
+    // Parent/child groups, keyed by their root: naming the root as a
+    // destination funds the whole group, the way every other view reads it.
+    const groupByRoot = new Map(buildPortfolioTree(portfolios).groups.map(g => [g.parent.id, g]));
+    const groupLegs = (group: PortfolioGroup, amount: number) => {
+        const members: MemberValue[] = group.members.map(p => {
+            const valueByTicker: Record<string, number> = {};
+            const quantityByTicker: Record<string, number> = {};
+            holdingsOf(p.id).forEach(a => {
+                valueByTicker[a.ticker] = (valueByTicker[a.ticker] || 0) + a.currentValue;
+                quantityByTicker[a.ticker] = (quantityByTicker[a.ticker] || 0) + a.quantity;
+            });
+            const totalValue = Object.values(valueByTicker).reduce((s, v) => s + v, 0);
+            return { portfolio: p, totalValue, valueByTicker, quantityByTicker };
+        });
+        const { members: ratio } = mergedRatio(members, configuredShares(group.members));
+        return splitGroupAmount({
+            memberIds: group.members.map(p => p.id),
+            members: ratio,
+            valueByMember: Object.fromEntries(members.map(m => [m.portfolio.id, m.totalValue])),
+        }, amount);
+    };
+
     for (const mapping of mappings) {
         if (mapping.target.kind === 'unmapped') continue;
         const category = categoryById.get(mapping.categoryId);
@@ -479,7 +507,10 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
         }
 
         // A whole portfolio as the destination: its own targets decide what the
-        // money buys, and each slice becomes an ordinary order from here on.
+        // money buys, and each slice becomes an ordinary order from here on. A
+        // parent/child group is one destination: the money is first shared out
+        // over its members, lightest against the group ratio first, and each
+        // member's leg then follows that member's own targets.
         if (mapping.target.kind === 'portfolio') {
             const portfolioId = mapping.target.portfolioId;
             const portfolio = portfolioById.get(portfolioId);
@@ -487,34 +518,51 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
                 ignored.push({ categoryId: category.id, categoryName: category.name, amount, reason: 'not-placed', splitReason: 'no-targets' });
                 continue;
             }
-            const split = splitPortfolioBudget({
-                portfolio,
-                budget: amount,
-                assets: holdingsOf(portfolioId),
-                marketData: prices as Record<string, { price: number }>,
-                assetSettings,
-                goalAllocations,
-                goals,
-                virtualBonds,
-            });
-            for (const line of split.lines) {
-                const brokerId = mapping.target.brokerId
-                    ?? portfolio.preferredBrokerId
-                    ?? lastBrokerForTicker(transactions, line.ticker);
-                addToDraft(line.ticker, brokerId, portfolioId, line.eur, {
-                    ...source,
-                    amount: line.eur,
-                    viaPortfolio: portfolio.name,
+            const group = groupByRoot.get(portfolioId);
+            const legs = group ? groupLegs(group, amount) : [{ portfolioId, amount }];
+            let leftover = 0;
+            let leftoverReason: PortfolioSplitReason | undefined;
+            for (const leg of legs) {
+                const member = portfolioById.get(leg.portfolioId);
+                if (!member || !(leg.amount > 0)) continue;
+                const split = splitPortfolioBudget({
+                    portfolio: member,
+                    budget: leg.amount,
+                    assets: holdingsOf(member.id),
+                    marketData: prices as Record<string, { price: number }>,
+                    assetSettings,
+                    goalAllocations,
+                    goals,
+                    virtualBonds,
                 });
+                for (const line of split.lines) {
+                    const brokerId = mapping.target.brokerId
+                        ?? member.preferredBrokerId
+                        ?? lastBrokerForTicker(transactions, line.ticker);
+                    addToDraft(line.ticker, brokerId, member.id, line.eur, {
+                        ...source,
+                        amount: line.eur,
+                        viaPortfolio: group ? `${portfolio.name} › ${member.name}` : member.name,
+                    });
+                }
+                if (split.leftover > 0) {
+                    leftover = roundCents(leftover + split.leftover);
+                    leftoverReason ??= split.reason;
+                }
+            }
+            // A group that could not be split at all keeps the whole amount unplaced.
+            if (legs.length === 0) {
+                leftover = amount;
+                leftoverReason = 'no-targets';
             }
             // Money the split could not place is reported, never quietly dropped.
-            if (split.leftover > 0) {
+            if (leftover > 0) {
                 ignored.push({
                     categoryId: category.id,
                     categoryName: category.name,
-                    amount: split.leftover,
+                    amount: leftover,
                     reason: 'not-placed',
-                    splitReason: split.reason,
+                    splitReason: leftoverReason,
                 });
             }
             continue;

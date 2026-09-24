@@ -644,19 +644,21 @@
         padding-bottom: var(--space-2) !important;
     }
 
-    /* The three dropdowns are the form: label above, full width below. */
+    /* The dropdowns are the form: label above, full width below. */
     .ynab-map-table td.map-cell-dest[data-label],
-    .ynab-map-table td.map-cell-broker[data-label],
-    .ynab-map-table td.map-cell-portfolio[data-label] {
+    .ynab-map-table td.map-cell-broker[data-label] {
         display: block !important;
         padding-top: var(--space-2) !important;
     }
 
     .ynab-map-table td.map-cell-dest[data-label]::before,
-    .ynab-map-table td.map-cell-broker[data-label]::before,
-    .ynab-map-table td.map-cell-portfolio[data-label]::before {
+    .ynab-map-table td.map-cell-broker[data-label]::before {
         display: block;
         margin-bottom: 2px;
+    }
+
+    .ynab-map-table .dest-wrap {
+        flex-wrap: wrap;
     }
 
     .ynab-map-table .form-select {
