@@ -501,7 +501,7 @@ const satellitePortfolio: Portfolio = {
 const viaGroup = build({}, {
     portfolios: [...portfolios, corePortfolio, satellitePortfolio],
     categories: [cat('c-group', 'Core + Satellite', 1000)],
-    mappings: [{ categoryId: 'c-group', target: { kind: 'portfolio', portfolioId: 'p-core', brokerId: 'b-degiro' } }],
+    mappings: [{ categoryId: 'c-group', target: { kind: 'portfolio', portfolioId: 'p-core', wholeGroup: true, brokerId: 'b-degiro' } }],
     transactions: [],
 });
 check('funding a group root reaches every member, each on its own targets',
@@ -510,6 +510,17 @@ check('funding a group root reaches every member, each on its own targets',
 check('the source names the group and the member',
     orderOf(viaGroup, 'IE00BKM4GZ66').sources[0].viaPortfolio, 'Core › Satellite');
 check('the whole contribution is placed', viaGroup.ignored.length, 0);
+
+// The same root without `wholeGroup` is just the parent portfolio.
+const viaParentOnly = build({}, {
+    portfolios: [...portfolios, corePortfolio, satellitePortfolio],
+    categories: [cat('c-parent', 'Core only', 1000)],
+    mappings: [{ categoryId: 'c-parent', target: { kind: 'portfolio', portfolioId: 'p-core', brokerId: 'b-degiro' } }],
+    transactions: [],
+});
+check('a single member can be funded on its own, even the parent',
+    viaParentOnly.orders.map(o => [o.ticker, o.portfolioId, o.budget]),
+    [['IE00B4L5Y983', 'p-core', 1000]]);
 
 console.log('totals');
 

@@ -22,9 +22,10 @@
  * A category may also name a whole portfolio rather than one asset; the money
  * is then spread over that portfolio's own targets (see utils/ynabPortfolioSplit)
  * and each resulting slice enters the same order pipeline as any other. Naming
- * the root of a parent/child group funds the whole group: the money is shared
+ * the root of a parent/child group can fund the whole group: the money is shared
  * out over its members first (see splitGroupAmount), then over each member's
- * targets.
+ * targets — when the mapping asks for the whole group; otherwise only the
+ * named portfolio is funded.
  */
 import type {
     AssetDefinition,
@@ -449,8 +450,8 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
         return assets;
     };
 
-    // Parent/child groups, keyed by their root: naming the root as a
-    // destination funds the whole group, the way every other view reads it.
+    // Parent/child groups, keyed by their root: a `wholeGroup` destination on
+    // the root funds the whole group, the way every other view reads it.
     const groupByRoot = new Map(buildPortfolioTree(portfolios).groups.map(g => [g.parent.id, g]));
     const groupLegs = (group: PortfolioGroup, amount: number) => {
         const members: MemberValue[] = group.members.map(p => {
@@ -508,9 +509,10 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
 
         // A whole portfolio as the destination: its own targets decide what the
         // money buys, and each slice becomes an ordinary order from here on. A
-        // parent/child group is one destination: the money is first shared out
-        // over its members, lightest against the group ratio first, and each
-        // member's leg then follows that member's own targets.
+        // parent/child group funded as a whole is one destination: the money is
+        // first shared out over its members, lightest against the group ratio
+        // first, and each member's leg then follows that member's own targets.
+        // Any single member, parent included, can still be funded on its own.
         if (mapping.target.kind === 'portfolio') {
             const portfolioId = mapping.target.portfolioId;
             const portfolio = portfolioById.get(portfolioId);
@@ -518,7 +520,7 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
                 ignored.push({ categoryId: category.id, categoryName: category.name, amount, reason: 'not-placed', splitReason: 'no-targets' });
                 continue;
             }
-            const group = groupByRoot.get(portfolioId);
+            const group = mapping.target.wholeGroup ? groupByRoot.get(portfolioId) : undefined;
             const legs = group ? groupLegs(group, amount) : [{ portfolioId, amount }];
             let leftover = 0;
             let leftoverReason: PortfolioSplitReason | undefined;
