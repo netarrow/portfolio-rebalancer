@@ -550,6 +550,7 @@
        every cell on its own line labelled from its data-label. */
     .ynab-map-table,
     .ynab-map-table tbody,
+    .ynab-map-table tfoot,
     .ynab-map-table tr,
     .ynab-map-table td,
     .plan-table,
@@ -646,13 +647,17 @@
 
     /* The dropdowns are the form: label above, full width below. */
     .ynab-map-table td.map-cell-dest[data-label],
-    .ynab-map-table td.map-cell-broker[data-label] {
+    .ynab-map-table td.map-cell-broker[data-label],
+    .ynab-map-table td.map-cell-nature[data-label],
+    .ynab-map-table td.map-cell-cash[data-label] {
         display: block !important;
         padding-top: var(--space-2) !important;
     }
 
     .ynab-map-table td.map-cell-dest[data-label]::before,
-    .ynab-map-table td.map-cell-broker[data-label]::before {
+    .ynab-map-table td.map-cell-broker[data-label]::before,
+    .ynab-map-table td.map-cell-nature[data-label]::before,
+    .ynab-map-table td.map-cell-cash[data-label]::before {
         display: block;
         margin-bottom: 2px;
     }

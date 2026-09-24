@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import YnabGoalsSyncModal from './YnabGoalsSyncModal';
 import YnabCategoryMappings from './YnabCategoryMappings';
 import YnabFundingPlanView from './YnabFundingPlanView';
+import YnabCoveragePanel from './YnabCoveragePanel';
 
 interface Props {
     onNavigateToSettings?: () => void;
@@ -161,6 +162,7 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
 
 
             <YnabCategoryMappings />
+            <YnabCoveragePanel />
             <YnabFundingPlanView />
 
             {syncCandidates !== null && (
