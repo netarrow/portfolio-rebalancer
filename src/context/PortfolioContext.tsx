@@ -16,7 +16,7 @@ import { getExcludedBrokerIds, hasScopeFlags } from '../utils/assetScope';
 import { parseGoalDescriptor, nativeGoalTarget } from '../utils/ynabGoalParser';
 import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
 import { mergeYnabGoalsFromCandidates, resolveGoalTarget } from '../utils/ynabGoalSync';
-import { isRegisterableOrder, roundCents } from '../utils/ynabFundingPlan';
+import { buildFundingCommit, isRegisterableOrder, roundCents } from '../utils/ynabFundingPlan';
 import type { FundingOrder, FundingTransfer } from '../utils/ynabFundingPlan';
 import type { YnabGoalSyncReport } from '../utils/ynabGoalSync';
 import io, { Socket } from 'socket.io-client';
@@ -2973,36 +2973,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             };
         }
 
-        const stamp = Date.now();
-        const txs: Transaction[] = registerable.map((order, i) => ({
-            id: `ynab-fund-${stamp}-${i}`,
-            ticker: order.ticker,
-            amount: order.quantity,
-            price: order.price as number,
+        const { transactions: txs, liquidityDeltas: deltas } = buildFundingCommit(orders, {
             date,
-            direction: 'Buy',
-            portfolioId: order.portfolioId,
-            brokerId: order.brokerId,
-            freeCommission: order.commission === 0 ? true : undefined,
-        }));
-
-        const deltas: Record<string, number> = {};
-        const move = (brokerId: string, amount: number) => {
-            deltas[brokerId] = roundCents((deltas[brokerId] ?? 0) + amount);
-        };
-        // A wire has two ends: the money lands at the destination and leaves the
-        // account that sent it, which also pays the bank's fee out of its own
-        // balance. An account the plan could not name sends nothing here — there
-        // is no balance to debit.
-        for (const transfer of opts?.creditTransfers ?? []) {
-            if (transfer.brokerId && transfer.transfer > 0) move(transfer.brokerId, transfer.transfer);
-            for (const leg of transfer.legs) {
-                if (leg.sourceBrokerId) move(leg.sourceBrokerId, -(leg.amount + leg.cost));
-            }
-        }
-        for (const order of registerable) {
-            if (order.brokerId) move(order.brokerId, -order.outlay);
-        }
+            stamp: Date.now(),
+            creditTransfers: opts?.creditTransfers,
+        });
 
         addTransactionsBulk(txs, { skipCashSync: true });
         adjustBrokerLiquidity(deltas);

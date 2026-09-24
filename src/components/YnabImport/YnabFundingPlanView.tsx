@@ -5,6 +5,7 @@ import { buildYnabFundingPlan, isRegisterableOrder } from '../../utils/ynabFundi
 import type { FundingOrderWarning } from '../../utils/ynabFundingPlan';
 import type { PortfolioSplitReason } from '../../utils/ynabPortfolioSplit';
 import { formatMonthKey } from '../../utils/freeCommissions';
+import YnabFundingWhatIf from './YnabFundingWhatIf';
 
 /**
  * The two answers the mapped categories are for: **how much to wire to each
@@ -128,6 +129,7 @@ const YnabFundingPlanView: React.FC = () => {
     }
 
     return (
+        <>
         <div className="ynab-plan-card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
                 <div>
@@ -570,6 +572,8 @@ const YnabFundingPlanView: React.FC = () => {
 
             <style>{cardStyle}</style>
         </div>
+        <YnabFundingWhatIf plan={plan} creditTransfers={creditTransfers} />
+        </>
     );
 };
 

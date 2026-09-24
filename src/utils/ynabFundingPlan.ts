@@ -760,3 +760,57 @@ export const buildYnabFundingPlan = (input: YnabFundingPlanInput): YnabFundingPl
 /** True when an order can become a real transaction (sized, with a home). */
 export const isRegisterableOrder = (order: FundingOrder): boolean =>
     order.quantity > 0 && !!order.price && !!order.brokerId && !!order.portfolioId;
+
+/** What registering a plan writes: the buy transactions and the cash each broker gains or loses. */
+export interface FundingCommit {
+    transactions: Transaction[];
+    /** brokerId → € added to (positive) or taken from (negative) its liquidity. */
+    liquidityDeltas: Record<string, number>;
+    /** Orders left out because they cannot become a transaction yet. */
+    skipped: number;
+}
+
+/**
+ * The single definition of what "Register" does, shared by the context and by
+ * the before/after preview — so the preview is the registered state, not an
+ * approximation of it.
+ *
+ * A wire has two ends: the money lands at the destination and leaves the
+ * account that sent it, which also pays the bank's fee out of its own balance.
+ * An account the plan could not name sends nothing here — there is no balance
+ * to debit.
+ */
+export const buildFundingCommit = (
+    orders: FundingOrder[],
+    opts: { date: string; stamp: number | string; creditTransfers?: FundingTransfer[] },
+): FundingCommit => {
+    const registerable = orders.filter(isRegisterableOrder);
+
+    const transactions: Transaction[] = registerable.map((order, i) => ({
+        id: `${YNAB_FUNDING_TX_PREFIX}${opts.stamp}-${i}`,
+        ticker: order.ticker,
+        amount: order.quantity,
+        price: order.price as number,
+        date: opts.date,
+        direction: 'Buy',
+        portfolioId: order.portfolioId,
+        brokerId: order.brokerId,
+        freeCommission: order.commission === 0 ? true : undefined,
+    }));
+
+    const liquidityDeltas: Record<string, number> = {};
+    const move = (brokerId: string, amount: number) => {
+        liquidityDeltas[brokerId] = roundCents((liquidityDeltas[brokerId] ?? 0) + amount);
+    };
+    for (const transfer of opts.creditTransfers ?? []) {
+        if (transfer.brokerId && transfer.transfer > 0) move(transfer.brokerId, transfer.transfer);
+        for (const leg of transfer.legs) {
+            if (leg.sourceBrokerId) move(leg.sourceBrokerId, -(leg.amount + leg.cost));
+        }
+    }
+    for (const order of registerable) {
+        if (order.brokerId) move(order.brokerId, -order.outlay);
+    }
+
+    return { transactions, liquidityDeltas, skipped: orders.length - registerable.length };
+};
