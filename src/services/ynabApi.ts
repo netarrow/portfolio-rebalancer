@@ -238,7 +238,13 @@ export async function getGoalCategories(
 export interface YnabAverageEntry {
     avgBudgetedMilliunits: number;
     monthsCount: number;
+    /** Average monthly outflow (−activity) over the spending window. */
+    avgSpentMilliunits: number;
+    spentMonthsCount: number;
 }
+
+/** Months the average spending is taken over: a full year smooths out seasonality. */
+export const SPENT_AVERAGE_MONTHS = 12;
 
 function previousMonthsIso(monthsBack: number, now: Date = new Date()): string[] {
     const out: string[] = [];
@@ -251,13 +257,18 @@ function previousMonthsIso(monthsBack: number, now: Date = new Date()): string[]
     return out;
 }
 
+// One pass over the previous months gives both averages: what was budgeted
+// over the configured window (`monthsBack`) and what was actually spent over
+// the last `spentMonthsBack` months.
 export async function getAverageBudgetedByCategory(
     apiKey: string,
     budgetId: string,
     monthsBack: number = 6,
+    spentMonthsBack: number = SPENT_AVERAGE_MONTHS,
 ): Promise<YnabApiResult<Map<string, YnabAverageEntry>>> {
     try {
-        const months = previousMonthsIso(monthsBack);
+        // Most recent first, so index < window means "inside that window".
+        const months = previousMonthsIso(Math.max(monthsBack, spentMonthsBack));
         const headers = { Authorization: `Bearer ${apiKey}` };
 
         const responses = await Promise.all(
@@ -274,24 +285,34 @@ export async function getAverageBudgetedByCategory(
             ),
         );
 
-        const sums = new Map<string, { sum: number; count: number }>();
-        for (const r of responses) {
-            if (!r.ok) continue;
+        const sums = new Map<string, { sum: number; count: number; spent: number; spentCount: number }>();
+        responses.forEach((r, index) => {
+            if (!r.ok) return;
             const cats: any[] = r.data?.categories ?? [];
             for (const c of cats) {
                 if (c.hidden || c.deleted) continue;
-                const budgeted = typeof c.budgeted === 'number' ? c.budgeted : 0;
-                const entry = sums.get(c.id) || { sum: 0, count: 0 };
-                entry.sum += budgeted;
-                entry.count += 1;
+                const entry = sums.get(c.id) || { sum: 0, count: 0, spent: 0, spentCount: 0 };
+                if (index < monthsBack) {
+                    entry.sum += typeof c.budgeted === 'number' ? c.budgeted : 0;
+                    entry.count += 1;
+                }
+                if (index < spentMonthsBack) {
+                    entry.spent += typeof c.activity === 'number' ? -c.activity : 0;
+                    entry.spentCount += 1;
+                }
                 sums.set(c.id, entry);
             }
-        }
+        });
 
         const result = new Map<string, YnabAverageEntry>();
-        for (const [id, { sum, count }] of sums) {
-            if (count === 0) continue;
-            result.set(id, { avgBudgetedMilliunits: sum / count, monthsCount: count });
+        for (const [id, { sum, count, spent, spentCount }] of sums) {
+            if (count === 0 && spentCount === 0) continue;
+            result.set(id, {
+                avgBudgetedMilliunits: count > 0 ? sum / count : 0,
+                monthsCount: count,
+                avgSpentMilliunits: spentCount > 0 ? spent / spentCount : 0,
+                spentMonthsCount: spentCount,
+            });
         }
 
         return { success: true, data: result };

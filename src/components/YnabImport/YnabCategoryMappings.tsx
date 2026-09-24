@@ -5,6 +5,9 @@ import { milliunitsToEur } from '../../services/ynabApi';
 import { buildPortfolioTree } from '../../utils/portfolioGroups';
 import { resolveGroups } from '../../utils/allocationGroups';
 import { isGroupKey } from '../../utils/portfolioCalculations';
+import type { YnabMacroCategory } from '../../types';
+import { useYnabCoverage } from './useYnabCoverage';
+import CategoryDetailModal from './CategoryDetailModal';
 
 /**
  * Where each YNAB category's money is meant to end up.
@@ -21,10 +24,32 @@ import { isGroupKey } from '../../utils/portfolioCalculations';
  * (the money is spread over its members) or through any one member alone,
  * parent included. The broker the order goes through stays
  * optional: naming it is what lets the funding plan price the commission.
+ *
+ * A second view, "Location & nature", says where each category's money is
+ * today rather than where it goes: the account its Available sits on (the same
+ * account the wires leave from), what it has invested, what kind of spending it
+ * is (the Summary's classes) and the goal it saves toward. The coverage panel
+ * below reads all of it.
  */
 
 const eur = (value: number) =>
     value.toLocaleString('en-IE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+
+// The Summary's macro classes, in the words this view uses for them.
+const NATURE_OPTIONS: { value: YnabMacroCategory; label: string }[] = [
+    { value: 'structural', label: 'Fixed (structural)' },
+    { value: 'variable', label: 'Variable' },
+    { value: 'compressible', label: 'Compressible' },
+    { value: 'sinking', label: 'Goal (dated expense)' },
+    { value: 'investments', label: 'Investments' },
+];
+const natureLabel = (nature: YnabMacroCategory) => NATURE_OPTIONS.find(o => o.value === nature)?.label ?? nature;
+
+const shortDate = (iso: string) =>
+    new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-IE', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+
+type MappingView = 'funding' | 'location';
+const VIEW_KEY = 'ynab_mapping_view';
 
 const CASH_PREFIX = 'cash:';
 const ASSET_PREFIX = 'asset:';
@@ -52,10 +77,23 @@ const YnabCategoryMappings: React.FC = () => {
     const {
         ynabCategories, ynabMappings, setYnabMapping, setYnabMappingSource,
         ynabFundingSettings, assetSettings, brokers, portfolios,
+        ynabMacroMappings, setYnabCategoryMacro,
     } = usePortfolio();
 
     const [search, setSearch] = useState('');
     const [mappedOnly, setMappedOnly] = useState(false);
+    const [view, setViewState] = useState<MappingView>(() => {
+        try { return localStorage.getItem(VIEW_KEY) === 'location' ? 'location' : 'funding'; } catch { return 'funding'; }
+    });
+    const setView = (next: MappingView) => {
+        setViewState(next);
+        try { localStorage.setItem(VIEW_KEY, next); } catch { /* per-viewer convenience only */ }
+    };
+    const [detailId, setDetailId] = useState<string | null>(null);
+
+    const { report } = useYnabCoverage();
+    const positionById = useMemo(() => new Map(report.positions.map(p => [p.categoryId, p])), [report.positions]);
+    const detailPosition = detailId ? positionById.get(detailId) : undefined;
 
     const mappingByCategory = useMemo(
         () => new Map(ynabMappings.map(m => [m.categoryId, m])),
@@ -137,14 +175,27 @@ const YnabCategoryMappings: React.FC = () => {
         const byGroup = new Map<string, { name: string; categories: YnabCategory[] }>();
         for (const category of ynabCategories) {
             const target = mappingByCategory.get(category.id)?.target;
-            if (mappedOnly && (!target || target.kind === 'unmapped')) continue;
+            if (view === 'funding' && mappedOnly && (!target || target.kind === 'unmapped')) continue;
             if (needle && !`${category.name} ${category.groupName}`.toLowerCase().includes(needle)) continue;
             const entry = byGroup.get(category.groupId) ?? { name: category.groupName, categories: [] };
             entry.categories.push(category);
             byGroup.set(category.groupId, entry);
         }
         return [...byGroup.values()];
-    }, [ynabCategories, mappingByCategory, mappedOnly, search]);
+    }, [ynabCategories, mappingByCategory, mappedOnly, search, view]);
+
+    // Totals of what is on screen, per group and overall.
+    const sumOf = (categories: YnabCategory[]) => categories.reduce((acc, c) => {
+        const position = positionById.get(c.id);
+        acc.available += milliunitsToEur(c.balanceMilliunits);
+        acc.budgeted += milliunitsToEur(c.budgetedMilliunits ?? 0);
+        acc.avgSpent += position?.avgSpent ?? 0;
+        acc.invested += position?.invested ?? 0;
+        return acc;
+    }, { available: 0, budgeted: 0, avgSpent: 0, invested: 0 });
+    const shownTotals = sumOf(groups.flatMap(g => g.categories));
+    const columnCount = view === 'funding' ? 6 : 7;
+    const hasAverages = report.positions.some(p => p.spentMonths > 0);
 
     const mappedCount = ynabMappings.filter(m => m.target.kind !== 'unmapped').length;
 
@@ -221,6 +272,59 @@ const YnabCategoryMappings: React.FC = () => {
         }
     };
 
+    // The "Location & nature" cells of one row, after Category and Available.
+    const renderLocationCells = (categoryId: string, sourceBrokerId: string | undefined) => {
+        const position = positionById.get(categoryId);
+        if (!position) return null;
+        const groupNature = ynabMacroMappings.groups[position.groupId];
+        const goal = position.goal;
+        const goalText = goal && (goal.amount || goal.date)
+            ? [goal.amount ? eur(goal.amount) : null, goal.date ? shortDate(goal.date) : null].filter(Boolean).join(' · ')
+            : null;
+        return (
+            <>
+                <td className="map-cell-avg" data-label="Avg / month" style={{ textAlign: 'right' }}
+                    title={position.spentMonths > 0 ? `Average over ${position.spentMonths} month${position.spentMonths === 1 ? '' : 's'}` : 'No spending history yet'}>
+                    {position.spentMonths > 0 ? eur(position.avgSpent) : <span className="muted-cell">—</span>}
+                </td>
+                <td className="map-cell-nature" data-label="Nature">
+                    <select
+                        className="form-select"
+                        value={ynabMacroMappings.categories[categoryId] ?? ''}
+                        onChange={e => setYnabCategoryMacro(categoryId, (e.target.value || null) as YnabMacroCategory | null)}
+                    >
+                        <option value="">{groupNature ? `Group · ${natureLabel(groupNature)}` : '— Not set —'}</option>
+                        {NATURE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                </td>
+                <td className="map-cell-cash" data-label="Cash at">
+                    <select
+                        className="form-select"
+                        value={sourceBrokerId || ''}
+                        onChange={e => setYnabMappingSource(categoryId, e.target.value || null)}
+                    >
+                        <option value="">{defaultSourceName ? `Default · ${defaultSourceName}` : 'Not set'}</option>
+                        {brokers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                </td>
+                <td className="map-cell-invested" data-label="Invested" style={{ textAlign: 'right' }}>
+                    <button type="button" className="cell-link" onClick={() => setDetailId(categoryId)}
+                        title="Portfolios and assets holding part of this category's money">
+                        {position.invested > 0 || position.allocations.length > 0
+                            ? `${eur(position.invested)} · ${position.allocations.length}`
+                            : '+ Add'}
+                    </button>
+                </td>
+                <td className="map-cell-goal" data-label="Goal">
+                    <button type="button" className={`cell-link${goalText ? '' : ' cell-link-muted'}`} onClick={() => setDetailId(categoryId)}>
+                        {goalText ?? (position.nature === 'sinking' ? 'Set target' : 'Set')}
+                    </button>
+                    {position.emergencyFund && <span className="fund-badge" title="Counts toward the emergency fund">Emergency fund</span>}
+                </td>
+            </>
+        );
+    };
+
     if (ynabCategories.length === 0) {
         return (
             <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', padding: '1.25rem', marginBottom: '1.5rem' }}>
@@ -238,11 +342,30 @@ const YnabCategoryMappings: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
                 <div>
                     <h3 style={{ margin: 0 }}>Category mappings</h3>
+                    <div className="map-view-tabs" role="tablist">
+                        <button type="button" role="tab" aria-selected={view === 'funding'} className={view === 'funding' ? 'active' : ''} onClick={() => setView('funding')}>
+                            Funding
+                        </button>
+                        <button type="button" role="tab" aria-selected={view === 'location'} className={view === 'location' ? 'active' : ''} onClick={() => setView('location')}>
+                            Location &amp; nature
+                        </button>
+                    </div>
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                        Where each category's money starts and where it should end up. {mappedCount} of{' '}
-                        {ynabCategories.length} mapped. The <em>From</em> account pays the wire out of its own
-                        liquidity; the destination names the portfolio that books the trade, and a broker lets the
-                        plan price the commission.
+                        {view === 'funding' ? (
+                            <>
+                                Where each category's money starts and where it should end up. {mappedCount} of{' '}
+                                {ynabCategories.length} mapped. The <em>From</em> account pays the wire out of its own
+                                liquidity; the destination names the portfolio that books the trade, and a broker lets the
+                                plan price the commission.
+                            </>
+                        ) : (
+                            <>
+                                Where each category's money is today and what kind of spending it is. The Available sits
+                                as cash on the <em>Cash at</em> account (the same one the wires leave from); anything it
+                                has invested is listed under <em>Invested</em>. The nature is shared with the Summary.
+                                {!hasAverages && <> Run <strong>Sync now</strong> to load the 12-month average spending.</>}
+                            </>
+                        )}
                     </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -254,30 +377,56 @@ const YnabCategoryMappings: React.FC = () => {
                         onChange={e => setSearch(e.target.value)}
                         style={{ minWidth: 200 }}
                     />
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                        <input type="checkbox" checked={mappedOnly} onChange={e => setMappedOnly(e.target.checked)} />
-                        Mapped only
-                    </label>
+                    {view === 'funding' && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            <input type="checkbox" checked={mappedOnly} onChange={e => setMappedOnly(e.target.checked)} />
+                            Mapped only
+                        </label>
+                    )}
                 </div>
             </div>
 
             <div className="ynab-map-wrap">
                 <table className="ynab-map-table">
                     <thead>
-                        <tr>
-                            <th>Category</th>
-                            <th style={{ textAlign: 'right' }}>Available</th>
-                            <th style={{ textAlign: 'right' }}>Budgeted</th>
-                            <th>From</th>
-                            <th>Destination</th>
-                            <th>Broker</th>
-                        </tr>
+                        {view === 'funding' ? (
+                            <tr>
+                                <th>Category</th>
+                                <th style={{ textAlign: 'right' }}>Available</th>
+                                <th style={{ textAlign: 'right' }}>Budgeted</th>
+                                <th>From</th>
+                                <th>Destination</th>
+                                <th>Broker</th>
+                            </tr>
+                        ) : (
+                            <tr>
+                                <th>Category</th>
+                                <th style={{ textAlign: 'right' }}>Available</th>
+                                <th style={{ textAlign: 'right' }} title="Average monthly spending over the last 12 months">Avg / month</th>
+                                <th>Nature</th>
+                                <th>Cash at</th>
+                                <th style={{ textAlign: 'right' }}>Invested</th>
+                                <th>Goal</th>
+                            </tr>
+                        )}
                     </thead>
                     <tbody>
                         {groups.map(group => (
                             <React.Fragment key={group.name}>
                                 <tr className="group-row">
-                                    <td colSpan={6}>{group.name}</td>
+                                    <td colSpan={columnCount}>
+                                        <div className="group-row-inner">
+                                            <span>{group.name}</span>
+                                            <span className="group-totals">
+                                                {(() => {
+                                                    const t = sumOf(group.categories);
+                                                    return view === 'funding'
+                                                        ? `${eur(t.available)} available · ${eur(t.budgeted)} budgeted`
+                                                        : `${eur(t.available)} available · ${eur(t.avgSpent)}/mo`;
+                                                })()}
+                                            </span>
+                                        </div>
+                                    </td>
                                 </tr>
                                 {group.categories.map(category => {
                                     const mapping = mappingByCategory.get(category.id);
@@ -302,6 +451,7 @@ const YnabCategoryMappings: React.FC = () => {
                                             <td className="map-cell-avail" data-label="Available" style={{ textAlign: 'right', color: available < 0 ? 'var(--color-danger)' : undefined }}>
                                                 {eur(available)}
                                             </td>
+                                            {view === 'location' ? renderLocationCells(category.id, mapping?.sourceBrokerId) : (<>
                                             <td className="map-cell-budgeted" data-label="Budgeted" style={{ textAlign: 'right', color: 'var(--text-muted)' }}>
                                                 {eur(milliunitsToEur(category.budgetedMilliunits ?? 0))}
                                             </td>
@@ -406,6 +556,7 @@ const YnabCategoryMappings: React.FC = () => {
                                                     <span className="muted-cell">—</span>
                                                 )}
                                             </td>
+                                            </>)}
                                         </tr>
                                     );
                                 })}
@@ -413,14 +564,43 @@ const YnabCategoryMappings: React.FC = () => {
                         ))}
                         {groups.length === 0 && (
                             <tr>
-                                <td colSpan={6} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>
+                                <td colSpan={columnCount} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>
                                     No category matches the filter.
                                 </td>
                             </tr>
                         )}
                     </tbody>
+                    {groups.length > 0 && (
+                        <tfoot>
+                            <tr className="total-row">
+                                <td className="map-cell-name">{search || (view === 'funding' && mappedOnly) ? 'Total shown' : 'Total'}</td>
+                                <td data-label="Available" style={{ textAlign: 'right' }}>{eur(shownTotals.available)}</td>
+                                {view === 'funding' ? (
+                                    <>
+                                        <td data-label="Budgeted" style={{ textAlign: 'right' }}>{eur(shownTotals.budgeted)}</td>
+                                        <td colSpan={3} className="is-empty" />
+                                    </>
+                                ) : (
+                                    <>
+                                        <td data-label="Avg / month" style={{ textAlign: 'right' }}>{eur(shownTotals.avgSpent)}</td>
+                                        <td colSpan={2} className="is-empty" />
+                                        <td data-label="Invested" style={{ textAlign: 'right' }}>{eur(shownTotals.invested)}</td>
+                                        <td className="is-empty" />
+                                    </>
+                                )}
+                            </tr>
+                        </tfoot>
+                    )}
                 </table>
             </div>
+
+            {detailPosition && (
+                <CategoryDetailModal
+                    key={detailPosition.categoryId}
+                    position={detailPosition}
+                    onClose={() => setDetailId(null)}
+                />
+            )}
 
             <style>{`
                 .ynab-map-card {
@@ -476,6 +656,66 @@ const YnabCategoryMappings: React.FC = () => {
                     font-size: 0.82rem;
                 }
                 .ynab-map-table .muted-cell { color: var(--text-muted); }
+                .map-view-tabs {
+                    display: inline-flex;
+                    gap: 0.25rem;
+                    margin-top: 0.6rem;
+                    padding: 0.2rem;
+                    background: var(--bg-app);
+                    border-radius: var(--radius-md);
+                }
+                .map-view-tabs button {
+                    border: none;
+                    background: none;
+                    color: var(--text-secondary);
+                    padding: 0.35rem 0.8rem;
+                    border-radius: var(--radius-sm, 6px);
+                    font-size: 0.85rem;
+                    cursor: pointer;
+                }
+                .map-view-tabs button.active {
+                    background: var(--bg-card);
+                    color: var(--text-primary);
+                    font-weight: 600;
+                }
+                .ynab-map-table .group-row-inner {
+                    display: flex;
+                    justify-content: space-between;
+                    gap: 1rem;
+                    flex-wrap: wrap;
+                }
+                .ynab-map-table .group-totals {
+                    font-weight: 500;
+                    text-transform: none;
+                    letter-spacing: 0;
+                    color: var(--text-muted);
+                    font-variant-numeric: tabular-nums;
+                }
+                .ynab-map-table tfoot td {
+                    position: sticky;
+                    bottom: 0;
+                    background: var(--bg-surface);
+                    font-weight: 600;
+                    border-top: 2px solid var(--border-color);
+                }
+                .ynab-map-table .cell-link {
+                    background: none;
+                    border: none;
+                    padding: 0;
+                    color: var(--color-primary);
+                    cursor: pointer;
+                    font-size: 0.85rem;
+                    font-variant-numeric: tabular-nums;
+                }
+                .ynab-map-table .cell-link-muted { color: var(--text-muted); }
+                .ynab-map-table .fund-badge {
+                    margin-left: 0.5rem;
+                    font-size: 0.68rem;
+                    padding: 0.1rem 0.4rem;
+                    border-radius: 999px;
+                    background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+                    color: var(--color-primary);
+                }
                 .ynab-map-table .dest-wrap {
                     display: flex;
                     align-items: center;

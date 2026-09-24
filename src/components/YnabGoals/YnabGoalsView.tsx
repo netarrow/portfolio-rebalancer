@@ -2,9 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { YnabGoal, YnabGoalAllocation } from '../../types';
 import { isVirtualBondTicker, getVirtualBondId } from '../../types';
-import { calculateAssets } from '../../utils/portfolioCalculations';
-import { resolveGroups } from '../../utils/allocationGroups';
-import { resolveAmountTargets } from '../../utils/amountTargets';
+import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import AllocationModal from './AllocationModal';
 import Swal from 'sweetalert2';
 
@@ -46,23 +44,15 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
     // An allocation pinned to an asset of a goal-matching portfolio is a
     // target, not money set aside: what it actually covers is its share of
     // what the asset holds today (the asset's goals are funded pro rata).
-    const pinnedCoverage = useMemo(() => {
-        const out = new Map<string, number>();
-        portfolios.filter(p => p.targetMode === 'amount').forEach(p => {
-            const { assets } = calculateAssets(transactions.filter(t => t.portfolioId === p.id), effectiveAssetSettings, marketData);
-            const { groupById } = resolveGroups(p);
-            const valueOf = (key: string) => {
-                const tickers = groupById[key]?.members ?? [key];
-                return tickers.reduce((s, t) => s + (assets.find(a =>
-                    isVirtualBondTicker(t) ? a.ticker === t : a.ticker.toUpperCase() === t.toUpperCase())?.currentValue || 0), 0);
-            };
-            resolveAmountTargets(p, ynabGoalAllocations, ynabGoals, virtualBonds).forEach(row => {
-                const ratio = row.target > 0 ? Math.min(1, valueOf(row.key) / row.target) : 0;
-                row.goals.forEach(g => out.set(g.allocationId, g.amount * ratio));
-            });
-        });
-        return out;
-    }, [portfolios, transactions, effectiveAssetSettings, marketData, ynabGoalAllocations, ynabGoals, virtualBonds]);
+    const pinnedCoverage = useMemo(() => pinnedAllocationCoverage({
+        portfolios,
+        transactions,
+        assetSettings: effectiveAssetSettings,
+        marketData,
+        allocations: ynabGoalAllocations,
+        goals: ynabGoals,
+        virtualBonds,
+    }), [portfolios, transactions, effectiveAssetSettings, marketData, ynabGoalAllocations, ynabGoals, virtualBonds]);
 
     const coveredBy = (a: YnabGoalAllocation) => pinnedCoverage.get(a.id) ?? a.amount;
 

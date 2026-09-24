@@ -313,7 +313,7 @@ export const categoryFunds = (category: YnabCategory, settings: YnabFundingSetti
     return roundCents(milli / 1000);
 };
 
-const minLiquidityOf = (broker: Broker): number => {
+export const minLiquidityOf = (broker: Broker): number => {
     if (broker.minLiquidityType === 'fixed') return Math.max(0, broker.minLiquidityAmount || 0);
     if (broker.minLiquidityType === 'percent') {
         return Math.max(0, (broker.currentLiquidity || 0) * ((broker.minLiquidityPercentage || 0) / 100));

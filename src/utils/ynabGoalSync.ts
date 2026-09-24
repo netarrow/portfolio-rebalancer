@@ -77,7 +77,8 @@ export interface YnabGoalSyncReport {
 // rebuild the forecast's planned expenses from the goals it just synced).
 //
 // Goals whose category disappeared from the YNAB group are archived when
-// allocations still point at them, and dropped otherwise.
+// allocations still point at them, and dropped otherwise — except the ones
+// created from a category on the YNAB page, which never belonged to the group.
 export function mergeYnabGoalsFromCandidates(
     previous: YnabGoal[],
     candidates: YnabGoalSyncCandidate[],
@@ -130,6 +131,8 @@ export function mergeYnabGoalsFromCandidates(
     for (const g of previous) {
         if (allFetchedIds.has(g.id)) continue;
         if (incomingIds.has(g.id)) continue;
+        // Created from a category outside the goals group: not this sync's to drop.
+        if (g.origin === 'category') continue;
         if (opts.allocations.some(a => a.ynabGoalId === g.id)) {
             byId.set(g.id, { ...g, archived: true, lastSyncedAt: now });
             report.archived += 1;

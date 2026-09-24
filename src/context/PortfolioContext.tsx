@@ -114,8 +114,18 @@ interface PortfolioContextType {
     ynabListBudgets: (apiKey: string) => Promise<{ ok: boolean; budgets?: YnabBudgetSummary[]; error?: string }>;
     syncYnabBudget: () => Promise<{ ok: boolean; error?: string }>;
     setYnabMapping: (categoryId: string, target: YnabMappingTarget) => void;
-    /** The account a category's money leaves from; null clears it. */
+    /** The account a category's money leaves from — and sits on; null clears it. */
     setYnabMappingSource: (categoryId: string, brokerId: string | null) => void;
+    /** Whether a category counts toward the emergency fund. */
+    setYnabMappingEmergency: (categoryId: string, emergencyFund: boolean) => void;
+    /**
+     * The YNAB goal tracking a category, created from the category when it has
+     * none yet (outside the goals group). Its allocations are where the
+     * category's money is invested.
+     */
+    ensureCategoryGoal: (categoryId: string) => YnabGoal | null;
+    /** Sets a category's goal target by hand (creating the goal if needed). */
+    setCategoryGoalTarget: (categoryId: string, target: { amount?: number | null; date?: string | null }) => void;
     // Funding plan: how the mapped categories are turned into wires and orders,
     // and the one-click registration of the orders it proposes.
     ynabFundingSettings: YnabFundingSettings;
@@ -2549,9 +2559,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             // A whole portfolio as the destination: the Tactical Tilt's own
             // weights decide which of its rows this money buys.
             { categoryId: 'ynab-cat-6', target: { kind: 'portfolio', portfolioId: pIdMainTilt, brokerId: 'b1' } },
-            { categoryId: 'ynab-cat-5', target: { kind: 'cash', brokerId: 'b1' } },
+            // The emergency fund: kept at Degiro as cash and counted by the
+            // coverage panel against six months of fixed spending.
+            { categoryId: 'ynab-cat-5', target: { kind: 'cash', brokerId: 'b1' }, emergencyFund: true },
             { categoryId: 'ynab-cat-7', target: { kind: 'asset', ticker: 'IT0005534141', brokerId: 'b2', portfolioId: pIdLadder } },
-            // cat-4 (Crypto) and housing/expenses remain unmapped
+            // cat-4 (Crypto) and housing/expenses are not invested; the day-to-day
+            // ones live on the joint account, which the coverage panel checks.
+            { categoryId: 'ynab-cat-12', target: { kind: 'unmapped' }, sourceBrokerId: 'b4' },
+            { categoryId: 'ynab-cat-13', target: { kind: 'unmapped' }, sourceBrokerId: 'b4' },
+            { categoryId: 'ynab-cat-8', target: { kind: 'unmapped' }, sourceBrokerId: 'b4' },
         ]);
 
         // 8b. YNAB Goals — synced from the "Investment Goals" category group.
@@ -2910,10 +2926,23 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const merged = result.data.map(c => {
                 const avg = averages?.get(c.id);
                 return avg
-                    ? { ...c, avgBudgetedMilliunits: avg.avgBudgetedMilliunits, avgMonthsCount: avg.monthsCount }
+                    ? {
+                        ...c,
+                        avgBudgetedMilliunits: avg.avgBudgetedMilliunits,
+                        avgMonthsCount: avg.monthsCount,
+                        avgSpentMilliunits: avg.avgSpentMilliunits,
+                        spentMonthsCount: avg.spentMonthsCount,
+                    }
                     : c;
             });
             setYnabCategories(merged);
+            // A goal's cash is its category's Available: keep it current on every
+            // sync, not only when the goals group is re-synced.
+            const balanceById = new Map(merged.map(c => [c.id, milliunitsToEur(c.balanceMilliunits)]));
+            setYnabGoals(prev => prev.map(g => {
+                const balance = balanceById.get(g.id);
+                return balance === undefined || balance === g.cashCoverage ? g : { ...g, cashCoverage: balance };
+            }));
             setYnabConfigState(prev => prev ? { ...prev, lastSyncAt: new Date().toISOString() } : prev);
             return { ok: true };
         } catch (e) {
@@ -2928,7 +2957,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const idx = prev.findIndex(m => m.categoryId === categoryId);
             if (target.kind === 'unmapped') {
                 if (idx === -1) return prev;
-                return prev.filter(m => m.categoryId !== categoryId);
+                // The row also says where the money sits and whether it is part
+                // of the emergency fund; only an empty row is dropped.
+                const { sourceBrokerId, emergencyFund } = prev[idx];
+                if (!sourceBrokerId && !emergencyFund) return prev.filter(m => m.categoryId !== categoryId);
+                const copy = prev.slice();
+                copy[idx] = { ...prev[idx], target };
+                return copy;
             }
             // Re-pointing a category keeps the account its money comes from:
             // where it goes and where it starts are independent choices.
@@ -2940,11 +2975,85 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
-    const setYnabMappingSource = (categoryId: string, brokerId: string | null) => {
-        setYnabMappings(prev => prev.map(m =>
-            m.categoryId === categoryId
-                ? { ...m, sourceBrokerId: brokerId || undefined }
-                : m));
+    // Upserts: where a category's money sits is worth saying even when it is
+    // not being invested anywhere.
+    const patchYnabMapping = (categoryId: string, patch: Partial<YnabCategoryMapping>) => {
+        setYnabMappings(prev => {
+            const idx = prev.findIndex(m => m.categoryId === categoryId);
+            const base: YnabCategoryMapping = idx === -1
+                ? { categoryId, target: { kind: 'unmapped' } }
+                : prev[idx];
+            const next: YnabCategoryMapping = { ...base, ...patch };
+            (Object.keys(patch) as (keyof YnabCategoryMapping)[]).forEach(k => {
+                if (next[k] === undefined) delete next[k];
+            });
+            const empty = next.target.kind === 'unmapped' && !next.sourceBrokerId && !next.emergencyFund;
+            if (idx === -1) return empty ? prev : [...prev, next];
+            if (empty) return prev.filter(m => m.categoryId !== categoryId);
+            const copy = prev.slice();
+            copy[idx] = next;
+            return copy;
+        });
+    };
+
+    const setYnabMappingSource = (categoryId: string, brokerId: string | null) =>
+        patchYnabMapping(categoryId, { sourceBrokerId: brokerId || undefined });
+
+    const setYnabMappingEmergency = (categoryId: string, emergencyFund: boolean) =>
+        patchYnabMapping(categoryId, { emergencyFund: emergencyFund || undefined });
+
+    // A goal read off the category itself: the "Name - 2500€ - 2030" descriptor
+    // in its name or note, else YNAB's own goal target.
+    const goalFromCategory = (category: YnabCategory): YnabGoal => {
+        const parsed = parseGoalDescriptor(category.name, category.note);
+        const native = nativeGoalTarget(category);
+        const amount = parsed.amount ?? native.amount;
+        const date = parsed.date ?? native.date;
+        return {
+            id: category.id,
+            ynabBudgetId: ynabConfig?.budgetId ?? '',
+            name: parsed.name ?? category.name,
+            ...(amount !== null ? { targetAmount: amount } : {}),
+            ...(date !== null ? { targetDate: date } : {}),
+            cashCoverage: milliunitsToEur(category.balanceMilliunits),
+            goalType: category.goalType,
+            targetSource: parsed.source ?? (native.amount !== null || native.date !== null ? 'ynab-goal' : 'manual-override'),
+            lastSyncedAt: new Date().toISOString(),
+            origin: 'category',
+        };
+    };
+
+    const ensureCategoryGoal = (categoryId: string): YnabGoal | null => {
+        const existing = ynabGoals.find(g => g.id === categoryId);
+        if (existing) {
+            if (existing.archived) setYnabGoals(prev => prev.map(g => g.id === categoryId ? { ...g, archived: false } : g));
+            return existing.archived ? { ...existing, archived: false } : existing;
+        }
+        const category = ynabCategories.find(c => c.id === categoryId);
+        if (!category) return null;
+        const goal = goalFromCategory(category);
+        setYnabGoals(prev => prev.some(g => g.id === categoryId) ? prev : [...prev, goal]);
+        return goal;
+    };
+
+    const setCategoryGoalTarget = (categoryId: string, target: { amount?: number | null; date?: string | null }) => {
+        const category = ynabCategories.find(c => c.id === categoryId);
+        setYnabGoals(prev => {
+            const current = prev.find(g => g.id === categoryId) ?? (category ? goalFromCategory(category) : null);
+            if (!current) return prev;
+            const next: YnabGoal = { ...current, targetSource: 'manual-override', archived: false };
+            if ('amount' in target) {
+                if (target.amount && target.amount > 0) next.targetAmount = target.amount;
+                else delete next.targetAmount;
+            }
+            if ('date' in target) {
+                if (target.date) next.targetDate = target.date;
+                else delete next.targetDate;
+            }
+            return prev.some(g => g.id === categoryId)
+                ? prev.map(g => g.id === categoryId ? next : g)
+                : [...prev, next];
+        });
     };
 
     /**
@@ -3649,6 +3758,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         syncYnabBudget,
         setYnabMapping,
         setYnabMappingSource,
+        setYnabMappingEmergency,
+        ensureCategoryGoal,
+        setCategoryGoalTarget,
         ynabFundingSettings,
         setYnabFundingSettings,
         registerYnabFundingOrders,

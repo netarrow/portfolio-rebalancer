@@ -404,6 +404,10 @@ export interface YnabCategory {
   budgetedMilliunits?: number;
   avgBudgetedMilliunits?: number;
   avgMonthsCount?: number;
+  // Average monthly outflow over the last 12 complete months (−activity, so a
+  // positive figure is money spent), and how many of those months YNAB had.
+  avgSpentMilliunits?: number;
+  spentMonthsCount?: number;
   note?: string;
   goalType?: string;
   goalTargetMilliunits?: number;
@@ -439,6 +443,10 @@ export interface YnabGoal {
   targetSource: YnabGoalTargetSource;
   lastSyncedAt: string;
   archived?: boolean;
+  // 'category' = created from the YNAB page for a category outside the goals
+  // group (to track where its money is invested, or to give it a target). A
+  // goals-group sync never archives or deletes those: they are not its own.
+  origin?: 'goals-group' | 'category';
 }
 
 export interface YnabGoalAllocation {
@@ -530,7 +538,11 @@ export interface YnabCategoryMapping {
   // is modelled as one). It pays the wire's fee out of its own liquidity, and
   // the plan checks it can actually afford the transfer. Absent = the funding
   // plan's default source, and failing that an unnamed account.
+  // It is also where the category's Available sits today: the coverage check
+  // adds up the categories of each account against that account's liquidity.
   sourceBrokerId?: string;
+  // Counts toward the emergency fund (its cash and invested money together).
+  emergencyFund?: boolean;
 }
 
 // ── YNAB funding plan ───────────────────────────────────────────────
@@ -562,6 +574,14 @@ export interface YnabFundingSettings {
   feeWarnPercent: number;
   // Account the wires leave from unless a category names its own.
   defaultSourceBrokerId?: string;
+  // ── Coverage check (liquidity per account, emergency fund, goals) ──
+  // Months of fixed (structural) spending the emergency fund should cover.
+  emergencyMonths?: number;
+  // Months of fixed + variable + compressible spending each account should
+  // keep liquid for the categories that live on it ("working capital").
+  workingCapitalMonths?: number;
+  // A dated goal due within this many months must already be cash.
+  goalHorizonMonths?: number;
 }
 
 export const DEFAULT_YNAB_FUNDING_SETTINGS: YnabFundingSettings = {
@@ -571,6 +591,9 @@ export const DEFAULT_YNAB_FUNDING_SETTINGS: YnabFundingSettings = {
   useBrokerCash: true,
   transferRoundingStep: 10,
   feeWarnPercent: 1,
+  emergencyMonths: 6,
+  workingCapitalMonths: 1,
+  goalHorizonMonths: 3,
 };
 
 // ── YNAB spending analysis (rolling 12 months) ──────────────────────
