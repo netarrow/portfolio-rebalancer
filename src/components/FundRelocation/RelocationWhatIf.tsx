@@ -13,7 +13,7 @@ const deltaClass = (v: number, invert = false) => {
     return good ? 'reloc-delta-positive' : 'reloc-delta-negative';
 };
 
-interface Row {
+export interface Row {
     label: string;
     before: number;
     after: number;
@@ -30,7 +30,7 @@ interface Row {
  * readable at 390px without the horizontal scroll that would hide the change,
  * which is the only column anyone came for.
  */
-const CompareTable: React.FC<{ title: string; rows: Row[]; format?: (v: number) => string; deltaFormat?: (v: number) => string }> = ({
+export const CompareTable: React.FC<{ title: string; rows: Row[]; format?: (v: number) => string; deltaFormat?: (v: number) => string }> = ({
     title, rows, format = eur0, deltaFormat = signedEur,
 }) => (
     <div className="reloc-card">
@@ -99,6 +99,20 @@ interface RelocationWhatIfProps {
     spent?: number;
     /** How many moves the "after" column includes. */
     moveCount: number;
+    /**
+     * Wording for a what-if that is not a relocation — the YNAB funding plan
+     * reuses this view, where money arrives instead of moving and nothing is
+     * sold, so the relocation sentences would be wrong.
+     */
+    copy?: {
+        title?: string;
+        netWorthHint?: string;
+        realizedHint?: string;
+        afterLabel?: string;
+        pyramidHint?: React.ReactNode;
+    };
+    /** Extra cards placed right after the macro allocation. */
+    children?: React.ReactNode;
 }
 
 /**
@@ -113,7 +127,7 @@ const netWorthHint = (friction: number, spent: number): string | undefined => {
     return undefined;
 };
 
-const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, friction, spent = 0, moveCount }) => {
+const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, friction, spent = 0, moveCount, copy, children }) => {
     const plural = moveCount > 1;
     const suffix = plural ? `after all ${moveCount} moves` : 'after the move';
 
@@ -122,7 +136,7 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
             label: 'Net worth',
             before: before.netWorth,
             after: after.netWorth,
-            hint: netWorthHint(friction, spent),
+            hint: copy?.netWorthHint ?? netWorthHint(friction, spent),
         },
         { label: 'Invested', before: before.invested, after: after.invested },
         { label: 'Liquidity', before: before.liquidity, after: after.liquidity },
@@ -133,9 +147,9 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
             before: before.realizedGain,
             after: after.realizedGain,
             neutral: true,
-            hint: plural
+            hint: copy?.realizedHint ?? (plural
                 ? 'each sale turns unrealized gain into realized — and taxed'
-                : 'the sale turns unrealized gain into realized — and taxed',
+                : 'the sale turns unrealized gain into realized — and taxed'),
         },
     ];
 
@@ -156,7 +170,7 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
 
     return (
         <>
-            <CompareTable title={`How the numbers change — ${suffix}`} rows={headline} />
+            <CompareTable title={copy?.title ?? `How the numbers change — ${suffix}`} rows={headline} />
 
             <div className="reloc-card">
                 <h3 className="reloc-section-title">Macro allocation</h3>
@@ -235,6 +249,8 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
                 </p>
             </div>
 
+            {children}
+
             <div className="reloc-card">
                 <h3 className="reloc-section-title">Stats charts, before and after</h3>
                 <div className="reloc-charts-grid">
@@ -275,12 +291,16 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
                     <h3 className="reloc-section-title">Goal pyramid</h3>
                     <div className="reloc-pyramids">
                         <GoalDistributionChart data={before.goalPyramid} total={before.goalPyramidTotal} title="Before" />
-                        <GoalDistributionChart data={after.goalPyramid} total={after.goalPyramidTotal} title={plural ? `After ${moveCount} moves` : 'After'} />
+                        <GoalDistributionChart data={after.goalPyramid} total={after.goalPyramidTotal} title={copy?.afterLabel ?? (plural ? `After ${moveCount} moves` : 'After')} />
                     </div>
                     <p className="reloc-hint">
-                        The pyramid total is net worth: {suffix} it is{' '}
-                        {eur0(before.goalPyramidTotal - after.goalPyramidTotal)} lower, which is exactly tax plus
-                        commissions. That is the cost the ordinary views never show.
+                        {copy?.pyramidHint ?? (
+                            <>
+                                The pyramid total is net worth: {suffix} it is{' '}
+                                {eur0(before.goalPyramidTotal - after.goalPyramidTotal)} lower, which is exactly tax plus
+                                commissions. That is the cost the ordinary views never show.
+                            </>
+                        )}
                     </p>
                 </div>
             )}

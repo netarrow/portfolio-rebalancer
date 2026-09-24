@@ -974,6 +974,20 @@ async function scrollAndShoot(page, base) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await sleep(200);
   }
+  // The before/after under the plan: the Fund Relocation what-if applied to
+  // the state Register would leave.
+  const whatIf = await page.$('.ynab-whatif');
+  if (whatIf) {
+    await page.evaluate(() =>
+      document.querySelector('.ynab-whatif')?.scrollIntoView({ block: 'start' })
+    );
+    await sleep(500);
+    const file = path.join(OUT, 'ynab_funding_whatif.png');
+    await whatIf.screenshot({ path: file });
+    console.log('  ->', path.relative(ROOT, file));
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await sleep(200);
+  }
 
   // ---------- YNAB GOALS ----------
   console.log('YNAB Goals');

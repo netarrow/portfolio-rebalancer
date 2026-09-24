@@ -429,6 +429,9 @@ Everything below is computed from data the app already holds — the category ba
 - Whether the fee comes **out of the category's money** (one share less is bought) or is an **extra outlay the wire has to cover** is a toggle — as is funding from *available* rather than *budgeted this month*, fractional instead of whole shares, and whether the cash already at the broker counts.
 - Orders that cannot be placed say why: no known price, no broker, no portfolio, or not enough money for one unit yet. A commission that eats more than a configurable share of the trade is flagged too.
 - **Register purchases** books the ready orders as real Buy transactions — free ones flagged as such — and moves the broker cash by the exact amounts: the wire in, the orders and their fees out. The YNAB side stays yours to record.
+- **Before / after**: below the plan, the same what-if [Fund Relocation](#fund-relocation) draws — net worth, invested, liquidity and cost basis, the macro allocation against its targets, the Stats pies (asset allocation, invested vs liquidity, by portfolio, by broker), value per portfolio and the goal pyramid — read once today and once on the state *Register* would leave. It is not a separate model: it applies the very commit Register writes, so it follows the *Also credit the wires* checkbox and leaves out the orders that are not ready. Two tables are specific to funding: **Assets bought**, with each asset's value and its weight in net worth before and after, and **Cash at each account**, where the wires land and leave — flagged when an account would go negative. The net-worth line splits the change into money arriving from accounts the app does not count, commissions and bank fees.
+
+![YNAB funding before / after](screenshots/ynab_funding_whatif.png)
 
 ### YNAB Goals
 

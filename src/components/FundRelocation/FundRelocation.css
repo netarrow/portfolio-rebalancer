@@ -1434,3 +1434,15 @@
         margin-left: auto;
     }
 }
+
+/* The Fund Relocation what-if nested inside the YNAB funding plan: the inner
+   cards sit on the page colour so they read as sections of one card. */
+.ynab-whatif .ynab-whatif-body {
+    padding-bottom: 0;
+}
+
+.ynab-whatif .reloc-card {
+    background-color: var(--bg-app);
+    padding: var(--space-4);
+    margin-bottom: var(--space-4);
+}
