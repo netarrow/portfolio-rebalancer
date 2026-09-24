@@ -662,6 +662,47 @@
         margin-bottom: 2px;
     }
 
+    /* The total is one more card: its desktop sticky footer styling (a rule
+       over every cell) would draw a line under each label here. */
+    .ynab-map-table tfoot tr {
+        padding: var(--space-3) !important;
+        border-top: 2px solid var(--border-color) !important;
+    }
+
+    .ynab-map-table tfoot td {
+        position: static !important;
+        background: none !important;
+        border-top: none !important;
+    }
+
+    /* Invested / Goal open the category's details: thumb-sized targets. */
+    .ynab-map-table .cell-link {
+        min-height: 36px;
+        padding: var(--space-2) var(--space-3) !important;
+        margin-right: calc(-1 * var(--space-3));
+    }
+
+    .ycd-modal .ycd-link {
+        padding: var(--space-2) !important;
+        min-height: 36px;
+    }
+
+    .ycd-modal .ycd-list li {
+        flex-wrap: wrap;
+    }
+
+    .ycd-modal .ycd-list-label {
+        flex: 1 1 100% !important;
+    }
+
+    .ycd-modal .ycd-list-amount {
+        margin-right: auto;
+    }
+
+    .ycd-modal .ycd-figures strong {
+        font-size: 0.95rem;
+    }
+
     .ynab-map-table .dest-wrap {
         flex-wrap: wrap;
     }

@@ -341,6 +341,7 @@ const YnabCoveragePanel: React.FC = () => {
                     .cov-settings label { flex: 1 1 0; }
                     .cov-settings input { width: 100%; font-size: 16px; }
                     .cov-add { flex: 1 1 100%; font-size: 16px; }
+                    .cov-figures { grid-template-columns: 1fr 1fr; }
                 }
             `}</style>
         </div>

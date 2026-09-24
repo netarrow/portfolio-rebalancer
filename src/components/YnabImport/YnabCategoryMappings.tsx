@@ -614,7 +614,9 @@ const YnabCategoryMappings: React.FC = () => {
                     margin-top: 1rem;
                     border: 1px solid var(--border-color);
                     border-radius: var(--radius-md);
-                    max-height: 460px;
+                    /* Tall enough to work in: most of the viewport, never less
+                       than the old fixed box. */
+                    max-height: max(460px, calc(100vh - 280px));
                     overflow-y: auto;
                 }
                 .ynab-map-table {
