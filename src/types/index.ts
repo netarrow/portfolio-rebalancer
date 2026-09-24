@@ -517,7 +517,9 @@ export interface PlannedForecastExpense {
 // portfolio's own targets (by weight, or by € target on an amount-mode one).
 export type YnabMappingTarget =
   | { kind: 'asset'; ticker: string; brokerId?: string; portfolioId?: string }
-  | { kind: 'portfolio'; portfolioId: string; brokerId?: string }
+  // `wholeGroup` on the root of a parent/child group funds the whole group,
+  // shared over its members by the group ratio; absent, only that portfolio.
+  | { kind: 'portfolio'; portfolioId: string; wholeGroup?: boolean; brokerId?: string }
   | { kind: 'cash'; brokerId: string }
   | { kind: 'unmapped' };
 

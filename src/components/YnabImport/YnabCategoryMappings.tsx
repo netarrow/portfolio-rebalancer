@@ -17,8 +17,9 @@ import { isGroupKey } from '../../utils/portfolioCalculations';
  * The destination is a single list, grouped by portfolio: each portfolio offers
  * itself as a whole and then the assets it targets, so picking an asset also
  * says which portfolio books the trade. A parent/child group is listed once, as
- * the one entity the rest of the app treats it as — funding it as a whole
- * spreads the money over its members. The broker the order goes through stays
+ * the one entity the rest of the app treats it as: it can be funded as a whole
+ * (the money is spread over its members) or through any one member alone,
+ * parent included. The broker the order goes through stays
  * optional: naming it is what lets the funding plan price the commission.
  */
 
@@ -28,6 +29,7 @@ const eur = (value: number) =>
 const CASH_PREFIX = 'cash:';
 const ASSET_PREFIX = 'asset:';
 const PORTFOLIO_PREFIX = 'portfolio:';
+const GROUP_PREFIX = 'group:';
 
 /** `asset:<portfolioId>|<ticker>`; an empty portfolio id means "no portfolio". */
 const assetValue = (ticker: string, portfolioId?: string) => `${ASSET_PREFIX}${portfolioId ?? ''}|${ticker}`;
@@ -40,6 +42,8 @@ interface DestinationEntity {
     /** Members counted as one entity; 1 for a standalone portfolio. */
     memberCount: number;
     isGroup: boolean;
+    /** Parent first, then the children — each also fundable on its own. */
+    members: { id: string; name: string }[];
     /** Assets the entity targets, each with the member portfolio that books it. */
     assets: { ticker: string; label: string; portfolioId: string }[];
 }
@@ -94,12 +98,13 @@ const YnabCategoryMappings: React.FC = () => {
                     name: g.parent.name,
                     memberCount: g.members.length,
                     isGroup: true,
+                    members: g.members.map(m => ({ id: m.id, name: m.name })),
                     assets: assetsOf(g.members),
                 },
             })),
             ...tree.standalones.map(p => ({
                 parent: p,
-                entity: { rootId: p.id, name: p.name, memberCount: 1, isGroup: false, assets: assetsOf([p]) },
+                entity: { rootId: p.id, name: p.name, memberCount: 1, isGroup: false, members: [{ id: p.id, name: p.name }], assets: assetsOf([p]) },
             })),
         ]
             .sort((a, b) => a.parent.order - b.parent.order)
@@ -117,7 +122,8 @@ const YnabCategoryMappings: React.FC = () => {
 
     const offeredValues = useMemo(() => new Set([
         ...entities.flatMap(e => [
-            `${PORTFOLIO_PREFIX}${e.rootId}`,
+            ...(e.isGroup ? [`${GROUP_PREFIX}${e.rootId}`] : []),
+            ...e.members.map(m => `${PORTFOLIO_PREFIX}${m.id}`),
             ...e.assets.map(a => assetValue(a.ticker, a.portfolioId)),
         ]),
         ...looseAssets.map(a => assetValue(a.ticker)),
@@ -145,7 +151,9 @@ const YnabCategoryMappings: React.FC = () => {
     const selectValue = (target: YnabMappingTarget | undefined): string => {
         if (!target || target.kind === 'unmapped') return '';
         if (target.kind === 'cash') return `${CASH_PREFIX}${target.brokerId}`;
-        if (target.kind === 'portfolio') return `${PORTFOLIO_PREFIX}${target.portfolioId}`;
+        if (target.kind === 'portfolio') {
+            return `${target.wholeGroup ? GROUP_PREFIX : PORTFOLIO_PREFIX}${target.portfolioId}`;
+        }
         return assetValue(target.ticker, target.portfolioId);
     };
 
@@ -156,7 +164,9 @@ const YnabCategoryMappings: React.FC = () => {
      * something else.
      */
     const legacyLabel = (target: YnabMappingTarget): string => {
-        if (target.kind === 'portfolio') return `${portfolioName(target.portfolioId) ?? 'Missing portfolio'} · whole`;
+        if (target.kind === 'portfolio') {
+            return `${portfolioName(target.portfolioId) ?? 'Missing portfolio'} · ${target.wholeGroup ? 'whole group' : 'whole'}`;
+        }
         if (target.kind === 'asset') {
             const where = portfolioName(target.portfolioId);
             return where ? `${labelOf(target.ticker)} · ${where}` : labelOf(target.ticker);
@@ -178,6 +188,15 @@ const YnabCategoryMappings: React.FC = () => {
             return;
         }
         const keptBroker = previous && previous.kind !== 'unmapped' ? previous.brokerId : undefined;
+        if (value.startsWith(GROUP_PREFIX)) {
+            setYnabMapping(categoryId, {
+                kind: 'portfolio',
+                portfolioId: value.slice(GROUP_PREFIX.length),
+                wholeGroup: true,
+                brokerId: keptBroker,
+            });
+            return;
+        }
         if (value.startsWith(PORTFOLIO_PREFIX)) {
             setYnabMapping(categoryId, {
                 kind: 'portfolio',
@@ -272,9 +291,8 @@ const YnabCategoryMappings: React.FC = () => {
                                     const fundedPortfolio = isPortfolio
                                         ? portfolios.find(p => p.id === target.portfolioId)
                                         : undefined;
-                                    const fundedEntity = isPortfolio
-                                        ? entities.find(e => e.rootId === target.portfolioId)
-                                        : undefined;
+                                    const fundsGroup = isPortfolio && !!target.wholeGroup
+                                        && !!entities.find(e => e.rootId === target.portfolioId)?.isGroup;
                                     const value = selectValue(target);
                                     const isLegacy = !!value && !offeredValues.has(value);
                                     const available = milliunitsToEur(category.balanceMilliunits);
@@ -324,10 +342,18 @@ const YnabCategoryMappings: React.FC = () => {
                                                         {entities.map(entity => (
                                                             <optgroup key={entity.rootId} label={entity.isGroup ? `${entity.name} · group of ${entity.memberCount}` : entity.name}>
                                                                 {/* No asset named: the portfolio's own targets
-                                                                    decide what the money buys. */}
-                                                                <option value={`${PORTFOLIO_PREFIX}${entity.rootId}`}>
-                                                                    {entity.isGroup ? `Whole group · ${entity.name}` : `Whole portfolio · ${entity.name}`}
-                                                                </option>
+                                                                    decide what the money buys. A group offers
+                                                                    itself as a whole, then each member alone. */}
+                                                                {entity.isGroup && (
+                                                                    <option value={`${GROUP_PREFIX}${entity.rootId}`}>
+                                                                        Whole group · {entity.name}
+                                                                    </option>
+                                                                )}
+                                                                {entity.members.map(m => (
+                                                                    <option key={m.id} value={`${PORTFOLIO_PREFIX}${m.id}`}>
+                                                                        {entity.isGroup ? `Only · ${m.name}` : `Whole portfolio · ${m.name}`}
+                                                                    </option>
+                                                                ))}
                                                                 {entity.assets.map(a => (
                                                                     <option key={a.ticker} value={assetValue(a.ticker, a.portfolioId)}>{a.label}</option>
                                                                 ))}
@@ -350,13 +376,13 @@ const YnabCategoryMappings: React.FC = () => {
                                                     {isPortfolio && (
                                                         <span
                                                             className="split-note"
-                                                            title={fundedEntity?.isGroup
+                                                            title={fundsGroup
                                                                 ? 'Shared over the group\'s members by their configured ratio, then over each member\'s own targets.'
                                                                 : fundedPortfolio?.targetMode === 'amount'
                                                                     ? 'The money fills this portfolio\'s € targets, nearest due date first.'
                                                                     : 'The money is spread over this portfolio\'s underweight rows, proportionally to their gap.'}
                                                         >
-                                                            {fundedEntity?.isGroup
+                                                            {fundsGroup
                                                                 ? 'by group ratio'
                                                                 : fundedPortfolio?.targetMode === 'amount' ? 'by € targets' : 'by target %'}
                                                         </span>
