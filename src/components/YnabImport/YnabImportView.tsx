@@ -99,7 +99,8 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
     }
 
     return (
-        <div style={{ maxWidth: 1100, margin: '0 auto' }}>
+        // Full width: the category table is the working area of this page.
+        <div style={{ maxWidth: 1800, margin: '0 auto' }}>
             {/* Page header: title + sync button */}
             <div className="ynab-page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div className="ynab-page-title">

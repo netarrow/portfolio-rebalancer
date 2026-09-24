@@ -171,7 +171,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           })}
         </nav>
       </header>
-      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' || currentView === 'globalRebalancing' || currentView === 'pac' ? 'full-width' : ''}`}>
+      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' || currentView === 'globalRebalancing' || currentView === 'pac' || currentView === 'ynab' ? 'full-width' : ''}`}>
         {children}
       </main>
 
