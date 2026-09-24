@@ -2,6 +2,9 @@ import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { YnabCategory, YnabMappingTarget } from '../../types';
 import { milliunitsToEur } from '../../services/ynabApi';
+import { buildPortfolioTree } from '../../utils/portfolioGroups';
+import { resolveGroups } from '../../utils/allocationGroups';
+import { isGroupKey } from '../../utils/portfolioCalculations';
 
 /**
  * Where each YNAB category's money is meant to end up.
@@ -9,10 +12,14 @@ import { milliunitsToEur } from '../../services/ynabApi';
  * One row per category, grouped as YNAB groups them. Each mapped category says
  * which account its money leaves from — a current account is a broker like any
  * other — and where it ends up: shares of one asset, a whole portfolio (its own
- * targets then decide what to buy), or simply cash at a broker. An asset row can also
- * name the broker the order goes through and the portfolio it belongs to — both
- * optional, but naming them is what lets the funding plan below price the
- * commission and register the trade.
+ * targets then decide what to buy), or simply cash at a broker.
+ *
+ * The destination is a single list, grouped by portfolio: each portfolio offers
+ * itself as a whole and then the assets it targets, so picking an asset also
+ * says which portfolio books the trade. A parent/child group is listed once, as
+ * the one entity the rest of the app treats it as — funding it as a whole
+ * spreads the money over its members. The broker the order goes through stays
+ * optional: naming it is what lets the funding plan price the commission.
  */
 
 const eur = (value: number) =>
@@ -21,6 +28,21 @@ const eur = (value: number) =>
 const CASH_PREFIX = 'cash:';
 const ASSET_PREFIX = 'asset:';
 const PORTFOLIO_PREFIX = 'portfolio:';
+
+/** `asset:<portfolioId>|<ticker>`; an empty portfolio id means "no portfolio". */
+const assetValue = (ticker: string, portfolioId?: string) => `${ASSET_PREFIX}${portfolioId ?? ''}|${ticker}`;
+
+interface DestinationEntity {
+    /** Root portfolio: the id a "whole portfolio" mapping points at. */
+    rootId: string;
+    /** The root's name: a group goes by its parent, as on the Dashboard. */
+    name: string;
+    /** Members counted as one entity; 1 for a standalone portfolio. */
+    memberCount: number;
+    isGroup: boolean;
+    /** Assets the entity targets, each with the member portfolio that books it. */
+    assets: { ticker: string; label: string; portfolioId: string }[];
+}
 
 const YnabCategoryMappings: React.FC = () => {
     const {
@@ -38,15 +60,71 @@ const YnabCategoryMappings: React.FC = () => {
 
     const defaultSourceName = brokers.find(b => b.id === ynabFundingSettings.defaultSourceBrokerId)?.name;
 
-    // Assets worth offering: everything in the registry except the cash and
-    // group pseudo-tickers, ordered by label so the select reads like the app.
-    const assetOptions = useMemo(
-        () => assetSettings
-            .filter(a => !a.ticker.startsWith('_'))
+    const labelOf = useMemo(() => {
+        const byTicker = new Map(assetSettings.map(a => [a.ticker.toUpperCase(), a.label || a.ticker]));
+        return (ticker: string) => byTicker.get(ticker.toUpperCase()) ?? ticker;
+    }, [assetSettings]);
+
+    // One entity per standalone portfolio and one per parent/child group, each
+    // listing the assets it targets (allocation groups expanded to their
+    // members). Within a group an asset is booked on the first member — parent
+    // first — that targets it, so it appears once.
+    const entities = useMemo((): DestinationEntity[] => {
+        const assetsOf = (members: typeof portfolios) => {
+            const seen = new Map<string, DestinationEntity['assets'][number]>();
+            for (const member of members) {
+                const { groupById } = resolveGroups(member);
+                for (const key of Object.keys(member.allocations || {})) {
+                    const tickers = isGroupKey(key) ? groupById[key]?.members ?? [] : [key];
+                    for (const ticker of tickers) {
+                        // Cash, virtual-bond and other pseudo-tickers are not buyable.
+                        if (ticker.startsWith('_') || seen.has(ticker.toUpperCase())) continue;
+                        seen.set(ticker.toUpperCase(), { ticker, label: labelOf(ticker), portfolioId: member.id });
+                    }
+                }
+            }
+            return [...seen.values()].sort((a, b) => a.label.localeCompare(b.label));
+        };
+        const tree = buildPortfolioTree(portfolios);
+        return [
+            ...tree.groups.map(g => ({
+                parent: g.parent,
+                entity: {
+                    rootId: g.parent.id,
+                    name: g.parent.name,
+                    memberCount: g.members.length,
+                    isGroup: true,
+                    assets: assetsOf(g.members),
+                },
+            })),
+            ...tree.standalones.map(p => ({
+                parent: p,
+                entity: { rootId: p.id, name: p.name, memberCount: 1, isGroup: false, assets: assetsOf([p]) },
+            })),
+        ]
+            .sort((a, b) => a.parent.order - b.parent.order)
+            .map(e => e.entity);
+    }, [portfolios, labelOf]);
+
+    // Registry assets no portfolio targets: still fundable, with no portfolio.
+    const looseAssets = useMemo(() => {
+        const targeted = new Set(entities.flatMap(e => e.assets.map(a => a.ticker.toUpperCase())));
+        return assetSettings
+            .filter(a => !a.ticker.startsWith('_') && !targeted.has(a.ticker.toUpperCase()))
             .map(a => ({ ticker: a.ticker, label: a.label || a.ticker }))
-            .sort((a, b) => a.label.localeCompare(b.label)),
-        [assetSettings],
-    );
+            .sort((a, b) => a.label.localeCompare(b.label));
+    }, [assetSettings, entities]);
+
+    const offeredValues = useMemo(() => new Set([
+        ...entities.flatMap(e => [
+            `${PORTFOLIO_PREFIX}${e.rootId}`,
+            ...e.assets.map(a => assetValue(a.ticker, a.portfolioId)),
+        ]),
+        ...looseAssets.map(a => assetValue(a.ticker)),
+        ...brokers.map(b => `${CASH_PREFIX}${b.id}`),
+    ]), [entities, looseAssets, brokers]);
+
+    const portfolioName = (id: string | undefined) => portfolios.find(p => p.id === id)?.name;
 
     const groups = useMemo(() => {
         const needle = search.trim().toLowerCase();
@@ -68,12 +146,28 @@ const YnabCategoryMappings: React.FC = () => {
         if (!target || target.kind === 'unmapped') return '';
         if (target.kind === 'cash') return `${CASH_PREFIX}${target.brokerId}`;
         if (target.kind === 'portfolio') return `${PORTFOLIO_PREFIX}${target.portfolioId}`;
-        return `${ASSET_PREFIX}${target.ticker}`;
+        return assetValue(target.ticker, target.portfolioId);
+    };
+
+    /**
+     * A saved mapping the list no longer offers — an asset booked on a portfolio
+     * that stopped targeting it, a child portfolio funded on its own before the
+     * group existed — still has to show, or the select would silently read as
+     * something else.
+     */
+    const legacyLabel = (target: YnabMappingTarget): string => {
+        if (target.kind === 'portfolio') return `${portfolioName(target.portfolioId) ?? 'Missing portfolio'} · whole`;
+        if (target.kind === 'asset') {
+            const where = portfolioName(target.portfolioId);
+            return where ? `${labelOf(target.ticker)} · ${where}` : labelOf(target.ticker);
+        }
+        if (target.kind === 'cash') return `Cash · ${brokers.find(b => b.id === target.brokerId)?.name ?? 'missing broker'}`;
+        return '';
     };
 
     // Changing the destination keeps the broker already chosen, so re-pointing a
     // category at a sibling ETF — or at the whole portfolio — does not undo the
-    // rest of the row.
+    // rest of the row. The portfolio now comes with the asset itself.
     const handleTargetChange = (categoryId: string, value: string, previous: YnabMappingTarget | undefined) => {
         if (!value) {
             setYnabMapping(categoryId, { kind: 'unmapped' });
@@ -92,32 +186,19 @@ const YnabCategoryMappings: React.FC = () => {
             });
             return;
         }
-        const kept = previous?.kind === 'asset' ? previous : undefined;
+        const rest = value.slice(ASSET_PREFIX.length);
+        const bar = rest.indexOf('|');
         setYnabMapping(categoryId, {
             kind: 'asset',
-            ticker: value.slice(ASSET_PREFIX.length),
+            ticker: rest.slice(bar + 1),
             brokerId: keptBroker,
-            portfolioId: kept?.portfolioId,
+            portfolioId: rest.slice(0, bar) || undefined,
         });
     };
 
-    const handleDetailChange = (
-        categoryId: string,
-        target: YnabMappingTarget,
-        patch: { brokerId?: string; portfolioId?: string },
-    ) => {
-        if (target.kind === 'asset') {
-            setYnabMapping(categoryId, {
-                ...target,
-                ...('brokerId' in patch ? { brokerId: patch.brokerId || undefined } : {}),
-                ...('portfolioId' in patch ? { portfolioId: patch.portfolioId || undefined } : {}),
-            });
-            return;
-        }
-        // A portfolio destination has no asset to pick, only the broker its
-        // orders go through.
-        if (target.kind === 'portfolio' && 'brokerId' in patch) {
-            setYnabMapping(categoryId, { ...target, brokerId: patch.brokerId || undefined });
+    const handleBrokerChange = (categoryId: string, target: YnabMappingTarget, brokerId: string) => {
+        if (target.kind === 'asset' || target.kind === 'portfolio') {
+            setYnabMapping(categoryId, { ...target, brokerId: brokerId || undefined });
         }
     };
 
@@ -141,7 +222,8 @@ const YnabCategoryMappings: React.FC = () => {
                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
                         Where each category's money starts and where it should end up. {mappedCount} of{' '}
                         {ynabCategories.length} mapped. The <em>From</em> account pays the wire out of its own
-                        liquidity; naming a broker and a portfolio lets the plan price the commission and book the trade.
+                        liquidity; the destination names the portfolio that books the trade, and a broker lets the
+                        plan price the commission.
                     </div>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
@@ -170,14 +252,13 @@ const YnabCategoryMappings: React.FC = () => {
                             <th>From</th>
                             <th>Destination</th>
                             <th>Broker</th>
-                            <th>Portfolio</th>
                         </tr>
                     </thead>
                     <tbody>
                         {groups.map(group => (
                             <React.Fragment key={group.name}>
                                 <tr className="group-row">
-                                    <td colSpan={7}>{group.name}</td>
+                                    <td colSpan={6}>{group.name}</td>
                                 </tr>
                                 {group.categories.map(category => {
                                     const mapping = mappingByCategory.get(category.id);
@@ -186,11 +267,16 @@ const YnabCategoryMappings: React.FC = () => {
                                     const isPortfolio = target?.kind === 'portfolio';
                                     const isMapped = !!target && target.kind !== 'unmapped';
                                     // A portfolio destination buys through a broker too, so the
-                                    // broker cell stays live; the portfolio cell instead explains
-                                    // which rule will split the money.
+                                    // broker cell stays live; a note says which rule will split
+                                    // the money.
                                     const fundedPortfolio = isPortfolio
                                         ? portfolios.find(p => p.id === target.portfolioId)
                                         : undefined;
+                                    const fundedEntity = isPortfolio
+                                        ? entities.find(e => e.rootId === target.portfolioId)
+                                        : undefined;
+                                    const value = selectValue(target);
+                                    const isLegacy = !!value && !offeredValues.has(value);
                                     const available = milliunitsToEur(category.balanceMilliunits);
                                     return (
                                         <tr key={category.id} className={isMapped ? 'mapped-row' : undefined}>
@@ -227,31 +313,55 @@ const YnabCategoryMappings: React.FC = () => {
                                                 )}
                                             </td>
                                             <td className="map-cell-dest" data-label="Destination">
-                                                <select
-                                                    className="form-select"
-                                                    value={selectValue(target)}
-                                                    onChange={e => handleTargetChange(category.id, e.target.value, target)}
-                                                >
-                                                    <option value="">— Not invested —</option>
-                                                    <optgroup label="Buy asset">
-                                                        {assetOptions.map(a => (
-                                                            <option key={a.ticker} value={`${ASSET_PREFIX}${a.ticker}`}>{a.label}</option>
+                                                <div className="dest-wrap">
+                                                    <select
+                                                        className="form-select"
+                                                        value={value}
+                                                        onChange={e => handleTargetChange(category.id, e.target.value, target)}
+                                                    >
+                                                        <option value="">— Not invested —</option>
+                                                        {isLegacy && target && <option value={value}>{legacyLabel(target)}</option>}
+                                                        {entities.map(entity => (
+                                                            <optgroup key={entity.rootId} label={entity.isGroup ? `${entity.name} · group of ${entity.memberCount}` : entity.name}>
+                                                                {/* No asset named: the portfolio's own targets
+                                                                    decide what the money buys. */}
+                                                                <option value={`${PORTFOLIO_PREFIX}${entity.rootId}`}>
+                                                                    {entity.isGroup ? `Whole group · ${entity.name}` : `Whole portfolio · ${entity.name}`}
+                                                                </option>
+                                                                {entity.assets.map(a => (
+                                                                    <option key={a.ticker} value={assetValue(a.ticker, a.portfolioId)}>{a.label}</option>
+                                                                ))}
+                                                            </optgroup>
                                                         ))}
-                                                    </optgroup>
-                                                    <optgroup label="Fund portfolio">
-                                                        {/* No asset named: the portfolio's own targets
-                                                            decide what the money buys. */}
-                                                        {portfolios.map(p => (
-                                                            <option key={p.id} value={`${PORTFOLIO_PREFIX}${p.id}`}>{p.name}</option>
-                                                        ))}
-                                                    </optgroup>
-                                                    <optgroup label="Keep as cash at">
-                                                        {/* Prefixed, so a closed select never reads as an asset named after a broker. */}
-                                                        {brokers.map(b => (
-                                                            <option key={b.id} value={`${CASH_PREFIX}${b.id}`}>Cash · {b.name}</option>
-                                                        ))}
-                                                    </optgroup>
-                                                </select>
+                                                        {looseAssets.length > 0 && (
+                                                            <optgroup label="Other assets (no portfolio)">
+                                                                {looseAssets.map(a => (
+                                                                    <option key={a.ticker} value={assetValue(a.ticker)}>{a.label}</option>
+                                                                ))}
+                                                            </optgroup>
+                                                        )}
+                                                        <optgroup label="Keep as cash at">
+                                                            {/* Prefixed, so a closed select never reads as an asset named after a broker. */}
+                                                            {brokers.map(b => (
+                                                                <option key={b.id} value={`${CASH_PREFIX}${b.id}`}>Cash · {b.name}</option>
+                                                            ))}
+                                                        </optgroup>
+                                                    </select>
+                                                    {isPortfolio && (
+                                                        <span
+                                                            className="split-note"
+                                                            title={fundedEntity?.isGroup
+                                                                ? 'Shared over the group\'s members by their configured ratio, then over each member\'s own targets.'
+                                                                : fundedPortfolio?.targetMode === 'amount'
+                                                                    ? 'The money fills this portfolio\'s € targets, nearest due date first.'
+                                                                    : 'The money is spread over this portfolio\'s underweight rows, proportionally to their gap.'}
+                                                        >
+                                                            {fundedEntity?.isGroup
+                                                                ? 'by group ratio'
+                                                                : fundedPortfolio?.targetMode === 'amount' ? 'by € targets' : 'by target %'}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </td>
                                             {/* `is-empty` marks the cells a non-asset row has nothing to
                                                 say in: on mobile, where every cell becomes its own line,
@@ -261,33 +371,10 @@ const YnabCategoryMappings: React.FC = () => {
                                                     <select
                                                         className="form-select"
                                                         value={target.brokerId || ''}
-                                                        onChange={e => handleDetailChange(category.id, target, { brokerId: e.target.value })}
+                                                        onChange={e => handleBrokerChange(category.id, target, e.target.value)}
                                                     >
                                                         <option value="">Auto</option>
                                                         {brokers.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                                                    </select>
-                                                ) : (
-                                                    <span className="muted-cell">—</span>
-                                                )}
-                                            </td>
-                                            <td className={`map-cell-portfolio${isAsset || isPortfolio ? '' : ' is-empty'}`} data-label="Portfolio">
-                                                {isPortfolio ? (
-                                                    <span
-                                                        className="split-note"
-                                                        title={fundedPortfolio?.targetMode === 'amount'
-                                                            ? 'The money fills this portfolio\'s € targets, nearest due date first.'
-                                                            : 'The money is spread over this portfolio\'s underweight rows, proportionally to their gap.'}
-                                                    >
-                                                        {fundedPortfolio?.targetMode === 'amount' ? 'by € targets' : 'by target %'}
-                                                    </span>
-                                                ) : isAsset ? (
-                                                    <select
-                                                        className="form-select"
-                                                        value={target.portfolioId || ''}
-                                                        onChange={e => handleDetailChange(category.id, target, { portfolioId: e.target.value })}
-                                                    >
-                                                        <option value="">—</option>
-                                                        {portfolios.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                                                     </select>
                                                 ) : (
                                                     <span className="muted-cell">—</span>
@@ -300,7 +387,7 @@ const YnabCategoryMappings: React.FC = () => {
                         ))}
                         {groups.length === 0 && (
                             <tr>
-                                <td colSpan={7} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>
+                                <td colSpan={6} style={{ color: 'var(--text-muted)', textAlign: 'center' }}>
                                     No category matches the filter.
                                 </td>
                             </tr>
@@ -363,6 +450,12 @@ const YnabCategoryMappings: React.FC = () => {
                     font-size: 0.82rem;
                 }
                 .ynab-map-table .muted-cell { color: var(--text-muted); }
+                .ynab-map-table .dest-wrap {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+                .ynab-map-table .map-cell-dest .form-select { min-width: 220px; }
                 .ynab-map-table .split-note {
                     font-size: 0.75rem;
                     color: var(--text-muted);

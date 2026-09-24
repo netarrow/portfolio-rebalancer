@@ -488,6 +488,29 @@ check('and it still adds up: gross + commission + leftover = the budget',
     Math.round((viaPortfolio.totals.gross + viaPortfolio.totals.commission + viaPortfolio.totals.leftover) * 100) / 100,
     viaPortfolio.totals.budget);
 
+// A parent/child group is one destination: naming its root spreads the money
+// over the members by the configured ratio, then over each member's targets.
+const corePortfolio: Portfolio = {
+    id: 'p-core', name: 'Core', order: 5, groupSharePercent: 50,
+    allocations: { IE00B4L5Y983: 100 },
+};
+const satellitePortfolio: Portfolio = {
+    id: 'p-sat', name: 'Satellite', order: 6, parentId: 'p-core', groupSharePercent: 50,
+    allocations: { IE00BKM4GZ66: 100 },
+};
+const viaGroup = build({}, {
+    portfolios: [...portfolios, corePortfolio, satellitePortfolio],
+    categories: [cat('c-group', 'Core + Satellite', 1000)],
+    mappings: [{ categoryId: 'c-group', target: { kind: 'portfolio', portfolioId: 'p-core', brokerId: 'b-degiro' } }],
+    transactions: [],
+});
+check('funding a group root reaches every member, each on its own targets',
+    viaGroup.orders.map(o => [o.ticker, o.portfolioId, o.budget]).sort(),
+    [['IE00B4L5Y983', 'p-core', 500], ['IE00BKM4GZ66', 'p-sat', 500]]);
+check('the source names the group and the member',
+    orderOf(viaGroup, 'IE00BKM4GZ66').sources[0].viaPortfolio, 'Core › Satellite');
+check('the whole contribution is placed', viaGroup.ignored.length, 0);
+
 console.log('totals');
 
 check('the budget total is every euro the mapped categories hold',
