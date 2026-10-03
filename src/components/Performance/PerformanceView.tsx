@@ -9,6 +9,9 @@ import '../Dashboard/Dashboard.css';
 
 type RangeKey = '1M' | '6M' | '1Y' | 'MAX';
 
+/** Scope key for transactions recorded without a broker. */
+const UNASSIGNED_BROKER = '__none__';
+
 const RANGE_MONTHS: Record<Exclude<RangeKey, 'MAX'>, number> = { '1M': 1, '6M': 6, '1Y': 12 };
 
 function rangeFrom(range: RangeKey): string | undefined {
@@ -22,8 +25,11 @@ const PerformanceView: React.FC = () => {
     // Scoped: respects the family/illiquid asset-scope toggles
     const { scopedTransactions: transactions, priceHistory, portfolios, scopedBrokers: brokers, assetSettings, refreshHistory } = usePortfolio();
 
-    // Scope: 'networth' | 'g:<parentId>' | 'p:<portfolioId>' | 'a:<ticker>'
+    // Scope: 'networth' | 'g:<parentId>' | 'p:<portfolioId>' | 'b:<brokerId>' | 'a:<ticker>'
     const [scope, setScope] = useState('networth');
+    // Asset scope only: the value of my position in it (units held × price,
+    // buys/sells as flows → TWR/MWR) or the bare unit price of the instrument.
+    const [assetView, setAssetView] = useState<'position' | 'unit'>('position');
     const [range, setRange] = useState<RangeKey>('1Y');
     const [includeLiquidity, setIncludeLiquidity] = useState(true);
     const [returnMode, setReturnMode] = useState<'mwr' | 'twr'>('twr');
@@ -57,6 +63,10 @@ const PerformanceView: React.FC = () => {
 
     const scopeLabel = useMemo(() => {
         if (scope === 'networth') return 'Net Worth';
+        if (scope.startsWith('b:')) {
+            const id = scope.slice(2);
+            return id === UNASSIGNED_BROKER ? 'No broker' : brokers.find(b => b.id === id)?.name || 'Broker';
+        }
         if (scope.startsWith('g:')) {
             const group = groups.find(g => g.parent.id === scope.slice(2));
             return group ? `${group.parent.name} (group)` : 'Group';
@@ -65,7 +75,37 @@ const PerformanceView: React.FC = () => {
             return portfolios.find(p => p.id === scope.slice(2))?.name || 'Portfolio';
         }
         return scope.slice(2);
-    }, [scope, groups, portfolios]);
+    }, [scope, groups, portfolios, brokers]);
+
+    const isAssetScope = scope.startsWith('a:');
+    // Unit-price view of a single instrument: no holdings, no flows of mine,
+    // so TWR/MWR and the euro risk figures don't apply.
+    const isUnitPrice = isAssetScope && assetView === 'unit';
+
+    // Brokers that hold at least one transaction in the current asset scope,
+    // plus a bucket for transactions recorded without a broker.
+    const brokerOptions = useMemo(() => {
+        const used = new Set(transactions.map(t => t.brokerId || UNASSIGNED_BROKER));
+        const options = brokers.filter(b => used.has(b.id)).map(b => ({ id: b.id, name: b.name }));
+        if (used.has(UNASSIGNED_BROKER)) options.push({ id: UNASSIGNED_BROKER, name: 'No broker' });
+        return options;
+    }, [brokers, transactions]);
+
+    // Transactions the selected scope is made of. Portfolio/group scopes keep
+    // the whole list and narrow it through `scopeIds`; broker and asset scopes
+    // narrow the list itself, so every downstream calculation (value series,
+    // flows, TWR, MWR, drawdown) runs on exactly that slice.
+    const scopeTx = useMemo(() => {
+        if (scope.startsWith('b:')) {
+            const id = scope.slice(2);
+            return transactions.filter(t => (t.brokerId || UNASSIGNED_BROKER) === id);
+        }
+        if (isAssetScope) {
+            const ticker = scope.slice(2).toUpperCase();
+            return transactions.filter(t => t.ticker.toUpperCase() === ticker);
+        }
+        return transactions;
+    }, [scope, isAssetScope, transactions]);
 
     // Broker cash only — single source of truth for liquidity, matching the
     // Dashboard Net Worth card. Per-portfolio liquidity is rebalancing-only and
@@ -95,11 +135,11 @@ const PerformanceView: React.FC = () => {
     // this one, because a constant cash overlay has no history and would dampen
     // every percentage toward zero.
     const baseSeries = useMemo(() => {
-        if (scope.startsWith('a:')) {
+        if (isUnitPrice) {
             return getAssetPriceSeries(scope.slice(2), priceHistory, { from });
         }
-        return getPortfolioValueSeries(transactions, priceHistory, { portfolioId: scopeIds, from });
-    }, [scope, scopeIds, from, transactions, priceHistory]);
+        return getPortfolioValueSeries(scopeTx, priceHistory, { portfolioId: scopeIds, from });
+    }, [scope, isUnitPrice, scopeIds, from, scopeTx, priceHistory]);
 
     // Chart series: net worth optionally overlays today's liquidity as a constant.
     const series = useMemo(() => {
@@ -109,7 +149,6 @@ const PerformanceView: React.FC = () => {
         return baseSeries;
     }, [scope, includeLiquidity, currentLiquidity, baseSeries, transactions, priceHistory, from]);
 
-    const isAssetScope = scope.startsWith('a:');
     const assetHistory = isAssetScope ? priceHistory[scope.slice(2).toUpperCase()] : undefined;
     const assetSource = isAssetScope
         ? assetSettings.find(s => s.ticker.toUpperCase() === scope.slice(2).toUpperCase())?.source
@@ -127,13 +166,13 @@ const PerformanceView: React.FC = () => {
     const missingHistoryTickers = useMemo(() => {
         if (isAssetScope) return [];
         const tickers = new Set<string>();
-        for (const tx of transactions) {
+        for (const tx of scopeTx) {
             if (scopeIdSet && !(tx.portfolioId && scopeIdSet.has(tx.portfolioId))) continue;
             const t = tx.ticker.toUpperCase();
             if (!t.startsWith('_') && !tickersWithHistory.has(t)) tickers.add(t);
         }
         return Array.from(tickers).sort();
-    }, [isAssetScope, scopeIdSet, transactions, tickersWithHistory]);
+    }, [isAssetScope, scopeIdSet, scopeTx, tickersWithHistory]);
 
     // Tickers in scope whose history is the clean price (corso secco): their
     // series value excludes accrued interest, while the Dashboard values them
@@ -141,13 +180,13 @@ const PerformanceView: React.FC = () => {
     const cleanBasisTickers = useMemo(() => {
         if (isAssetScope) return [];
         const tickers = new Set<string>();
-        for (const tx of transactions) {
+        for (const tx of scopeTx) {
             if (scopeIdSet && !(tx.portfolioId && scopeIdSet.has(tx.portfolioId))) continue;
             const t = tx.ticker.toUpperCase();
             if (priceHistory[t]?.priceBasis === 'clean') tickers.add(t);
         }
         return Array.from(tickers).sort();
-    }, [isAssetScope, scopeIdSet, transactions, priceHistory]);
+    }, [isAssetScope, scopeIdSet, scopeTx, priceHistory]);
 
     const chartOptions = {
         chart: {
@@ -174,7 +213,7 @@ const PerformanceView: React.FC = () => {
         },
         yaxis: {
             labels: {
-                formatter: (val: number) => isAssetScope
+                formatter: (val: number) => isUnitPrice
                     ? `€${val.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
                     : `€${Math.round(val).toLocaleString()}`,
                 style: { colors: '#9ca3af' }
@@ -200,23 +239,23 @@ const PerformanceView: React.FC = () => {
     const deltaPct = firstValue > 0 ? (delta / firstValue) * 100 : 0;
 
     const twrPct = useMemo(() => {
-        if (isAssetScope) return null;
-        const cashFlows = getCashFlowsByDate(transactions, scopeIds, { includeDistributions });
+        if (isUnitPrice) return null;
+        const cashFlows = getCashFlowsByDate(scopeTx, scopeIds, { includeDistributions });
         return computeTWR(baseSeries, cashFlows);
-    }, [baseSeries, scopeIds, isAssetScope, transactions, includeDistributions]);
+    }, [baseSeries, scopeIds, isUnitPrice, scopeTx, includeDistributions]);
 
     // Risk metrics on the flow-adjusted return stream: deposits/withdrawals
     // are stripped from daily returns, so a disinvestment doesn't read as a
     // drawdown, while coupons/dividends are credited as return (unless the
-    // total-return toggle is off → price-only). Asset scope uses per-unit
-    // distribution flows on top of the close-price series.
+    // total-return toggle is off → price-only). The unit-price view of an
+    // asset uses per-unit distribution flows on top of the close-price series.
     const cashFlows = useMemo(() => (
-        isAssetScope
+        isUnitPrice
             ? (includeDistributions
                 ? getAssetDistributionFlows(transactions, scope.slice(2))
                 : new Map<string, number>())
-            : getCashFlowsByDate(transactions, scopeIds, { includeDistributions })
-    ), [scope, scopeIds, isAssetScope, transactions, includeDistributions]);
+            : getCashFlowsByDate(scopeTx, scopeIds, { includeDistributions })
+    ), [scope, scopeIds, isUnitPrice, transactions, scopeTx, includeDistributions]);
 
     const returnStats = useMemo(
         () => computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate }),
@@ -268,7 +307,7 @@ const PerformanceView: React.FC = () => {
         data: (drawdown?.curve ?? []).map(p => ({ x: p.date, y: Math.round(p.ddPct * 100) / 100 }))
     }];
 
-    const fmtEur = (v: number) => `€${v.toLocaleString(undefined, { maximumFractionDigits: isAssetScope ? 2 : 0 })}`;
+    const fmtEur = (v: number) => `€${v.toLocaleString(undefined, { maximumFractionDigits: isUnitPrice ? 2 : 0 })}`;
     // 0.005% below the mark still rounds to 0.00%: call that a new high.
     const atNewHigh = !!drawdown && drawdown.currentDrawdownPct > -0.005;
 
@@ -277,12 +316,12 @@ const PerformanceView: React.FC = () => {
     // the Dashboard's "Total Appreciation" (unrealized + realized over total
     // capital invested); distributions are tracked separately in the Dashboard.
     const mwr = useMemo(() => {
-        if (isAssetScope || baseSeries.length === 0) return null;
+        if (isUnitPrice || baseSeries.length === 0) return null;
         const first = baseSeries[0];
         const last = baseSeries[baseSeries.length - 1];
         let netFlows = 0;
         let buys = 0;
-        for (const tx of transactions) {
+        for (const tx of scopeTx) {
             if (scopeIdSet && !(tx.portfolioId && scopeIdSet.has(tx.portfolioId))) continue;
             const direction = tx.direction || 'Buy';
             if (direction !== 'Buy' && direction !== 'Sell') continue;
@@ -295,7 +334,7 @@ const PerformanceView: React.FC = () => {
         const gain = last.value - first.value - netFlows;
         const capital = first.value + buys;
         return { gain, pct: capital > 0 ? (gain / capital) * 100 : 0 };
-    }, [baseSeries, isAssetScope, scopeIdSet, transactions]);
+    }, [baseSeries, isUnitPrice, scopeIdSet, scopeTx]);
 
     if (!hasHistory) {
         return (
@@ -370,6 +409,13 @@ const PerformanceView: React.FC = () => {
                             <option key={p.id} value={`p:${p.id}`}>{p.name}</option>
                         ))}
                     </optgroup>
+                    {brokerOptions.length > 0 && (
+                        <optgroup label="Brokers">
+                            {brokerOptions.map(b => (
+                                <option key={b.id} value={`b:${b.id}`}>{b.name}</option>
+                            ))}
+                        </optgroup>
+                    )}
                     <optgroup label="Assets">
                         {assetOptions.map(a => (
                             <option key={a.ticker} value={`a:${a.ticker}`}>{a.label}</option>
@@ -395,6 +441,30 @@ const PerformanceView: React.FC = () => {
                     ))}
                 </div>
 
+                {isAssetScope && (
+                    <div style={{ display: 'flex', gap: '0.25rem' }}>
+                        {([
+                            ['position', 'My position', 'Value of the units you hold (quantity × price): buys and sells are cash flows, so TWR and MWR measure your own return on this asset'],
+                            ['unit', 'Unit price', 'Price of one unit of the instrument, regardless of what you hold'],
+                        ] as const).map(([key, label, title]) => (
+                            <button
+                                key={key}
+                                onClick={() => setAssetView(key)}
+                                title={title}
+                                style={{
+                                    padding: '0.4rem 0.8rem',
+                                    background: assetView === key ? 'var(--color-primary)' : 'var(--bg-card)',
+                                    color: assetView === key ? 'white' : 'var(--text-secondary)',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem'
+                                }}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
                 {scope === 'networth' && (
                     <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.85rem', cursor: 'pointer' }}>
                         <input
@@ -419,7 +489,7 @@ const PerformanceView: React.FC = () => {
                     </span>
                 </label>
 
-                {!isAssetScope && (
+                {!isUnitPrice && (
                     <label
                         style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
                         title="Annual risk-free rate subtracted from the return in the Sharpe ratio (e.g. the yield of a short-term govt bond or overnight deposit). Saved locally."
@@ -453,7 +523,7 @@ const PerformanceView: React.FC = () => {
                     <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Change over range</div>
-                            {!isAssetScope && (
+                            {!isUnitPrice && (
                                 <div style={{ display: 'flex', gap: '0.15rem' }}>
                                     {(['twr', 'mwr'] as const).map(m => (
                                         <button
@@ -478,13 +548,13 @@ const PerformanceView: React.FC = () => {
                             )}
                         </div>
                         <div style={{
-                            color: (isAssetScope || (returnMode === 'mwr' ? mwr === null : twrPct === null)
+                            color: (isUnitPrice || (returnMode === 'mwr' ? mwr === null : twrPct === null)
                                 ? delta
                                 : returnMode === 'mwr' ? mwr!.gain : twrPct!) >= 0
                                 ? 'var(--color-success)' : 'var(--color-danger)',
                             fontWeight: 700, fontSize: '1.3rem'
                         }}>
-                            {isAssetScope || (returnMode === 'mwr' ? mwr === null : twrPct === null) ? (
+                            {isUnitPrice || (returnMode === 'mwr' ? mwr === null : twrPct === null) ? (
                                 <>
                                     {delta >= 0 ? '+' : ''}€{delta.toLocaleString(undefined, { maximumFractionDigits: 2 })}
                                     {firstValue > 0 && ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)`}
@@ -564,7 +634,7 @@ const PerformanceView: React.FC = () => {
                             </div>
                         </div>
 
-                        <div title={isAssetScope
+                        <div title={isUnitPrice
                             ? 'Gain still needed to get back to the peak, and what it is worth on one unit at today\'s price.'
                             : 'Gain still needed to get back to the peak, and what it is worth on the invested value of today (liquidity excluded) — comparing raw euro against an old peak would be meaningless once the capital changed.'}>
                             <div style={ddLabelStyle}>To recover</div>
@@ -573,7 +643,7 @@ const PerformanceView: React.FC = () => {
                             </div>
                             <div style={ddSubStyle}>
                                 {!atNewHigh && drawdown.recoveryNeededEur !== null
-                                    ? `${fmtEur(drawdown.recoveryNeededEur)} to go${isAssetScope ? ' per unit' : ''}`
+                                    ? `${fmtEur(drawdown.recoveryNeededEur)} to go${isUnitPrice ? ' per unit' : ''}`
                                     : 'nothing to recover'}
                             </div>
                         </div>
@@ -639,7 +709,9 @@ const PerformanceView: React.FC = () => {
                     background: 'var(--bg-card)', borderRadius: 'var(--radius-md)',
                     padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)'
                 }}>
-                    No data points in the selected range.
+                    {isAssetScope && !isUnitPrice && scopeTx.length === 0
+                        ? 'You hold no transactions in this asset — switch to Unit price to see the instrument itself.'
+                        : 'No data points in the selected range.'}
                 </div>
             ) : (
                 <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-md)', padding: '1rem' }}>
