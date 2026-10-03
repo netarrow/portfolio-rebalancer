@@ -2,12 +2,18 @@ import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
-import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeReturnStats, computeDrawdownAnalysis, type PortfolioScope } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeXIRR, computeReturnStats, computeDrawdownAnalysis, type PortfolioScope } from '../../utils/performanceCalculations';
 import { buildPortfolioTree } from '../../utils/portfolioGroups';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import '../Dashboard/Dashboard.css';
 
 type RangeKey = '1M' | '6M' | '1Y' | 'MAX';
+
+const RETURN_MODE_HELP: Record<'twr' | 'mwr' | 'xirr', string> = {
+    twr: 'Time-Weighted Return: excludes the effect of cash deposits/withdrawals; coupons/dividends are counted as return (as if reinvested in the scope)',
+    mwr: 'Money-Weighted Return: net gain (deposits/withdrawals stripped out) over capital deployed — on MAX it matches the Dashboard\'s Total Appreciation. Ignores when the money went in, and coupons/dividends',
+    xirr: 'XIRR: annual internal rate of return on the dated flows — buys paid in, sells received, coupons/dividends received on their pay date (with Total return on), final value received. Weighs each euro by how long it was invested',
+};
 
 /** Scope key for transactions recorded without a broker. */
 const UNASSIGNED_BROKER = '__none__';
@@ -32,7 +38,7 @@ const PerformanceView: React.FC = () => {
     const [assetView, setAssetView] = useState<'position' | 'unit'>('position');
     const [range, setRange] = useState<RangeKey>('1Y');
     const [includeLiquidity, setIncludeLiquidity] = useState(true);
-    const [returnMode, setReturnMode] = useState<'mwr' | 'twr'>('twr');
+    const [returnMode, setReturnMode] = useState<'twr' | 'mwr' | 'xirr'>('twr');
     // Total return (coupons/dividends credited on pay date) vs price-only.
     const [includeDistributions, setIncludeDistributions] = useState(true);
     // Underwater (distance-from-peak) chart under the value chart.
@@ -336,6 +342,31 @@ const PerformanceView: React.FC = () => {
         return { gain, pct: capital > 0 ? (gain / capital) * 100 : 0 };
     }, [baseSeries, isUnitPrice, scopeIdSet, scopeTx]);
 
+    // XIRR: annualized money-weighted return on the dated flows — starting
+    // value paid in, buys paid in, sells (and coupons/dividends with total
+    // return on) received, final value received. Unlike the MWR above it
+    // weighs each euro by how long it was invested.
+    const xirrPct = useMemo(
+        () => (isUnitPrice ? null : computeXIRR(baseSeries, cashFlows)),
+        [isUnitPrice, baseSeries, cashFlows]
+    );
+    const rangeYears = series.length > 1
+        ? (Date.parse(series[series.length - 1].date) - Date.parse(series[0].date)) / (365 * 86400000)
+        : 0;
+
+    // What the "Change over range" figure shows: the selected return when it
+    // can be computed, the plain first-vs-last change otherwise.
+    const fmtSigned = (v: number, digits = 2) => `${v >= 0 ? '+' : ''}${v.toFixed(digits)}%`;
+    const fmtSignedEur = (v: number) => `${v >= 0 ? '+' : ''}€${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    const change: { value: number; text: string } = (() => {
+        if (!isUnitPrice) {
+            if (returnMode === 'twr' && twrPct !== null) return { value: twrPct, text: fmtSigned(twrPct) };
+            if (returnMode === 'mwr' && mwr !== null) return { value: mwr.gain, text: `${fmtSignedEur(mwr.gain)} (${fmtSigned(mwr.pct)})` };
+            if (returnMode === 'xirr' && xirrPct !== null) return { value: xirrPct, text: `${fmtSigned(xirrPct)} p.a.` };
+        }
+        return { value: delta, text: `${fmtSignedEur(delta)}${firstValue > 0 ? ` (${fmtSigned(deltaPct)})` : ''}` };
+    })();
+
     if (!hasHistory) {
         return (
             <div className="dashboard-container">
@@ -525,13 +556,11 @@ const PerformanceView: React.FC = () => {
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Change over range</div>
                             {!isUnitPrice && (
                                 <div style={{ display: 'flex', gap: '0.15rem' }}>
-                                    {(['twr', 'mwr'] as const).map(m => (
+                                    {(['twr', 'mwr', 'xirr'] as const).map(m => (
                                         <button
                                             key={m}
                                             onClick={() => setReturnMode(m)}
-                                            title={m === 'mwr'
-                                                ? 'Money-Weighted Return: net gain (deposits/withdrawals stripped out) over capital deployed — on MAX it matches the Dashboard\'s Total Appreciation'
-                                                : 'Time-Weighted Return: excludes the effect of cash deposits/withdrawals; coupons/dividends are counted as return'}
+                                            title={RETURN_MODE_HELP[m]}
                                             style={{
                                                 padding: '0.05rem 0.4rem',
                                                 background: returnMode === m ? 'var(--color-primary)' : 'var(--bg-card)',
@@ -548,26 +577,19 @@ const PerformanceView: React.FC = () => {
                             )}
                         </div>
                         <div style={{
-                            color: (isUnitPrice || (returnMode === 'mwr' ? mwr === null : twrPct === null)
-                                ? delta
-                                : returnMode === 'mwr' ? mwr!.gain : twrPct!) >= 0
-                                ? 'var(--color-success)' : 'var(--color-danger)',
+                            color: change.value >= 0 ? 'var(--color-success)' : 'var(--color-danger)',
                             fontWeight: 700, fontSize: '1.3rem'
                         }}>
-                            {isUnitPrice || (returnMode === 'mwr' ? mwr === null : twrPct === null) ? (
-                                <>
-                                    {delta >= 0 ? '+' : ''}€{delta.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                    {firstValue > 0 && ` (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)`}
-                                </>
-                            ) : returnMode === 'mwr' ? (
-                                <>
-                                    {mwr!.gain >= 0 ? '+' : ''}€{mwr!.gain.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-                                    {` (${mwr!.pct >= 0 ? '+' : ''}${mwr!.pct.toFixed(2)}%)`}
-                                </>
-                            ) : (
-                                `${twrPct! >= 0 ? '+' : ''}${twrPct!.toFixed(2)}%`
-                            )}
+                            {change.text}
                         </div>
+                        {!isUnitPrice && returnMode === 'xirr' && xirrPct !== null && rangeYears < 1 && (
+                            <div
+                                style={{ color: 'var(--text-muted)', fontSize: '0.7rem', marginTop: '0.1rem' }}
+                                title="XIRR is always an annual rate: over a range shorter than a year a small gain compounds into a large yearly figure"
+                            >
+                                annualized over {Math.max(1, Math.round(rangeYears * 365))} days
+                            </div>
+                        )}
                     </div>
                     {returnStats && (
                         <>

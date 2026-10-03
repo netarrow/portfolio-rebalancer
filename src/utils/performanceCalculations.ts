@@ -609,3 +609,59 @@ export function getNetWorthSeries(
         return { date: p.date, value: p.value + overlay };
     });
 }
+
+/**
+ * XIRR (%, annualized) of a value series seen from the investor: the starting
+ * value is paid in on the first date, every external flow in between is paid
+ * in (buys) or received (sells, and coupons/dividends when they are in
+ * `cashFlows`), and the final value is received on the last date. Solves
+ * NPV(r) = 0 on actual/365 day counts.
+ *
+ * `cashFlows` uses the same sign as getCashFlowsByDate (money into the scope
+ * positive), so each flow is negated to become the investor's. Flows dated on
+ * the first date are already inside the starting value and are skipped.
+ * Returns null when there is nothing to solve (no capital, or no rate makes
+ * the flows break even).
+ */
+export function computeXIRR(series: ValuePoint[], cashFlows: Map<string, number>): number | null {
+    if (series.length < 2) return null;
+    const first = series[0];
+    const last = series[series.length - 1];
+    const t0 = Date.parse(first.date);
+
+    const flows: Array<{ years: number; amount: number }> = [];
+    const yearsAt = (date: string) => (Date.parse(date) - t0) / (365 * MS_PER_DAY);
+    if (first.value > 0) flows.push({ years: 0, amount: -first.value });
+    for (const [date, flow] of cashFlows) {
+        if (date <= first.date || date > last.date || flow === 0) continue;
+        flows.push({ years: yearsAt(date), amount: -flow });
+    }
+    if (last.value > 0) flows.push({ years: yearsAt(last.date), amount: last.value });
+
+    // A rate exists only when money goes both ways.
+    if (!flows.some(f => f.amount < 0) || !flows.some(f => f.amount > 0)) return null;
+    if (yearsAt(last.date) <= 0) return null;
+
+    const npv = (r: number) => flows.reduce((sum, f) => sum + f.amount * Math.pow(1 + r, -f.years), 0);
+
+    // Bracket the root, then bisect: slower than Newton but it cannot diverge
+    // on the odd flow patterns (sell-everything, big late buys) real logs have.
+    let lo = -0.9999;
+    let hi = 1;
+    let npvLo = npv(lo);
+    let npvHi = npv(hi);
+    while (npvLo * npvHi > 0 && hi < 1e6) {
+        hi *= 4;
+        npvHi = npv(hi);
+    }
+    if (!Number.isFinite(npvLo) || !Number.isFinite(npvHi) || npvLo * npvHi > 0) return null;
+
+    for (let i = 0; i < 200 && hi - lo > 1e-10; i++) {
+        const mid = (lo + hi) / 2;
+        const npvMid = npv(mid);
+        if (npvMid === 0) return mid * 100;
+        if (npvLo * npvMid < 0) { hi = mid; npvHi = npvMid; }
+        else { lo = mid; npvLo = npvMid; }
+    }
+    return ((lo + hi) / 2) * 100;
+}
