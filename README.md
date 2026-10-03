@@ -439,7 +439,11 @@ Sync a chosen "Investment Goals" YNAB category group and fund each goal from one
 
 ![YNAB goals](screenshots/ynab_goals.png)
 
-- Each goal card shows the YNAB **target**, **target date**, **cash coverage** and **total covered** (cash + earmarked investments).
+<img src="screenshots/mobile_ynab_goals.png" alt="YNAB goals on a phone" width="300"> <img src="screenshots/ynab_goal_setup.png" alt="Setup of one goal" width="520">
+
+- The goals read as **one list**, a row per goal: its name with target and due date, the **cash** it holds in YNAB, what is **invested** for it and **where** (portfolio › asset), and the **progress** toward the target — a bar split into cash and investments, with what is still to go. A strip on top adds up targets, cash, invested and overall coverage.
+- On a phone each row becomes a compact block — name and setup button on top, the bar, cash and invested side by side, then where the money sits.
+- **Setup** (the ⚙ button, or a click on the row) opens everything else about the goal: the full figures, monthly funding and its allocations, which are added, edited and removed there.
 - **Allocations** link portfolios to a goal with an amount; **suggested monthly funding** is compared against YNAB's own monthly funding, with warnings when they drift apart.
 - An allocation can also name its **covering asset** inside the portfolio. On a portfolio with [targets in €](#targets-in--goal-matching) that amount becomes the asset's target, so several goals can share one bond; the goal then counts as covered only by its share of what the asset actually holds (*€3,000 of €8,000*), not by the target itself.
 
