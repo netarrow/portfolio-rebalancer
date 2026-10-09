@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState, YnabTrackingConfig } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -39,6 +39,9 @@ export interface SyncPayload {
     // budgetId -> 'family' | Person id: which source a budget's income and
     // expenses count as in the Forecast. A mapping, not a credential.
     ynabBudgetOwners?: Record<string, string>;
+    // How the off-budget accounts are split by purpose (off-budget map). A
+    // mapping of YNAB account ids, not a credential, so it travels.
+    ynabTrackingConfig?: YnabTrackingConfig;
     ynabGoalsGroupId?: string;
     ynabGoalsGroupName?: string;
     ynabLastGoalsSyncAt?: string;

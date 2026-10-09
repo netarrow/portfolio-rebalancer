@@ -350,6 +350,26 @@ export interface YnabAccountMapping {
 // id in a different budget is a different account and maps independently.
 export type YnabAccountMappings = Record<string, YnabAccountMapping>;
 
+// How the off-budget (tracking) accounts of the primary budget are meant to be
+// split: from one account per broker to one per purpose — a YNAB goal, a
+// portfolio (parent and children merged), a broker's own cash. Read by the
+// off-budget map, which only previews; nothing here is ever written to YNAB
+// by itself. Account ids belong to the primary budget, where the goal
+// categories live: a transfer cannot cross budgets.
+export interface YnabTrackingConfig {
+  // brokerId -> off-budget account holding that broker in YNAB today, the
+  // source the split moves money out of.
+  brokerSources: Record<string, string>;
+  // Destination key -> tracking account chosen for it. Keys are built by
+  // utils/ynabTrackingPlan (`goal:<id>`, `portfolio:<rootId>`, `cash:<brokerId>`).
+  destinationAccounts: Record<string, string>;
+  // brokerId -> forced in (true) or out (false) of the split. Absent = the
+  // default: family brokers out, every other broker in.
+  brokerInclusion?: Record<string, boolean>;
+}
+
+export const EMPTY_YNAB_TRACKING_CONFIG: YnabTrackingConfig = { brokerSources: {}, destinationAccounts: {} };
+
 // One row of the "update broker liquidity" preview. A row is one operation on
 // one broker: either its YNAB account balance (kind 'ynab') or the interest its
 // own remuneration plan has accrued (kind 'interest'). A broker with both

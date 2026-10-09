@@ -449,6 +449,25 @@ Sync a chosen "Investment Goals" YNAB category group and fund each goal from one
 
 ![Pinning a goal to a covering asset](screenshots/ynab_goal_pin_modal.png)
 
+### YNAB Off-budget
+
+A preview of how the investments would read in YNAB by **purpose** rather than by broker: instead of one tracking account per broker ("Broker X Investments"), one per goal, one per portfolio and one for the cash a broker keeps off budget. **Read only** — the page loads the account list of the primary budget and never writes to YNAB.
+
+![YNAB off-budget map](screenshots/ynab_offbudget.png)
+
+- **Accounts by purpose**, each with its expected balance:
+  - 🎯 one per [YNAB goal](#ynab-goals) — or category — covered by investments: its share of the holdings it is allocated to, split across the brokers that hold them;
+  - 💼 one per portfolio, a **parent and its children merged** into one account: whatever no goal claims, long-term money included;
+  - 🏦 the same for a portfolio held only at illiquid brokers (a pension fund), which simply stays where it is;
+  - 💵 the cash of a broker that has **no on-budget account** — cash and securities sit together off budget today, and the cash stays there.
+- **Brokers**: each is linked to the off-budget account that holds it in YNAB today. A broker whose cash is an on-budget account (the one linked for the liquidity sync) is type **A**: its off-budget account holds securities only. Otherwise it is type **B**. Family brokers are left out by default; any broker can be switched in or out.
+- **A goal's share** is read off its allocations: pinned to an asset or a group, from those holdings in that portfolio; on the whole portfolio, from all of it — pro rata to what each holding is worth, in units, so it follows the market from then on. A holding never gives away more than it is worth: over-claimed holdings scale their claims down, and the page says so.
+- **Latent tax**: the capital-gains tax on each account's gain today, at the asset's own rate — the figure that would sit as the uncleared part of the account.
+- **Checks**: the accounts add up to the securities plus the off-budget cash (*Balanced*); each broker account's YNAB balance is compared with the tool's value (*To realign*); a linked account that is on budget, missing, or linked twice is flagged, as is an allocation no holding backs.
+- **Migration preview**: per broker account, the tracking-to-tracking transfers that would empty it into the accounts above (no category, no effect on Ready to Assign) — the cash of a type-B broker and a pension fund *stay in place*.
+
+<img src="screenshots/mobile_ynab_offbudget.png" alt="YNAB off-budget map on a phone" width="300">
+
 ### Settings
 
 The control room for data, sync, price refresh and integrations.

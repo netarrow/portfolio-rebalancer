@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking';
 
 interface LayoutProps {
   currentView: View;
@@ -36,6 +36,7 @@ const menuStructure = [
       { label: '📊 PAC', view: 'pac' as const },
       { label: '💰 YNAB', view: 'ynab' as const },
       { label: '🎯 YNAB Goals', view: 'ynabGoals' as const },
+      { label: '🧾 YNAB Off-budget', view: 'ynabTracking' as const },
     ],
   },
   { label: '⚙️ Settings', view: 'settings' as const },
