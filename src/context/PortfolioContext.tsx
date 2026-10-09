@@ -4,6 +4,7 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig } from '../types';
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
+import { checkYnabWriteTarget } from '../utils/ynabWriteGuard';
 import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
@@ -152,6 +153,10 @@ interface PortfolioContextType {
     setYnabTrackingBrokerSource: (brokerId: string, accountId: string | null) => void;
     setYnabTrackingDestinationAccount: (destinationKey: string, accountId: string | null) => void;
     setYnabTrackingBrokerInclusion: (brokerId: string, included: boolean | null) => void;
+    // Write guard (Settings): the only budget and off-budget accounts the
+    // off-budget map may link and any write-back may touch.
+    setYnabWriteGuardBudget: (budgetId: string | null) => void;
+    setYnabWriteGuardAccounts: (accountIds: string[]) => void;
     // YNAB Goals (entità separata dai Goal manuali)
     ynabGoals: YnabGoal[];
     ynabGoalAllocations: YnabGoalAllocation[];
@@ -3117,15 +3122,21 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     // ── Off-budget map (preview configuration) ─────────────────────────
+    // Linking goes through the write guard: an account it does not allow is
+    // refused here, whatever the page offered. Clearing a link is always allowed.
+    const guardAllowsLink = (cur: YnabTrackingConfig, accountId: string | null): boolean =>
+        accountId === null || checkYnabWriteTarget(cur, { budgetId: ynabConfig?.budgetId ?? '', accountId }).ok;
     const setYnabTrackingBrokerSource = (brokerId: string, accountId: string | null) => {
         setYnabTrackingConfig(prev => {
             const cur = normalizeYnabTrackingConfig(prev);
+            if (!guardAllowsLink(cur, accountId)) return cur;
             return { ...cur, brokerSources: withEntry(cur.brokerSources, brokerId, accountId) };
         });
     };
     const setYnabTrackingDestinationAccount = (destinationKey: string, accountId: string | null) => {
         setYnabTrackingConfig(prev => {
             const cur = normalizeYnabTrackingConfig(prev);
+            if (!guardAllowsLink(cur, accountId)) return cur;
             return { ...cur, destinationAccounts: withEntry(cur.destinationAccounts, destinationKey, accountId) };
         });
     };
@@ -3133,9 +3144,30 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabTrackingConfig(prev => {
             const cur = normalizeYnabTrackingConfig(prev);
             const brokerInclusion = withEntry(cur.brokerInclusion, brokerId, included);
-            const next: YnabTrackingConfig = { brokerSources: cur.brokerSources, destinationAccounts: cur.destinationAccounts };
+            const next: YnabTrackingConfig = { ...cur };
             if (Object.keys(brokerInclusion).length > 0) next.brokerInclusion = brokerInclusion;
+            else delete next.brokerInclusion;
             return next;
+        });
+    };
+    // Write guard. Changing the budget empties the account list: account ids
+    // belong to a budget and do not carry over.
+    const setYnabWriteGuardBudget = (budgetId: string | null) => {
+        setYnabTrackingConfig(prev => {
+            const cur = normalizeYnabTrackingConfig(prev);
+            if ((budgetId ?? undefined) === cur.guardBudgetId) return cur;
+            const next: YnabTrackingConfig = { ...cur };
+            delete next.guardBudgetId;
+            delete next.guardAccountIds;
+            if (budgetId) { next.guardBudgetId = budgetId; next.guardAccountIds = []; }
+            return next;
+        });
+    };
+    const setYnabWriteGuardAccounts = (accountIds: string[]) => {
+        setYnabTrackingConfig(prev => {
+            const cur = normalizeYnabTrackingConfig(prev);
+            if (!cur.guardBudgetId) return cur;
+            return { ...cur, guardAccountIds: [...new Set(accountIds)] };
         });
     };
 
@@ -3811,6 +3843,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabTrackingBrokerSource,
         setYnabTrackingDestinationAccount,
         setYnabTrackingBrokerInclusion,
+        setYnabWriteGuardBudget,
+        setYnabWriteGuardAccounts,
         refreshYnabBudgets,
         listYnabAccounts,
         prepareBrokerLiquiditySync,

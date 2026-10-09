@@ -10,6 +10,7 @@ import EncryptionSettingsCard from '../Security/EncryptionSettingsCard';
 import PrivateTierPriceCard from './PrivateTierPriceCard';
 import FreeCommissionCard from './FreeCommissionCard';
 import PeopleCard from './PeopleCard';
+import YnabWriteGuardCard from './YnabWriteGuardCard';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -1038,6 +1039,8 @@ const TargetSettings: React.FC = () => {
                             )}
                         </div>
                     )}
+
+                    {ynabConfig && <YnabWriteGuardCard budgets={ynabBudgetRefs} />}
                 </div>
             </div>
 

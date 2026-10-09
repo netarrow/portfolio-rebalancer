@@ -366,6 +366,11 @@ export interface YnabTrackingConfig {
   // brokerId -> forced in (true) or out (false) of the split. Absent = the
   // default: family brokers out, every other broker in.
   brokerInclusion?: Record<string, boolean>;
+  // Write guard, set in Settings: the only budget, and the only off-budget
+  // accounts of it, that the off-budget map may link and any write-back may
+  // ever touch. Absent = nothing is allowed. Account ids belong to guardBudgetId.
+  guardBudgetId?: string;
+  guardAccountIds?: string[];
 }
 
 export const EMPTY_YNAB_TRACKING_CONFIG: YnabTrackingConfig = { brokerSources: {}, destinationAccounts: {} };

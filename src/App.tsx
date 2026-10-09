@@ -111,7 +111,7 @@ function App() {
       case 'brokers': return <BrokersView />;
       case 'goals': return <GoalsView />;
       case 'ynabGoals': return <YnabGoalsView onNavigateToYnab={() => setCurrentView('ynab')} />;
-      case 'ynabTracking': return <YnabTrackingView onNavigateToYnab={() => setCurrentView('ynab')} />;
+      case 'ynabTracking': return <YnabTrackingView onNavigateToYnab={() => setCurrentView('ynab')} onNavigateToSettings={() => setCurrentView('settings')} />;
       case 'summary': return <SummaryAnalysisView onNavigateToSettings={() => setCurrentView('settings')} />;
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
