@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState } from '../types';
-import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig } from '../types';
+import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
+import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
@@ -145,6 +146,12 @@ interface PortfolioContextType {
     prepareBrokerLiquiditySync: () => Promise<{ ok: boolean; rows?: BrokerLiquiditySyncRow[]; error?: string; reason?: 'empty' }>;
     applyBrokerLiquiditySync: (rows: BrokerLiquiditySyncRow[]) => { ok: boolean; updated: number; interest: number; fromYnab: number; credits: number };
     brokerLiquiditySyncing: boolean;
+    // Off-budget map: how the broker tracking accounts are split by purpose.
+    // A preview configuration only — nothing here writes to YNAB.
+    ynabTrackingConfig: YnabTrackingConfig;
+    setYnabTrackingBrokerSource: (brokerId: string, accountId: string | null) => void;
+    setYnabTrackingDestinationAccount: (destinationKey: string, accountId: string | null) => void;
+    setYnabTrackingBrokerInclusion: (brokerId: string, included: boolean | null) => void;
     // YNAB Goals (entità separata dai Goal manuali)
     ynabGoals: YnabGoal[];
     ynabGoalAllocations: YnabGoalAllocation[];
@@ -284,6 +291,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabMappings, setYnabMappings] = useLocalStorage<YnabCategoryMapping[]>('portfolio_ynab_mappings', []);
     const [ynabFundingSettings, setYnabFundingSettings] = useLocalStorage<YnabFundingSettings>('portfolio_ynab_funding', DEFAULT_YNAB_FUNDING_SETTINGS);
     const [ynabAccountMappings, setYnabAccountMappings] = useLocalStorage<YnabAccountMappings>('portfolio_ynab_account_mappings', {});
+    const [storedYnabTrackingConfig, setYnabTrackingConfig] = useLocalStorage<YnabTrackingConfig>('portfolio_ynab_tracking_config', EMPTY_YNAB_TRACKING_CONFIG);
+    const ynabTrackingConfig = useMemo(() => normalizeYnabTrackingConfig(storedYnabTrackingConfig), [storedYnabTrackingConfig]);
     const [ynabSyncing, setYnabSyncing] = useState(false);
     const [brokerLiquiditySyncing, setBrokerLiquiditySyncing] = useState(false);
     const [ynabGoals, setYnabGoals] = useLocalStorage<YnabGoal[]>('portfolio_ynab_goals', []);
@@ -1015,6 +1024,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoalAllocations,
                 ynabMacroMappings,
                 ynabBudgetOwners,
+                ynabTrackingConfig,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -1046,7 +1056,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates, ynabMappings, ynabFundingSettings, ynabAccountMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabTrackingConfig, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -1071,6 +1081,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         ynabGoals,
                         ynabGoalAllocations,
                         ynabBudgetOwners,
+                        ynabTrackingConfig,
                         ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                         ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                         ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -2729,6 +2740,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             // bare account ids; attach them to the budget configured here.
             const importedYnabAccountMappings: YnabAccountMappings =
                 normalizeYnabAccountMappings(data.ynabAccountMappings, ynabConfig?.budgetId);
+            const importedYnabTrackingConfig: YnabTrackingConfig = normalizeYnabTrackingConfig(data.ynabTrackingConfig);
             const importedPacPlans: PacPlan[] = Array.isArray(data.pacPlans) ? data.pacPlans : [];
             const importedPacExecutions: PacExecution[] = Array.isArray(data.pacExecutions) ? data.pacExecutions : [];
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
@@ -2762,6 +2774,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_asset_scope', JSON.stringify(importedAssetScope));
             localStorage.setItem('portfolio_people', JSON.stringify(importedPeople));
             localStorage.setItem('portfolio_ynab_account_mappings', JSON.stringify(importedYnabAccountMappings));
+            localStorage.setItem('portfolio_ynab_tracking_config', JSON.stringify(importedYnabTrackingConfig));
             localStorage.setItem('portfolio_pac_plans', JSON.stringify(importedPacPlans));
             localStorage.setItem('portfolio_pac_executions', JSON.stringify(importedPacExecutions));
 
@@ -2791,6 +2804,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setAssetScope(importedAssetScope);
             setPeople(importedPeople);
             setYnabAccountMappings(importedYnabAccountMappings);
+            setYnabTrackingConfig(importedYnabTrackingConfig);
             setPacPlans(importedPacPlans);
             setPacExecutions(importedPacExecutions);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
@@ -2831,6 +2845,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabGoalAllocations,
                 ynabMacroMappings,
                 ynabBudgetOwners,
+                ynabTrackingConfig,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -3101,6 +3116,29 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabAccountMappings(prev => assignYnabAccountMapping(prev, brokerId, mapping));
     };
 
+    // ── Off-budget map (preview configuration) ─────────────────────────
+    const setYnabTrackingBrokerSource = (brokerId: string, accountId: string | null) => {
+        setYnabTrackingConfig(prev => {
+            const cur = normalizeYnabTrackingConfig(prev);
+            return { ...cur, brokerSources: withEntry(cur.brokerSources, brokerId, accountId) };
+        });
+    };
+    const setYnabTrackingDestinationAccount = (destinationKey: string, accountId: string | null) => {
+        setYnabTrackingConfig(prev => {
+            const cur = normalizeYnabTrackingConfig(prev);
+            return { ...cur, destinationAccounts: withEntry(cur.destinationAccounts, destinationKey, accountId) };
+        });
+    };
+    const setYnabTrackingBrokerInclusion = (brokerId: string, included: boolean | null) => {
+        setYnabTrackingConfig(prev => {
+            const cur = normalizeYnabTrackingConfig(prev);
+            const brokerInclusion = withEntry(cur.brokerInclusion, brokerId, included);
+            const next: YnabTrackingConfig = { brokerSources: cur.brokerSources, destinationAccounts: cur.destinationAccounts };
+            if (Object.keys(brokerInclusion).length > 0) next.brokerInclusion = brokerInclusion;
+            return next;
+        });
+    };
+
     // Refresh the cached list of budgets reachable with the stored token, so the
     // broker mapping UI can offer them all without re-running "Verify".
     const refreshYnabBudgets = async (): Promise<{ ok: boolean; budgets?: YnabBudgetRef[]; error?: string }> => {
@@ -3367,6 +3405,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabCategories([]);
         setYnabMappings([]);
         setYnabAccountMappings({});
+        setYnabTrackingConfig(EMPTY_YNAB_TRACKING_CONFIG);
         setYnabGoals([]);
         setYnabGoalAllocations([]);
         setStoredYnabSpendingHistory({});
@@ -3768,6 +3807,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ynabSyncing,
         ynabAccountMappings,
         setYnabAccountMapping,
+        ynabTrackingConfig,
+        setYnabTrackingBrokerSource,
+        setYnabTrackingDestinationAccount,
+        setYnabTrackingBrokerInclusion,
         refreshYnabBudgets,
         listYnabAccounts,
         prepareBrokerLiquiditySync,
