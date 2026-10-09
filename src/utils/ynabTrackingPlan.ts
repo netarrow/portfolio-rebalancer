@@ -45,6 +45,7 @@ import { resolveGroups } from './allocationGroups';
 import { buildPortfolioTree } from './portfolioGroups';
 import { pinnedAllocationCoverage } from './goalAllocationCoverage';
 import { capitalGainsRate, resolveAssetClass } from './rebalanceCosts';
+import { checkYnabGuardBudget, checkYnabWriteTarget } from './ynabWriteGuard';
 
 type MarketData = Record<string, { price: number; lastUpdated: string }>;
 
@@ -170,7 +171,9 @@ export type TrackingWarningKind =
     | 'missing-source'        // an included broker with holdings but no YNAB account
     | 'account-reused'        // one YNAB account linked to two different roles
     | 'account-on-budget'     // a source or destination that is not a tracking account
-    | 'account-missing';      // a linked account is gone (closed/deleted)
+    | 'account-missing'       // a linked account is gone (closed/deleted)
+    | 'guard'                 // the write guard does not allow this budget
+    | 'account-not-allowed';  // a linked account is outside the write guard
 
 export interface TrackingWarning {
     kind: TrackingWarningKind;
@@ -206,6 +209,8 @@ export interface TrackingPlanInput {
     config: YnabTrackingConfig;
     /** Accounts of the primary budget, when loaded; balances are then compared. */
     accounts?: TrackingAccountRef[];
+    /** Budget the accounts belong to (the primary one), checked against the write guard. */
+    budgetId?: string;
 }
 
 export const NO_BROKER_ID = '';
@@ -228,10 +233,15 @@ export function normalizeYnabTrackingConfig(raw: unknown): YnabTrackingConfig {
     const inclusion = obj.brokerInclusion && typeof obj.brokerInclusion === 'object' && !Array.isArray(obj.brokerInclusion)
         ? Object.fromEntries(Object.entries(obj.brokerInclusion as Record<string, unknown>).filter(([k, v]) => k && typeof v === 'boolean')) as Record<string, boolean>
         : {};
+    const guardBudgetId = typeof obj.guardBudgetId === 'string' && obj.guardBudgetId ? obj.guardBudgetId : undefined;
+    const guardAccountIds = guardBudgetId && Array.isArray(obj.guardAccountIds)
+        ? [...new Set(obj.guardAccountIds.filter((id): id is string => typeof id === 'string' && id.length > 0))]
+        : [];
     return {
         brokerSources: stringRecord(obj.brokerSources),
         destinationAccounts: stringRecord(obj.destinationAccounts),
         ...(Object.keys(inclusion).length > 0 ? { brokerInclusion: inclusion } : {}),
+        ...(guardBudgetId ? { guardBudgetId, guardAccountIds } : {}),
     };
 }
 
@@ -568,9 +578,17 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         const d = destinationList.find(x => x.key === key);
         role(accountId, `destination ${d?.accountName ?? key}`);
     });
+    const guardBudget = checkYnabGuardBudget(config, input.budgetId);
+    if (!guardBudget.ok) warn('guard', guardBudget.message);
     for (const [accountId, labels] of roles) {
         const account = accountById.get(accountId);
         const name = account?.name ?? accountId;
+        if (guardBudget.ok) {
+            const verdict = checkYnabWriteTarget(config, { budgetId: input.budgetId!, accountId, onBudget: account?.onBudget, accountName: account?.name });
+            if (!verdict.ok && verdict.reason === 'account-not-allowed') {
+                warn('account-not-allowed', `${verdict.message} It is linked as ${labels.join(', ')}.`);
+            }
+        }
         // A source may also be its own broker's destination: that is the money staying put.
         const destinations = labels.filter(l => l.startsWith('destination'));
         const sources = labels.filter(l => l.startsWith('source'));

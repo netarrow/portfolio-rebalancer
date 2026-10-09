@@ -5,6 +5,7 @@
 // Run with: npx esbuild scripts/verify-ynab-tracking-plan.ts --bundle --format=esm | node --input-type=module
 import type { AssetDefinition, Broker, Portfolio, Transaction, YnabGoal, YnabGoalAllocation, YnabTrackingConfig } from '../src/types';
 import { buildTrackingPlan, normalizeYnabTrackingConfig, withEntry, type TrackingAccountRef, type TrackingPlanInput } from '../src/utils/ynabTrackingPlan';
+import { checkYnabGuardBudget, checkYnabWriteTarget } from '../src/utils/ynabWriteGuard';
 
 let failures = 0;
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -95,6 +96,8 @@ const config: YnabTrackingConfig = {
         'cash:fin': 'acc-fin',               // the broker account keeps its cash
         'portfolio:pension': 'acc-pens',     // the pension account stays as it is
     },
+    guardBudgetId: 'budget',
+    guardAccountIds: ['acc-bank-inv', 'acc-fin', 'acc-pens', 'acc-bath'],
 };
 
 const base: TrackingPlanInput = {
@@ -103,6 +106,7 @@ const base: TrackingPlanInput = {
     liquidityMappings: { bank: { budgetId: 'budget', accountId: 'acc-checking' } },
     config,
     accounts,
+    budgetId: 'budget',
 };
 
 const plan = buildTrackingPlan(base);
@@ -192,6 +196,25 @@ check('malformed entries are dropped', normalizeYnabTrackingConfig({
 }), { brokerSources: { fin: 'acc-fin' }, destinationAccounts: {}, brokerInclusion: { kid: true } });
 check('nothing stored', normalizeYnabTrackingConfig(undefined), { brokerSources: {}, destinationAccounts: {} });
 check('withEntry sets and clears', [withEntry({ a: '1' }, 'b', '2'), withEntry({ a: '1' }, 'a', null)], [{ a: '1', b: '2' }, {}]);
+
+console.log('Write guard');
+const verdict = (v: { ok: boolean; reason?: string }) => v.ok ? 'ok' : v.reason;
+check('nothing configured: nothing allowed', verdict(checkYnabWriteTarget({}, { budgetId: 'budget', accountId: 'acc-fin' })), 'no-guard');
+check('another budget is refused', verdict(checkYnabWriteTarget(config, { budgetId: 'other', accountId: 'acc-fin' })), 'wrong-budget');
+check('allowed off-budget account', verdict(checkYnabWriteTarget(config, { budgetId: 'budget', accountId: 'acc-fin', onBudget: false })), 'ok');
+check('off-budget account left unticked', verdict(checkYnabWriteTarget(config, { budgetId: 'budget', accountId: 'acc-house' })), 'account-not-allowed');
+check('on-budget account refused even if listed', verdict(checkYnabWriteTarget({ ...config, guardAccountIds: ['acc-checking'] }, { budgetId: 'budget', accountId: 'acc-checking', onBudget: true })), 'account-on-budget');
+check('budget check alone', [verdict(checkYnabGuardBudget(config, 'budget')), verdict(checkYnabGuardBudget(config, undefined))], ['ok', 'wrong-budget']);
+
+const noGuard = buildTrackingPlan({ ...base, config: { brokerSources: config.brokerSources, destinationAccounts: config.destinationAccounts } });
+check('plan without a guard says so', noGuard.warnings.filter(w => w.kind === 'guard').length, 1);
+const wrongBudget = buildTrackingPlan({ ...base, budgetId: 'other' });
+check('plan on another budget says so', wrongBudget.warnings.some(w => w.kind === 'guard'), true);
+const narrowGuard = buildTrackingPlan({ ...base, config: { ...config, guardAccountIds: ['acc-bank-inv', 'acc-fin'] } });
+check('linked accounts outside the guard are flagged', narrowGuard.warnings.filter(w => w.kind === 'account-not-allowed').length, 2);
+
+check('guard survives normalization', normalizeYnabTrackingConfig({ ...config, guardAccountIds: ['a', 'a', 7, 'b'] }).guardAccountIds, ['a', 'b']);
+check('accounts without a budget are dropped', normalizeYnabTrackingConfig({ guardAccountIds: ['a'] }).guardAccountIds, undefined);
 
 if (failures > 0) {
     console.log(`\n${failures} check(s) failed`);

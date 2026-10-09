@@ -465,6 +465,7 @@ A preview of how the investments would read in YNAB by **purpose** rather than b
 - **Latent tax**: the capital-gains tax on each account's gain today, at the asset's own rate — the figure that would sit as the uncleared part of the account.
 - **Checks**: the accounts add up to the securities plus the off-budget cash (*Balanced*); each broker account's YNAB balance is compared with the tool's value (*To realign*); a linked account that is on budget, missing, or linked twice is flagged, as is an allocation no holding backs.
 - **Migration preview**: per broker account, the tracking-to-tracking transfers that would empty it into the accounts above (no category, no effect on Ready to Assign) — the cash of a type-B broker and a pension fund *stay in place*.
+- **Write guard**: accounts can be linked only once [Settings](#settings) names the one budget allowed and ticks its off-budget accounts the tool may use. Until then — or while the active budget is another one — linking is locked. Every link is checked against the guard when it is made, and a link outside it is flagged; on-budget accounts and anything left unticked (a house, a car, a loan) are never offered. The same check is meant to gate any future write-back.
 
 <img src="screenshots/mobile_ynab_offbudget.png" alt="YNAB off-budget map on a phone" width="300">
 
@@ -480,6 +481,10 @@ The control room for data, sync, price refresh and integrations.
 ![Lock screen — passphrase at app start](screenshots/unlock_screen.png)
 
 ![Settings — price history](screenshots/settings_price_history.png)
+
+- **YNAB write guard** — inside the YNAB section: the one budget, and the off-budget (tracking) accounts of it, that the [YNAB Off-budget](#ynab-off-budget) page may link and any write-back may ever touch. Nothing chosen means nothing is allowed; on-budget accounts are never offered; changing the budget empties the list. The choice travels with the backup and Azure sync, so every device gets the same guard.
+
+![Settings — YNAB write guard](screenshots/settings_ynab_write_guard.png)
 
 - **Data Management** — JSON backup / restore of all local data (plaintext).
 - **Price History** — a *separate* backup for the daily price-history series; **Update History** backfills each asset from its first purchase date.

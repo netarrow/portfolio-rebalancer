@@ -7,6 +7,7 @@ import {
     type TrackingDestination,
     type TrackingDestinationKind,
 } from '../../utils/ynabTrackingPlan';
+import { checkYnabGuardBudget, checkYnabWriteTarget } from '../../utils/ynabWriteGuard';
 
 // The off-budget map: how the per-broker tracking accounts of the primary
 // budget would be re-cut by purpose. Preview only — the page reads the account
@@ -27,6 +28,7 @@ const stripPrefix = (name: string) =>
 
 interface AccountSelectProps {
     value?: string;
+    disabled?: boolean;
     accounts: TrackingAccountRef[];
     emptyLabel: string;
     onChange: (accountId: string | null) => void;
@@ -34,22 +36,23 @@ interface AccountSelectProps {
     ariaLabel: string;
 }
 
-const AccountSelect: React.FC<AccountSelectProps> = ({ value, accounts, emptyLabel, onChange, format, ariaLabel }) => (
+const AccountSelect: React.FC<AccountSelectProps> = ({ value, disabled, accounts, emptyLabel, onChange, format, ariaLabel }) => (
     <select
         className="form-select ytv-select"
         value={value ?? ''}
+        disabled={disabled}
         aria-label={ariaLabel}
         onChange={e => onChange(e.target.value || null)}
     >
         <option value="">{emptyLabel}</option>
-        {value && !accounts.some(a => a.id === value) && <option value={value}>(account not found)</option>}
+        {value && !accounts.some(a => a.id === value) && <option value={value}>⛔ not allowed by the write guard — clear it</option>}
         {accounts.map(a => (
             <option key={a.id} value={a.id}>{a.name} · {format(a.balance)}</option>
         ))}
     </select>
 );
 
-const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigateToYnab }) => {
+const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSettings?: () => void }> = ({ onNavigateToYnab, onNavigateToSettings }) => {
     const {
         ynabConfig,
         listYnabAccounts,
@@ -122,11 +125,19 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavig
         liquidityMappings,
         config: ynabTrackingConfig,
         accounts: accounts ?? undefined,
+        budgetId: ynabConfig?.budgetId,
     }), [portfolios, transactions, brokers, effectiveAssetSettings, marketData, ynabGoals, ynabGoalAllocations,
-        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts]);
+        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId]);
 
-    const offBudget = useMemo(() => (accounts ?? []).filter(a => !a.onBudget)
-        .sort((a, b) => a.name.localeCompare(b.name)), [accounts]);
+    // Write guard: the active budget must be the allowed one, and only the
+    // off-budget accounts ticked in Settings can be linked.
+    const guard = checkYnabGuardBudget(ynabTrackingConfig, ynabConfig?.budgetId);
+    const offBudget = useMemo(() => (accounts ?? [])
+        .filter(a => checkYnabWriteTarget(ynabTrackingConfig, {
+            budgetId: ynabConfig?.budgetId ?? '', accountId: a.id, onBudget: a.onBudget,
+        }).ok)
+        .sort((a, b) => a.name.localeCompare(b.name)), [accounts, ynabTrackingConfig, ynabConfig?.budgetId]);
+    const allowedCount = guard.ok ? (ynabTrackingConfig.guardAccountIds ?? []).length : 0;
     const accountName = (id?: string) => (id && accounts?.find(a => a.id === id)?.name) || null;
     const destinationByKey = useMemo(() => new Map(plan.destinations.map(d => [d.key, d])), [plan.destinations]);
     const brokerById = useMemo(() => new Map(plan.brokers.map(b => [b.brokerId, b])), [plan.brokers]);
@@ -186,6 +197,21 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavig
             </header>
 
             {error && <div className="ytv-alert ytv-alert-error">{error}</div>}
+
+            {!guard.ok ? (
+                <div className="ytv-guard ytv-guard-locked">
+                    <span>🛡 <strong>Linking is locked.</strong> {guard.message} Until then the figures below are a preview and no account can be linked.</span>
+                    {onNavigateToSettings && <button type="button" className="btn" onClick={onNavigateToSettings}>Open Settings</button>}
+                </div>
+            ) : (
+                <div className={`ytv-guard${allowedCount === 0 ? ' ytv-guard-locked' : ''}`}>
+                    <span>
+                        🛡 Write guard: only <strong>{allowedCount}</strong> off-budget account{allowedCount === 1 ? '' : 's'} of this budget can be linked.
+                        {allowedCount === 0 && ' Tick the allowed ones in Settings → YNAB write guard.'}
+                    </span>
+                    {onNavigateToSettings && <button type="button" className="ytv-link" onClick={onNavigateToSettings}>Change in Settings</button>}
+                </div>
+            )}
 
             <div className="ytv-totals">
                 <div className="ytv-total">
@@ -257,7 +283,8 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavig
                                     <AccountSelect
                                         value={b.sourceAccountId}
                                         accounts={offBudget}
-                                        emptyLabel={accounts ? '— not in YNAB —' : '— load accounts —'}
+                                        disabled={!guard.ok}
+                                        emptyLabel={!guard.ok ? '🛡 locked' : accounts ? '— not in YNAB —' : '— load accounts —'}
                                         onChange={id => setYnabTrackingBrokerSource(b.brokerId, id)}
                                         format={eur}
                                         ariaLabel={`YNAB account of ${b.name}`}
@@ -319,7 +346,8 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavig
                                             <AccountSelect
                                                 value={d.accountId}
                                                 accounts={offBudget}
-                                                emptyLabel={accounts ? '＋ to create' : '— load accounts —'}
+                                                disabled={!guard.ok}
+                                                emptyLabel={!guard.ok ? '🛡 locked' : accounts ? '＋ to create' : '— load accounts —'}
                                                 onChange={id => setYnabTrackingDestinationAccount(d.key, id)}
                                                 format={eur}
                                                 ariaLabel={`YNAB account for ${d.accountName}`}
@@ -427,6 +455,13 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavig
                 .ytv-up { color: var(--color-success); font-variant-numeric: tabular-nums; }
                 .ytv-down { color: var(--color-warning); font-variant-numeric: tabular-nums; }
                 .ytv-warn-inline { color: var(--color-warning); }
+                .ytv-guard {
+                    display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
+                    padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); font-size: 0.85rem;
+                    background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.3); color: var(--text-secondary);
+                }
+                .ytv-guard-locked { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.35); }
+                .ytv-link { background: none; border: none; padding: 0; color: var(--color-primary); cursor: pointer; font-size: 0.82rem; text-decoration: underline; }
                 .ytv-alert { padding: var(--space-3); border-radius: var(--radius-md); font-size: 0.85rem; }
                 .ytv-alert-error { background: rgba(239, 68, 68, 0.12); color: var(--color-danger); }
 
