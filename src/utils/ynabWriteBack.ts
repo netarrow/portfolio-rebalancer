@@ -198,23 +198,54 @@ export interface ExecuteHooks {
     now?: () => string;
 }
 
+/**
+ * One write to YNAB, whatever it is for (a migration, a reassignment…): the
+ * balances that must not have moved since the preview, the accounts to
+ * create, and the transactions — balance adjustments and transfers between
+ * tracking accounts. Every write goes through executeWritePlan.
+ */
+export type WriteOp =
+    | { kind: 'adjust'; accountId: string; amount: number; memo: string; importId: string }
+    | {
+        kind: 'transfer';
+        fromAccountId: string;
+        /** A linked account, or a destination whose account is created first. */
+        to: { destinationKey: string; accountId?: string; accountName: string };
+        amount: number;          // € leaving fromAccountId
+        memo: string;
+        importId: string;
+    };
+
+export interface WritePlan {
+    entryId: string;
+    kind: YnabWriteLogEntry['kind'];
+    budgetId: string;
+    brokerId: string;            // '' when the write is not about one broker
+    label: string;
+    date: string;
+    checks: { accountId: string; name: string; balanceSeen: number }[];
+    createAccounts: { destinationKey: string; name: string }[];
+    ops: WriteOp[];
+    blockers: string[];
+}
+
 const allowing = (config: YnabTrackingConfig, extra: string[]): YnabTrackingConfig =>
     ({ ...config, guardAccountIds: [...(config.guardAccountIds ?? []), ...extra] });
 
-export async function executeMigration(
+export async function executeWritePlan(
     api: YnabWriteApi,
-    preview: MigrationPreview,
+    plan: WritePlan,
     config: YnabTrackingConfig,
     hooks: ExecuteHooks,
 ): Promise<{ ok: boolean; entry: YnabWriteLogEntry; error?: string }> {
     const now = hooks.now ?? (() => new Date().toISOString());
     let entry: YnabWriteLogEntry = {
-        id: preview.entryId,
-        kind: 'migration',
-        budgetId: preview.budgetId,
-        brokerId: preview.brokerId,
-        label: `Migration of ${preview.brokerName}`,
-        date: preview.date,
+        id: plan.entryId,
+        kind: plan.kind,
+        budgetId: plan.budgetId,
+        brokerId: plan.brokerId,
+        label: plan.label,
+        date: plan.date,
         createdAt: now(),
         updatedAt: now(),
         status: 'pending',
@@ -228,83 +259,69 @@ export async function executeMigration(
     };
     const fail = (error: string) => ({ ok: false, entry: save({ status: 'failed', error }), error });
 
-    if (preview.blockers.length > 0) return fail(`Not ready: ${preview.blockers[0]}`);
-    if (!preview.source) return fail('No source account.');
+    if (plan.blockers.length > 0) return fail(`Not ready: ${plan.blockers[0]}`);
+    if (plan.ops.length === 0) return fail('Nothing to write.');
     save({});
 
     // 1. Fresh look at YNAB: nothing may have moved since the preview.
     const fresh = await api.listAccounts();
     if (!fresh.success || !fresh.data) return fail(fresh.error || 'Unable to re-read the YNAB accounts.');
     const accountById = new Map(fresh.data.map(a => [a.id, a]));
-    const source = accountById.get(preview.source.accountId);
-    if (!source) return fail(`"${preview.source.name}" is no longer in YNAB.`);
-    if (Math.abs(source.balanceMilliunits / 1000 - preview.source.balanceSeen) >= 0.005) {
-        return fail(`The balance of "${source.name}" changed since the preview: reload and check again.`);
+    for (const c of plan.checks) {
+        const a = accountById.get(c.accountId);
+        if (!a) return fail(`"${c.name}" is no longer in YNAB.`);
+        if (Math.abs(a.balanceMilliunits / 1000 - c.balanceSeen) >= 0.005) {
+            return fail(`The balance of "${a.name}" changed since the preview: reload and check again.`);
+        }
     }
     const guardOk = (cfg: YnabTrackingConfig, a: YnabAccountSummary) =>
-        checkYnabWriteTarget(cfg, { budgetId: preview.budgetId, accountId: a.id, onBudget: a.onBudget, accountName: a.name });
-    const sourceVerdict = guardOk(config, source);
-    if (!sourceVerdict.ok) return fail(sourceVerdict.message);
-
-    const target = new Map<string, { accountId: string; transferPayeeId?: string }>();
-    for (const t of preview.transfers) {
-        if (!t.accountId) continue;
-        const a = accountById.get(t.accountId);
-        if (!a) return fail(`"${t.accountName}" is no longer in YNAB.`);
+        checkYnabWriteTarget(cfg, { budgetId: plan.budgetId, accountId: a.id, onBudget: a.onBudget, accountName: a.name });
+    // Every existing account the plan touches, before anything is written.
+    const touched = new Set<string>();
+    for (const op of plan.ops) {
+        if (op.kind === 'adjust') touched.add(op.accountId);
+        else { touched.add(op.fromAccountId); if (op.to.accountId) touched.add(op.to.accountId); }
+    }
+    for (const id of touched) {
+        const a = accountById.get(id);
+        if (!a) return fail('An account of this write is no longer in YNAB.');
         const verdict = guardOk(config, a);
         if (!verdict.ok) return fail(verdict.message);
-        target.set(t.destinationKey, { accountId: a.id, transferPayeeId: a.transferPayeeId });
     }
     const takenNames = new Set(fresh.data.map(a => a.name.trim().toLowerCase()));
-    for (const c of preview.createAccounts) {
+    for (const c of plan.createAccounts) {
         if (takenNames.has(c.name.trim().toLowerCase())) return fail(`An account named "${c.name}" appeared in YNAB since the preview.`);
     }
 
     // 2. Accounts to create. Each is recorded as soon as it exists.
-    let effective = config;
-    for (const c of preview.createAccounts) {
-        const created = await api.createTrackingAccount(c.name);
-        if (!created.success || !created.data) return fail(created.error || `Unable to create "${c.name}".`);
-        save({ createdAccounts: [...entry.createdAccounts, { id: created.data.id, name: created.data.name, destinationKey: c.destinationKey }] });
-        effective = allowing(effective, [created.data.id]);
-        hooks.onAccountCreated?.(c.destinationKey, created.data);
-        target.set(c.destinationKey, { accountId: created.data.id, transferPayeeId: created.data.transferPayeeId });
+    const created = new Map<string, YnabAccountSummary>();
+    for (const c of plan.createAccounts) {
+        const res = await api.createTrackingAccount(c.name);
+        if (!res.success || !res.data) return fail(res.error || `Unable to create "${c.name}".`);
+        save({ createdAccounts: [...entry.createdAccounts, { id: res.data.id, name: res.data.name, destinationKey: c.destinationKey }] });
+        hooks.onAccountCreated?.(c.destinationKey, res.data);
+        created.set(c.destinationKey, res.data);
     }
+    const effective = allowing(config, [...created.values()].map(a => a.id));
 
     // 3. The transactions, in one request.
     const transactions: YnabNewTransaction[] = [];
     const roles = new Map<string, Pick<YnabWriteLogTransaction, 'role' | 'destinationKey'>>();
-    const common = { date: preview.date, cleared: 'cleared' as const, approved: true, flag_color: PRB_FLAG };
-    if (Math.abs(preview.realignment) >= 0.01) {
-        transactions.push({
-            ...common,
-            account_id: source.id,
-            amount: toMilliunits(preview.realignment),
-            payee_name: PRB_PAYEE,
-            memo: preview.realignMemo,
-            import_id: preview.realignImportId,
-        });
-        roles.set(preview.realignImportId, { role: 'realign' });
-    }
-    for (const t of preview.transfers) {
-        const dest = target.get(t.destinationKey);
-        if (!dest?.transferPayeeId) return fail(`No transfer payee for "${t.accountName}": reload the accounts.`);
-        const destAccount = accountById.get(dest.accountId);
-        if (destAccount) {
-            const verdict = guardOk(effective, destAccount);
-            if (!verdict.ok) return fail(verdict.message);
-        } else if (!(effective.guardAccountIds ?? []).includes(dest.accountId)) {
-            return fail(`"${t.accountName}" is not allowed by the write guard.`);
+    const common = { date: plan.date, cleared: 'cleared' as const, approved: true, flag_color: PRB_FLAG };
+    for (const op of plan.ops) {
+        if (op.kind === 'adjust') {
+            if (Math.abs(op.amount) < 0.01) continue;
+            transactions.push({ ...common, account_id: op.accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId });
+            roles.set(op.importId, { role: 'realign' });
+            continue;
         }
-        transactions.push({
-            ...common,
-            account_id: source.id,
-            amount: -toMilliunits(t.amount),
-            payee_id: dest.transferPayeeId,
-            memo: t.memo,
-            import_id: t.importId,
-        });
-        roles.set(t.importId, { role: 'transfer', destinationKey: t.destinationKey });
+        const dest = op.to.accountId ? accountById.get(op.to.accountId) : created.get(op.to.destinationKey);
+        if (!dest) return fail(`No account for "${op.to.accountName}".`);
+        if (!guardOk(effective, dest).ok) return fail(`"${op.to.accountName}" is not allowed by the write guard.`);
+        if (!dest.transferPayeeId) return fail(`No transfer payee for "${op.to.accountName}": reload the accounts.`);
+        if (dest.id === op.fromAccountId) continue;
+        transactions.push({ ...common, account_id: op.fromAccountId, amount: -toMilliunits(op.amount), payee_id: dest.transferPayeeId, memo: op.memo, import_id: op.importId });
+        roles.set(op.importId, { role: 'transfer', destinationKey: op.to.destinationKey });
     }
     if (transactions.length === 0) return fail('Nothing to write.');
 
@@ -330,6 +347,43 @@ export async function executeMigration(
     });
     return { ok: true, entry };
 }
+
+/** A migration preview as a write plan. */
+export function migrationWritePlan(preview: MigrationPreview): WritePlan {
+    const ops: WriteOp[] = [];
+    const blockers = [...preview.blockers];
+    if (!preview.source && blockers.length === 0) blockers.push('No source account.');
+    if (preview.source) {
+        if (Math.abs(preview.realignment) >= 0.01) {
+            ops.push({ kind: 'adjust', accountId: preview.source.accountId, amount: preview.realignment, memo: preview.realignMemo, importId: preview.realignImportId });
+        }
+        for (const t of preview.transfers) {
+            ops.push({
+                kind: 'transfer',
+                fromAccountId: preview.source.accountId,
+                to: { destinationKey: t.destinationKey, accountId: t.accountId, accountName: t.accountName },
+                amount: t.amount,
+                memo: t.memo,
+                importId: t.importId,
+            });
+        }
+    }
+    return {
+        entryId: preview.entryId,
+        kind: 'migration',
+        budgetId: preview.budgetId,
+        brokerId: preview.brokerId,
+        label: `Migration of ${preview.brokerName}`,
+        date: preview.date,
+        checks: preview.source ? [{ accountId: preview.source.accountId, name: preview.source.name, balanceSeen: preview.source.balanceSeen }] : [],
+        createAccounts: preview.createAccounts,
+        ops,
+        blockers,
+    };
+}
+
+export const executeMigration = (api: YnabWriteApi, preview: MigrationPreview, config: YnabTrackingConfig, hooks: ExecuteHooks) =>
+    executeWritePlan(api, migrationWritePlan(preview), config, hooks);
 
 // ── Rollback ────────────────────────────────────────────────────────
 
@@ -386,7 +440,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 export function normalizeYnabWriteLog(raw: unknown): YnabWriteLogEntry[] {
     if (!Array.isArray(raw)) return [];
     return raw.filter((e): e is YnabWriteLogEntry =>
-        isObj(e) && typeof e.id === 'string' && e.kind === 'migration' && typeof e.budgetId === 'string'
+        isObj(e) && typeof e.id === 'string' && (e.kind === 'migration' || e.kind === 'reassignment') && typeof e.budgetId === 'string'
         && typeof e.brokerId === 'string' && typeof e.status === 'string'
         && Array.isArray(e.transactions) && Array.isArray(e.createdAccounts));
 }
@@ -413,3 +467,189 @@ export function migratedBrokerIds(log: YnabWriteLogEntry[], budgetId: string | u
 /** Puts an entry in the log, replacing the one with the same id. Newest first. */
 export const upsertWriteLogEntry = (log: YnabWriteLogEntry[], entry: YnabWriteLogEntry): YnabWriteLogEntry[] =>
     [entry, ...log.filter(e => e.id !== entry.id)].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+
+/** Accounts an entry wrote to (both sides of every transfer). */
+export const entryAccounts = (e: YnabWriteLogEntry): Set<string> =>
+    new Set(e.transactions.flatMap(t => [t.accountId, t.transferAccountId].filter((x): x is string => !!x)));
+
+/**
+ * Later writes that must be rolled back before this one: a newer entry, still
+ * in place, that touched one of the same accounts. Undoing in the opposite
+ * order would leave YNAB and the frozen shares out of step.
+ */
+export function rollbackDependents(log: YnabWriteLogEntry[], entryId: string): YnabWriteLogEntry[] {
+    const entry = log.find(e => e.id === entryId);
+    if (!entry) return [];
+    const mine = entryAccounts(entry);
+    return log.filter(e => e.id !== entryId && e.createdAt > entry.createdAt
+        && (e.status === 'applied' || e.status === 'rollback-partial')
+        && [...entryAccounts(e)].some(id => mine.has(id)));
+}
+
+// ── Reassignment ────────────────────────────────────────────────────
+// Moves goal shares between accounts by purpose once a broker is migrated:
+// "from portfolio X to goal Y", "from goal A to goal B", "from goal A back to
+// its portfolio". Units move, not euros: the receiving account takes the
+// holdings with their own cost basis, so gains, losses and latent tax follow.
+// Only holdings at migrated brokers move this way — elsewhere the goal
+// allocations still decide, and the migration will carry them over.
+
+export interface ReassignmentPreview {
+    entryId: string;
+    budgetId: string;
+    date: string;
+    from: { destinationKey: string; accountName: string; accountId?: string; balanceSeen?: number };
+    to: { destinationKey: string; accountName: string; accountId?: string };
+    /** € moved, at today's prices. */
+    amount: number;
+    /** The slices of holdings that move, in units. */
+    pieces: { holdingKey: string; brokerId: string; ticker: string; label: string; quantity: number; value: number; cost: number }[];
+    memo: string;
+    importId: string;
+    createAccounts: { destinationKey: string; name: string }[];
+    /** Movements of the goal-share ledger, booked on success. */
+    quotes: Omit<YnabGoalQuote, 'entryId' | 'frozenAt'>[];
+    blockers: string[];
+}
+
+export interface ReassignmentInput {
+    plan: TrackingPlan;
+    fromKey: string;
+    toKey: string;
+    /** € to move; capped by nothing — more than is available is a blocker. */
+    amount: number;
+    accounts: (TrackingAccountRef & { transferPayeeId?: string })[] | null;
+    config: YnabTrackingConfig;
+    budgetId: string;
+    entryId: string;
+    date: string;
+    /** Name of the target account when it has to be created. */
+    newAccountName?: string;
+}
+
+export function buildReassignmentPreview(input: ReassignmentInput): ReassignmentPreview {
+    const { plan, fromKey, toKey, accounts, config, budgetId, entryId, date } = input;
+    const blockers: string[] = [];
+    const from = plan.destinations.find(d => d.key === fromKey);
+    const to = plan.destinations.find(d => d.key === toKey);
+    const accountById = new Map((accounts ?? []).map(a => [a.id, a]));
+    const migrated = new Set(plan.brokers.filter(b => b.migrated).map(b => b.brokerId));
+    const preview: ReassignmentPreview = {
+        entryId, budgetId, date,
+        from: { destinationKey: fromKey, accountName: from?.accountName ?? fromKey },
+        to: { destinationKey: toKey, accountName: to?.accountName ?? toKey },
+        amount: 0, pieces: [], memo: '', importId: prbImportId(entryId, 1),
+        createAccounts: [], quotes: [], blockers,
+    };
+
+    if (!accounts) blockers.push('YNAB accounts are not loaded.');
+    const budgetVerdict = checkYnabGuardBudget(config, budgetId);
+    if (!budgetVerdict.ok) blockers.push(budgetVerdict.message);
+    if (!from) { blockers.push('The account to move from is not in the plan.'); return preview; }
+    if (!to) { blockers.push('The account to move to is not in the plan: give the goal an allocation first.'); return preview; }
+    const sharesKind = (k: string) => k === 'goal' ? 'goal' : (k === 'portfolio' || k === 'pension') ? 'portfolio' : null;
+    const fromKind = sharesKind(from.kind);
+    const toKind = sharesKind(to.kind);
+    if (!fromKind || !toKind) { blockers.push('Only goal and portfolio accounts hold shares that can be reassigned.'); return preview; }
+    if (fromKey === toKey) blockers.push('Pick two different accounts.');
+    if (fromKind === 'portfolio' && toKind === 'portfolio') blockers.push('Holdings belong to their own portfolio: move them to a goal instead.');
+
+    const available = from.pieces.filter(p => migrated.has(p.brokerId));
+    const availableValue = available.reduce((s, p) => s + p.value, 0);
+    if (available.length === 0) {
+        blockers.push(`${from.accountName} holds nothing at a migrated broker yet: change the goal allocations instead, the migration will follow them.`);
+        return preview;
+    }
+    const amount = cents(input.amount);
+    if (!(amount > 0)) blockers.push('Enter an amount to move.');
+    else if (amount > availableValue + 0.005) blockers.push(`${from.accountName} holds ${cents(availableValue)} € at migrated brokers: move at most that.`);
+    const share = availableValue > 0 ? Math.min(1, amount / availableValue) : 0;
+    preview.amount = amount;
+    preview.pieces = available.map(p => ({
+        holdingKey: p.holdingKey, brokerId: p.brokerId, ticker: p.ticker, label: p.label,
+        quantity: p.quantity * share, value: p.value * share, cost: p.cost * share,
+    })).filter(p => p.quantity > 1e-9);
+
+    // Units can only go back to the portfolio that holds them.
+    if (toKind === 'portfolio') {
+        const members = new Set(to.memberIds ?? []);
+        for (const p of preview.pieces) {
+            const [portfolioId] = p.holdingKey.split('|');
+            if (!members.has(portfolioId)) {
+                blockers.push(`${p.label} is not held by ${to.accountName}: it can only go back to its own portfolio.`);
+                break;
+            }
+        }
+    }
+
+    // Ledger movements.
+    for (const p of preview.pieces) {
+        const [portfolioId, brokerId, ticker] = p.holdingKey.split('|');
+        if (fromKind === 'goal' && from.goalId) preview.quotes.push({ goalId: from.goalId, portfolioId, brokerId, ticker, quantity: -p.quantity, cost: -p.cost });
+        if (toKind === 'goal' && to.goalId) preview.quotes.push({ goalId: to.goalId, portfolioId, brokerId, ticker, quantity: p.quantity, cost: p.cost });
+    }
+
+    // Accounts: the source exists (it was filled by the migration); the target
+    // may have to be created.
+    const fromAccount = from.accountId ? accountById.get(from.accountId) : undefined;
+    if (!fromAccount) blockers.push(`${from.accountName} has no YNAB account linked.`);
+    else {
+        preview.from = { ...preview.from, accountId: fromAccount.id, accountName: fromAccount.name, balanceSeen: fromAccount.balance };
+        const v = checkYnabWriteTarget(config, { budgetId, accountId: fromAccount.id, onBudget: fromAccount.onBudget, accountName: fromAccount.name });
+        if (!v.ok) blockers.push(v.message);
+    }
+    const toAccount = to.accountId ? accountById.get(to.accountId) : undefined;
+    if (to.accountId && accounts && !toAccount) blockers.push(`The YNAB account linked to ${to.accountName} no longer exists.`);
+    if (toAccount) {
+        preview.to = { ...preview.to, accountId: toAccount.id, accountName: toAccount.name };
+        const v = checkYnabWriteTarget(config, { budgetId, accountId: toAccount.id, onBudget: toAccount.onBudget, accountName: toAccount.name });
+        if (!v.ok) blockers.push(v.message);
+        else if (!toAccount.transferPayeeId) blockers.push(`YNAB gave no transfer payee for "${toAccount.name}": reload the accounts.`);
+    } else if (!to.accountId) {
+        const name = (input.newAccountName ?? to.accountName).trim();
+        if (!name) blockers.push('The new account needs a name.');
+        else if ((accounts ?? []).some(a => a.name.trim().toLowerCase() === name.toLowerCase())) blockers.push(`An account named "${name}" already exists: link it instead of creating a new one.`);
+        preview.to.accountName = name;
+        preview.createAccounts.push({ destinationKey: toKey, name });
+    }
+
+    const listed = preview.pieces.slice(0, PIECES_IN_MEMO).map(p => `${p.label} ${qty(p.quantity)} q`);
+    const more = preview.pieces.length > PIECES_IN_MEMO ? ` +${preview.pieces.length - PIECES_IN_MEMO}` : '';
+    const memo = `${PRB_MEMO_PREFIX} Riassegnazione da ${preview.from.accountName}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`;
+    preview.memo = memo.length > MEMO_MAX ? `${memo.slice(0, MEMO_MAX - 1)}…` : memo;
+    return preview;
+}
+
+/** A reassignment preview as a write plan: one transfer between two tracking accounts. */
+export function reassignmentWritePlan(preview: ReassignmentPreview): WritePlan {
+    const blockers = [...preview.blockers];
+    const ops: WriteOp[] = [];
+    if (preview.from.accountId) {
+        ops.push({
+            kind: 'transfer',
+            fromAccountId: preview.from.accountId,
+            to: { destinationKey: preview.to.destinationKey, accountId: preview.to.accountId, accountName: preview.to.accountName },
+            amount: preview.amount,
+            memo: preview.memo,
+            importId: preview.importId,
+        });
+    } else if (blockers.length === 0) blockers.push('No account to move from.');
+    return {
+        entryId: preview.entryId,
+        kind: 'reassignment',
+        budgetId: preview.budgetId,
+        brokerId: '',
+        label: `Reassignment: ${preview.from.accountName} → ${preview.to.accountName}`,
+        date: preview.date,
+        checks: preview.from.accountId && preview.from.balanceSeen !== undefined
+            ? [{ accountId: preview.from.accountId, name: preview.from.accountName, balanceSeen: preview.from.balanceSeen }]
+            : [],
+        createAccounts: preview.createAccounts,
+        ops,
+        blockers,
+    };
+}
+
+export const executeReassignment = (api: YnabWriteApi, preview: ReassignmentPreview, config: YnabTrackingConfig, hooks: ExecuteHooks) =>
+    executeWritePlan(api, reassignmentWritePlan(preview), config, hooks);

@@ -5,7 +5,7 @@ import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, P
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import { checkYnabWriteTarget } from '../utils/ynabWriteGuard';
-import { executeMigration, rollbackWriteEntry, normalizeYnabWriteLog, normalizeYnabGoalQuotes, migratedBrokerIds, upsertWriteLogEntry, type MigrationPreview, type YnabWriteApi } from '../utils/ynabWriteBack';
+import { executeMigration, executeReassignment, rollbackWriteEntry, rollbackDependents, normalizeYnabWriteLog, normalizeYnabGoalQuotes, migratedBrokerIds, upsertWriteLogEntry, type MigrationPreview, type ReassignmentPreview, type YnabWriteApi } from '../utils/ynabWriteBack';
 import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
@@ -164,6 +164,7 @@ interface PortfolioContextType {
     ynabGoalQuotes: YnabGoalQuote[];
     ynabMigratedBrokerIds: string[];
     executeYnabMigration: (preview: MigrationPreview) => Promise<{ ok: boolean; entry?: YnabWriteLogEntry; error?: string }>;
+    executeYnabReassignment: (preview: ReassignmentPreview) => Promise<{ ok: boolean; entry?: YnabWriteLogEntry; error?: string }>;
     rollbackYnabWrite: (entryId: string) => Promise<{ ok: boolean; error?: string; accountsLeft?: { id: string; name: string }[] }>;
     ynabWriting: boolean;
     // YNAB Goals (entità separata dai Goal manuali)
@@ -3243,9 +3244,44 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     };
 
+    const executeYnabReassignment = async (preview: ReassignmentPreview) => {
+        if (!ynabConfig?.apiKey || !ynabConfig.budgetId) return { ok: false, error: 'YNAB not configured.' };
+        if (preview.budgetId !== ynabConfig.budgetId) return { ok: false, error: 'The active budget changed since the preview.' };
+        if (ynabWriting) return { ok: false, error: 'Another write to YNAB is in progress.' };
+        setYnabWriting(true);
+        try {
+            const result = await executeReassignment(ynabWriteApi(ynabConfig.apiKey, ynabConfig.budgetId), preview, ynabTrackingConfig, {
+                report: recordWrite,
+                onAccountCreated: (destinationKey, account) => setYnabTrackingConfig(prev => {
+                    const cur = normalizeYnabTrackingConfig(prev);
+                    return {
+                        ...cur,
+                        guardAccountIds: [...new Set([...(cur.guardAccountIds ?? []), account.id])],
+                        destinationAccounts: { ...cur.destinationAccounts, [destinationKey]: account.id },
+                    };
+                }),
+            });
+            if (result.ok) {
+                const frozenAt = new Date().toISOString();
+                setYnabGoalQuotes(prev => [
+                    ...normalizeYnabGoalQuotes(prev),
+                    ...preview.quotes.map(q => ({ ...q, entryId: result.entry.id, frozenAt })),
+                ]);
+            }
+            return { ok: result.ok, entry: result.entry, error: result.error };
+        } finally {
+            setYnabWriting(false);
+        }
+    };
+
     const rollbackYnabWrite = async (entryId: string) => {
         const entry = ynabWriteLog.find(e => e.id === entryId);
         if (!entry) return { ok: false, error: 'Write not found in the log.' };
+        // Newest first: a later write on the same accounts is undone before this one.
+        const dependents = rollbackDependents(ynabWriteLog, entryId);
+        if (dependents.length > 0) {
+            return { ok: false, error: `Roll back first: ${dependents.map(e => e.label).join(', ')}.` };
+        }
         if (!ynabConfig?.apiKey) return { ok: false, error: 'YNAB not configured.' };
         if (ynabWriting) return { ok: false, error: 'Another write to YNAB is in progress.' };
         setYnabWriting(true);
@@ -3936,6 +3972,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         ynabGoalQuotes,
         ynabMigratedBrokerIds,
         executeYnabMigration,
+        executeYnabReassignment,
         rollbackYnabWrite,
         ynabWriting,
         refreshYnabBudgets,
