@@ -653,3 +653,49 @@ export function reassignmentWritePlan(preview: ReassignmentPreview): WritePlan {
 
 export const executeReassignment = (api: YnabWriteApi, preview: ReassignmentPreview, config: YnabTrackingConfig, hooks: ExecuteHooks) =>
     executeWritePlan(api, reassignmentWritePlan(preview), config, hooks);
+
+export interface ReassignmentSuggestion {
+    fromKey: string;
+    toKey: string;
+    amount: number;
+}
+
+/**
+ * The moves that would bring the accounts by purpose back to what the goal
+ * allocations ask, once brokers are migrated: accounts holding more than
+ * asked give to accounts holding less, largest gaps first. Pairs the engine
+ * would refuse (portfolio → portfolio, a holding going back to a portfolio
+ * that does not hold it) are left out by checking each one.
+ */
+export function suggestReassignments(
+    plan: TrackingPlan,
+    check?: (s: ReassignmentSuggestion) => boolean,
+): ReassignmentSuggestion[] {
+    const holdsShares = (k: string) => k === 'goal' || k === 'portfolio' || k === 'pension';
+    const migrated = new Set(plan.brokers.filter(b => b.migrated).map(b => b.brokerId));
+    const movable = (key: string) => plan.destinations.find(d => d.key === key)?.pieces
+        .filter(p => migrated.has(p.brokerId)).reduce((s, p) => s + p.value, 0) ?? 0;
+    const surplus = plan.destinations
+        .filter(d => holdsShares(d.kind) && d.value - d.desiredValue >= 1)
+        .map(d => ({ key: d.key, kind: d.kind, left: Math.min(d.value - d.desiredValue, movable(d.key)) }))
+        .filter(x => x.left >= 1)
+        .sort((a, b) => b.left - a.left);
+    const deficit = plan.destinations
+        .filter(d => holdsShares(d.kind) && d.desiredValue - d.value >= 1)
+        .map(d => ({ key: d.key, kind: d.kind, left: d.desiredValue - d.value }))
+        .sort((a, b) => b.left - a.left);
+    const out: ReassignmentSuggestion[] = [];
+    for (const s of surplus) {
+        for (const d of deficit) {
+            if (s.left < 1) break;
+            if (d.left < 1) continue;
+            if (s.kind !== 'goal' && d.kind !== 'goal') continue; // portfolio → portfolio
+            const suggestion = { fromKey: s.key, toKey: d.key, amount: cents(Math.min(s.left, d.left)) };
+            if (check && !check(suggestion)) continue;
+            out.push(suggestion);
+            s.left -= suggestion.amount;
+            d.left -= suggestion.amount;
+        }
+    }
+    return out;
+}

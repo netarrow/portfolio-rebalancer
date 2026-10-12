@@ -6,7 +6,7 @@
 import type { Broker, Portfolio, Transaction, YnabGoal, YnabGoalAllocation, YnabGoalQuote, YnabTrackingConfig, YnabWriteLogEntry } from '../src/types';
 import type { YnabAccountSummary, YnabNewTransaction } from '../src/services/ynabApi';
 import { buildTrackingPlan, type TrackingPlanInput } from '../src/utils/ynabTrackingPlan';
-import { buildMigrationPreview, buildReassignmentPreview, executeMigration, executeReassignment, rollbackDependents, rollbackWriteEntry, type YnabWriteApi } from '../src/utils/ynabWriteBack';
+import { buildMigrationPreview, buildReassignmentPreview, executeMigration, executeReassignment, rollbackDependents, rollbackWriteEntry, suggestReassignments, type YnabWriteApi } from '../src/utils/ynabWriteBack';
 
 let failures = 0;
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -248,6 +248,23 @@ const reassignments = async () => {
     };
     const val = (key: string) => plan.destinations.find(d => d.key === key)?.value;
     const units = (key: string) => plan.destinations.find(d => d.key === key)?.pieces.map(p => [p.ticker, Math.round(p.quantity * 1000) / 1000]);
+
+    console.log('Suggestions');
+    check('nothing to suggest while shares match the allocations', suggestReassignments(plan), []);
+    const halved = buildTrackingPlan({
+        portfolios, transactions, brokers, assetSettings: [], marketData, goals, virtualBonds: [], liquidityMappings: {}, config, accounts,
+        budgetId: 'budget', migratedBrokerIds: ['fin'], goalQuotes: ledger,
+        allocations: allocations.map(a => a.id === 'a1' ? { ...a, amount: 600 } : a),
+    });
+    check('a smaller allocation suggests giving the difference back', suggestReassignments(halved), [{ fromKey: 'goal:g-bath', toKey: 'portfolio:growth', amount: 600 }]);
+    const moved = buildTrackingPlan({
+        portfolios, transactions, brokers, assetSettings: [], marketData, goals, virtualBonds: [], liquidityMappings: {}, config, accounts,
+        budgetId: 'budget', migratedBrokerIds: ['fin'], goalQuotes: ledger,
+        allocations: [...allocations.map(a => a.id === 'a1' ? { ...a, amount: 600 } : a), { id: 'a3', ynabGoalId: 'g-car', portfolioId: 'growth', ticker: 'WORLD', amount: 600, createdAt: '2026-01-01', updatedAt: '2026-01-01' }],
+    });
+    check('moving an allocation between goals suggests goal → goal', suggestReassignments(moved), [{ fromKey: 'goal:g-bath', toKey: 'goal:g-car', amount: 600 }]);
+    const viaCheck = suggestReassignments(moved, () => false);
+    check('refused pairs are left out', viaCheck, []);
 
     console.log('Reassignment: from goal A to goal B');
     const r1 = await reassign('goal:g-bath', 'goal:g-car', 600, 'rea00001');
