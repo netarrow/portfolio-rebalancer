@@ -129,6 +129,8 @@ export interface TrackingDestination {
      * latent tax.
      */
     migratedValue: number;
+    /** Cost basis (PMC) of the migrated pieces: what the transfers into the account carry. */
+    migratedCost: number;
     migratedLatentTax: number;
     cost: number;
     latentTax: number;
@@ -177,7 +179,10 @@ export interface TrackingBroker {
 
 export interface TrackingTransfer {
     toKey: string;
-    amount: number;
+    amount: number;           // market value of what goes there
+    /** Cost basis (PMC) of it: what the YNAB transfer carries (cash: the cash). */
+    cost: number;
+    latentTax: number;
     /** Destination is the source account itself: the money just stays. */
     staysInPlace: boolean;
 }
@@ -557,10 +562,10 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     tree.standalones.forEach(p => rootOf.set(p.id, { root: p, members: [p] }));
 
     const destinations = new Map<string, TrackingDestination>();
-    const destination = (key: string, init: () => Omit<TrackingDestination, 'value' | 'desiredValue' | 'migratedValue' | 'migratedLatentTax' | 'cost' | 'latentTax' | 'net' | 'pieces'>) => {
+    const destination = (key: string, init: () => Omit<TrackingDestination, 'value' | 'desiredValue' | 'migratedValue' | 'migratedCost' | 'migratedLatentTax' | 'cost' | 'latentTax' | 'net' | 'pieces'>) => {
         let d = destinations.get(key);
         if (!d) {
-            d = { ...init(), value: 0, desiredValue: 0, migratedValue: 0, migratedLatentTax: 0, cost: 0, latentTax: 0, net: 0, pieces: [] };
+            d = { ...init(), value: 0, desiredValue: 0, migratedValue: 0, migratedCost: 0, migratedLatentTax: 0, cost: 0, latentTax: 0, net: 0, pieces: [] };
             destinations.set(key, d);
         }
         return d;
@@ -581,6 +586,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         d.latentTax += latentTax;
         if (migratedSet.has(h.brokerId)) {
             d.migratedValue += value;
+            d.migratedCost += cost;
             d.migratedLatentTax += latentTax;
         }
     };
@@ -684,6 +690,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
             value,
             desiredValue: cents(d.desiredValue),
             migratedValue: cents(d.migratedValue),
+            migratedCost: cents(d.migratedCost),
             migratedLatentTax: cents(d.migratedLatentTax),
             cost: cents(d.cost),
             latentTax,
@@ -699,17 +706,23 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     const migrations: TrackingMigration[] = [];
     for (const b of trackingBrokers) {
         if (!b.included) continue;
-        const byDest = new Map<string, number>();
+        const byDest = new Map<string, { value: number; cost: number; latentTax: number }>();
+        const add = (key: string, value: number, cost: number, latentTax: number) => {
+            const cur = byDest.get(key) ?? { value: 0, cost: 0, latentTax: 0 };
+            byDest.set(key, { value: cur.value + value, cost: cur.cost + cost, latentTax: cur.latentTax + latentTax });
+        };
         for (const d of destinationList) {
             for (const p of d.pieces) {
-                if (p.brokerId === b.brokerId) byDest.set(d.key, (byDest.get(d.key) ?? 0) + p.value);
+                if (p.brokerId === b.brokerId) add(d.key, p.value, p.cost, p.latentTax);
             }
-            if (d.kind === 'broker-cash' && d.brokerId === b.brokerId) byDest.set(d.key, (byDest.get(d.key) ?? 0) + b.cash);
+            if (d.kind === 'broker-cash' && d.brokerId === b.brokerId) add(d.key, b.cash, b.cash, 0);
         }
         const transfers: TrackingTransfer[] = [...byDest.entries()]
-            .map(([toKey, amount]) => ({
+            .map(([toKey, v]) => ({
                 toKey,
-                amount: cents(amount),
+                amount: cents(v.value),
+                cost: cents(v.cost),
+                latentTax: cents(v.latentTax),
                 staysInPlace: !!b.sourceAccountId && config.destinationAccounts[toKey] === b.sourceAccountId,
             }))
             .filter(t => t.amount > 0)
@@ -725,7 +738,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         // After the split the broker account only keeps what stays in it.
         if (b.migrated && b.sourceAccount) {
             const stays = transfers.filter(t => t.staysInPlace).reduce((x, t) => x + t.amount, 0);
-            b.realignment = cents(stays - b.sourceAccount.balance);
+            b.realignment = cents(stays - (b.sourceAccount.balance - (input.taxLineAmounts?.[b.sourceAccount.id] ?? 0)));
         }
     }
 

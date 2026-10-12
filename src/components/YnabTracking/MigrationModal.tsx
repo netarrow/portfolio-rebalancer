@@ -16,7 +16,7 @@ const todayLocal = () => new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD i
 // Migration of ONE broker account: the exact operations, then an explicit
 // confirmation before anything is sent to YNAB.
 const MigrationModal: React.FC<Props> = ({ plan, brokerId, accounts, format, onClose }) => {
-    const { ynabConfig, ynabTrackingConfig, executeYnabMigration, ynabWriting } = usePortfolio();
+    const { ynabConfig, ynabTrackingConfig, ynabWriteLog, executeYnabMigration, ynabWriting } = usePortfolio();
     const [entryId] = useState(() => crypto.randomUUID());
     const [date] = useState(todayLocal);
     const [names, setNames] = useState<Record<string, string>>({});
@@ -28,15 +28,17 @@ const MigrationModal: React.FC<Props> = ({ plan, brokerId, accounts, format, onC
     const [sent, setSent] = useState<MigrationPreview | null>(null);
     const live = useMemo(() => buildMigrationPreview({
         plan, brokerId, accounts, config: ynabTrackingConfig, budgetId: ynabConfig?.budgetId ?? '',
-        entryId, date, nameOverrides: names,
-    }), [plan, brokerId, accounts, ynabTrackingConfig, ynabConfig?.budgetId, entryId, date, names]);
+        entryId, date, nameOverrides: names, log: ynabWriteLog,
+    }), [plan, brokerId, accounts, ynabTrackingConfig, ynabConfig?.budgetId, entryId, date, names, ynabWriteLog]);
     const preview = sent ?? live;
 
     const signed = (v: number) => `${v > 0 ? '+' : ''}${format(v)}`;
     const moved = preview.transfers.reduce((s, t) => s + t.amount, 0);
     const stays = preview.staysInPlace.reduce((s, t) => s + t.amount, 0);
     const ready = preview.blockers.length === 0;
-    const writes = (Math.abs(preview.realignment) >= 0.01 ? 1 : 0) + preview.transfers.length;
+    const sourceLines = (Math.abs(preview.realignment) >= 0.01 ? 1 : 0) + (Math.abs(preview.plMove) >= 0.01 ? 1 : 0);
+    const writes = sourceLines + preview.transfers.length + preview.lines.length;
+    const lineName = (l: MigrationPreview['lines'][number]) => l.accountId ? l.accountName : (names[l.destinationKey] ?? l.accountName);
 
     const apply = async () => {
         setSent(live);
@@ -71,19 +73,27 @@ const MigrationModal: React.FC<Props> = ({ plan, brokerId, accounts, format, onC
                     </div>
                 )}
 
-                {Math.abs(preview.realignment) >= 0.01 && (
+                {sourceLines > 0 && (
                     <section className="mgm-sec">
-                        <h4>1 · Realign the balance</h4>
-                        <div className="mgm-line">
-                            <span>{preview.source?.name} · payee “{PRB_PAYEE}”</span>
-                            <span className={preview.realignment > 0 ? 'mgm-up' : 'mgm-down'}>{signed(preview.realignment)}</span>
-                        </div>
+                        <h4>1 · {preview.source?.name ?? 'Broker account'} · payee “{PRB_PAYEE}”</h4>
+                        {Math.abs(preview.realignment) >= 0.01 && (
+                            <div className="mgm-line">
+                                <span>Realign to the tool's value</span>
+                                <span className={preview.realignment > 0 ? 'mgm-up' : 'mgm-down'}>{signed(preview.realignment)}</span>
+                            </div>
+                        )}
+                        {Math.abs(preview.plMove) >= 0.01 && (
+                            <div className="mgm-line">
+                                <span>Unrealised gains, moved to the P/L lines below</span>
+                                <span className={preview.plMove > 0 ? 'mgm-up' : 'mgm-down'}>{signed(preview.plMove)}</span>
+                            </div>
+                        )}
                     </section>
                 )}
 
                 {preview.createAccounts.length > 0 && (
                     <section className="mgm-sec">
-                        <h4>{Math.abs(preview.realignment) >= 0.01 ? '2' : '1'} · Create tracking accounts (opened at 0)</h4>
+                        <h4>{sourceLines > 0 ? '2' : '1'} · Create tracking accounts (opened at 0)</h4>
                         {preview.createAccounts.map(c => (
                             <label key={c.destinationKey} className="mgm-name">
                                 <input
@@ -100,13 +110,14 @@ const MigrationModal: React.FC<Props> = ({ plan, brokerId, accounts, format, onC
                 )}
 
                 <section className="mgm-sec">
-                    <h4>Transfers out of {preview.source?.name ?? 'the broker account'}</h4>
+                    <h4>Transfers out of {preview.source?.name ?? 'the broker account'}, at cost basis (PMC)</h4>
                     {preview.transfers.map(t => (
                         <div key={t.destinationKey} className="mgm-transfer">
                             <div className="mgm-line">
                                 <span>→ {names[t.destinationKey] ?? t.accountName}{!t.accountId && <span className="mgm-small"> (new)</span>}</span>
                                 <span className="mgm-amount">{format(t.amount)}</span>
                             </div>
+                            {Math.abs(t.value - t.amount) >= 0.01 && <div className="mgm-small">value today {format(t.value)} · P/L {signed(t.value - t.amount)}</div>}
                             <div className="mgm-memo">{t.memo}</div>
                         </div>
                     ))}
@@ -118,9 +129,23 @@ const MigrationModal: React.FC<Props> = ({ plan, brokerId, accounts, format, onC
                     ))}
                 </section>
 
+                {preview.lines.length > 0 && (
+                    <section className="mgm-sec">
+                        <h4>P/L and latent-tax lines (one each per account, updated in place later)</h4>
+                        {preview.lines.map(l => (
+                            <div key={l.importId} className="mgm-line">
+                                <span>{lineName(l)} · {l.role === 'pl' ? 'P/L (cleared)' : 'latent tax (uncleared)'}</span>
+                                <span className={l.amount >= 0 ? 'mgm-up' : 'mgm-down'}>
+                                    {l.existingId ? `${format(l.previous)} → ` : ''}{signed(l.amount)}
+                                </span>
+                            </div>
+                        ))}
+                    </section>
+                )}
+
                 {preview.source && (
                     <div className="mgm-summary">
-                        <span>{writes} transaction{writes === 1 ? '' : 's'} · {format(moved)} moved</span>
+                        <span>{writes} transaction{writes === 1 ? '' : 's'} · {format(moved)} moved at PMC</span>
                         <span>{preview.source.name} after: <strong>{format(stays)}</strong></span>
                     </div>
                 )}

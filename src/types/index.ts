@@ -385,10 +385,12 @@ export interface YnabWriteLogTransaction {
   accountId: string;
   amount: number;                // €, signed as booked on accountId
   importId: string;
-  // realign: balance set to the tool's value before a migration; transfer;
-  // revalue: the P/L of a revaluation (cleared); tax: the latent-tax line
-  // (uncleared), created once per account and then updated in place.
-  role: 'realign' | 'transfer' | 'revalue' | 'tax';
+  // realign: balance set to the tool's value before a migration (and the
+  // gains it hands to the P/L lines); transfer (at cost basis, PMC);
+  // revalue: an alignment of the account to its cost basis; pl: the account's
+  // single P/L line (cleared) and tax: its single latent-tax line
+  // (uncleared), each created once and then updated in place.
+  role: 'realign' | 'transfer' | 'revalue' | 'pl' | 'tax';
   destinationKey?: string;
   transferAccountId?: string;    // the other account of a transfer
   transferTransactionId?: string;// the other side of a transfer

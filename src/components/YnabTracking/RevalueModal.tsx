@@ -58,9 +58,9 @@ const RevalueModal: React.FC<Props> = ({ plan, accounts, format, onClose }) => {
                     <span className="rvm-writes">Writes to YNAB</span>
                 </div>
                 <p className="rvm-hint">
-                    Each account goes to the value of what it holds at migrated brokers, dated {date}: the P/L since the last write as a
-                    <strong> cleared</strong> line, the tax on today's gain as the account's single <strong>uncleared</strong> line, updated in place.
-                    Cleared balance = gross, working balance = net.
+                    Each account goes to the value of what it holds at migrated brokers, dated {date}. Its two lines are updated in place:
+                    <strong> P/L</strong> (value − PMC, cleared) and <strong>latent tax</strong> (uncleared). The PMC is touched only when a
+                    purchase, sale or transfer moved it. Cleared balance = gross, working balance = net.
                 </p>
 
                 {preview.blockers.length > 0 && (
@@ -85,10 +85,12 @@ const RevalueModal: React.FC<Props> = ({ plan, accounts, format, onClose }) => {
                                         <span className={a.delta >= 0 ? 'rvm-up' : 'rvm-down'}>{signed(a.delta)}</span>
                                     </div>
                                     <div className="rvm-line rvm-small">
-                                        <span>{format(a.bookValue)} → {format(a.value)}</span>
+                                        <span>PMC {Math.abs(a.costAdjust) >= 0.01 ? `${format(a.costSeen)} → ` : ''}{format(a.cost)}</span>
+                                        <span>P/L {format(a.plSeen)} → {format(a.plTarget)}</span>
                                         <span>tax {format(a.taxSeen)} → {format(a.taxTarget)}</span>
                                     </div>
-                                    {a.suspicious && <div className="rvm-warn">⚠ Bigger than a price move would explain: a transfer may be missing in YNAB or not registered in the tool. Check before ticking it.</div>}
+                                    {a.conversion && <div className="rvm-info">ℹ First P/L line: the gain moves out of the PMC (one-time reclassification of an account migrated before P/L lines existed).</div>}
+                                    {a.suspicious && <div className="rvm-warn">⚠ The PMC moved by {signed(a.costAdjust)}: a transfer may be missing in YNAB, or a purchase or sale not registered in the tool. Check before ticking it.</div>}
                                     {a.blocked && <div className="rvm-warn">⛔ {a.blocked}</div>}
                                 </div>
                             </label>
@@ -141,6 +143,7 @@ const RevalueModal: React.FC<Props> = ({ plan, accounts, format, onClose }) => {
                     .rvm-up { color: var(--color-success); font-weight: 600; white-space: nowrap; }
                     .rvm-down { color: var(--color-warning); font-weight: 600; white-space: nowrap; }
                     .rvm-warn { font-size: 0.76rem; color: var(--color-warning); }
+                    .rvm-info { font-size: 0.76rem; color: var(--text-secondary); }
                     .rvm-summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); font-size: 0.85rem; padding-top: var(--space-3); border-top: 1px solid var(--bg-card); }
                     .rvm-confirm { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.88rem; cursor: pointer; }
                     .rvm-confirm input { width: 18px; height: 18px; margin-top: 0.1rem; flex-shrink: 0; }

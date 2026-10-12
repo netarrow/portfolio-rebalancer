@@ -114,12 +114,13 @@ const baseConfig: YnabTrackingConfig = {
     guardAccountIds: ['acc-fin', 'acc-bath'],
 };
 
-const planFor = async (y: FakeYnab, config: YnabTrackingConfig, migratedBrokerIds: string[] = [], goalQuotes: YnabGoalQuote[] = []) => {
+const planFor = async (y: FakeYnab, config: YnabTrackingConfig, migratedBrokerIds: string[] = [], goalQuotes: YnabGoalQuote[] = [], log: YnabWriteLogEntry[] = []) => {
     const res = await y.listAccounts();
     const accounts = res.data!.map(a => ({ id: a.id, name: a.name, onBudget: a.onBudget, balance: a.balanceMilliunits / 1000, clearedBalance: a.clearedBalanceMilliunits / 1000, transferPayeeId: a.transferPayeeId }));
+    const taxLineAmounts = Object.fromEntries([...currentTaxLines(log, 'budget')].map(([id, t]) => [id, t.amount]));
     const input: TrackingPlanInput = {
         portfolios, transactions, brokers, assetSettings: [], marketData, goals, allocations, virtualBonds: [],
-        liquidityMappings: {}, config, accounts, budgetId: 'budget', migratedBrokerIds, goalQuotes,
+        liquidityMappings: {}, config, accounts, budgetId: 'budget', migratedBrokerIds, goalQuotes, taxLineAmounts,
     };
     return { plan: buildTrackingPlan(input), accounts };
 };
@@ -132,12 +133,17 @@ const run = async () => {
     const preview = buildMigrationPreview({ plan, brokerId: 'fin', accounts, config, budgetId: 'budget', entryId: 'e1a2b3c4d5', date: '2026-10-12' });
     check('ready', preview.blockers, []);
     check('realignment to the tool value first', preview.realignment, -500);
-    check('transfers out of the broker account', preview.transfers.map(t => [t.destinationKey, t.amount, t.accountId ?? 'new']), [
-        ['portfolio:growth', 4800, 'new'], ['portfolio:safe', 3000, 'new'], ['goal:g-car', 2000, 'new'], ['goal:g-bath', 1200, 'acc-bath'],
+    check('transfers out of the broker account, at cost basis (PMC)', preview.transfers.map(t => [t.destinationKey, t.amount, t.value, t.accountId ?? 'new']), [
+        ['portfolio:growth', 4000, 4800, 'new'], ['portfolio:safe', 3000, 3000, 'new'], ['goal:g-car', 2000, 2000, 'new'], ['goal:g-bath', 1000, 1200, 'acc-bath'],
+    ]);
+    check('the gains leave the broker account', [preview.plMove, preview.plMoveImportId], [-1000, 'PRB:e1a2b3c4:5']);
+    check('one P/L and one tax line per account with a gain', preview.lines.map(l => [l.destinationKey, l.role, l.amount, l.accountId ?? 'new', l.existingId ?? null]), [
+        ['portfolio:growth', 'pl', 800, 'new', null], ['portfolio:growth', 'tax', -208, 'new', null],
+        ['goal:g-bath', 'pl', 200, 'acc-bath', null], ['goal:g-bath', 'tax', -52, 'acc-bath', null],
     ]);
     check('cash stays in the broker account', preview.staysInPlace.map(s => [s.destinationKey, s.amount]), [['cash:fin', 1000]]);
     check('accounts to create, prefixed', preview.createAccounts.map(c => c.name), ['🏦 Growth', '🏦 Safe', '🎯 Car']);
-    check('memo marks the tool and lists the holdings', preview.transfers[3].memo, '[PRB] Migrazione da Beta Investments · WORLD 10 q');
+    check('memo marks the tool and lists the holdings', preview.transfers[3].memo, '[PRB] Migrazione al PMC da Beta Investments · WORLD 10 q');
     check('import ids unique and ≤ 36 chars', [new Set(preview.transfers.map(t => t.importId)).size, preview.transfers.every(t => t.importId.length <= 36), preview.transfers[0].importId], [4, true, 'PRB:e1a2b3c4:1']);
     check('goal shares frozen in units', preview.quotes.map(q => [q.goalId, q.ticker, q.quantity, q.cost]), [['g-bath', 'WORLD', 10, 1000], ['g-car', 'GOVB', 20, 2000]]);
 
@@ -166,18 +172,23 @@ const run = async () => {
     check('log saved before and after each write', log.map(e => e.status), ['pending', 'pending', 'pending', 'pending', 'pending', 'applied']);
     check('created accounts reported', created, ['portfolio:growth', 'portfolio:safe', 'goal:g-car']);
     const balances = () => Object.fromEntries([...y.accounts.values()].map(a => [a.name, y.balance(a.id)]));
-    check('balances after the migration', balances(), {
-        'Beta Investments': 1000, '🎯 Bathroom': 1200, House: 250000, Checking: 3000, '🏦 Growth': 4800, '🏦 Safe': 3000, '🎯 Car': 2000,
+    check('working balances after the migration (gross − latent tax)', balances(), {
+        'Beta Investments': 1000, '🎯 Bathroom': 1148, House: 250000, Checking: 3000, '🏦 Growth': 4592, '🏦 Safe': 3000, '🎯 Car': 2000,
     });
+    check('cleared balances are the gross value', [y.cleared('acc-bath'), y.cleared(config.destinationAccounts['portfolio:growth'])], [1200, 4800]);
     const mine = [...y.txs.values()].filter(t => t.importId);
-    check('every transaction flagged, memo-tagged, cleared booking', [mine.length, mine.every(t => t.flag === 'purple' && t.memo?.startsWith('[PRB]'))], [5, true]);
+    check('every transaction flagged, memo-tagged', [mine.length, mine.every(t => t.flag === 'purple' && t.memo?.startsWith('[PRB]'))], [10, true]);
     check('realignment booked to the tool payee', mine.find(t => t.importId === 'PRB:e1a2b3c4:0')?.payeeName, 'Portfolio Rebalancer');
-    check('logged: realign + 4 transfers, with the other sides', [res.entry.transactions.length, res.entry.transactions.filter(t => t.transferTransactionId).length], [5, 4]);
+    const bathLines = mine.filter(t => t.accountId === 'acc-bath' && t.payeeName === 'Portfolio Rebalancer').map(t => [t.amount / 1000, t.cleared, t.memo]);
+    check('the goal account reads PMC + P/L + latent tax', bathLines, [
+        [200, 'cleared', '[PRB] P/L latente (valore − PMC) · 12/10/2026'], [-52, 'uncleared', '[PRB] Tasse latenti su plusvalenza · 12/10/2026'],
+    ]);
+    check('logged: realign, gains, 4 transfers with the other sides, 4 lines', [res.entry.transactions.length, res.entry.transactions.filter(t => t.transferTransactionId).length, res.entry.transactions.map(t => t.role).filter(r => r === 'pl' || r === 'tax').length], [10, 4, 4]);
     check('untouched accounts untouched', [y.balance('acc-house'), y.balance('acc-checking')], [250000, 3000]);
 
     console.log('Plan after the migration');
     const frozen: YnabGoalQuote[] = preview.quotes.map(q => ({ ...q, entryId: res.entry.id, frozenAt: '2026-10-12T10:00:00Z' }));
-    ({ plan, accounts } = await planFor(y, config, ['fin'], frozen));
+    ({ plan, accounts } = await planFor(y, config, ['fin'], frozen, log));
     check('broker marked migrated, migration done', [plan.brokers[0].migrated, plan.migrations[0].done], [true, true]);
     check('broker account aligned on what stays', plan.brokers[0].realignment, 0);
     check('destinations match YNAB', plan.destinations.map(d => [d.key, d.accountDifference]), [
@@ -247,10 +258,10 @@ const reassignments = async () => {
     const mig = buildMigrationPreview({ plan, brokerId: 'fin', accounts, config, budgetId: 'budget', entryId: 'mig00001', date: '2026-10-12' });
     const migRes = await executeMigration(y, mig, config, { report: keep, onAccountCreated: linkCreated, now });
     ledger.push(...mig.quotes.map(q => ({ ...q, entryId: migRes.entry.id, frozenAt: now() })));
-    const refresh = async () => ({ plan, accounts } = await planFor(y, config, ['fin'], ledger));
+    const refresh = async () => ({ plan, accounts } = await planFor(y, config, ['fin'], ledger, log));
     await refresh();
     const reassign = async (fromKey: string, toKey: string, amount: number, entryId: string) => {
-        const p = buildReassignmentPreview({ plan, fromKey, toKey, amount, accounts, config, budgetId: 'budget', entryId, date: '2026-10-12' });
+        const p = buildReassignmentPreview({ plan, fromKey, toKey, amount, accounts, config, budgetId: 'budget', entryId, date: '2026-10-12', log });
         if (p.blockers.length) return { p, ok: false };
         const r = await executeReassignment(y, p, config, { report: keep, onAccountCreated: linkCreated, now });
         if (r.ok) ledger.push(...p.quotes.map(q => ({ ...q, entryId: r.entry.id, frozenAt: now() })));
@@ -279,10 +290,13 @@ const reassignments = async () => {
 
     console.log('Reassignment: from goal A to goal B');
     const r1 = await reassign('goal:g-bath', 'goal:g-car', 600, 'rea00001');
-    check('one transfer between the two goal accounts', [r1.ok, r1.p.amount, r1.p.from.accountName, r1.p.to.accountName], [true, 600, '🎯 Bathroom', '🎯 Car']);
+    check('one transfer between the two goal accounts, at PMC', [r1.ok, r1.p.amount, r1.p.cost, r1.p.from.accountName, r1.p.to.accountName], [true, 600, 500, '🎯 Bathroom', '🎯 Car']);
     check('units move with their cost basis', r1.p.quotes.map(q => [q.goalId, q.ticker, q.quantity, q.cost]), [['g-bath', 'WORLD', -5, -500], ['g-car', 'WORLD', 5, 500]]);
-    check('memo says reassignment', r1.p.memo, '[PRB] Riassegnazione da 🎯 Bathroom · WORLD 5 q');
-    check('YNAB balances', [y.balance('acc-bath'), y.balance(config.destinationAccounts['goal:g-car'])], [600, 2600]);
+    check('memo says reassignment', r1.p.memo, '[PRB] Riassegnazione al PMC da 🎯 Bathroom · WORLD 5 q');
+    check('P/L and tax follow the shares: updated on one side, created on the other', r1.p.lines.map(l => [l.destinationKey, l.role, l.previous, l.amount, !!l.existingId]), [
+        ['goal:g-bath', 'pl', 200, 100, true], ['goal:g-bath', 'tax', -52, -26, true], ['goal:g-car', 'pl', 0, 100, false], ['goal:g-car', 'tax', 0, -26, false],
+    ]);
+    check('YNAB balances (cleared = gross)', [y.cleared('acc-bath'), y.cleared(config.destinationAccounts['goal:g-car'])], [600, 2600]);
     check('plan follows the shares', [val('goal:g-bath'), val('goal:g-car'), units('goal:g-car')], [600, 2600, [['GOVB', 20], ['WORLD', 5]]]);
     check('desired still from the allocations', plan.destinations.find(d => d.key === 'goal:g-bath')?.desiredValue, 1200);
 
@@ -314,6 +328,9 @@ const reassignments = async () => {
     const early = buildReassignmentPreview({ plan: notMigrated, fromKey: 'goal:g-bath', toKey: 'goal:g-car', amount: 100, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-12' });
     check('before the migration, allocations decide', early.blockers.some(b => b.includes('nothing at a migrated broker')), true);
 
+    const ghost = buildReassignmentPreview({ plan, fromKey: 'goal:g-bath', toKey: 'goal:g-car', amount: 100, accounts: accounts.map(a => a.id === 'acc-bath' ? { ...a, balance: a.balance + 300 } : a), config, budgetId: 'budget', entryId: 'x', date: '2026-10-12', log });
+    check('an account off its PMC in YNAB asks for a revaluation first', [ghost.unaligned.length, ghost.blockers.some(b => b.includes('revalue it first'))], [1, true]);
+
     console.log('Rollback order');
     check('the migration waits for the reassignments on its accounts', rollbackDependents(log, migRes.entry.id).map(e => e.id), ['rea00001', 'rea00002', 'rea00003']);
     check('the latest reassignment has no dependents', rollbackDependents(log, 'rea00003'), []);
@@ -324,6 +341,7 @@ const reassignments = async () => {
     }
     check('all rolled back in order', log.map(e => e.status), ['rolled-back', 'rolled-back', 'rolled-back', 'rolled-back']);
     check('YNAB back to the start', [y.txs.size, y.balance('acc-fin'), y.balance('acc-bath')], [0, 12500, 0]);
+    check('lines restored before being deleted', y.updates > 0, true);
     check('ledger empty again', ledger.length, 0);
 };
 
@@ -355,13 +373,14 @@ const revaluations = async () => {
     console.log('Revaluation: prices up');
     ({ plan, accounts } = await planAt({ WORLD: 132, GOVB: 100 }, ['fin']));
     const p1 = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'rev00001', date: '2026-10-13', log });
-    check('only the accounts whose value moved', p1.accounts.map(a => [a.destinationKey, a.delta, a.taxTarget, a.taxSeen]), [
-        ['goal:g-bath', 120, -83.2, 0], ['portfolio:growth', 480, -332.8, 0],
+    check('only the accounts whose value moved', p1.accounts.map(a => [a.destinationKey, a.costAdjust, a.plSeen, a.plTarget, a.delta, a.taxTarget, a.taxSeen]), [
+        ['goal:g-bath', 0, 200, 320, 120, -83.2, -52], ['portfolio:growth', 0, 800, 1280, 480, -332.8, -208],
     ]);
-    check('memo with units and prices', p1.accounts[0].memo, '[PRB] Rivalutazione 13/10/2026 · WORLD 10 q @ 132,00');
-    check('nothing suspicious after a price move', p1.accounts.map(a => a.suspicious), [false, false]);
+    check('P/L memo with units and prices', p1.accounts[0].plMemo, '[PRB] P/L latente (valore − PMC) · 13/10/2026 · WORLD 10 q @ 132,00');
+    check('nothing suspicious after a price move', p1.accounts.map(a => [a.suspicious, a.conversion]), [[false, false], [false, false]]);
+    const txBefore = y.txs.size;
     const r1 = await executeRevaluation(y, p1, new Set(p1.accounts.map(a => a.destinationKey)), config, { report: keep, now });
-    check('applied: P/L cleared + one uncleared tax line each', [r1.ok, r1.entry.transactions.map(t => t.role).sort()], [true, ['revalue', 'revalue', 'tax', 'tax']]);
+    check('applied: both lines updated in place, no new rows', [r1.ok, r1.entry.transactions.map(t => t.role).sort(), r1.entry.transactions.every(t => t.updatedInPlace), y.txs.size - txBefore], [true, ['pl', 'pl', 'tax', 'tax'], true, 0]);
     check('cleared = gross, working = net', [y.cleared('acc-bath'), y.balance('acc-bath'), y.cleared(growthId()), y.balance(growthId())], [1320, 1236.8, 5280, 4947.2]);
     ({ plan, accounts } = await planAt({ WORLD: 132, GOVB: 100 }, ['fin']));
     check('the page compares without the tax line: nothing left', plan.destinations.map(d => d.accountDifference), [0, 0, 0, 0, 0]);
@@ -372,12 +391,12 @@ const revaluations = async () => {
     ({ plan, accounts } = await planAt({ WORLD: 126, GOVB: 100 }, ['fin']));
     const taxIdBefore = currentTaxLines(log, 'budget').get('acc-bath')?.transactionId;
     const p2 = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'rev00002', date: '2026-10-14', log });
-    check('P/L measured from the account without its tax line', p2.accounts.map(a => [a.destinationKey, a.bookValue, a.delta, a.taxTarget, a.taxSeen]), [
-        ['goal:g-bath', 1320, -60, -67.6, -83.2], ['portfolio:growth', 5280, -240, -270.4, -332.8],
+    check('PMC read from the account without its two lines', p2.accounts.map(a => [a.destinationKey, a.costSeen, a.plSeen, a.plTarget, a.delta, a.taxTarget, a.taxSeen]), [
+        ['goal:g-bath', 1000, 320, 260, -60, -67.6, -83.2], ['portfolio:growth', 4000, 1280, 1040, -240, -270.4, -332.8],
     ]);
     const updatesBefore = y.updates;
     const r2 = await executeRevaluation(y, p2, new Set(p2.accounts.map(a => a.destinationKey)), config, { report: keep, now });
-    check('the same tax line, updated in place', [r2.ok, y.updates - updatesBefore, currentTaxLines(log, 'budget').get('acc-bath')?.transactionId === taxIdBefore], [true, 2, true]);
+    check('the same lines, updated in place', [r2.ok, y.updates - updatesBefore, currentTaxLines(log, 'budget').get('acc-bath')?.transactionId === taxIdBefore], [true, 4, true]);
     check('balances after', [y.cleared('acc-bath'), y.balance('acc-bath')], [1260, 1192.4]);
     check('one tax line per account in YNAB', [...y.txs.values()].filter(t => t.accountId === 'acc-bath' && t.cleared === 'uncleared').length, 1);
 
@@ -386,13 +405,13 @@ const revaluations = async () => {
     await rollbackWriteEntry(y, log.find(e => e.id === 'rev00002')!, config, { report: keep, now });
     check('second undone: tax line back to its previous amount, same line', [y.cleared('acc-bath'), y.balance('acc-bath'), currentTaxLines(log, 'budget').get('acc-bath')?.amount], [1320, 1236.8, -83.2]);
     await rollbackWriteEntry(y, log.find(e => e.id === 'rev00001')!, config, { report: keep, now });
-    check('first undone: back to the migration', [y.balance('acc-bath'), y.balance(growthId()), currentTaxLines(log, 'budget').size], [1200, 4800, 0]);
+    check('first undone: back to the migration', [y.balance('acc-bath'), y.balance(growthId()), currentTaxLines(log, 'budget').get('acc-bath')?.amount], [1148, 4592, -52]);
 
     console.log('Revaluation: a move bigger than the market');
     y.txs.set('manual-1', { id: 'manual-1', accountId: 'acc-bath', amount: 500_000, cleared: 'uncleared' }); // a transfer the tool does not know about
     ({ plan, accounts } = await planAt({ WORLD: 121, GOVB: 100 }, ['fin']));
     const p3 = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'rev00003', date: '2026-10-15', log });
-    check('flagged as suspicious, so left unticked', p3.accounts.find(a => a.destinationKey === 'goal:g-bath')?.suspicious, true);
+    check('flagged as suspicious, so left unticked', [p3.accounts.find(a => a.destinationKey === 'goal:g-bath')?.suspicious, p3.accounts.find(a => a.destinationKey === 'goal:g-bath')?.costAdjust], [true, -500]);
     const narrow = { ...config, guardAccountIds: config.guardAccountIds!.filter(id => id !== growthId()) };
     const p4 = buildRevaluationPreview({ plan, accounts, config: narrow, budgetId: 'budget', entryId: 'rev00004', date: '2026-10-15', log });
     check('an account outside the guard is shown but blocked', p4.accounts.find(a => a.destinationKey === 'portfolio:growth')?.blocked?.includes('not among'), true);
@@ -403,9 +422,37 @@ const revaluations = async () => {
     const staysOnly: MigrationPreview = {
         entryId: 'stay0001', budgetId: 'budget', brokerId: 'pens', brokerName: 'Pension', date: '2026-10-15',
         source: { accountId: 'acc-house', name: 'Pension', balanceSeen: 250000 }, realignment: 0, realignMemo: '', realignImportId: 'PRB:stay0001:0',
+        plMove: 0, plMoveMemo: '', plMoveImportId: '', lines: [],
         createAccounts: [], transfers: [], staysInPlace: [{ destinationKey: 'portfolio:pension', accountName: 'Pension', amount: 250000 }], quotes: [], blockers: [],
     };
     check('nothing to write, still a valid migration', migrationWritePlan(staysOnly).allowNoWrites, true);
+};
+
+const conversion = async () => {
+    console.log('Account migrated before P/L lines existed');
+    // Its transfer carried the market value (1,200) and it has no P/L line.
+    const y = fresh();
+    y.accounts.get('acc-bath')!.opening = 1_200_000;
+    const config: YnabTrackingConfig = { ...baseConfig };
+    const ledger: YnabGoalQuote[] = [
+        { entryId: 'old', goalId: 'g-bath', portfolioId: 'growth', brokerId: 'fin', ticker: 'WORLD', quantity: 10, cost: 1000, frozenAt: '2026-10-01' },
+        { entryId: 'old', goalId: 'g-car', portfolioId: 'safe', brokerId: 'fin', ticker: 'GOVB', quantity: 20, cost: 2000, frozenAt: '2026-10-01' },
+    ];
+    const log: YnabWriteLogEntry[] = [];
+    const { plan, accounts } = await planFor(y, config, ['fin'], ledger, log);
+    const blocked = buildReassignmentPreview({ plan, fromKey: 'goal:g-bath', toKey: 'goal:g-car', amount: 100, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-20', log });
+    check('a reassignment waits for the revaluation', blocked.unaligned.some(b => b.includes('🎯 Bathroom')), true);
+    const p = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'conv0001', date: '2026-10-20', log });
+    const bath = p.accounts.find(a => a.destinationKey === 'goal:g-bath')!;
+    check('the gain moves out of the PMC into a new P/L line', [bath.costSeen, bath.costAdjust, bath.plTarget, bath.delta, bath.taxTarget], [1200, -200, 200, 0, -52]);
+    check('a one-time reclassification, not suspicious', [bath.conversion, bath.suspicious, bath.costMemo.includes('Riclassifica')], [true, false, true]);
+    const res = await executeRevaluation(y, p, new Set([bath.destinationKey]), config, { report: e => { const i = log.findIndex(x => x.id === e.id); if (i >= 0) log[i] = e; else log.push(e); } });
+    check('written: reclassification, P/L line, tax line', [res.ok, res.entry.transactions.map(t => [t.role, t.amount])], [true, [['revalue', -200], ['pl', 200], ['tax', -52]]]);
+    check('cleared still gross, working net', [y.cleared('acc-bath'), y.balance('acc-bath')], [1200, 1148]);
+    const after = await planFor(y, config, ['fin'], ledger, log);
+    const ok = buildReassignmentPreview({ plan: after.plan, fromKey: 'goal:g-bath', toKey: 'goal:g-car', amount: 100, accounts: after.accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-20', log });
+    check('then the reassignment can run', ok.unaligned, []);
+    check('and nothing is left to revalue', buildRevaluationPreview({ plan: after.plan, accounts: after.accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-20', log }).accounts.filter(a => a.destinationKey === 'goal:g-bath').length, 0);
 };
 
 const lifecycle = async () => {
@@ -425,7 +472,8 @@ const lifecycle = async () => {
     ({ accounts } = await planFor(y, config, ['fin'], ledger));
     const planWith = (over: Partial<TrackingPlanInput>) => buildTrackingPlan({
         portfolios, transactions, brokers, assetSettings: [], marketData, goals, allocations, virtualBonds: [], liquidityMappings: {},
-        config, accounts, budgetId: 'budget', migratedBrokerIds: ['fin'], goalQuotes: ledger, ...over,
+        config, accounts, budgetId: 'budget', migratedBrokerIds: ['fin'], goalQuotes: ledger,
+        taxLineAmounts: Object.fromEntries([...currentTaxLines(log, 'budget')].map(([id, t]) => [id, t.amount])), ...over,
     });
 
     console.log('Goal archived or removed while holding shares');
@@ -464,7 +512,7 @@ const lifecycle = async () => {
     check('a release rolls back without touching YNAB', [rb.ok, rb.entry.status, y.writes === writes], [true, 'rolled-back', true]);
 };
 
-run().then(reassignments).then(revaluations).then(lifecycle).then(() => {
+run().then(reassignments).then(revaluations).then(conversion).then(lifecycle).then(() => {
     if (failures > 0) { console.log(`\n${failures} check(s) failed`); process.exit(1); }
     console.log('\nAll checks passed');
 });
