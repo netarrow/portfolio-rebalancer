@@ -470,7 +470,11 @@ How the investments read in YNAB by **purpose** rather than by broker: instead o
   - Accounts created by a migration are added to the write guard and linked to their destination.
   - The goal shares moved are **frozen in units** (quantity and cost of each holding), so from then on a goal's value follows the market rather than the euro amount of its allocation. The frozen shares are a ledger of movements (+units in, −units out), one set per write, so later reassignments and rollbacks stay exact.
   - A migrated broker is marked as such and cannot be migrated twice; its account is then compared with what stays in it.
-  - After the migration, an account whose frozen shares differ from what the goal allocations now ask shows it next to its expected balance (*allocations: … (±…)*): the amount a **reassignment** would move. The engine already moves shares between accounts by purpose — from a goal to another goal, from a portfolio to a goal, or from a goal back to its own portfolio — as one tracking-to-tracking transfer with its units and cost basis, under the same guard, confirmation, log and rollback.
+  - After the migration, an account whose frozen shares differ from what the goal allocations now ask shows it next to its expected balance (*allocations: … (±…)*), with a **Reassign…** link.
+- **Reassign shares…** (once a broker is migrated) moves goal shares between accounts by purpose: from a goal to another goal, from a portfolio to a goal, or from a goal back to its own portfolio. The dialog suggests the moves that bring the accounts back to what the goal allocations ask; or pick *From*, *To* and an amount (*Max* = all the shares movable). It shows the transfer, the units that move with their cost basis — so gains, losses and latent tax follow them — and writes one tracking-to-tracking transfer after the confirmation, with the same guard, re-read balances, `[PRB]` memo, purple flag, log and rollback as a migration. Only shares at migrated brokers move this way: elsewhere the goal allocations still decide, and the migration follows them. Portfolio → portfolio is refused (holdings belong to their own portfolio), as is a holding sent to a portfolio that does not hold it.
+
+![Reassigning shares between accounts by purpose](screenshots/ynab_offbudget_reassign.png)
+
 
 ![Migrating one broker account](screenshots/ynab_offbudget_migrate.png)
 

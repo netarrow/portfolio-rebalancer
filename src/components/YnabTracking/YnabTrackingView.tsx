@@ -9,6 +9,7 @@ import {
 } from '../../utils/ynabTrackingPlan';
 import { checkYnabGuardBudget, checkYnabWriteTarget } from '../../utils/ynabWriteGuard';
 import MigrationModal from './MigrationModal';
+import ReassignModal from './ReassignModal';
 import { rollbackDependents } from '../../utils/ynabWriteBack';
 import Swal from 'sweetalert2';
 
@@ -81,6 +82,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         ynabWriting,
     } = usePortfolio();
     const [migrating, setMigrating] = useState<string | null>(null);
+    const [reassigning, setReassigning] = useState<{ fromKey?: string; toKey?: string; amount?: number } | null>(null);
 
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const eur = useCallback((v: number) => new Intl.NumberFormat('en-IE', {
@@ -348,7 +350,18 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
 
             {/* ── 2. Destinations ────────────────────────────────── */}
             <section className="ytv-section">
-                <h3 className="ytv-section-title">2 · Accounts by purpose</h3>
+                <div className="ytv-section-head">
+                    <h3 className="ytv-section-title">2 · Accounts by purpose</h3>
+                    {ynabMigratedBrokerIds.length > 0 && (
+                        <button
+                            type="button"
+                            className="btn ytv-reassign-all"
+                            disabled={!guard.ok || !accounts || ynabWriting}
+                            title={!guard.ok ? guard.message : 'Move goal shares between accounts by purpose'}
+                            onClick={() => setReassigning({})}
+                        >Reassign shares…</button>
+                    )}
+                </div>
                 <p className="ytv-hint">
                     Expected balance of each account: a goal's share of the holdings, what is left of each portfolio, the pension fund and the cash that stays at a type-B broker.
                     Latent tax is the capital-gains tax on today's gain — it would be the uncleared part of the account.
@@ -380,6 +393,16 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                                 <span className="ytv-small ytv-warn-inline" title="The goal allocations ask for a different amount than the shares this account holds at migrated brokers: a reassignment would move the difference.">
                                                     allocations: {eur(d.desiredValue)} <span className="ytv-nowrap">({signed(d.desiredValue - d.value)})</span>
                                                 </span>
+                                            )}
+                                            {Math.abs(d.desiredValue - d.value) >= 1 && guard.ok && accounts && (
+                                                <button
+                                                    type="button"
+                                                    className="ytv-link ytv-small"
+                                                    disabled={ynabWriting}
+                                                    onClick={() => setReassigning(d.value > d.desiredValue
+                                                        ? { fromKey: d.key, amount: Math.round((d.value - d.desiredValue) * 100) / 100 }
+                                                        : { toKey: d.key, amount: Math.round((d.desiredValue - d.value) * 100) / 100 })}
+                                                >Reassign…</button>
                                             )}
                                         </div>
                                         <div className="ytv-cell ytv-num">
@@ -535,6 +558,16 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 </div>
             </section>
 
+            {reassigning !== null && (
+                <ReassignModal
+                    plan={plan}
+                    accounts={accounts}
+                    format={eur}
+                    initial={reassigning}
+                    onClose={changed => { setReassigning(null); if (changed) void loadAccounts(); }}
+                />
+            )}
+
             {migrating !== null && (
                 <MigrationModal
                     plan={plan}
@@ -588,6 +621,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
 
                 .ytv-section { display: flex; flex-direction: column; gap: var(--space-3); }
                 .ytv-section-title { margin: 0; font-size: 1.05rem; }
+                .ytv-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
                 .ytv-hint { margin: 0; font-size: 0.8rem; color: var(--text-muted); line-height: 1.45; max-width: 70rem; }
                 .ytv-group { display: flex; flex-direction: column; gap: var(--space-2); }
                 .ytv-group-title { margin: var(--space-2) 0 0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); }
