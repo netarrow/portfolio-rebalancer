@@ -6,7 +6,8 @@
 import type { Broker, Portfolio, Transaction, YnabGoal, YnabGoalAllocation, YnabGoalQuote, YnabTrackingConfig, YnabWriteLogEntry } from '../src/types';
 import type { YnabAccountSummary, YnabNewTransaction } from '../src/services/ynabApi';
 import { buildTrackingPlan, type TrackingPlanInput } from '../src/utils/ynabTrackingPlan';
-import { buildMigrationPreview, buildReassignmentPreview, buildRevaluationPreview, currentTaxLines, executeMigration, executeReassignment, executeRevaluation, migrationWritePlan, rollbackDependents, rollbackWriteEntry, suggestReassignments, type MigrationPreview, type YnabWriteApi } from '../src/utils/ynabWriteBack';
+import { mergeYnabGoalsFromCandidates } from '../src/utils/ynabGoalSync';
+import { buildMigrationPreview, buildOrphanRelease, buildReassignmentPreview, buildRevaluationPreview, currentTaxLines, goalHeldUnits, goalsHoldingShares, executeMigration, executeReassignment, executeRevaluation, migrationWritePlan, rollbackDependents, rollbackWriteEntry, suggestReassignments, type MigrationPreview, type YnabWriteApi } from '../src/utils/ynabWriteBack';
 
 let failures = 0;
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -407,7 +408,63 @@ const revaluations = async () => {
     check('nothing to write, still a valid migration', migrationWritePlan(staysOnly).allowNoWrites, true);
 };
 
-run().then(reassignments).then(revaluations).then(() => {
+const lifecycle = async () => {
+    const y = fresh();
+    let config: YnabTrackingConfig = { ...baseConfig };
+    const ledger: YnabGoalQuote[] = [];
+    const log: YnabWriteLogEntry[] = [];
+    const keep = (e: YnabWriteLogEntry) => { const i = log.findIndex(x => x.id === e.id); if (i >= 0) log[i] = e; else log.push(e); };
+    const linkCreated = (key: string, a: { id: string }) => {
+        config = { ...config, guardAccountIds: [...config.guardAccountIds!, a.id], destinationAccounts: { ...config.destinationAccounts, [key]: a.id } };
+    };
+    const start = await planFor(y, config);
+    let accounts = start.accounts;
+    const mig = buildMigrationPreview({ plan: start.plan, brokerId: 'fin', accounts, config, budgetId: 'budget', entryId: 'mig00020', date: '2026-10-16' });
+    const migRes = await executeMigration(y, mig, config, { report: keep, onAccountCreated: linkCreated });
+    ledger.push(...mig.quotes.map(q => ({ ...q, entryId: migRes.entry.id, frozenAt: '2026-10-16' })));
+    ({ accounts } = await planFor(y, config, ['fin'], ledger));
+    const planWith = (over: Partial<TrackingPlanInput>) => buildTrackingPlan({
+        portfolios, transactions, brokers, assetSettings: [], marketData, goals, allocations, virtualBonds: [], liquidityMappings: {},
+        config, accounts, budgetId: 'budget', migratedBrokerIds: ['fin'], goalQuotes: ledger, ...over,
+    });
+
+    console.log('Goal archived or removed while holding shares');
+    check('which goals hold shares', [...goalsHoldingShares(ledger)].sort(), ['g-bath', 'g-car']);
+    check('units held by a goal', goalHeldUnits(ledger, 'g-bath'), 10);
+    const archived = planWith({
+        goals: goals.map(g => g.id === 'g-bath' ? { ...g, archived: true } : g),
+        allocations: allocations.filter(a => a.ynabGoalId !== 'g-bath'),
+    });
+    const bath = archived.destinations.find(d => d.key === 'goal:g-bath');
+    check('archived goal keeps its account and value', [bath?.inactiveGoal, bath?.value, bath?.desiredValue, bath?.accountDifference], ['archived', 1200, 0, 0]);
+    check('and says so', archived.warnings.some(w => w.kind === 'shares-of-inactive-goal'), true);
+    check('suggested back to its portfolio', suggestReassignments(archived), [{ fromKey: 'goal:g-bath', toKey: 'portfolio:growth', amount: 1200 }]);
+    const removed = planWith({ goals: goals.filter(g => g.id !== 'g-bath'), allocations: allocations.filter(a => a.ynabGoalId !== 'g-bath') });
+    check('removed goal still listed', [removed.destinations.find(d => d.key === 'goal:g-bath')?.inactiveGoal, removed.destinations.find(d => d.key === 'goal:g-bath')?.accountName], ['removed', '🎯 Removed goal']);
+    check('still balanced', [archived.balanced, removed.balanced], [true, true]);
+
+    console.log('Goal sync keeps goals holding shares');
+    const merged = mergeYnabGoalsFromCandidates(goals.filter(g => !g.archived), [], { budgetId: 'budget', allocations: [], heldGoalIds: new Set(['g-bath']) });
+    check('held goal archived, others dropped', [merged.goals.map(g => [g.id, g.archived]), merged.report.archived], [[['g-bath', true]], 1]);
+
+    console.log('Orphan shares');
+    const soldAll: Transaction[] = [...transactions, { id: 't9', portfolioId: 'growth', brokerId: 'fin', ticker: 'WORLD', amount: 50, price: 120, date: '2026-10-16', direction: 'Sell' }];
+    const sold = planWith({ transactions: soldAll });
+    check('a holding sold out leaves orphan shares', sold.orphanShares.map(o => [o.goalId, o.ticker, o.quantity]), [['g-bath', 'WORLD', 10]]);
+    check('warned', sold.warnings.some(w => w.kind === 'orphan-goal-shares'), true);
+    const release = buildOrphanRelease(sold.orphanShares, { entryId: 'rel00001', budgetId: 'budget', now: '2026-10-16T12:00:00Z' });
+    check('release: a ledger entry, no YNAB transaction', [release.entry.kind, release.entry.status, release.entry.transactions.length, release.quotes.map(q => [q.goalId, q.quantity, q.cost])], ['release', 'applied', 0, [['g-bath', -10, -1000]]]);
+    const afterRelease = planWith({ transactions: soldAll, goalQuotes: [...ledger, ...release.quotes] });
+    check('no orphan left', afterRelease.orphanShares.length, 0);
+    const rebought: Transaction[] = [...soldAll, { id: 't10', portfolioId: 'growth', brokerId: 'fin', ticker: 'WORLD', amount: 5, price: 120, date: '2026-10-17', direction: 'Buy' }];
+    const back = planWith({ transactions: rebought, goalQuotes: [...ledger, ...release.quotes] });
+    check('buying the ticker again does not hand it to the old goal', back.destinations.find(d => d.key === 'goal:g-bath')?.pieces.filter(p => p.ticker === 'WORLD').length ?? 0, 0);
+    const writes = y.writes;
+    const rb = await rollbackWriteEntry(y, release.entry, config, { report: () => {} });
+    check('a release rolls back without touching YNAB', [rb.ok, rb.entry.status, y.writes === writes], [true, 'rolled-back', true]);
+};
+
+run().then(reassignments).then(revaluations).then(lifecycle).then(() => {
     if (failures > 0) { console.log(`\n${failures} check(s) failed`); process.exit(1); }
     console.log('\nAll checks passed');
 });

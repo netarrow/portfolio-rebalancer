@@ -80,6 +80,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         ynabGoalQuotes,
         ynabWriteLog,
         rollbackYnabWrite,
+        releaseYnabOrphanShares,
         ynabWriting,
     } = usePortfolio();
     const [migrating, setMigrating] = useState<string | null>(null);
@@ -182,6 +183,20 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         }
         const target = d.baseName.trim().toLowerCase();
         return offBudget.find(a => stripPrefix(a.name) === target) ?? null;
+    };
+
+    const handleReleaseOrphans = async () => {
+        const confirm = await Swal.fire({
+            title: 'Release orphan shares?',
+            html: 'The goals stop holding these units in the tool. <strong>Nothing is written to YNAB</strong>: if a goal account still holds their value '
+                + '(a sale not moved out yet), transfer it in YNAB yourself. The release is logged and can be rolled back.',
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Release',
+        });
+        if (!confirm.isConfirmed) return;
+        const res = releaseYnabOrphanShares(plan.orphanShares);
+        if (!res.ok) Swal.fire({ title: 'Nothing released', text: res.error, icon: 'error' });
     };
 
     const handleRollback = async (entryId: string) => {
@@ -297,6 +312,23 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 </div>
             </div>
 
+            {plan.orphanShares.length > 0 && (
+                <div className="ytv-orphans">
+                    <div>
+                        <strong>Orphan shares</strong>
+                        <span className="ytv-small ytv-muted"> — frozen units of holdings that no longer exist (sold, or moved to another portfolio). They count nowhere, but would come back to the goal if the same ticker were bought there again.</span>
+                    </div>
+                    <ul>
+                        {plan.orphanShares.map(o => (
+                            <li key={`${o.goalId}#${o.holdingKey}`}>
+                                <span>{o.goalName}: {o.quantity.toLocaleString('en-IE', { maximumFractionDigits: 4 })} units of {o.ticker}</span>
+                            </li>
+                        ))}
+                    </ul>
+                    <button type="button" className="btn" disabled={ynabWriting} onClick={handleReleaseOrphans}>Release…</button>
+                </div>
+            )}
+
             {plan.warnings.length > 0 && (
                 <details className="ytv-warnings" open={plan.warnings.length <= 3}>
                     <summary>⚠ {plan.warnings.length} thing{plan.warnings.length === 1 ? '' : 's'} to check</summary>
@@ -410,7 +442,10 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                 return (
                                     <div key={d.key} className="ytv-row ytv-row-dest">
                                         <div className="ytv-cell ytv-name">
-                                            <span className="ytv-name-text" title={d.accountName}>{d.accountName}</span>
+                                            <span className="ytv-name-text" title={d.accountName}>
+                                                {d.accountName}
+                                                {d.inactiveGoal && <span className="ytv-tag ytv-tag-inactive" title="The goal is gone from the tool but its YNAB account still holds investments: reassign them">{d.inactiveGoal}</span>}
+                                            </span>
                                             <span className="ytv-muted ytv-small">
                                                 {d.memberNames && d.memberNames.length > 1 && <>{d.memberNames.join(' + ')} · </>}
                                                 {d.pieces.length > 0 && `${d.pieces.length} position${d.pieces.length === 1 ? '' : 's'}`}
@@ -661,6 +696,9 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
 
                 .ytv-section { display: flex; flex-direction: column; gap: var(--space-3); }
                 .ytv-section-title { margin: 0; font-size: 1.05rem; }
+                .ytv-tag-inactive { background: rgba(245, 158, 11, 0.16); color: var(--color-warning); margin-left: 0.4rem; }
+                .ytv-orphans { display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); font-size: 0.85rem; }
+                .ytv-orphans ul { margin: 0; padding-left: 1.2rem; }
                 .ytv-head-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
                 .ytv-revalue-banner { background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.35); }
                 .ytv-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }

@@ -489,7 +489,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 export function normalizeYnabWriteLog(raw: unknown): YnabWriteLogEntry[] {
     if (!Array.isArray(raw)) return [];
     return raw.filter((e): e is YnabWriteLogEntry =>
-        isObj(e) && typeof e.id === 'string' && (e.kind === 'migration' || e.kind === 'reassignment' || e.kind === 'revaluation') && typeof e.budgetId === 'string'
+        isObj(e) && typeof e.id === 'string' && (e.kind === 'migration' || e.kind === 'reassignment' || e.kind === 'revaluation' || e.kind === 'release') && typeof e.budgetId === 'string'
         && typeof e.brokerId === 'string' && typeof e.status === 'string'
         && Array.isArray(e.transactions) && Array.isArray(e.createdAccounts));
 }
@@ -899,3 +899,46 @@ export function revaluationWritePlan(preview: RevaluationPreview, selected: Set<
 
 export const executeRevaluation = (api: YnabWriteApi, preview: RevaluationPreview, selected: Set<string>, config: YnabTrackingConfig, hooks: ExecuteHooks) =>
     executeWritePlan(api, revaluationWritePlan(preview, selected), config, hooks);
+
+
+// ── Release of orphan shares ────────────────────────────────────────
+
+/** Total units a goal holds in the ledger, all holdings together. */
+export const goalHeldUnits = (ledger: YnabGoalQuote[], goalId: string): number =>
+    ledger.filter(q => q.goalId === goalId).reduce((s, q) => s + q.quantity, 0);
+
+/** Goals that still hold frozen shares. */
+export const goalsHoldingShares = (ledger: YnabGoalQuote[]): Set<string> => {
+    const units = new Map<string, number>();
+    for (const q of ledger) units.set(q.goalId, (units.get(q.goalId) ?? 0) + q.quantity);
+    return new Set([...units].filter(([, u]) => u > 1e-9).map(([id]) => id));
+};
+
+/**
+ * A log entry and the ledger movements that drop orphan shares — frozen units
+ * of a holding that no longer exists. Nothing is written to YNAB; rolling the
+ * entry back brings the units back.
+ */
+export function buildOrphanRelease(
+    orphans: TrackingPlan['orphanShares'],
+    opts: { entryId: string; budgetId: string; now: string },
+): { entry: YnabWriteLogEntry; quotes: YnabGoalQuote[] } {
+    const entry: YnabWriteLogEntry = {
+        id: opts.entryId,
+        kind: 'release',
+        budgetId: opts.budgetId,
+        brokerId: '',
+        label: `Release of ${orphans.map(o => `${o.ticker} from ${o.goalName}`).join(', ')}`,
+        date: opts.now.slice(0, 10),
+        createdAt: opts.now,
+        updatedAt: opts.now,
+        status: 'applied',
+        createdAccounts: [],
+        transactions: [],
+    };
+    const quotes: YnabGoalQuote[] = orphans.map(o => ({
+        entryId: opts.entryId, goalId: o.goalId, portfolioId: o.portfolioId, brokerId: o.brokerId, ticker: o.ticker,
+        quantity: -o.quantity, cost: -o.cost, frozenAt: opts.now,
+    }));
+    return { entry, quotes };
+}

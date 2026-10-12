@@ -405,7 +405,9 @@ export interface YnabWriteLogEntry {
   // 'migration' splits one broker account; 'reassignment' moves goal shares
   // between accounts by purpose (goal → goal, portfolio → goal, goal → portfolio);
   // 'revaluation' books the P/L since the last one and updates the latent tax.
-  kind: 'migration' | 'reassignment' | 'revaluation';
+  // 'release' writes nothing to YNAB: it only drops frozen shares whose
+  // holding is gone, so they cannot come back on a later purchase.
+  kind: 'migration' | 'reassignment' | 'revaluation' | 'release';
   budgetId: string;
   brokerId: string;              // the migrated broker; '' for a reassignment
   label: string;                 // e.g. "Migration of Broker X"

@@ -82,7 +82,9 @@ export interface YnabGoalSyncReport {
 export function mergeYnabGoalsFromCandidates(
     previous: YnabGoal[],
     candidates: YnabGoalSyncCandidate[],
-    opts: { budgetId: string; allocations: YnabGoalAllocation[]; now?: string },
+    // heldGoalIds: goals that still hold frozen shares in YNAB (off-budget map).
+    // Like goals with allocations, they are archived rather than dropped.
+    opts: { budgetId: string; allocations: YnabGoalAllocation[]; heldGoalIds?: Set<string>; now?: string },
 ): { goals: YnabGoal[]; report: YnabGoalSyncReport } {
     const now = opts.now ?? new Date().toISOString();
     const report: YnabGoalSyncReport = { created: 0, updated: 0, skipped: 0, archived: 0, deleted: 0 };
@@ -133,7 +135,7 @@ export function mergeYnabGoalsFromCandidates(
         if (incomingIds.has(g.id)) continue;
         // Created from a category outside the goals group: not this sync's to drop.
         if (g.origin === 'category') continue;
-        if (opts.allocations.some(a => a.ynabGoalId === g.id)) {
+        if (opts.allocations.some(a => a.ynabGoalId === g.id) || opts.heldGoalIds?.has(g.id)) {
             byId.set(g.id, { ...g, archived: true, lastSyncedAt: now });
             report.archived += 1;
         } else {

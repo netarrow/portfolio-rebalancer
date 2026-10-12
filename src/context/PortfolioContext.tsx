@@ -5,7 +5,7 @@ import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, P
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import { checkYnabWriteTarget } from '../utils/ynabWriteGuard';
-import { executeMigration, executeReassignment, executeRevaluation, rollbackWriteEntry, rollbackDependents, normalizeYnabWriteLog, normalizeYnabGoalQuotes, migratedBrokerIds, upsertWriteLogEntry, type MigrationPreview, type ReassignmentPreview, type RevaluationPreview, type YnabWriteApi } from '../utils/ynabWriteBack';
+import { executeMigration, executeReassignment, executeRevaluation, buildOrphanRelease, goalHeldUnits, goalsHoldingShares, rollbackWriteEntry, rollbackDependents, normalizeYnabWriteLog, normalizeYnabGoalQuotes, migratedBrokerIds, upsertWriteLogEntry, type MigrationPreview, type ReassignmentPreview, type RevaluationPreview, type YnabWriteApi } from '../utils/ynabWriteBack';
 import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
@@ -166,6 +166,7 @@ interface PortfolioContextType {
     executeYnabMigration: (preview: MigrationPreview) => Promise<{ ok: boolean; entry?: YnabWriteLogEntry; error?: string }>;
     executeYnabReassignment: (preview: ReassignmentPreview) => Promise<{ ok: boolean; entry?: YnabWriteLogEntry; error?: string }>;
     executeYnabRevaluation: (preview: RevaluationPreview, selected: Set<string>) => Promise<{ ok: boolean; entry?: YnabWriteLogEntry; error?: string }>;
+    releaseYnabOrphanShares: (orphans: { goalId: string; goalName: string; holdingKey: string; portfolioId: string; brokerId: string; ticker: string; quantity: number; cost: number }[]) => { ok: boolean; error?: string };
     rollbackYnabWrite: (entryId: string) => Promise<{ ok: boolean; error?: string; accountsLeft?: { id: string; name: string }[] }>;
     ynabWriting: boolean;
     // YNAB Goals (entità separata dai Goal manuali)
@@ -3289,6 +3290,17 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
     };
 
+    // Drops orphan shares from the ledger. Writes nothing to YNAB; it is logged
+    // like every write, so it can be rolled back.
+    const releaseYnabOrphanShares: PortfolioContextType['releaseYnabOrphanShares'] = orphans => {
+        if (!ynabConfig?.budgetId) return { ok: false, error: 'YNAB not configured.' };
+        if (orphans.length === 0) return { ok: false, error: 'Nothing to release.' };
+        const { entry, quotes } = buildOrphanRelease(orphans, { entryId: crypto.randomUUID(), budgetId: ynabConfig.budgetId, now: new Date().toISOString() });
+        recordWrite(entry);
+        setYnabGoalQuotes(prev => [...normalizeYnabGoalQuotes(prev), ...quotes]);
+        return { ok: true };
+    };
+
     const rollbackYnabWrite = async (entryId: string) => {
         const entry = ynabWriteLog.find(e => e.id === entryId);
         if (!entry) return { ok: false, error: 'Write not found in the log.' };
@@ -3668,6 +3680,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
         const now = new Date().toISOString();
         const { goals: nextGoals, report } = mergeYnabGoalsFromCandidates(ynabGoals, candidates, {
+            heldGoalIds: goalsHoldingShares(ynabGoalQuotes),
             budgetId: ynabConfig.budgetId,
             allocations: ynabGoalAllocations,
             now,
@@ -3681,6 +3694,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const hasAllocs = ynabGoalAllocations.some(a => a.ynabGoalId === ynabGoalId);
         if (hasAllocs) {
             return { ok: false as const, error: 'Remove allocations linked to this YNAB goal first.' };
+        }
+        // Its YNAB account still holds investments: deleting it here would leave
+        // them there with no goal to answer for them.
+        if (goalHeldUnits(ynabGoalQuotes, ynabGoalId) > 1e-9) {
+            return { ok: false as const, error: 'This goal still holds investments in its YNAB account. Move them with Reassign (YNAB Off-budget page) before deleting it.' };
         }
         setYnabGoals(prev => prev.filter(g => g.id !== ynabGoalId));
         return { ok: true as const };
@@ -3989,6 +4007,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         executeYnabMigration,
         executeYnabReassignment,
         executeYnabRevaluation,
+        releaseYnabOrphanShares,
         rollbackYnabWrite,
         ynabWriting,
         refreshYnabBudgets,

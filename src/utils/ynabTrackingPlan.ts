@@ -106,6 +106,11 @@ export interface TrackingDestination {
     accountName: string;
     baseName: string;
     goalId?: string;
+    /**
+     * The goal is archived or no longer exists, but still holds frozen shares
+     * in YNAB: the account stays listed so they can be reassigned.
+     */
+    inactiveGoal?: 'archived' | 'removed';
     portfolioId?: string;     // root of the parent/child group
     memberNames?: string[];   // portfolios merged into it, root first
     memberIds?: string[];     // their ids, same order
@@ -198,7 +203,9 @@ export type TrackingWarningKind =
     | 'guard'                 // the write guard does not allow this budget
     | 'account-not-allowed'   // a linked account is outside the write guard
     | 'quote-exceeds-holding' // frozen shares claim more units than are held
-    | 'liquidity-on-mixed-account'; // liquidity read from an account still holding securities
+    | 'liquidity-on-mixed-account' // liquidity read from an account still holding securities
+    | 'shares-of-inactive-goal'     // an archived/removed goal still holds frozen shares
+    | 'orphan-goal-shares';         // frozen shares of a holding that no longer exists
 
 export interface TrackingWarning {
     kind: TrackingWarningKind;
@@ -218,6 +225,12 @@ export interface TrackingPlan {
     /** Destinations add up to securities + cash, to the cent. */
     balanced: boolean;
     warnings: TrackingWarning[];
+    /**
+     * Frozen goal shares whose holding is gone (sold, or moved to another
+     * portfolio): they count nowhere, and would silently come back if the same
+     * ticker were bought again there — release them once dealt with.
+     */
+    orphanShares: { goalId: string; goalName: string; holdingKey: string; portfolioId: string; brokerId: string; ticker: string; quantity: number; cost: number }[];
 }
 
 export interface TrackingPlanInput {
@@ -429,6 +442,12 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     // Units and cost the frozen shares give each goal, per holding.
     const frozen = currentGoalQuotes(input.goalQuotes ?? []);
     const frozenPiece = new Map<string, { quantity: number; cost: number }>(); // `${holdingKey}#${goalId}`
+    // Every goal, archived ones included, for the names of frozen-share holders.
+    const anyGoalById = new Map(goals.map(g => [g.id, g]));
+    const goalLabel = (goalId: string) => anyGoalById.get(goalId)?.name ?? 'Removed goal';
+    // A goal that holds frozen shares keeps holding them in YNAB even once
+    // archived or deleted in the tool: it stays a holder until reassigned.
+    const holderGoalIds = new Set<string>();
     for (const h of holdings) {
         if (!migratedSet.has(h.brokerId)) {
             const d = desiredClaims.get(h.key);
@@ -438,7 +457,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         const byGoal = frozen.get(h.key);
         if (!byGoal) continue;
         let units = 0;
-        byGoal.forEach((v, goalId) => { if (goalById.has(goalId) && v.quantity > 0) units += v.quantity; });
+        byGoal.forEach(v => { if (v.quantity > 0) units += v.quantity; });
         const ratio = units > h.quantity + 1e-9 ? h.quantity / units : 1;
         if (ratio < 1) {
             warn('quote-exceeds-holding',
@@ -446,13 +465,34 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         }
         const out = new Map<string, number>();
         byGoal.forEach((v, goalId) => {
-            if (!goalById.has(goalId) || !(v.quantity > 0)) return;
+            if (!(v.quantity > 0)) return;
             const quantity = v.quantity * ratio;
             out.set(goalId, quantity * h.price);
             frozenPiece.set(`${h.key}#${goalId}`, { quantity, cost: v.cost * ratio });
+            holderGoalIds.add(goalId);
         });
         if (out.size > 0) actualClaims.set(h.key, out);
-        // A frozen share whose goal is gone (deleted/archived) falls back to the portfolio.
+    }
+    for (const goalId of holderGoalIds) {
+        if (goalById.has(goalId)) continue;
+        warn('shares-of-inactive-goal',
+            `"${goalLabel(goalId)}" is ${anyGoalById.has(goalId) ? 'archived' : 'no longer in the tool'} but still holds investments in YNAB: reassign them (to its portfolio or another goal) to empty its account.`);
+    }
+    // Frozen shares whose holding no longer exists at a migrated broker.
+    const holdingKeys = new Set(holdings.map(h => h.key));
+    const orphanShares: TrackingPlan['orphanShares'] = [];
+    for (const [key, byGoal] of frozen) {
+        if (holdingKeys.has(key)) continue;
+        const [portfolioId, brokerId, ticker] = key.split('|');
+        if (!migratedSet.has(brokerId)) continue;
+        byGoal.forEach((v, goalId) => {
+            if (!(v.quantity > 1e-9)) return;
+            orphanShares.push({ goalId, goalName: goalLabel(goalId), holdingKey: key, portfolioId, brokerId, ticker, quantity: v.quantity, cost: v.cost });
+        });
+    }
+    for (const o of orphanShares) {
+        warn('orphan-goal-shares',
+            `"${o.goalName}" holds ${o.quantity.toFixed(4)} units of ${o.ticker} in ${portfolioName(o.portfolioId)} at ${brokerName(o.brokerId)}, but that holding is gone (sold, or moved to another portfolio). Move the money out of its YNAB account if needed, then release those units.`);
     }
 
     // ── Brokers ──────────────────────────────────────────────────────
@@ -555,13 +595,15 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     }
 
     const goalDestination = (goalId: string) => {
-        const goal = goalById.get(goalId)!;
+        const name = goalLabel(goalId);
+        const inactive: TrackingDestination['inactiveGoal'] = goalById.has(goalId) ? undefined : anyGoalById.has(goalId) ? 'archived' : 'removed';
         return destination(goalDestinationKey(goalId), () => ({
             key: goalDestinationKey(goalId),
             kind: 'goal',
-            accountName: `${TRACKING_PREFIX.goal} ${goal.name}`,
-            baseName: goal.name,
+            accountName: `${TRACKING_PREFIX.goal} ${name}`,
+            baseName: name,
             goalId,
+            ...(inactive ? { inactiveGoal: inactive } : {}),
         }));
     };
     const portfolioDestination = (portfolioId: string) => {
@@ -747,5 +789,6 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         totals: { securities: cents(securities), cash: cents(cash), destinations: cents(destinationsTotal) },
         balanced: Math.abs(destinationsTotal - (securities + cash)) < 0.01 * Math.max(1, destinationList.length),
         warnings,
+        orphanShares,
     };
 }
