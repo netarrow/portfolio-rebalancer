@@ -468,12 +468,13 @@ How the investments read in YNAB by **purpose** rather than by broker: instead o
   - Before writing, YNAB is read again: if the broker account's balance moved since the preview, nothing is written.
   - Every transaction carries the `[PRB]` memo prefix, the **purple** flag and an import id unique to the migration, so the tool's writes are easy to find in YNAB and a retried request cannot book them twice. The memo lists the holdings moved.
   - Accounts created by a migration are added to the write guard and linked to their destination.
-  - The goal shares moved are **frozen in units** (quantity and cost of each holding), so from then on a goal's value follows the market rather than the euro amount of its allocation.
+  - The goal shares moved are **frozen in units** (quantity and cost of each holding), so from then on a goal's value follows the market rather than the euro amount of its allocation. The frozen shares are a ledger of movements (+units in, −units out), one set per write, so later reassignments and rollbacks stay exact.
   - A migrated broker is marked as such and cannot be migrated twice; its account is then compared with what stays in it.
+  - After the migration, an account whose frozen shares differ from what the goal allocations now ask shows it next to its expected balance (*allocations: … (±…)*): the amount a **reassignment** would move. The engine already moves shares between accounts by purpose — from a goal to another goal, from a portfolio to a goal, or from a goal back to its own portfolio — as one tracking-to-tracking transfer with its units and cost basis, under the same guard, confirmation, log and rollback.
 
 ![Migrating one broker account](screenshots/ynab_offbudget_migrate.png)
 
-- **Write-back log**: every write the tool made, recorded before and after each step (so a migration interrupted halfway is still listed). **Roll back** deletes every transaction it created, both sides of each transfer, and releases its frozen shares; the accounts it created stay in YNAB, empty, to close by hand — the API cannot delete accounts. The log travels with the backup and Azure sync.
+- **Write-back log**: every write the tool made, recorded before and after each step (so a migration interrupted halfway is still listed). **Roll back** deletes every transaction it created, both sides of each transfer, and releases its frozen shares — newest first: a write cannot be rolled back while a later one on the same accounts is still in place; the accounts it created stay in YNAB, empty, to close by hand — the API cannot delete accounts. The log travels with the backup and Azure sync.
 - **Write guard**: accounts can be linked only once [Settings](#settings) names the one budget allowed and ticks its off-budget accounts the tool may use. Until then — or while the active budget is another one — linking and migrating are locked. Every link, every write and every rollback is checked against the guard; on-budget accounts and anything left unticked (a house, a car, a loan) are never offered nor written.
 
 <img src="screenshots/mobile_ynab_offbudget.png" alt="YNAB off-budget map on a phone" width="300">

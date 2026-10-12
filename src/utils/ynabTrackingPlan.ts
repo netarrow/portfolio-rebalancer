@@ -30,6 +30,7 @@
  */
 import type {
     AssetDefinition,
+    YnabGoalQuote,
     Broker,
     Portfolio,
     Transaction,
@@ -107,8 +108,16 @@ export interface TrackingDestination {
     goalId?: string;
     portfolioId?: string;     // root of the parent/child group
     memberNames?: string[];   // portfolios merged into it, root first
+    memberIds?: string[];     // their ids, same order
     brokerId?: string;
     value: number;            // gross market value (or cash)
+    /**
+     * What the goal allocations ask this account to hold. Equal to `value`
+     * until a broker is migrated: from then on `value` follows the frozen
+     * shares (units × price), and a gap between the two is what a
+     * reassignment would move.
+     */
+    desiredValue: number;
     cost: number;
     latentTax: number;
     net: number;              // value − latentTax
@@ -180,7 +189,8 @@ export type TrackingWarningKind =
     | 'account-on-budget'     // a source or destination that is not a tracking account
     | 'account-missing'       // a linked account is gone (closed/deleted)
     | 'guard'                 // the write guard does not allow this budget
-    | 'account-not-allowed';  // a linked account is outside the write guard
+    | 'account-not-allowed'   // a linked account is outside the write guard
+    | 'quote-exceeds-holding';// frozen shares claim more units than are held
 
 export interface TrackingWarning {
     kind: TrackingWarningKind;
@@ -220,6 +230,33 @@ export interface TrackingPlanInput {
     budgetId?: string;
     /** Brokers whose account a still-applied write-back has already split. */
     migratedBrokerIds?: string[];
+    /**
+     * Ledger of frozen goal shares: one +/- movement per holding per write
+     * (a migration freezes +units, a reassignment moves −units from one goal
+     * and +units to another). Their sum is what each goal holds today at a
+     * migrated broker.
+     */
+    goalQuotes?: YnabGoalQuote[];
+}
+
+export const quoteHoldingKey = (q: Pick<YnabGoalQuote, 'portfolioId' | 'brokerId' | 'ticker'>) =>
+    `${q.portfolioId}|${q.brokerId}|${q.ticker}`;
+
+/** Sums the ledger: units and cost each goal holds of each holding. */
+export function currentGoalQuotes(ledger: YnabGoalQuote[]): Map<string, Map<string, { quantity: number; cost: number }>> {
+    const out = new Map<string, Map<string, { quantity: number; cost: number }>>(); // holdingKey -> goalId -> units
+    for (const q of ledger) {
+        const key = quoteHoldingKey(q);
+        let byGoal = out.get(key);
+        if (!byGoal) { byGoal = new Map(); out.set(key, byGoal); }
+        const cur = byGoal.get(q.goalId) ?? { quantity: 0, cost: 0 };
+        byGoal.set(q.goalId, { quantity: cur.quantity + q.quantity, cost: cur.cost + q.cost });
+    }
+    for (const [key, byGoal] of out) {
+        for (const [goalId, v] of byGoal) if (Math.abs(v.quantity) < 1e-9) byGoal.delete(goalId);
+        if (byGoal.size === 0) out.delete(key);
+    }
+    return out;
 }
 
 export const NO_BROKER_ID = '';
@@ -370,6 +407,41 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         }
     }
 
+    // Desired = what the allocations say (computed above). Actual = the same,
+    // except at a migrated broker, where the frozen shares rule: the goal
+    // accounts already hold them in YNAB, whatever the allocations say now.
+    const migratedSet = new Set(input.migratedBrokerIds ?? []);
+    const desiredClaims = claims;
+    const actualClaims = new Map<string, Map<string, number>>();
+    // Units and cost the frozen shares give each goal, per holding.
+    const frozen = currentGoalQuotes(input.goalQuotes ?? []);
+    const frozenPiece = new Map<string, { quantity: number; cost: number }>(); // `${holdingKey}#${goalId}`
+    for (const h of holdings) {
+        if (!migratedSet.has(h.brokerId)) {
+            const d = desiredClaims.get(h.key);
+            if (d) actualClaims.set(h.key, d);
+            continue;
+        }
+        const byGoal = frozen.get(h.key);
+        if (!byGoal) continue;
+        let units = 0;
+        byGoal.forEach((v, goalId) => { if (goalById.has(goalId) && v.quantity > 0) units += v.quantity; });
+        const ratio = units > h.quantity + 1e-9 ? h.quantity / units : 1;
+        if (ratio < 1) {
+            warn('quote-exceeds-holding',
+                `${h.label} in ${portfolioName(h.portfolioId)} at ${brokerName(h.brokerId)}: goals hold ${units.toFixed(4)} units but only ${h.quantity.toFixed(4)} are left (sold?) — every goal share is scaled down.`);
+        }
+        const out = new Map<string, number>();
+        byGoal.forEach((v, goalId) => {
+            if (!goalById.has(goalId) || !(v.quantity > 0)) return;
+            const quantity = v.quantity * ratio;
+            out.set(goalId, quantity * h.price);
+            frozenPiece.set(`${h.key}#${goalId}`, { quantity, cost: v.cost * ratio });
+        });
+        if (out.size > 0) actualClaims.set(h.key, out);
+        // A frozen share whose goal is gone (deleted/archived) falls back to the portfolio.
+    }
+
     // ── Brokers ──────────────────────────────────────────────────────
     const brokerIdsWithHoldings = new Set(holdings.map(h => h.brokerId));
     const relevantBrokerIds = new Set<string>([
@@ -419,22 +491,24 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     tree.standalones.forEach(p => rootOf.set(p.id, { root: p, members: [p] }));
 
     const destinations = new Map<string, TrackingDestination>();
-    const destination = (key: string, init: () => Omit<TrackingDestination, 'value' | 'cost' | 'latentTax' | 'net' | 'pieces'>) => {
+    const destination = (key: string, init: () => Omit<TrackingDestination, 'value' | 'desiredValue' | 'cost' | 'latentTax' | 'net' | 'pieces'>) => {
         let d = destinations.get(key);
         if (!d) {
-            d = { ...init(), value: 0, cost: 0, latentTax: 0, net: 0, pieces: [] };
+            d = { ...init(), value: 0, desiredValue: 0, cost: 0, latentTax: 0, net: 0, pieces: [] };
             destinations.set(key, d);
         }
         return d;
     };
-    const addPiece = (d: TrackingDestination, h: TrackingHolding, value: number) => {
+    // `units` overrides the proportional split with a frozen share's own
+    // quantity and cost basis.
+    const addPiece = (d: TrackingDestination, h: TrackingHolding, value: number, units?: { quantity: number; cost: number }) => {
         if (!(value > 1e-9)) return;
         const share = value / h.value;
-        const cost = h.cost * share;
+        const cost = units ? units.cost : h.cost * share;
         const latentTax = Math.max(0, value - cost) * h.taxRate;
         d.pieces.push({
             holdingKey: h.key, brokerId: h.brokerId, ticker: h.ticker, label: h.label,
-            quantity: h.quantity * share, value, cost, latentTax,
+            quantity: units ? units.quantity : h.quantity * share, value, cost, latentTax,
         });
         d.value += value;
         d.cost += cost;
@@ -450,42 +524,52 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         bucketIlliquid.set(rootId, (bucketIlliquid.get(rootId) ?? true) && illiquid);
     }
 
+    const goalDestination = (goalId: string) => {
+        const goal = goalById.get(goalId)!;
+        return destination(goalDestinationKey(goalId), () => ({
+            key: goalDestinationKey(goalId),
+            kind: 'goal',
+            accountName: `${TRACKING_PREFIX.goal} ${goal.name}`,
+            baseName: goal.name,
+            goalId,
+        }));
+    };
+    const portfolioDestination = (portfolioId: string) => {
+        const group = rootOf.get(portfolioId);
+        const root = group?.root;
+        const rootId = root?.id ?? portfolioId;
+        const kind: TrackingDestinationKind = bucketIlliquid.get(rootId) ? 'pension' : 'portfolio';
+        return destination(portfolioDestinationKey(rootId), () => ({
+            key: portfolioDestinationKey(rootId),
+            kind,
+            accountName: `${TRACKING_PREFIX[kind]} ${root?.name ?? portfolioName(rootId)}`,
+            baseName: root?.name ?? portfolioName(rootId),
+            portfolioId: rootId,
+            memberNames: (group?.members ?? []).map(m => m.name),
+            memberIds: (group?.members ?? []).map(m => m.id),
+        }));
+    };
+
     const excludedClaims = new Map<string, number>(); // goalId -> €
     for (const h of holdings) {
-        const byGoal = claims.get(h.key);
+        const byGoal = actualClaims.get(h.key);
+        const wanted = desiredClaims.get(h.key);
         if (!includedBroker.get(h.brokerId)) {
-            byGoal?.forEach((v, goalId) => excludedClaims.set(goalId, (excludedClaims.get(goalId) ?? 0) + v));
+            wanted?.forEach((v, goalId) => excludedClaims.set(goalId, (excludedClaims.get(goalId) ?? 0) + v));
             continue;
         }
         let claimed = 0;
         byGoal?.forEach((v, goalId) => {
-            const goal = goalById.get(goalId)!;
-            const d = destination(goalDestinationKey(goalId), () => ({
-                key: goalDestinationKey(goalId),
-                kind: 'goal',
-                accountName: `${TRACKING_PREFIX.goal} ${goal.name}`,
-                baseName: goal.name,
-                goalId,
-            }));
-            addPiece(d, h, v);
+            addPiece(goalDestination(goalId), h, v, frozenPiece.get(`${h.key}#${goalId}`));
             claimed += v;
         });
         const rest = h.value - claimed;
-        if (rest > EPS) {
-            const group = rootOf.get(h.portfolioId);
-            const root = group?.root;
-            const rootId = root?.id ?? h.portfolioId;
-            const kind: TrackingDestinationKind = bucketIlliquid.get(rootId) ? 'pension' : 'portfolio';
-            const d = destination(portfolioDestinationKey(rootId), () => ({
-                key: portfolioDestinationKey(rootId),
-                kind,
-                accountName: `${TRACKING_PREFIX[kind]} ${root?.name ?? portfolioName(rootId)}`,
-                baseName: root?.name ?? portfolioName(rootId),
-                portfolioId: rootId,
-                memberNames: (group?.members ?? []).map(m => m.name),
-            }));
-            addPiece(d, h, rest);
-        }
+        if (rest > EPS) addPiece(portfolioDestination(h.portfolioId), h, rest);
+        // What the allocations ask for, next to what is actually there.
+        let desiredClaimed = 0;
+        wanted?.forEach((v, goalId) => { goalDestination(goalId).desiredValue += v; desiredClaimed += v; });
+        const desiredRest = h.value - desiredClaimed;
+        if (desiredRest > EPS) portfolioDestination(h.portfolioId).desiredValue += desiredRest;
     }
     excludedClaims.forEach((v, goalId) => {
         if (v > EPS) warn('excluded-broker-claim',
@@ -503,6 +587,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
             brokerId: b.brokerId,
         }));
         d.value += b.cash;
+        d.desiredValue += b.cash;
         d.cost += b.cash;
     }
 
@@ -525,6 +610,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         return {
             ...d,
             value,
+            desiredValue: cents(d.desiredValue),
             cost: cents(d.cost),
             latentTax,
             net: cents(value - latentTax),

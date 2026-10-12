@@ -9,6 +9,7 @@ import {
 } from '../../utils/ynabTrackingPlan';
 import { checkYnabGuardBudget, checkYnabWriteTarget } from '../../utils/ynabWriteGuard';
 import MigrationModal from './MigrationModal';
+import { rollbackDependents } from '../../utils/ynabWriteBack';
 import Swal from 'sweetalert2';
 
 // The off-budget map: how the per-broker tracking accounts of the primary
@@ -74,6 +75,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         setYnabTrackingBrokerInclusion,
         people,
         ynabMigratedBrokerIds,
+        ynabGoalQuotes,
         ynabWriteLog,
         rollbackYnabWrite,
         ynabWriting,
@@ -136,8 +138,9 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         accounts: accounts ?? undefined,
         budgetId: ynabConfig?.budgetId,
         migratedBrokerIds: ynabMigratedBrokerIds,
+        goalQuotes: ynabGoalQuotes,
     }), [portfolios, transactions, brokers, effectiveAssetSettings, marketData, ynabGoals, ynabGoalAllocations,
-        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId, ynabMigratedBrokerIds]);
+        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId, ynabMigratedBrokerIds, ynabGoalQuotes]);
 
     // Write guard: the active budget must be the allowed one, and only the
     // off-budget accounts ticked in Settings can be linked.
@@ -373,6 +376,11 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                         <div className="ytv-cell ytv-num">
                                             <span className="ytv-mlabel">Expected</span>
                                             <span className="ytv-strong">{eur(d.value)}</span>
+                                            {Math.abs(d.desiredValue - d.value) >= 1 && (
+                                                <span className="ytv-small ytv-warn-inline" title="The goal allocations ask for a different amount than the shares this account holds at migrated brokers: a reassignment would move the difference.">
+                                                    allocations: {eur(d.desiredValue)} <span className="ytv-nowrap">({signed(d.desiredValue - d.value)})</span>
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="ytv-cell ytv-num">
                                             <span className="ytv-mlabel">Latent tax</span>
@@ -495,6 +503,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 <div className="ytv-list">
                     {ynabWriteLog.map(e => {
                         const canRollback = e.status === 'applied' || e.status === 'failed' || e.status === 'rollback-partial';
+                        const dependents = canRollback ? rollbackDependents(ynabWriteLog, e.id) : [];
                         return (
                             <div key={e.id} className="ytv-log">
                                 <div className="ytv-cell">
@@ -508,7 +517,16 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                 <span className={`ytv-status ytv-status-${e.status}`}>{e.status.replace('-', ' ')}</span>
                                 <div className="ytv-cell ytv-log-action">
                                     {canRollback && (
-                                        <button type="button" className="btn ytv-rollback" disabled={ynabWriting} onClick={() => handleRollback(e.id)}>Roll back</button>
+                                        <button
+                                            type="button"
+                                            className="btn ytv-rollback"
+                                            disabled={ynabWriting || dependents.length > 0}
+                                            title={dependents.length > 0 ? `Roll back first: ${dependents.map(x => x.label).join(', ')}` : undefined}
+                                            onClick={() => handleRollback(e.id)}
+                                        >Roll back</button>
+                                    )}
+                                    {dependents.length > 0 && (
+                                        <span className="ytv-small ytv-muted">after {dependents.map(x => x.label).join(', ')}</span>
                                     )}
                                 </div>
                             </div>
@@ -545,6 +563,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 .ytv-up { color: var(--color-success); font-variant-numeric: tabular-nums; }
                 .ytv-down { color: var(--color-warning); font-variant-numeric: tabular-nums; }
                 .ytv-warn-inline { color: var(--color-warning); }
+                .ytv-nowrap { white-space: nowrap; }
                 .ytv-guard {
                     display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
                     padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); font-size: 0.85rem;

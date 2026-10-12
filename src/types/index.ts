@@ -395,9 +395,11 @@ export type YnabWriteLogStatus = 'pending' | 'applied' | 'failed' | 'rolled-back
 
 export interface YnabWriteLogEntry {
   id: string;
-  kind: 'migration';
+  // 'migration' splits one broker account; 'reassignment' moves goal shares
+  // between accounts by purpose (goal → goal, portfolio → goal, goal → portfolio).
+  kind: 'migration' | 'reassignment';
   budgetId: string;
-  brokerId: string;
+  brokerId: string;              // the migrated broker; '' for a reassignment
   label: string;                 // e.g. "Migration of Broker X"
   date: string;                  // date booked on the transactions, 'YYYY-MM-DD'
   createdAt: string;
@@ -410,17 +412,19 @@ export interface YnabWriteLogEntry {
   rolledBackAt?: string;
 }
 
-// A goal's share of one holding, frozen in units when the holding's broker is
-// migrated: from then on the goal's value follows the market (quantity × price)
-// instead of the euro amount of its allocation.
+// One movement of a goal's share of one holding, in units. The stored list is a
+// ledger: a migration freezes +units per goal, a reassignment moves −units from
+// one goal and +units to another, and their sum is what each goal holds. From
+// a migration on, a goal's value follows the market (units × price) instead of
+// the euro amount of its allocation. Rolling a write back drops its movements.
 export interface YnabGoalQuote {
   entryId: string;               // write-log entry that froze it
   goalId: string;
   portfolioId: string;
   brokerId: string;
   ticker: string;
-  quantity: number;
-  cost: number;                  // € cost basis of that quantity
+  quantity: number;              // signed: + units in, − units out
+  cost: number;                  // € cost basis of that quantity, signed alike
   frozenAt: string;
 }
 

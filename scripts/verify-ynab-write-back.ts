@@ -3,10 +3,10 @@
 // rollback (both sides of every transfer), stale balances and failures.
 // Every name and figure below is invented.
 // Run with: npx esbuild scripts/verify-ynab-write-back.ts --bundle --format=esm | node --input-type=module
-import type { Broker, Portfolio, Transaction, YnabGoal, YnabGoalAllocation, YnabTrackingConfig, YnabWriteLogEntry } from '../src/types';
+import type { Broker, Portfolio, Transaction, YnabGoal, YnabGoalAllocation, YnabGoalQuote, YnabTrackingConfig, YnabWriteLogEntry } from '../src/types';
 import type { YnabAccountSummary, YnabNewTransaction } from '../src/services/ynabApi';
 import { buildTrackingPlan, type TrackingPlanInput } from '../src/utils/ynabTrackingPlan';
-import { buildMigrationPreview, executeMigration, rollbackWriteEntry, type YnabWriteApi } from '../src/utils/ynabWriteBack';
+import { buildMigrationPreview, buildReassignmentPreview, executeMigration, executeReassignment, rollbackDependents, rollbackWriteEntry, type YnabWriteApi } from '../src/utils/ynabWriteBack';
 
 let failures = 0;
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -103,12 +103,12 @@ const baseConfig: YnabTrackingConfig = {
     guardAccountIds: ['acc-fin', 'acc-bath'],
 };
 
-const planFor = async (y: FakeYnab, config: YnabTrackingConfig, migratedBrokerIds: string[] = []) => {
+const planFor = async (y: FakeYnab, config: YnabTrackingConfig, migratedBrokerIds: string[] = [], goalQuotes: YnabGoalQuote[] = []) => {
     const res = await y.listAccounts();
     const accounts = res.data!.map(a => ({ id: a.id, name: a.name, onBudget: a.onBudget, balance: a.balanceMilliunits / 1000, clearedBalance: a.clearedBalanceMilliunits / 1000, transferPayeeId: a.transferPayeeId }));
     const input: TrackingPlanInput = {
         portfolios, transactions, brokers, assetSettings: [], marketData, goals, allocations, virtualBonds: [],
-        liquidityMappings: {}, config, accounts, budgetId: 'budget', migratedBrokerIds,
+        liquidityMappings: {}, config, accounts, budgetId: 'budget', migratedBrokerIds, goalQuotes,
     };
     return { plan: buildTrackingPlan(input), accounts };
 };
@@ -165,7 +165,8 @@ const run = async () => {
     check('untouched accounts untouched', [y.balance('acc-house'), y.balance('acc-checking')], [250000, 3000]);
 
     console.log('Plan after the migration');
-    ({ plan, accounts } = await planFor(y, config, ['fin']));
+    const frozen: YnabGoalQuote[] = preview.quotes.map(q => ({ ...q, entryId: res.entry.id, frozenAt: '2026-10-12T10:00:00Z' }));
+    ({ plan, accounts } = await planFor(y, config, ['fin'], frozen));
     check('broker marked migrated, migration done', [plan.brokers[0].migrated, plan.migrations[0].done], [true, true]);
     check('broker account aligned on what stays', plan.brokers[0].realignment, 0);
     check('destinations match YNAB', plan.destinations.map(d => [d.key, d.accountDifference]), [
@@ -219,7 +220,86 @@ const run = async () => {
     check('refused when the source is no longer allowed, nothing deleted', [r5b.ok, y.writes === writesBefore], [false, true]);
 };
 
-run().then(() => {
+const reassignments = async () => {
+    // Migrate first, keeping the ledger the way the app does.
+    let clock = 0;
+    const now = () => `2026-10-12T10:${String(clock++).padStart(2, '0')}:00Z`;
+    const y = fresh();
+    let config: YnabTrackingConfig = { ...baseConfig };
+    const ledger: YnabGoalQuote[] = [];
+    const log: YnabWriteLogEntry[] = [];
+    const keep = (e: YnabWriteLogEntry) => { const i = log.findIndex(x => x.id === e.id); if (i >= 0) log[i] = e; else log.push(e); };
+    const linkCreated = (key: string, a: { id: string }) => {
+        config = { ...config, guardAccountIds: [...config.guardAccountIds!, a.id], destinationAccounts: { ...config.destinationAccounts, [key]: a.id } };
+    };
+    let { plan, accounts } = await planFor(y, config);
+    const mig = buildMigrationPreview({ plan, brokerId: 'fin', accounts, config, budgetId: 'budget', entryId: 'mig00001', date: '2026-10-12' });
+    const migRes = await executeMigration(y, mig, config, { report: keep, onAccountCreated: linkCreated, now });
+    ledger.push(...mig.quotes.map(q => ({ ...q, entryId: migRes.entry.id, frozenAt: now() })));
+    const refresh = async () => ({ plan, accounts } = await planFor(y, config, ['fin'], ledger));
+    await refresh();
+    const reassign = async (fromKey: string, toKey: string, amount: number, entryId: string) => {
+        const p = buildReassignmentPreview({ plan, fromKey, toKey, amount, accounts, config, budgetId: 'budget', entryId, date: '2026-10-12' });
+        if (p.blockers.length) return { p, ok: false };
+        const r = await executeReassignment(y, p, config, { report: keep, onAccountCreated: linkCreated, now });
+        if (r.ok) ledger.push(...p.quotes.map(q => ({ ...q, entryId: r.entry.id, frozenAt: now() })));
+        await refresh();
+        return { p, ok: r.ok, r };
+    };
+    const val = (key: string) => plan.destinations.find(d => d.key === key)?.value;
+    const units = (key: string) => plan.destinations.find(d => d.key === key)?.pieces.map(p => [p.ticker, Math.round(p.quantity * 1000) / 1000]);
+
+    console.log('Reassignment: from goal A to goal B');
+    const r1 = await reassign('goal:g-bath', 'goal:g-car', 600, 'rea00001');
+    check('one transfer between the two goal accounts', [r1.ok, r1.p.amount, r1.p.from.accountName, r1.p.to.accountName], [true, 600, '🎯 Bathroom', '🎯 Car']);
+    check('units move with their cost basis', r1.p.quotes.map(q => [q.goalId, q.ticker, q.quantity, q.cost]), [['g-bath', 'WORLD', -5, -500], ['g-car', 'WORLD', 5, 500]]);
+    check('memo says reassignment', r1.p.memo, '[PRB] Riassegnazione da 🎯 Bathroom · WORLD 5 q');
+    check('YNAB balances', [y.balance('acc-bath'), y.balance(config.destinationAccounts['goal:g-car'])], [600, 2600]);
+    check('plan follows the shares', [val('goal:g-bath'), val('goal:g-car'), units('goal:g-car')], [600, 2600, [['GOVB', 20], ['WORLD', 5]]]);
+    check('desired still from the allocations', plan.destinations.find(d => d.key === 'goal:g-bath')?.desiredValue, 1200);
+
+    console.log('Reassignment: from a goal back to its portfolio');
+    const r2 = await reassign('goal:g-bath', 'portfolio:growth', 200, 'rea00002');
+    check('goal → its own portfolio', [r2.ok, val('goal:g-bath'), val('portfolio:growth')], [true, 400, 5000]);
+    const wrong = buildReassignmentPreview({ plan, fromKey: 'goal:g-car', toKey: 'portfolio:growth', amount: 100, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-12' });
+    check('a holding cannot go to a portfolio that does not hold it', wrong.blockers.some(b => b.includes('GOVB is not held by')), true);
+
+    console.log('Reassignment: from portfolio X to goal Y');
+    const r3 = await reassign('portfolio:safe', 'goal:g-bath', 1000, 'rea00003');
+    check('portfolio → goal', [r3.ok, val('portfolio:safe'), val('goal:g-bath')], [true, 2000, 1400]);
+    check('the goal now holds both', units('goal:g-bath'), [['GOVB', 10], ['WORLD', 3.333]]);
+    check('ledger adds up per goal', [
+        ledger.filter(q => q.goalId === 'g-bath' && q.ticker === 'WORLD').reduce((s, q) => s + q.quantity, 0),
+        ledger.filter(q => q.goalId === 'g-bath' && q.ticker === 'GOVB').reduce((s, q) => s + q.quantity, 0),
+    ].map(v => Math.round(v * 1000) / 1000), [3.333, 10]);
+    check('everything still balanced', plan.balanced, true);
+    check('YNAB matches the plan', plan.destinations.map(d => [d.key, d.accountDifference]), [
+        ['goal:g-bath', 0], ['goal:g-car', 0], ['portfolio:growth', 0], ['portfolio:safe', 0], ['cash:fin', 0],
+    ]);
+
+    console.log('Reassignment: refused cases');
+    const tooMuch = buildReassignmentPreview({ plan, fromKey: 'goal:g-bath', toKey: 'goal:g-car', amount: 5000, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-12' });
+    check('more than the account holds', tooMuch.blockers.some(b => b.includes('move at most')), true);
+    const p2p = buildReassignmentPreview({ plan, fromKey: 'portfolio:safe', toKey: 'portfolio:growth', amount: 100, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-12' });
+    check('portfolio → portfolio is not a reassignment', p2p.blockers.some(b => b.includes('own portfolio')), true);
+    const notMigrated = buildTrackingPlan({ portfolios, transactions, brokers, assetSettings: [], marketData, goals, allocations, virtualBonds: [], liquidityMappings: {}, config, accounts, budgetId: 'budget' });
+    const early = buildReassignmentPreview({ plan: notMigrated, fromKey: 'goal:g-bath', toKey: 'goal:g-car', amount: 100, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-12' });
+    check('before the migration, allocations decide', early.blockers.some(b => b.includes('nothing at a migrated broker')), true);
+
+    console.log('Rollback order');
+    check('the migration waits for the reassignments on its accounts', rollbackDependents(log, migRes.entry.id).map(e => e.id), ['rea00001', 'rea00002', 'rea00003']);
+    check('the latest reassignment has no dependents', rollbackDependents(log, 'rea00003'), []);
+    for (const id of ['rea00003', 'rea00002', 'rea00001', migRes.entry.id]) {
+        const e = log.find(x => x.id === id)!;
+        const rb = await rollbackWriteEntry(y, e, config, { report: keep, now });
+        if (rb.ok) ledger.splice(0, ledger.length, ...ledger.filter(q => q.entryId !== id));
+    }
+    check('all rolled back in order', log.map(e => e.status), ['rolled-back', 'rolled-back', 'rolled-back', 'rolled-back']);
+    check('YNAB back to the start', [y.txs.size, y.balance('acc-fin'), y.balance('acc-bath')], [0, 12500, 0]);
+    check('ledger empty again', ledger.length, 0);
+};
+
+run().then(reassignments).then(() => {
     if (failures > 0) { console.log(`\n${failures} check(s) failed`); process.exit(1); }
     console.log('\nAll checks passed');
 });
