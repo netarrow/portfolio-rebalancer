@@ -1,6 +1,12 @@
 /**
  * YNAB write-back: the only place that writes to YNAB.
  *
+ * Every account by purpose (🎯 goal, 🏦 portfolio, 🏛 pension) reads in three
+ * parts: the transfers in and out, at cost basis (PMC); ONE cleared P/L line
+ * (value − PMC); ONE uncleared latent-tax line. The two lines are created
+ * once and then updated in place, so the account never fills with
+ * revaluation rows.
+ *
  * Phase 3 writes one thing, the migration of ONE broker account: an optional
  * realignment of its balance, then one tracking-to-tracking transfer per
  * destination (🎯 goal, 🏦 portfolio …), creating the destination accounts that
@@ -22,7 +28,7 @@
  */
 import type { YnabGoalQuote, YnabTrackingConfig, YnabWriteLogEntry, YnabWriteLogTransaction } from '../types';
 import type { YnabAccountSummary, YnabApiResult, YnabFlagColor, YnabNewTransaction, YnabSavedTransaction } from '../services/ynabApi';
-import type { TrackingAccountRef, TrackingPlan } from './ynabTrackingPlan';
+import type { TrackingAccountRef, TrackingDestination, TrackingPlan } from './ynabTrackingPlan';
 import { checkYnabGuardBudget, checkYnabWriteTarget } from './ynabWriteGuard';
 
 export const PRB_MEMO_PREFIX = '[PRB]';
@@ -43,7 +49,22 @@ export interface MigrationTransferOp {
     accountName: string;
     /** Linked YNAB account; absent = the account is created first. */
     accountId?: string;
-    amount: number;              // € leaving the broker account
+    amount: number;              // € leaving the broker account: the cost basis (PMC)
+    value: number;               // market value of what moves
+    memo: string;
+    importId: string;
+}
+
+/** One of an account's own lines — P/L or latent tax — set to a new amount. */
+export interface AccountLineOp {
+    role: 'pl' | 'tax';
+    destinationKey: string;
+    accountName: string;
+    /** Absent: the account is created by the same write. */
+    accountId?: string;
+    amount: number;              // the line's new amount
+    previous: number;            // its amount today (0 = no line yet)
+    existingId?: string;
     memo: string;
     importId: string;
 }
@@ -59,8 +80,17 @@ export interface MigrationPreview {
     realignment: number;
     realignMemo: string;
     realignImportId: string;
+    /**
+     * The unrealised gains leave the broker account (−Σ value − PMC): they
+     * move to the P/L lines of the accounts by purpose.
+     */
+    plMove: number;
+    plMoveMemo: string;
+    plMoveImportId: string;
     createAccounts: { destinationKey: string; name: string }[];
     transfers: MigrationTransferOp[];
+    /** P/L and latent-tax lines the migration sets. */
+    lines: AccountLineOp[];
     staysInPlace: { destinationKey: string; accountName: string; amount: number }[];
     /** Goal shares of this broker's holdings, frozen in units on success. */
     quotes: Omit<YnabGoalQuote, 'entryId' | 'frozenAt'>[];
@@ -79,7 +109,15 @@ export interface MigrationPreviewInput {
     date: string;
     /** Names chosen in the preview for the accounts to create, by destination key. */
     nameOverrides?: Record<string, string>;
+    /** The write log: the P/L and tax lines already in YNAB. */
+    log?: YnabWriteLogEntry[];
 }
+
+const holdsShares = (kind: string | undefined) => kind === 'goal' || kind === 'portfolio' || kind === 'pension';
+const clip = (memo: string) => memo.length > MEMO_MAX ? `${memo.slice(0, MEMO_MAX - 1)}…` : memo;
+const ddmmyyyy = (date: string) => date.split('-').reverse().join('/');
+const plMemo = (date: string) => `${PRB_MEMO_PREFIX} P/L latente (valore − PMC) · ${ddmmyyyy(date)}`;
+const taxMemo = (date: string) => `${PRB_MEMO_PREFIX} Tasse latenti su plusvalenza · ${ddmmyyyy(date)}`;
 
 const qty = (q: number) => q.toLocaleString('en-US', { maximumFractionDigits: 4 });
 
@@ -98,8 +136,12 @@ export function buildMigrationPreview(input: MigrationPreviewInput): MigrationPr
         realignment: 0,
         realignMemo: `${PRB_MEMO_PREFIX} Riallineamento al valore del tool prima della migrazione`,
         realignImportId: prbImportId(entryId, 0),
+        plMove: 0,
+        plMoveMemo: `${PRB_MEMO_PREFIX} Plusvalenze latenti spostate nelle righe P/L dei conti per scopo`,
+        plMoveImportId: '',
         createAccounts: [],
         transfers: [],
+        lines: [],
         staysInPlace: [],
         quotes: [],
         blockers,
@@ -127,11 +169,15 @@ export function buildMigrationPreview(input: MigrationPreviewInput): MigrationPr
     const existingNames = new Set((accounts ?? []).map(a => a.name.trim().toLowerCase()));
     const namesToCreate = new Set<string>();
     let seq = 1;
+    const plLines = currentLines(input.log ?? [], budgetId, 'pl');
+    const taxLines = currentLines(input.log ?? [], budgetId, 'tax');
+    const lineTargets: { d: TrackingDestination; accountId?: string; accountName: string; gain: number; latentTax: number }[] = [];
     for (const t of migration.transfers) {
         const d = destinationByKey.get(t.toKey);
         const name = d?.accountName ?? t.toKey;
         if (t.staysInPlace) {
             preview.staysInPlace.push({ destinationKey: t.toKey, accountName: source?.name ?? name, amount: t.amount });
+            if (d && holdsShares(d.kind)) lineTargets.push({ d, accountId: source?.id, accountName: source?.name ?? name, gain: t.amount - t.cost, latentTax: t.latentTax });
             continue;
         }
         const linkedId = config.destinationAccounts[t.toKey];
@@ -157,15 +203,36 @@ export function buildMigrationPreview(input: MigrationPreviewInput): MigrationPr
         const pieces = (d?.pieces ?? []).filter(p => p.brokerId === brokerId);
         const listed = pieces.slice(0, PIECES_IN_MEMO).map(p => `${p.label} ${qty(p.quantity)} q`);
         const more = pieces.length > PIECES_IN_MEMO ? ` +${pieces.length - PIECES_IN_MEMO}` : '';
-        const memo = `${PRB_MEMO_PREFIX} Migrazione da ${source?.name ?? broker.name}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`;
+        const memo = `${PRB_MEMO_PREFIX} Migrazione al PMC da ${source?.name ?? broker.name}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`;
         preview.transfers.push({
             destinationKey: t.toKey,
             accountName,
             ...(linkedId ? { accountId: linkedId } : {}),
-            amount: t.amount,
-            memo: memo.length > MEMO_MAX ? `${memo.slice(0, MEMO_MAX - 1)}…` : memo,
+            amount: t.cost,
+            value: t.amount,
+            memo: clip(memo),
             importId: prbImportId(entryId, seq++),
         });
+        if (d && holdsShares(d.kind)) lineTargets.push({ d, accountId: linkedId, accountName, gain: t.amount - t.cost, latentTax: t.latentTax });
+    }
+
+    // The gains leave the broker account and land on each account's P/L
+    // line; the latent tax on its tax line. A line already there (another
+    // broker's migration) grows by this broker's part.
+    preview.plMove = cents(-lineTargets.reduce((s, l) => s + l.gain, 0));
+    if (Math.abs(preview.plMove) >= 0.01) preview.plMoveImportId = prbImportId(entryId, seq++);
+    for (const l of lineTargets) {
+        const pl = l.accountId ? plLines.get(l.accountId) : undefined;
+        const tax = l.accountId ? taxLines.get(l.accountId) : undefined;
+        const base = { destinationKey: l.d.key, accountName: l.accountName, ...(l.accountId ? { accountId: l.accountId } : {}) };
+        const plTarget = cents((pl?.amount ?? 0) + l.gain);
+        if (pl || Math.abs(plTarget) >= 0.01) {
+            preview.lines.push({ ...base, role: 'pl', amount: plTarget, previous: pl?.amount ?? 0, ...(pl ? { existingId: pl.transactionId } : {}), memo: plMemo(date), importId: prbImportId(entryId, seq++) });
+        }
+        const taxTarget = cents((tax?.amount ?? 0) - l.latentTax);
+        if (tax || Math.abs(taxTarget) >= 0.01) {
+            preview.lines.push({ ...base, role: 'tax', amount: taxTarget, previous: tax?.amount ?? 0, ...(tax ? { existingId: tax.transactionId } : {}), memo: taxMemo(date), importId: prbImportId(entryId, seq++) });
+        }
     }
 
     // The goal shares this migration moves, frozen in units once it succeeds.
@@ -208,10 +275,11 @@ export interface ExecuteHooks {
 export type WriteOp =
     | { kind: 'adjust'; role?: 'realign' | 'revalue'; accountId: string; amount: number; memo: string; importId: string }
     /**
-     * The account's latent-tax line (uncleared): set to `amount`, updating the
-     * existing line in place when there is one, creating it otherwise.
+     * One of the account's own lines — its P/L (cleared) or latent tax
+     * (uncleared) — set to `amount`: updated in place when it exists, created
+     * otherwise, on a linked account or one this write creates.
      */
-    | { kind: 'tax'; accountId: string; amount: number; memo: string; importId: string; existingId?: string; previousAmount: number }
+    | { kind: 'line'; role: 'pl' | 'tax'; accountId?: string; destinationKey?: string; amount: number; memo: string; importId: string; existingId?: string; previousAmount: number }
     | {
         kind: 'transfer';
         fromAccountId: string;
@@ -288,7 +356,8 @@ export async function executeWritePlan(
     const touched = new Set<string>();
     for (const op of plan.ops) {
         if (op.kind === 'transfer') { touched.add(op.fromAccountId); if (op.to.accountId) touched.add(op.to.accountId); }
-        else touched.add(op.accountId);
+        else if (op.accountId) touched.add(op.accountId);
+        else if (op.kind === 'line' && op.existingId) return fail('A line to update has no account.');
     }
     for (const id of touched) {
         const a = accountById.get(id);
@@ -316,7 +385,7 @@ export async function executeWritePlan(
     const transactions: YnabNewTransaction[] = [];
     const roles = new Map<string, Pick<YnabWriteLogTransaction, 'role' | 'destinationKey'>>();
     const common = { date: plan.date, cleared: 'cleared' as const, approved: true, flag_color: PRB_FLAG };
-    const updates: Extract<WriteOp, { kind: 'tax' }>[] = [];
+    const updates: (Extract<WriteOp, { kind: 'line' }> & { accountId: string })[] = [];
     for (const op of plan.ops) {
         if (op.kind === 'adjust') {
             if (Math.abs(op.amount) < 0.01) continue;
@@ -324,11 +393,13 @@ export async function executeWritePlan(
             roles.set(op.importId, { role: op.role ?? 'realign' });
             continue;
         }
-        if (op.kind === 'tax') {
-            if (op.existingId) { updates.push(op); continue; }
+        if (op.kind === 'line') {
+            if (op.existingId) { updates.push({ ...op, accountId: op.accountId! }); continue; }
             if (Math.abs(op.amount) < 0.01) continue;
-            transactions.push({ ...common, cleared: 'uncleared', account_id: op.accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId });
-            roles.set(op.importId, { role: 'tax' });
+            const accountId = op.accountId ?? (op.destinationKey ? created.get(op.destinationKey)?.id : undefined);
+            if (!accountId) return fail(`No account for the ${op.role === 'pl' ? 'P/L' : 'latent-tax'} line.`);
+            transactions.push({ ...common, cleared: op.role === 'tax' ? 'uncleared' : 'cleared', account_id: accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId });
+            roles.set(op.importId, { role: op.role });
             continue;
         }
         const dest = op.to.accountId ? accountById.get(op.to.accountId) : created.get(op.to.destinationKey);
@@ -361,19 +432,20 @@ export async function executeWritePlan(
         }));
     save({ transactions: logged });
 
-    // 4. Lines updated in place (the latent tax), one request each, each
+    // 4. Lines updated in place (P/L, latent tax), one request each, each
     //    recorded with the amount it had so a rollback can put it back.
     for (const op of updates) {
+        const what = op.role === 'pl' ? 'P/L' : 'latent-tax';
         const res = await api.updateTransaction(op.existingId!, { amount: toMilliunits(op.amount), memo: op.memo, date: plan.date });
-        if (!res.success || !res.data) return fail(res.error || 'YNAB refused to update the latent-tax line.');
+        if (!res.success || !res.data) return fail(res.error || `YNAB refused to update the ${what} line.`);
         if (res.data.notFound) {
             // Deleted in YNAB meanwhile: open a new one instead.
-            const made = await api.createTransactions([{ ...common, cleared: 'uncleared', account_id: op.accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId }]);
+            const made = await api.createTransactions([{ ...common, cleared: op.role === 'tax' ? 'uncleared' : 'cleared', account_id: op.accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId }]);
             const t = made.success ? made.data?.transactions[0] : undefined;
-            if (!t) return fail(made.error || 'Unable to recreate the latent-tax line.');
-            logged.push({ id: t.id, accountId: t.accountId, amount: t.amountMilliunits / 1000, importId: op.importId, role: 'tax' });
+            if (!t) return fail(made.error || `Unable to recreate the ${what} line.`);
+            logged.push({ id: t.id, accountId: t.accountId, amount: t.amountMilliunits / 1000, importId: op.importId, role: op.role });
         } else {
-            logged.push({ id: op.existingId!, accountId: op.accountId, amount: op.amount, importId: op.importId, role: 'tax', previousAmount: op.previousAmount, updatedInPlace: true });
+            logged.push({ id: op.existingId!, accountId: op.accountId, amount: op.amount, importId: op.importId, role: op.role, previousAmount: op.previousAmount, updatedInPlace: true });
         }
         save({ transactions: [...logged] });
     }
@@ -388,6 +460,14 @@ export async function executeWritePlan(
     return { ok: true, entry };
 }
 
+const lineOp = (l: AccountLineOp): WriteOp => ({
+    kind: 'line', role: l.role,
+    ...(l.accountId ? { accountId: l.accountId } : { destinationKey: l.destinationKey }),
+    amount: l.amount, memo: l.memo, importId: l.importId,
+    ...(l.existingId ? { existingId: l.existingId } : {}),
+    previousAmount: l.previous,
+});
+
 /** A migration preview as a write plan. */
 export function migrationWritePlan(preview: MigrationPreview): WritePlan {
     const ops: WriteOp[] = [];
@@ -396,6 +476,9 @@ export function migrationWritePlan(preview: MigrationPreview): WritePlan {
     if (preview.source) {
         if (Math.abs(preview.realignment) >= 0.01) {
             ops.push({ kind: 'adjust', accountId: preview.source.accountId, amount: preview.realignment, memo: preview.realignMemo, importId: preview.realignImportId });
+        }
+        if (Math.abs(preview.plMove) >= 0.01) {
+            ops.push({ kind: 'adjust', accountId: preview.source.accountId, amount: preview.plMove, memo: preview.plMoveMemo, importId: preview.plMoveImportId });
         }
         for (const t of preview.transfers) {
             ops.push({
@@ -407,6 +490,7 @@ export function migrationWritePlan(preview: MigrationPreview): WritePlan {
                 importId: t.importId,
             });
         }
+        ops.push(...preview.lines.map(lineOp));
     }
     return {
         entryId: preview.entryId,
@@ -552,8 +636,14 @@ export interface ReassignmentPreview {
     to: { destinationKey: string; accountName: string; accountId?: string };
     /** € moved, at today's prices. */
     amount: number;
+    /** Their cost basis (PMC): what the YNAB transfer carries. */
+    cost: number;
     /** The slices of holdings that move, in units. */
-    pieces: { holdingKey: string; brokerId: string; ticker: string; label: string; quantity: number; value: number; cost: number }[];
+    pieces: { holdingKey: string; brokerId: string; ticker: string; label: string; quantity: number; value: number; cost: number; latentTax: number }[];
+    /** The P/L and latent-tax lines of both accounts, following the shares. */
+    lines: AccountLineOp[];
+    /** Blockers that a revaluation clears (an account off its PMC in YNAB). */
+    unaligned: string[];
     memo: string;
     importId: string;
     createAccounts: { destinationKey: string; name: string }[];
@@ -575,6 +665,8 @@ export interface ReassignmentInput {
     date: string;
     /** Name of the target account when it has to be created. */
     newAccountName?: string;
+    /** The write log: the P/L and tax lines already in YNAB. */
+    log?: YnabWriteLogEntry[];
 }
 
 export function buildReassignmentPreview(input: ReassignmentInput): ReassignmentPreview {
@@ -588,7 +680,7 @@ export function buildReassignmentPreview(input: ReassignmentInput): Reassignment
         entryId, budgetId, date,
         from: { destinationKey: fromKey, accountName: from?.accountName ?? fromKey },
         to: { destinationKey: toKey, accountName: to?.accountName ?? toKey },
-        amount: 0, pieces: [], memo: '', importId: prbImportId(entryId, 1),
+        amount: 0, cost: 0, pieces: [], lines: [], unaligned: [], memo: '', importId: prbImportId(entryId, 1),
         createAccounts: [], quotes: [], blockers,
     };
 
@@ -617,7 +709,7 @@ export function buildReassignmentPreview(input: ReassignmentInput): Reassignment
     preview.amount = amount;
     preview.pieces = available.map(p => ({
         holdingKey: p.holdingKey, brokerId: p.brokerId, ticker: p.ticker, label: p.label,
-        quantity: p.quantity * share, value: p.value * share, cost: p.cost * share,
+        quantity: p.quantity * share, value: p.value * share, cost: p.cost * share, latentTax: p.latentTax * share,
     })).filter(p => p.quantity > 1e-9);
 
     // Units can only go back to the portfolio that holds them.
@@ -663,9 +755,44 @@ export function buildReassignmentPreview(input: ReassignmentInput): Reassignment
         preview.createAccounts.push({ destinationKey: toKey, name });
     }
 
+    // The transfer carries the PMC; each side's P/L and tax lines follow the
+    // shares. Both accounts must already hold their PMC in YNAB, or the new
+    // lines would hide the gap: a revaluation aligns them first.
+    const moved = preview.pieces.reduce((m, p) => ({ value: m.value + p.value, cost: m.cost + p.cost, tax: m.tax + p.latentTax }), { value: 0, cost: 0, tax: 0 });
+    preview.cost = cents(moved.cost);
+    const plLines = currentPlLines(input.log ?? [], budgetId);
+    const taxLines = currentTaxLines(input.log ?? [], budgetId);
+    let seq = 2;
+    const side = (d: TrackingDestination, accountId: string | undefined, accountName: string, sign: 1 | -1) => {
+        const pl = accountId ? plLines.get(accountId) : undefined;
+        const tax = accountId ? taxLines.get(accountId) : undefined;
+        const account = accountId ? accountById.get(accountId) : undefined;
+        if (account) {
+            const gap = cents(account.balance - (pl?.amount ?? 0) - (tax?.amount ?? 0) - d.migratedCost);
+            if (Math.abs(gap) >= 1) {
+                const message = `${accountName} does not match its cost basis in YNAB (${gap > 0 ? '+' : ''}${gap} €): revalue it first.`;
+                blockers.push(message);
+                preview.unaligned.push(message);
+            }
+        }
+        const base = { destinationKey: d.key, accountName, ...(accountId ? { accountId } : {}) };
+        const plTarget = cents(d.migratedValue + sign * moved.value - (d.migratedCost + sign * moved.cost));
+        if (pl ? Math.abs(plTarget - pl.amount) >= 0.01 : Math.abs(plTarget) >= 0.01) {
+            preview.lines.push({ ...base, role: 'pl', amount: plTarget, previous: pl?.amount ?? 0, ...(pl ? { existingId: pl.transactionId } : {}), memo: plMemo(date), importId: prbImportId(entryId, seq++) });
+        }
+        const taxTarget = cents(-(d.migratedLatentTax + sign * moved.tax));
+        if (tax ? Math.abs(taxTarget - tax.amount) >= 0.01 : Math.abs(taxTarget) >= 0.01) {
+            preview.lines.push({ ...base, role: 'tax', amount: taxTarget, previous: tax?.amount ?? 0, ...(tax ? { existingId: tax.transactionId } : {}), memo: taxMemo(date), importId: prbImportId(entryId, seq++) });
+        }
+    };
+    if (preview.pieces.length > 0) {
+        side(from, preview.from.accountId, preview.from.accountName, -1);
+        side(to, preview.to.accountId, preview.to.accountName, 1);
+    }
+
     const listed = preview.pieces.slice(0, PIECES_IN_MEMO).map(p => `${p.label} ${qty(p.quantity)} q`);
     const more = preview.pieces.length > PIECES_IN_MEMO ? ` +${preview.pieces.length - PIECES_IN_MEMO}` : '';
-    const memo = `${PRB_MEMO_PREFIX} Riassegnazione da ${preview.from.accountName}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`;
+    const memo = `${PRB_MEMO_PREFIX} Riassegnazione al PMC da ${preview.from.accountName}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`;
     preview.memo = memo.length > MEMO_MAX ? `${memo.slice(0, MEMO_MAX - 1)}…` : memo;
     return preview;
 }
@@ -679,10 +806,11 @@ export function reassignmentWritePlan(preview: ReassignmentPreview): WritePlan {
             kind: 'transfer',
             fromAccountId: preview.from.accountId,
             to: { destinationKey: preview.to.destinationKey, accountId: preview.to.accountId, accountName: preview.to.accountName },
-            amount: preview.amount,
+            amount: preview.cost,
             memo: preview.memo,
             importId: preview.importId,
         });
+        ops.push(...preview.lines.map(lineOp));
     } else if (blockers.length === 0) blockers.push('No account to move from.');
     return {
         entryId: preview.entryId,
@@ -751,24 +879,29 @@ export function suggestReassignments(
 
 // ── Revaluation ─────────────────────────────────────────────────────
 // After a price update, brings each account by purpose to the value of what
-// it holds: one cleared line with the P/L, and the account's single uncleared
-// latent-tax line set to the tax on today's gain. The cleared balance then
-// reads the gross value, the working balance the net one.
+// it holds by updating its two lines in place: the P/L (cleared, value − PMC)
+// and the latent tax (uncleared). When the PMC in YNAB no longer matches the
+// shares held (a purchase, a sale, a manual transfer) one cleared alignment
+// line closes the gap. The cleared balance reads the gross value, the
+// working balance the net one.
 
 /**
- * The latent-tax line of each account, as the last write still in place left
- * it: the newest applied entry that wrote one wins.
+ * The P/L or latent-tax line of each account, as the last write still in
+ * place left it: the newest applied entry that wrote one wins.
  */
-export function currentTaxLines(log: YnabWriteLogEntry[], budgetId: string | undefined): Map<string, { transactionId: string; amount: number }> {
+export function currentLines(log: YnabWriteLogEntry[], budgetId: string | undefined, role: 'pl' | 'tax'): Map<string, { transactionId: string; amount: number }> {
     const out = new Map<string, { transactionId: string; amount: number }>();
     const live = log
         .filter(e => e.budgetId === budgetId && (e.status === 'applied' || e.status === 'rollback-partial'))
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     for (const e of live) for (const t of e.transactions) {
-        if (t.role === 'tax') out.set(t.accountId, { transactionId: t.id, amount: t.amount });
+        if (t.role === role) out.set(t.accountId, { transactionId: t.id, amount: t.amount });
     }
     return out;
 }
+
+export const currentTaxLines = (log: YnabWriteLogEntry[], budgetId: string | undefined) => currentLines(log, budgetId, 'tax');
+export const currentPlLines = (log: YnabWriteLogEntry[], budgetId: string | undefined) => currentLines(log, budgetId, 'pl');
 
 export interface RevaluationAccount {
     destinationKey: string;
@@ -776,21 +909,37 @@ export interface RevaluationAccount {
     accountName: string;
     /** Gross value of what the account holds in YNAB (migrated shares). */
     value: number;
+    /** Their cost basis (PMC). */
+    cost: number;
     latentTax: number;
     balanceSeen: number;          // working balance read for the preview
+    plSeen: number;               // the tool's P/L line in it today
     taxSeen: number;              // the tool's latent-tax line in it (≤ 0)
-    /** The account without the tool's tax line: what the P/L is measured from. */
-    bookValue: number;
-    /** P/L to book (cleared): value − bookValue. */
-    delta: number;
+    /** The account without its P/L and tax lines: the PMC it holds in YNAB. */
+    costSeen: number;
+    /** cost − costSeen: booked (cleared) only when a purchase, sale or transfer left them apart. */
+    costAdjust: number;
+    /** The P/L line becomes value − cost. */
+    plTarget: number;
     /** The tax line becomes −latentTax. */
     taxTarget: number;
+    /** Total change of the cleared balance: value − (balance − tax line). */
+    delta: number;
+    plLineId?: string;
     taxLineId?: string;
-    memo: string;
+    costMemo: string;
+    plMemo: string;
     taxMemo: string;
     importId: string;
+    plImportId: string;
     taxImportId: string;
-    /** Larger than a price move would explain: a transfer may be missing. Unticked by default. */
+    /**
+     * The account has no P/L line yet but its transfers carried market value
+     * (migrated before P/L lines existed): the gain moves out of the PMC into
+     * the new line. Expected once, not suspicious.
+     */
+    conversion: boolean;
+    /** The PMC moved more than a price move would explain: a transfer may be missing. Unticked by default. */
     suspicious: boolean;
     blocked?: string;
 }
@@ -827,43 +976,59 @@ export function buildRevaluationPreview(input: RevaluationInput): RevaluationPre
 
     const accountById = new Map((accounts ?? []).map(a => [a.id, a]));
     const taxLines = currentTaxLines(log, budgetId);
+    const plLines = currentPlLines(log, budgetId);
     const migrated = new Set(plan.brokers.filter(b => b.migrated).map(b => b.brokerId));
-    const dd = date.split('-').reverse().join('/');
+    const dd = ddmmyyyy(date);
     let seq = 1;
     for (const d of plan.destinations) {
-        if (d.kind !== 'goal' && d.kind !== 'portfolio' && d.kind !== 'pension') continue;
+        if (!holdsShares(d.kind)) continue;
         if (!d.accountId) continue;
         const account = accountById.get(d.accountId);
         const tax = taxLines.get(d.accountId);
-        if (!account || (!(d.migratedValue > 0) && !tax)) continue;
+        const pl = plLines.get(d.accountId);
+        if (!account || (!(d.migratedValue > 0) && !tax && !pl)) continue;
         const taxSeen = tax?.amount ?? 0;
-        const bookValue = cents(account.balance - taxSeen);
-        const delta = cents(d.migratedValue - bookValue);
+        const plSeen = pl?.amount ?? 0;
+        const costSeen = cents(account.balance - taxSeen - plSeen);
+        const costAdjust = cents(d.migratedCost - costSeen);
+        const plTarget = cents(d.migratedValue - d.migratedCost);
         const taxTarget = cents(-d.migratedLatentTax);
-        if (Math.abs(delta) < 0.01 && Math.abs(taxTarget - taxSeen) < 0.01) continue;
+        if (Math.abs(costAdjust) < 0.01 && Math.abs(plTarget - plSeen) < 0.01 && Math.abs(taxTarget - taxSeen) < 0.01) continue;
+        const delta = cents(costAdjust + plTarget - plSeen);
         const verdict = checkYnabWriteTarget(config, { budgetId, accountId: account.id, onBudget: account.onBudget, accountName: account.name });
         const pieces = d.pieces.filter(p => migrated.has(p.brokerId));
         const listed = pieces.slice(0, PIECES_IN_MEMO).map(p => `${p.label} ${qty(p.quantity)} q @ ${eu(p.value / p.quantity)}`);
         const more = pieces.length > PIECES_IN_MEMO ? ` +${pieces.length - PIECES_IN_MEMO}` : '';
-        const memo = `${PRB_MEMO_PREFIX} Rivalutazione ${dd}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`;
+        // Market moves rarely shift an account by more than a tenth in one go.
+        const tolerance = Math.max(50, Math.abs(d.migratedValue) * 0.1);
+        const conversion = !pl && Math.abs(costAdjust) >= 0.01 && Math.abs(delta) <= tolerance;
         preview.accounts.push({
             destinationKey: d.key,
             accountId: account.id,
             accountName: account.name,
             value: d.migratedValue,
+            cost: d.migratedCost,
             latentTax: d.migratedLatentTax,
             balanceSeen: account.balance,
+            plSeen,
             taxSeen,
-            bookValue,
-            delta,
+            costSeen,
+            costAdjust,
+            plTarget,
             taxTarget,
+            delta,
+            ...(pl ? { plLineId: pl.transactionId } : {}),
             ...(tax ? { taxLineId: tax.transactionId } : {}),
-            memo: memo.length > MEMO_MAX ? `${memo.slice(0, MEMO_MAX - 1)}…` : memo,
-            taxMemo: `${PRB_MEMO_PREFIX} Tasse latenti su plusvalenza · ${dd}`,
+            costMemo: conversion
+                ? `${PRB_MEMO_PREFIX} Riclassifica: la plusvalenza passa dal PMC alla riga P/L · ${dd}`
+                : `${PRB_MEMO_PREFIX} Allineamento al PMC (acquisti, vendite o trasferimenti) · ${dd}`,
+            plMemo: clip(`${plMemo(date)}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`),
+            taxMemo: taxMemo(date),
             importId: prbImportId(entryId, seq++),
+            plImportId: prbImportId(entryId, seq++),
             taxImportId: prbImportId(entryId, seq++),
-            // Market moves rarely shift an account by more than a tenth in one go.
-            suspicious: Math.abs(delta) > Math.max(50, Math.abs(d.migratedValue) * 0.1),
+            conversion,
+            suspicious: !conversion && Math.abs(costAdjust) > tolerance,
             ...(!verdict.ok ? { blocked: verdict.message } : {}),
         });
     }
@@ -878,9 +1043,13 @@ export function revaluationWritePlan(preview: RevaluationPreview, selected: Set<
     const picked = preview.accounts.filter(a => selected.has(a.destinationKey) && !a.blocked);
     if (picked.length === 0 && blockers.length === 0) blockers.push('Tick at least one account.');
     for (const a of picked) {
-        if (Math.abs(a.delta) >= 0.01) ops.push({ kind: 'adjust', role: 'revalue', accountId: a.accountId, amount: a.delta, memo: a.memo, importId: a.importId });
+        if (Math.abs(a.costAdjust) >= 0.01) ops.push({ kind: 'adjust', role: 'revalue', accountId: a.accountId, amount: a.costAdjust, memo: a.costMemo, importId: a.importId });
+        // The P/L line is rewritten even when unchanged in amount, so its memo carries today's prices.
+        if (a.plLineId || Math.abs(a.plTarget) >= 0.01) {
+            ops.push({ kind: 'line', role: 'pl', accountId: a.accountId, amount: a.plTarget, memo: a.plMemo, importId: a.plImportId, existingId: a.plLineId, previousAmount: a.plSeen });
+        }
         if (Math.abs(a.taxTarget - a.taxSeen) >= 0.01) {
-            ops.push({ kind: 'tax', accountId: a.accountId, amount: a.taxTarget, memo: a.taxMemo, importId: a.taxImportId, existingId: a.taxLineId, previousAmount: a.taxSeen });
+            ops.push({ kind: 'line', role: 'tax', accountId: a.accountId, amount: a.taxTarget, memo: a.taxMemo, importId: a.taxImportId, existingId: a.taxLineId, previousAmount: a.taxSeen });
         }
     }
     return {

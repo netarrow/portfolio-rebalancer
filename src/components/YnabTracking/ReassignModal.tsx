@@ -19,7 +19,7 @@ const SHARE_KINDS = new Set(['goal', 'portfolio', 'pension']);
 // goal, goal → its own portfolio. One transfer, previewed exactly, written
 // only after the confirmation.
 const ReassignModal: React.FC<Props> = ({ plan, accounts, format, initial, onClose }) => {
-    const { ynabConfig, ynabTrackingConfig, executeYnabReassignment, ynabWriting } = usePortfolio();
+    const { ynabConfig, ynabTrackingConfig, ynabWriteLog, executeYnabReassignment, ynabWriting } = usePortfolio();
     const [entryId, setEntryId] = useState(() => crypto.randomUUID());
     const [date] = useState(todayLocal);
     const budgetId = ynabConfig?.budgetId ?? '';
@@ -31,12 +31,16 @@ const ReassignModal: React.FC<Props> = ({ plan, accounts, format, initial, onClo
     const targets = plan.destinations.filter(d => SHARE_KINDS.has(d.kind));
 
     const build = (fromKey: string, toKey: string, amount: number, newAccountName?: string) => buildReassignmentPreview({
-        plan, fromKey, toKey, amount, accounts, config: ynabTrackingConfig, budgetId, entryId, date, newAccountName,
+        plan, fromKey, toKey, amount, accounts, config: ynabTrackingConfig, budgetId, entryId, date, newAccountName, log: ynabWriteLog,
     });
+    // A suggestion stays listed when only a revaluation stands in its way.
     const suggestions = useMemo(
-        () => suggestReassignments(plan, s => build(s.fromKey, s.toKey, s.amount).blockers.length === 0),
+        () => suggestReassignments(plan, s => {
+            const p = build(s.fromKey, s.toKey, s.amount);
+            return p.blockers.every(b => p.unaligned.includes(b));
+        }),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [plan, accounts, ynabTrackingConfig, budgetId],
+        [plan, accounts, ynabTrackingConfig, budgetId, ynabWriteLog],
     );
 
     // Opening from a row: the suggestion that involves that row, if any.
@@ -54,9 +58,10 @@ const ReassignModal: React.FC<Props> = ({ plan, accounts, format, initial, onClo
     const live = useMemo(
         () => build(fromKey, toKey, Number.isFinite(amount) ? amount : 0, newName),
         // eslint-disable-next-line react-hooks/exhaustive-deps
-        [plan, accounts, ynabTrackingConfig, budgetId, entryId, date, fromKey, toKey, amount, newName],
+        [plan, accounts, ynabTrackingConfig, budgetId, entryId, date, fromKey, toKey, amount, newName, ynabWriteLog],
     );
     const preview = sent ?? live;
+    const signed = (v: number) => `${v > 0 ? '+' : ''}${format(v)}`;
     const nameOf = (key: string) => plan.destinations.find(d => d.key === key)?.accountName ?? key;
     const pick = (s: { fromKey: string; toKey: string; amount: number }) => {
         setFromKey(s.fromKey); setToKey(s.toKey); setAmountText(String(s.amount)); setNewName(undefined); setConfirmed(false);
@@ -143,12 +148,13 @@ const ReassignModal: React.FC<Props> = ({ plan, accounts, format, initial, onClo
 
                 {preview.pieces.length > 0 && toKey && (
                     <section className="rsm-sec">
-                        <h4>Transfer</h4>
+                        <h4>Transfer at cost basis (PMC)</h4>
                         <div className="rsm-transfer">
                             <div className="rsm-line">
                                 <span>{preview.from.accountName} → {preview.to.accountName}{preview.createAccounts.length > 0 && <span className="rsm-small"> (new)</span>}</span>
-                                <span className="rsm-strong">{format(preview.amount)}</span>
+                                <span className="rsm-strong">{format(preview.cost)}</span>
                             </div>
+                            <div className="rsm-small">value today {format(preview.amount)} · P/L {signed(preview.amount - preview.cost)}</div>
                             <div className="rsm-small">{preview.memo}</div>
                         </div>
                         <ul className="rsm-pieces">
@@ -159,6 +165,17 @@ const ReassignModal: React.FC<Props> = ({ plan, accounts, format, initial, onClo
                                 </li>
                             ))}
                         </ul>
+                        {preview.lines.length > 0 && (
+                            <>
+                                <h4>P/L and latent-tax lines, updated in place</h4>
+                                {preview.lines.map(l => (
+                                    <div key={l.importId} className="rsm-line rsm-small">
+                                        <span>{l.accountName} · {l.role === 'pl' ? 'P/L' : 'latent tax'}</span>
+                                        <span>{format(l.previous)} → {format(l.amount)}</span>
+                                    </div>
+                                ))}
+                            </>
+                        )}
                     </section>
                 )}
 
