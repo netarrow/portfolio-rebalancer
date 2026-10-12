@@ -141,9 +141,9 @@ check('pension left in place: no outflow, plain comparison', [dest('portfolio:pe
 console.log('Portfolio accounts');
 check('parent + child merged, minus goal shares', [dest('portfolio:growth')?.value, dest('portfolio:growth')?.memberNames], [15000, ['Growth', 'Satellite']]);
 check('standalone portfolio, minus goal shares', dest('portfolio:safe')?.value, 3000);
-check('illiquid-only portfolio reads as pension', [dest('portfolio:pension')?.kind, dest('portfolio:pension')?.accountName, dest('portfolio:pension')?.value], ['pension', '🏦 Pension', 2500]);
+check('illiquid-only portfolio reads as pension', [dest('portfolio:pension')?.kind, dest('portfolio:pension')?.accountName, dest('portfolio:pension')?.value], ['pension', '🏛 Pension', 2500]);
 check('type B cash account', [dest('cash:fin')?.kind, dest('cash:fin')?.accountName, dest('cash:fin')?.value], ['broker-cash', '💵 Beta Broker', 1000]);
-check('account names carry the prefix', [dest('goal:g-bath')?.accountName, dest('portfolio:growth')?.accountName], ['🎯 Bathroom', '💼 Growth']);
+check('account names carry the prefix', [dest('goal:g-bath')?.accountName, dest('portfolio:growth')?.accountName], ['🎯 Bathroom', '🏦 Growth']);
 check('destination order: goals, portfolios, pension, cash', plan.destinations.map(d => d.kind), ['goal', 'goal', 'goal', 'portfolio', 'portfolio', 'pension', 'broker-cash']);
 
 console.log('Totals');

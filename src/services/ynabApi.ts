@@ -55,7 +55,38 @@ export interface YnabAccountSummary {
     onBudget: boolean;
     balanceMilliunits: number;         // working balance: cleared + uncleared
     clearedBalanceMilliunits: number;
+    // Payee to use on a transaction that transfers money INTO this account.
+    transferPayeeId?: string;
 }
+
+// Account and transaction objects as the YNAB API returns them (the fields read here).
+interface RawAccount {
+    id: string;
+    name: string;
+    type?: unknown;
+    on_budget?: boolean;
+    balance?: unknown;
+    cleared_balance?: unknown;
+    transfer_payee_id?: unknown;
+}
+interface RawTransaction {
+    id: string;
+    account_id: string;
+    amount?: unknown;
+    import_id?: string | null;
+    transfer_account_id?: string | null;
+    transfer_transaction_id?: string | null;
+}
+
+const accountSummary = (a: RawAccount): YnabAccountSummary => ({
+    id: a.id,
+    name: a.name,
+    type: typeof a.type === 'string' ? a.type : '',
+    onBudget: !!a.on_budget,
+    balanceMilliunits: typeof a.balance === 'number' ? a.balance : 0,
+    clearedBalanceMilliunits: typeof a.cleared_balance === 'number' ? a.cleared_balance : 0,
+    ...(typeof a.transfer_payee_id === 'string' && a.transfer_payee_id ? { transferPayeeId: a.transfer_payee_id } : {}),
+});
 
 // Open, non-deleted accounts of a budget. `balance` is the figure YNAB shows in
 // the account sidebar, which is what we mirror into broker liquidity.
@@ -72,14 +103,7 @@ export async function listAccounts(
         const result: YnabAccountSummary[] = [];
         for (const a of accounts) {
             if (a.deleted || a.closed) continue;
-            result.push({
-                id: a.id,
-                name: a.name,
-                type: typeof a.type === 'string' ? a.type : '',
-                onBudget: !!a.on_budget,
-                balanceMilliunits: typeof a.balance === 'number' ? a.balance : 0,
-                clearedBalanceMilliunits: typeof a.cleared_balance === 'number' ? a.cleared_balance : 0,
-            });
+            result.push(accountSummary(a));
         }
         return { success: true, data: result };
     } catch (e) {
@@ -392,6 +416,107 @@ export async function getMonthlyBudgetSnapshots(
         }
 
         return { success: true, data: snapshots };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}
+
+// ── Writes ──────────────────────────────────────────────────────────
+// Called ONLY by utils/ynabWriteBack, which checks every target against the
+// write guard (utils/ynabWriteGuard) before reaching these. Nothing else in the
+// app writes to YNAB.
+
+export type YnabFlagColor = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple';
+
+export interface YnabNewTransaction {
+    account_id: string;
+    date: string;                 // 'YYYY-MM-DD'
+    amount: number;               // milliunits, negative = outflow
+    payee_id?: string;            // a transfer_payee_id makes it a transfer
+    payee_name?: string;          // max 200
+    memo?: string;                // max 500
+    cleared?: 'cleared' | 'uncleared' | 'reconciled';
+    approved?: boolean;
+    flag_color?: YnabFlagColor;
+    import_id?: string;           // max 36, unique per account
+}
+
+export interface YnabSavedTransaction {
+    id: string;
+    accountId: string;
+    amountMilliunits: number;
+    importId?: string;
+    transferAccountId?: string;
+    transferTransactionId?: string;
+}
+
+const savedTransaction = (t: RawTransaction): YnabSavedTransaction => ({
+    id: t.id,
+    accountId: t.account_id,
+    amountMilliunits: typeof t.amount === 'number' ? t.amount : 0,
+    ...(t.import_id ? { importId: t.import_id } : {}),
+    ...(t.transfer_account_id ? { transferAccountId: t.transfer_account_id } : {}),
+    ...(t.transfer_transaction_id ? { transferTransactionId: t.transfer_transaction_id } : {}),
+});
+
+export async function createTransactions(
+    apiKey: string,
+    budgetId: string,
+    transactions: YnabNewTransaction[],
+): Promise<YnabApiResult<{ transactions: YnabSavedTransaction[]; duplicateImportIds: string[] }>> {
+    try {
+        const response = await axios.post(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/transactions`,
+            { transactions },
+            { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        const data = response.data?.data ?? {};
+        const saved: RawTransaction[] = Array.isArray(data.transactions) ? data.transactions : (data.transaction ? [data.transaction] : []);
+        return {
+            success: true,
+            data: {
+                transactions: saved.map(savedTransaction),
+                duplicateImportIds: Array.isArray(data.duplicate_import_ids) ? data.duplicate_import_ids : [],
+            },
+        };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}
+
+export async function deleteTransaction(
+    apiKey: string,
+    budgetId: string,
+    transactionId: string,
+): Promise<YnabApiResult<{ notFound: boolean }>> {
+    try {
+        await axios.delete(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/transactions/${encodeURIComponent(transactionId)}`,
+            { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        return { success: true, data: { notFound: false } };
+    } catch (e) {
+        // Already gone (e.g. the other side of a transfer went with it): fine.
+        if (axios.isAxiosError(e) && e.response?.status === 404) return { success: true, data: { notFound: true } };
+        return { success: false, error: mapError(e) };
+    }
+}
+
+// A tracking (off-budget) asset account, opened at zero.
+export async function createTrackingAccount(
+    apiKey: string,
+    budgetId: string,
+    name: string,
+): Promise<YnabApiResult<YnabAccountSummary>> {
+    try {
+        const response = await axios.post(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/accounts`,
+            { account: { name, type: 'otherAsset', balance: 0 } },
+            { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        const account = response.data?.data?.account;
+        if (!account?.id) return { success: false, error: 'YNAB did not return the new account.' };
+        return { success: true, data: accountSummary(account) };
     } catch (e) {
         return { success: false, error: mapError(e) };
     }
