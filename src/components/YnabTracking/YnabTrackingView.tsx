@@ -10,7 +10,8 @@ import {
 import { checkYnabGuardBudget, checkYnabWriteTarget } from '../../utils/ynabWriteGuard';
 import MigrationModal from './MigrationModal';
 import ReassignModal from './ReassignModal';
-import { rollbackDependents } from '../../utils/ynabWriteBack';
+import RevalueModal from './RevalueModal';
+import { buildRevaluationPreview, currentTaxLines, rollbackDependents } from '../../utils/ynabWriteBack';
 import Swal from 'sweetalert2';
 
 // The off-budget map: how the per-broker tracking accounts of the primary
@@ -83,6 +84,12 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
     } = usePortfolio();
     const [migrating, setMigrating] = useState<string | null>(null);
     const [reassigning, setReassigning] = useState<{ fromKey?: string; toKey?: string; amount?: number } | null>(null);
+    const [revaluing, setRevaluing] = useState(false);
+    // The tool's latent-tax line in each account: balances are compared without it.
+    const taxLineAmounts = useMemo(
+        () => Object.fromEntries([...currentTaxLines(ynabWriteLog, ynabConfig?.budgetId)].map(([id, t]) => [id, t.amount])),
+        [ynabWriteLog, ynabConfig?.budgetId],
+    );
 
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const eur = useCallback((v: number) => new Intl.NumberFormat('en-IE', {
@@ -141,8 +148,9 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         budgetId: ynabConfig?.budgetId,
         migratedBrokerIds: ynabMigratedBrokerIds,
         goalQuotes: ynabGoalQuotes,
+        taxLineAmounts,
     }), [portfolios, transactions, brokers, effectiveAssetSettings, marketData, ynabGoals, ynabGoalAllocations,
-        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId, ynabMigratedBrokerIds, ynabGoalQuotes]);
+        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId, ynabMigratedBrokerIds, ynabGoalQuotes, taxLineAmounts]);
 
     // Write guard: the active budget must be the allowed one, and only the
     // off-budget accounts ticked in Settings can be linked.
@@ -204,6 +212,13 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         }
     };
 
+    // Accounts a revaluation would move by a market-sized amount (≥ 1 €).
+    const revaluePending = useMemo(() => {
+        if (!guard.ok || !accounts || ynabMigratedBrokerIds.length === 0) return 0;
+        const p = buildRevaluationPreview({ plan, accounts, config: ynabTrackingConfig, budgetId: ynabConfig?.budgetId ?? '', entryId: 'check', date: '2000-01-01', log: ynabWriteLog });
+        return p.accounts.filter(a => !a.suspicious && !a.blocked && (Math.abs(a.delta) >= 1 || Math.abs(a.taxTarget - a.taxSeen) >= 1)).length;
+    }, [plan, accounts, ynabTrackingConfig, ynabConfig?.budgetId, ynabWriteLog, ynabMigratedBrokerIds, guard.ok]);
+
     const linkedCount = plan.destinations.filter(d => d.accountId).length;
     const toCreate = plan.destinations.length - linkedCount;
 
@@ -253,6 +268,13 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                         {allowedCount === 0 && ' Tick the allowed ones in Settings → YNAB write guard.'}
                     </span>
                     {onNavigateToSettings && <button type="button" className="ytv-link" onClick={onNavigateToSettings}>Change in Settings</button>}
+                </div>
+            )}
+
+            {revaluePending > 0 && (
+                <div className="ytv-guard ytv-revalue-banner">
+                    <span>📈 {revaluePending} account{revaluePending === 1 ? '' : 's'} in YNAB {revaluePending === 1 ? 'needs' : 'need'} a revaluation: P/L at today's prices or latent tax not booked yet.</span>
+                    <button type="button" className="btn btn-primary" disabled={ynabWriting} onClick={() => setRevaluing(true)}>Revalue…</button>
                 </div>
             )}
 
@@ -353,6 +375,14 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 <div className="ytv-section-head">
                     <h3 className="ytv-section-title">2 · Accounts by purpose</h3>
                     {ynabMigratedBrokerIds.length > 0 && (
+                        <div className="ytv-head-actions">
+                        <button
+                            type="button"
+                            className="btn"
+                            disabled={!guard.ok || !accounts || ynabWriting}
+                            title={!guard.ok ? guard.message : 'Book the P/L and the latent tax of every account at today\'s prices'}
+                            onClick={() => setRevaluing(true)}
+                        >Revalue…</button>
                         <button
                             type="button"
                             className="btn ytv-reassign-all"
@@ -360,6 +390,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                             title={!guard.ok ? guard.message : 'Move goal shares between accounts by purpose'}
                             onClick={() => setReassigning({})}
                         >Reassign shares…</button>
+                        </div>
                     )}
                 </div>
                 <p className="ytv-hint">
@@ -558,6 +589,15 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 </div>
             </section>
 
+            {revaluing && (
+                <RevalueModal
+                    plan={plan}
+                    accounts={accounts}
+                    format={eur}
+                    onClose={changed => { setRevaluing(false); if (changed) void loadAccounts(); }}
+                />
+            )}
+
             {reassigning !== null && (
                 <ReassignModal
                     plan={plan}
@@ -621,6 +661,8 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
 
                 .ytv-section { display: flex; flex-direction: column; gap: var(--space-3); }
                 .ytv-section-title { margin: 0; font-size: 1.05rem; }
+                .ytv-head-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+                .ytv-revalue-banner { background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.35); }
                 .ytv-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
                 .ytv-hint { margin: 0; font-size: 0.8rem; color: var(--text-muted); line-height: 1.45; max-width: 70rem; }
                 .ytv-group { display: flex; flex-direction: column; gap: var(--space-2); }

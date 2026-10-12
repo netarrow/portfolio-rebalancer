@@ -188,6 +188,7 @@ export interface YnabWriteApi {
     createTrackingAccount(name: string): Promise<YnabApiResult<YnabAccountSummary>>;
     createTransactions(transactions: YnabNewTransaction[]): Promise<YnabApiResult<{ transactions: YnabSavedTransaction[]; duplicateImportIds: string[] }>>;
     deleteTransaction(id: string): Promise<YnabApiResult<{ notFound: boolean }>>;
+    updateTransaction(id: string, patch: { amount?: number; memo?: string; date?: string }): Promise<YnabApiResult<{ transaction?: YnabSavedTransaction; notFound: boolean }>>;
 }
 
 export interface ExecuteHooks {
@@ -205,7 +206,12 @@ export interface ExecuteHooks {
  * tracking accounts. Every write goes through executeWritePlan.
  */
 export type WriteOp =
-    | { kind: 'adjust'; accountId: string; amount: number; memo: string; importId: string }
+    | { kind: 'adjust'; role?: 'realign' | 'revalue'; accountId: string; amount: number; memo: string; importId: string }
+    /**
+     * The account's latent-tax line (uncleared): set to `amount`, updating the
+     * existing line in place when there is one, creating it otherwise.
+     */
+    | { kind: 'tax'; accountId: string; amount: number; memo: string; importId: string; existingId?: string; previousAmount: number }
     | {
         kind: 'transfer';
         fromAccountId: string;
@@ -227,6 +233,8 @@ export interface WritePlan {
     createAccounts: { destinationKey: string; name: string }[];
     ops: WriteOp[];
     blockers: string[];
+    /** A plan that legitimately writes nothing (a migration where everything stays put). */
+    allowNoWrites?: boolean;
 }
 
 const allowing = (config: YnabTrackingConfig, extra: string[]): YnabTrackingConfig =>
@@ -260,7 +268,7 @@ export async function executeWritePlan(
     const fail = (error: string) => ({ ok: false, entry: save({ status: 'failed', error }), error });
 
     if (plan.blockers.length > 0) return fail(`Not ready: ${plan.blockers[0]}`);
-    if (plan.ops.length === 0) return fail('Nothing to write.');
+    if (plan.ops.length === 0 && !plan.allowNoWrites) return fail('Nothing to write.');
     save({});
 
     // 1. Fresh look at YNAB: nothing may have moved since the preview.
@@ -279,8 +287,8 @@ export async function executeWritePlan(
     // Every existing account the plan touches, before anything is written.
     const touched = new Set<string>();
     for (const op of plan.ops) {
-        if (op.kind === 'adjust') touched.add(op.accountId);
-        else { touched.add(op.fromAccountId); if (op.to.accountId) touched.add(op.to.accountId); }
+        if (op.kind === 'transfer') { touched.add(op.fromAccountId); if (op.to.accountId) touched.add(op.to.accountId); }
+        else touched.add(op.accountId);
     }
     for (const id of touched) {
         const a = accountById.get(id);
@@ -308,11 +316,19 @@ export async function executeWritePlan(
     const transactions: YnabNewTransaction[] = [];
     const roles = new Map<string, Pick<YnabWriteLogTransaction, 'role' | 'destinationKey'>>();
     const common = { date: plan.date, cleared: 'cleared' as const, approved: true, flag_color: PRB_FLAG };
+    const updates: Extract<WriteOp, { kind: 'tax' }>[] = [];
     for (const op of plan.ops) {
         if (op.kind === 'adjust') {
             if (Math.abs(op.amount) < 0.01) continue;
             transactions.push({ ...common, account_id: op.accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId });
-            roles.set(op.importId, { role: 'realign' });
+            roles.set(op.importId, { role: op.role ?? 'realign' });
+            continue;
+        }
+        if (op.kind === 'tax') {
+            if (op.existingId) { updates.push(op); continue; }
+            if (Math.abs(op.amount) < 0.01) continue;
+            transactions.push({ ...common, cleared: 'uncleared', account_id: op.accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId });
+            roles.set(op.importId, { role: 'tax' });
             continue;
         }
         const dest = op.to.accountId ? accountById.get(op.to.accountId) : created.get(op.to.destinationKey);
@@ -323,9 +339,14 @@ export async function executeWritePlan(
         transactions.push({ ...common, account_id: op.fromAccountId, amount: -toMilliunits(op.amount), payee_id: dest.transferPayeeId, memo: op.memo, import_id: op.importId });
         roles.set(op.importId, { role: 'transfer', destinationKey: op.to.destinationKey });
     }
-    if (transactions.length === 0) return fail('Nothing to write.');
+    if (transactions.length === 0 && updates.length === 0) {
+        if (plan.allowNoWrites) { save({ status: 'applied' }); return { ok: true, entry }; }
+        return fail('Nothing to write.');
+    }
 
-    const saved = await api.createTransactions(transactions);
+    const saved = transactions.length > 0
+        ? await api.createTransactions(transactions)
+        : { success: true as const, data: { transactions: [] as YnabSavedTransaction[], duplicateImportIds: [] as string[] } };
     if (!saved.success || !saved.data) return fail(saved.error || 'YNAB refused the transactions.');
     const logged: YnabWriteLogTransaction[] = saved.data.transactions
         .filter(t => t.importId && roles.has(t.importId))
@@ -338,7 +359,26 @@ export async function executeWritePlan(
             ...(t.transferAccountId ? { transferAccountId: t.transferAccountId } : {}),
             ...(t.transferTransactionId ? { transferTransactionId: t.transferTransactionId } : {}),
         }));
-    const missing = transactions.length - logged.length;
+    save({ transactions: logged });
+
+    // 4. Lines updated in place (the latent tax), one request each, each
+    //    recorded with the amount it had so a rollback can put it back.
+    for (const op of updates) {
+        const res = await api.updateTransaction(op.existingId!, { amount: toMilliunits(op.amount), memo: op.memo, date: plan.date });
+        if (!res.success || !res.data) return fail(res.error || 'YNAB refused to update the latent-tax line.');
+        if (res.data.notFound) {
+            // Deleted in YNAB meanwhile: open a new one instead.
+            const made = await api.createTransactions([{ ...common, cleared: 'uncleared', account_id: op.accountId, amount: toMilliunits(op.amount), payee_name: PRB_PAYEE, memo: op.memo, import_id: op.importId }]);
+            const t = made.success ? made.data?.transactions[0] : undefined;
+            if (!t) return fail(made.error || 'Unable to recreate the latent-tax line.');
+            logged.push({ id: t.id, accountId: t.accountId, amount: t.amountMilliunits / 1000, importId: op.importId, role: 'tax' });
+        } else {
+            logged.push({ id: op.existingId!, accountId: op.accountId, amount: op.amount, importId: op.importId, role: 'tax', previousAmount: op.previousAmount, updatedInPlace: true });
+        }
+        save({ transactions: [...logged] });
+    }
+
+    const missing = transactions.length - saved.data.transactions.filter(t => t.importId && roles.has(t.importId)).length;
     save({
         transactions: logged,
         ...(saved.data.duplicateImportIds.length ? { duplicateImportIds: saved.data.duplicateImportIds } : {}),
@@ -379,6 +419,9 @@ export function migrationWritePlan(preview: MigrationPreview): WritePlan {
         createAccounts: preview.createAccounts,
         ops,
         blockers,
+        // A pension fund that simply stays where it is: nothing to write, but
+        // the broker still counts as migrated so its account can be revalued.
+        allowNoWrites: preview.transfers.length === 0 && preview.staysInPlace.length > 0,
     };
 }
 
@@ -416,7 +459,13 @@ export async function rollbackWriteEntry(
 
     const errors: string[] = [];
     const remaining: YnabWriteLogTransaction[] = [];
-    for (const t of entry.transactions) {
+    for (const t of [...entry.transactions].reverse()) {
+        if (t.updatedInPlace) {
+            // A line this write only updated (the latent tax): put its amount back.
+            const back = await api.updateTransaction(t.id, { amount: toMilliunits(t.previousAmount ?? 0) });
+            if (!back.success) { errors.push(back.error || `Unable to restore ${t.id}.`); remaining.push(t); }
+            continue;
+        }
         const res = await api.deleteTransaction(t.id);
         if (!res.success) { errors.push(res.error || `Unable to delete ${t.id}.`); remaining.push(t); continue; }
         if (t.transferTransactionId) {
@@ -440,7 +489,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 export function normalizeYnabWriteLog(raw: unknown): YnabWriteLogEntry[] {
     if (!Array.isArray(raw)) return [];
     return raw.filter((e): e is YnabWriteLogEntry =>
-        isObj(e) && typeof e.id === 'string' && (e.kind === 'migration' || e.kind === 'reassignment') && typeof e.budgetId === 'string'
+        isObj(e) && typeof e.id === 'string' && (e.kind === 'migration' || e.kind === 'reassignment' || e.kind === 'revaluation') && typeof e.budgetId === 'string'
         && typeof e.brokerId === 'string' && typeof e.status === 'string'
         && Array.isArray(e.transactions) && Array.isArray(e.createdAccounts));
 }
@@ -699,3 +748,154 @@ export function suggestReassignments(
     }
     return out;
 }
+
+// ── Revaluation ─────────────────────────────────────────────────────
+// After a price update, brings each account by purpose to the value of what
+// it holds: one cleared line with the P/L, and the account's single uncleared
+// latent-tax line set to the tax on today's gain. The cleared balance then
+// reads the gross value, the working balance the net one.
+
+/**
+ * The latent-tax line of each account, as the last write still in place left
+ * it: the newest applied entry that wrote one wins.
+ */
+export function currentTaxLines(log: YnabWriteLogEntry[], budgetId: string | undefined): Map<string, { transactionId: string; amount: number }> {
+    const out = new Map<string, { transactionId: string; amount: number }>();
+    const live = log
+        .filter(e => e.budgetId === budgetId && (e.status === 'applied' || e.status === 'rollback-partial'))
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const e of live) for (const t of e.transactions) {
+        if (t.role === 'tax') out.set(t.accountId, { transactionId: t.id, amount: t.amount });
+    }
+    return out;
+}
+
+export interface RevaluationAccount {
+    destinationKey: string;
+    accountId: string;
+    accountName: string;
+    /** Gross value of what the account holds in YNAB (migrated shares). */
+    value: number;
+    latentTax: number;
+    balanceSeen: number;          // working balance read for the preview
+    taxSeen: number;              // the tool's latent-tax line in it (≤ 0)
+    /** The account without the tool's tax line: what the P/L is measured from. */
+    bookValue: number;
+    /** P/L to book (cleared): value − bookValue. */
+    delta: number;
+    /** The tax line becomes −latentTax. */
+    taxTarget: number;
+    taxLineId?: string;
+    memo: string;
+    taxMemo: string;
+    importId: string;
+    taxImportId: string;
+    /** Larger than a price move would explain: a transfer may be missing. Unticked by default. */
+    suspicious: boolean;
+    blocked?: string;
+}
+
+export interface RevaluationPreview {
+    entryId: string;
+    budgetId: string;
+    date: string;
+    accounts: RevaluationAccount[];
+    blockers: string[];
+}
+
+export interface RevaluationInput {
+    plan: TrackingPlan;
+    accounts: (TrackingAccountRef & { transferPayeeId?: string })[] | null;
+    config: YnabTrackingConfig;
+    budgetId: string;
+    entryId: string;
+    date: string;
+    log: YnabWriteLogEntry[];
+}
+
+const eu = (v: number, digits = 2) => v.toLocaleString('it-IT', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+export function buildRevaluationPreview(input: RevaluationInput): RevaluationPreview {
+    const { plan, accounts, config, budgetId, entryId, date, log } = input;
+    const blockers: string[] = [];
+    const preview: RevaluationPreview = { entryId, budgetId, date, accounts: [], blockers };
+    if (!accounts) blockers.push('YNAB accounts are not loaded.');
+    const budgetVerdict = checkYnabGuardBudget(config, budgetId);
+    if (!budgetVerdict.ok) blockers.push(budgetVerdict.message);
+    if (!plan.brokers.some(b => b.migrated)) blockers.push('Nothing is migrated yet: there is nothing in YNAB to revalue.');
+    if (blockers.length > 0) return preview;
+
+    const accountById = new Map((accounts ?? []).map(a => [a.id, a]));
+    const taxLines = currentTaxLines(log, budgetId);
+    const migrated = new Set(plan.brokers.filter(b => b.migrated).map(b => b.brokerId));
+    const dd = date.split('-').reverse().join('/');
+    let seq = 1;
+    for (const d of plan.destinations) {
+        if (d.kind !== 'goal' && d.kind !== 'portfolio' && d.kind !== 'pension') continue;
+        if (!d.accountId) continue;
+        const account = accountById.get(d.accountId);
+        const tax = taxLines.get(d.accountId);
+        if (!account || (!(d.migratedValue > 0) && !tax)) continue;
+        const taxSeen = tax?.amount ?? 0;
+        const bookValue = cents(account.balance - taxSeen);
+        const delta = cents(d.migratedValue - bookValue);
+        const taxTarget = cents(-d.migratedLatentTax);
+        if (Math.abs(delta) < 0.01 && Math.abs(taxTarget - taxSeen) < 0.01) continue;
+        const verdict = checkYnabWriteTarget(config, { budgetId, accountId: account.id, onBudget: account.onBudget, accountName: account.name });
+        const pieces = d.pieces.filter(p => migrated.has(p.brokerId));
+        const listed = pieces.slice(0, PIECES_IN_MEMO).map(p => `${p.label} ${qty(p.quantity)} q @ ${eu(p.value / p.quantity)}`);
+        const more = pieces.length > PIECES_IN_MEMO ? ` +${pieces.length - PIECES_IN_MEMO}` : '';
+        const memo = `${PRB_MEMO_PREFIX} Rivalutazione ${dd}${listed.length ? ` · ${listed.join(' · ')}${more}` : ''}`;
+        preview.accounts.push({
+            destinationKey: d.key,
+            accountId: account.id,
+            accountName: account.name,
+            value: d.migratedValue,
+            latentTax: d.migratedLatentTax,
+            balanceSeen: account.balance,
+            taxSeen,
+            bookValue,
+            delta,
+            taxTarget,
+            ...(tax ? { taxLineId: tax.transactionId } : {}),
+            memo: memo.length > MEMO_MAX ? `${memo.slice(0, MEMO_MAX - 1)}…` : memo,
+            taxMemo: `${PRB_MEMO_PREFIX} Tasse latenti su plusvalenza · ${dd}`,
+            importId: prbImportId(entryId, seq++),
+            taxImportId: prbImportId(entryId, seq++),
+            // Market moves rarely shift an account by more than a tenth in one go.
+            suspicious: Math.abs(delta) > Math.max(50, Math.abs(d.migratedValue) * 0.1),
+            ...(!verdict.ok ? { blocked: verdict.message } : {}),
+        });
+    }
+    if (preview.accounts.length === 0) blockers.push('Every account is already at its value: nothing to revalue.');
+    return preview;
+}
+
+/** The accounts picked in the preview, as a write plan. */
+export function revaluationWritePlan(preview: RevaluationPreview, selected: Set<string>): WritePlan {
+    const blockers = [...preview.blockers];
+    const ops: WriteOp[] = [];
+    const picked = preview.accounts.filter(a => selected.has(a.destinationKey) && !a.blocked);
+    if (picked.length === 0 && blockers.length === 0) blockers.push('Tick at least one account.');
+    for (const a of picked) {
+        if (Math.abs(a.delta) >= 0.01) ops.push({ kind: 'adjust', role: 'revalue', accountId: a.accountId, amount: a.delta, memo: a.memo, importId: a.importId });
+        if (Math.abs(a.taxTarget - a.taxSeen) >= 0.01) {
+            ops.push({ kind: 'tax', accountId: a.accountId, amount: a.taxTarget, memo: a.taxMemo, importId: a.taxImportId, existingId: a.taxLineId, previousAmount: a.taxSeen });
+        }
+    }
+    return {
+        entryId: preview.entryId,
+        kind: 'revaluation',
+        budgetId: preview.budgetId,
+        brokerId: '',
+        label: `Revaluation of ${picked.length} account${picked.length === 1 ? '' : 's'}`,
+        date: preview.date,
+        checks: picked.map(a => ({ accountId: a.accountId, name: a.accountName, balanceSeen: a.balanceSeen })),
+        createAccounts: [],
+        ops,
+        blockers,
+    };
+}
+
+export const executeRevaluation = (api: YnabWriteApi, preview: RevaluationPreview, selected: Set<string>, config: YnabTrackingConfig, hooks: ExecuteHooks) =>
+    executeWritePlan(api, revaluationWritePlan(preview, selected), config, hooks);

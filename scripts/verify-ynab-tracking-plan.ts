@@ -188,6 +188,17 @@ console.log('Reused account');
 const reused = buildTrackingPlan({ ...base, config: { ...config, destinationAccounts: { ...config.destinationAccounts, 'portfolio:safe': 'acc-bath' } } });
 check('one account for two destinations is flagged', reused.warnings.some(w => w.kind === 'account-reused'), true);
 
+console.log('Liquidity link and broker kind');
+const linkedToOwnCash = buildTrackingPlan({ ...base, liquidityMappings: { ...base.liquidityMappings, fin: { budgetId: 'budget', accountId: 'acc-fin' } } });
+check('cash read from the broker\'s own off-budget account keeps it type B', linkedToOwnCash.brokers.find(b => b.brokerId === 'fin')?.kind, 'B');
+check('its cash account stays among the accounts by purpose', linkedToOwnCash.destinations.some(d => d.key === 'cash:fin'), true);
+check('warned while the account still holds securities', linkedToOwnCash.warnings.some(w => w.kind === 'liquidity-on-mixed-account'), true);
+const afterMigration = buildTrackingPlan({ ...base, liquidityMappings: { ...base.liquidityMappings, fin: { budgetId: 'budget', accountId: 'acc-fin' } }, migratedBrokerIds: ['fin'] });
+check('no warning once migrated', afterMigration.warnings.some(w => w.kind === 'liquidity-on-mixed-account'), false);
+const offlineOwn = buildTrackingPlan({ ...base, accounts: undefined, liquidityMappings: { ...base.liquidityMappings, fin: { budgetId: 'budget', accountId: 'acc-fin' } } });
+check('accounts not loaded: the broker\'s own account still means type B', offlineOwn.brokers.find(b => b.brokerId === 'fin')?.kind, 'B');
+check('an on-budget link is type A', plan.brokers.find(b => b.brokerId === 'bank')?.kind, 'A');
+
 console.log('Stored config');
 check('malformed entries are dropped', normalizeYnabTrackingConfig({
     brokerSources: { fin: 'acc-fin', bad: 42, '': 'x' },

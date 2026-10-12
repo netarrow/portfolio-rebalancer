@@ -521,3 +521,25 @@ export async function createTrackingAccount(
         return { success: false, error: mapError(e) };
     }
 }
+
+// Changes some fields of an existing transaction (the tool's own latent-tax
+// line, updated in place at each revaluation). 404 = it was deleted in YNAB.
+export async function updateTransaction(
+    apiKey: string,
+    budgetId: string,
+    transactionId: string,
+    patch: Partial<Pick<YnabNewTransaction, 'amount' | 'memo' | 'date' | 'cleared'>>,
+): Promise<YnabApiResult<{ transaction?: YnabSavedTransaction; notFound: boolean }>> {
+    try {
+        const response = await axios.put(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/transactions/${encodeURIComponent(transactionId)}`,
+            { transaction: patch },
+            { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        const t: RawTransaction | undefined = response.data?.data?.transaction;
+        return { success: true, data: { transaction: t ? savedTransaction(t) : undefined, notFound: false } };
+    } catch (e) {
+        if (axios.isAxiosError(e) && e.response?.status === 404) return { success: true, data: { notFound: true } };
+        return { success: false, error: mapError(e) };
+    }
+}
