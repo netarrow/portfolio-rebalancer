@@ -6,7 +6,7 @@
 import type { Broker, Portfolio, Transaction, YnabGoal, YnabGoalAllocation, YnabGoalQuote, YnabTrackingConfig, YnabWriteLogEntry } from '../src/types';
 import type { YnabAccountSummary, YnabNewTransaction } from '../src/services/ynabApi';
 import { buildTrackingPlan, type TrackingPlanInput } from '../src/utils/ynabTrackingPlan';
-import { buildMigrationPreview, buildReassignmentPreview, executeMigration, executeReassignment, rollbackDependents, rollbackWriteEntry, suggestReassignments, type YnabWriteApi } from '../src/utils/ynabWriteBack';
+import { buildMigrationPreview, buildReassignmentPreview, buildRevaluationPreview, currentTaxLines, executeMigration, executeReassignment, executeRevaluation, migrationWritePlan, rollbackDependents, rollbackWriteEntry, suggestReassignments, type MigrationPreview, type YnabWriteApi } from '../src/utils/ynabWriteBack';
 
 let failures = 0;
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -17,7 +17,7 @@ const check = (label: string, actual: unknown, expected: unknown) => {
 };
 
 // ── A fake YNAB budget ───────────────────────────────────────────────
-interface FakeTx { id: string; accountId: string; amount: number; importId?: string; memo?: string; flag?: string; payeeName?: string; transferAccountId?: string; transferTransactionId?: string }
+interface FakeTx { id: string; accountId: string; amount: number; cleared?: string; importId?: string; memo?: string; flag?: string; payeeName?: string; transferAccountId?: string; transferTransactionId?: string }
 class FakeYnab implements YnabWriteApi {
     accounts = new Map<string, { id: string; name: string; onBudget: boolean; opening: number }>();
     txs = new Map<string, FakeTx>();
@@ -27,10 +27,11 @@ class FakeYnab implements YnabWriteApi {
     private n = 0;
     add(id: string, name: string, opening: number, onBudget = false) { this.accounts.set(id, { id, name, onBudget, opening: opening * 1000 }); }
     balance(id: string) { let b = this.accounts.get(id)!.opening; for (const t of this.txs.values()) if (t.accountId === id) b += t.amount; return b / 1000; }
+    cleared(id: string) { let b = this.accounts.get(id)!.opening; for (const t of this.txs.values()) if (t.accountId === id && t.cleared !== 'uncleared') b += t.amount; return b / 1000; }
     private summary(id: string): YnabAccountSummary {
         const a = this.accounts.get(id)!;
         const bal = Math.round(this.balance(id) * 1000);
-        return { id, name: a.name, type: 'otherAsset', onBudget: a.onBudget, balanceMilliunits: bal, clearedBalanceMilliunits: bal, transferPayeeId: `payee-${id}` };
+        return { id, name: a.name, type: 'otherAsset', onBudget: a.onBudget, balanceMilliunits: bal, clearedBalanceMilliunits: Math.round(this.cleared(id) * 1000), transferPayeeId: `payee-${id}` };
     }
     async listAccounts() { return { success: true, data: [...this.accounts.keys()].map(id => this.summary(id)) }; }
     async createTrackingAccount(name: string) {
@@ -47,18 +48,27 @@ class FakeYnab implements YnabWriteApi {
         for (const t of list) {
             if (t.import_id && [...this.txs.values()].some(x => x.accountId === t.account_id && x.importId === t.import_id)) { duplicateImportIds.push(t.import_id); continue; }
             const id = `tx-${++this.n}`;
-            const tx: FakeTx = { id, accountId: t.account_id, amount: t.amount, importId: t.import_id, memo: t.memo, flag: t.flag_color, payeeName: t.payee_name };
+            const tx: FakeTx = { id, accountId: t.account_id, amount: t.amount, cleared: t.cleared, importId: t.import_id, memo: t.memo, flag: t.flag_color, payeeName: t.payee_name };
             const toAccount = t.payee_id?.startsWith('payee-') ? t.payee_id.slice('payee-'.length) : undefined;
             if (toAccount) {
                 const otherId = `tx-${++this.n}`;
                 tx.transferAccountId = toAccount;
                 tx.transferTransactionId = otherId;
-                this.txs.set(otherId, { id: otherId, accountId: toAccount, amount: -t.amount, transferAccountId: t.account_id, transferTransactionId: id });
+                this.txs.set(otherId, { id: otherId, accountId: toAccount, amount: -t.amount, cleared: t.cleared, transferAccountId: t.account_id, transferTransactionId: id });
             }
             this.txs.set(id, tx);
             saved.push({ id, accountId: tx.accountId, amountMilliunits: tx.amount, importId: tx.importId, transferAccountId: tx.transferAccountId, transferTransactionId: tx.transferTransactionId });
         }
         return { success: true, data: { transactions: saved, duplicateImportIds } };
+    }
+    updates = 0;
+    async updateTransaction(id: string, patch: { amount?: number; memo?: string; date?: string }) {
+        this.writes++; this.updates++;
+        const t = this.txs.get(id);
+        if (!t) return { success: true, data: { notFound: true } };
+        if (patch.amount !== undefined) t.amount = patch.amount;
+        if (patch.memo !== undefined) t.memo = patch.memo;
+        return { success: true, data: { notFound: false, transaction: { id, accountId: t.accountId, amountMilliunits: t.amount } } };
     }
     async deleteTransaction(id: string) {
         this.writes++;
@@ -152,7 +162,7 @@ const run = async () => {
         now: () => '2026-10-12T10:00:00Z',
     });
     check('applied', [res.ok, res.entry.status, res.error ?? null], [true, 'applied', null]);
-    check('log saved before and after each write', log.map(e => e.status), ['pending', 'pending', 'pending', 'pending', 'applied']);
+    check('log saved before and after each write', log.map(e => e.status), ['pending', 'pending', 'pending', 'pending', 'pending', 'applied']);
     check('created accounts reported', created, ['portfolio:growth', 'portfolio:safe', 'goal:g-car']);
     const balances = () => Object.fromEntries([...y.accounts.values()].map(a => [a.name, y.balance(a.id)]));
     check('balances after the migration', balances(), {
@@ -316,7 +326,88 @@ const reassignments = async () => {
     check('ledger empty again', ledger.length, 0);
 };
 
-run().then(reassignments).then(() => {
+const revaluations = async () => {
+    let clock = 0;
+    const now = () => `2026-10-13T10:${String(clock++).padStart(2, '0')}:00Z`;
+    const y = fresh();
+    let config: YnabTrackingConfig = { ...baseConfig };
+    const ledger: YnabGoalQuote[] = [];
+    const log: YnabWriteLogEntry[] = [];
+    const keep = (e: YnabWriteLogEntry) => { const i = log.findIndex(x => x.id === e.id); if (i >= 0) log[i] = e; else log.push(e); };
+    const linkCreated = (key: string, a: { id: string }) => {
+        config = { ...config, guardAccountIds: [...config.guardAccountIds!, a.id], destinationAccounts: { ...config.destinationAccounts, [key]: a.id } };
+    };
+    const planAt = async (prices: Record<string, number>, migrated: string[]) => {
+        const res = await y.listAccounts();
+        const accounts = res.data!.map(a => ({ id: a.id, name: a.name, onBudget: a.onBudget, balance: a.balanceMilliunits / 1000, clearedBalance: a.clearedBalanceMilliunits / 1000, transferPayeeId: a.transferPayeeId }));
+        const md = Object.fromEntries(Object.entries(prices).map(([t, price]) => [t, { price, lastUpdated: '2026-10-13' }]));
+        const taxLineAmounts = Object.fromEntries([...currentTaxLines(log, 'budget')].map(([id, t]) => [id, t.amount]));
+        const plan = buildTrackingPlan({ portfolios, transactions, brokers, assetSettings: [], marketData: md, goals, allocations, virtualBonds: [], liquidityMappings: {}, config, accounts, budgetId: 'budget', migratedBrokerIds: migrated, goalQuotes: ledger, taxLineAmounts });
+        return { plan, accounts };
+    };
+    let { plan, accounts } = await planAt({ WORLD: 120, GOVB: 100 }, []);
+    const mig = buildMigrationPreview({ plan, brokerId: 'fin', accounts, config, budgetId: 'budget', entryId: 'mig00009', date: '2026-10-13' });
+    const migRes = await executeMigration(y, mig, config, { report: keep, onAccountCreated: linkCreated, now });
+    ledger.push(...mig.quotes.map(q => ({ ...q, entryId: migRes.entry.id, frozenAt: now() })));
+    const growthId = () => config.destinationAccounts['portfolio:growth'];
+
+    console.log('Revaluation: prices up');
+    ({ plan, accounts } = await planAt({ WORLD: 132, GOVB: 100 }, ['fin']));
+    const p1 = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'rev00001', date: '2026-10-13', log });
+    check('only the accounts whose value moved', p1.accounts.map(a => [a.destinationKey, a.delta, a.taxTarget, a.taxSeen]), [
+        ['goal:g-bath', 120, -83.2, 0], ['portfolio:growth', 480, -332.8, 0],
+    ]);
+    check('memo with units and prices', p1.accounts[0].memo, '[PRB] Rivalutazione 13/10/2026 · WORLD 10 q @ 132,00');
+    check('nothing suspicious after a price move', p1.accounts.map(a => a.suspicious), [false, false]);
+    const r1 = await executeRevaluation(y, p1, new Set(p1.accounts.map(a => a.destinationKey)), config, { report: keep, now });
+    check('applied: P/L cleared + one uncleared tax line each', [r1.ok, r1.entry.transactions.map(t => t.role).sort()], [true, ['revalue', 'revalue', 'tax', 'tax']]);
+    check('cleared = gross, working = net', [y.cleared('acc-bath'), y.balance('acc-bath'), y.cleared(growthId()), y.balance(growthId())], [1320, 1236.8, 5280, 4947.2]);
+    ({ plan, accounts } = await planAt({ WORLD: 132, GOVB: 100 }, ['fin']));
+    check('the page compares without the tax line: nothing left', plan.destinations.map(d => d.accountDifference), [0, 0, 0, 0, 0]);
+    const again = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-13' , log });
+    check('revaluing twice at the same prices does nothing', again.accounts.length, 0);
+
+    console.log('Revaluation: prices down, tax updated in place');
+    ({ plan, accounts } = await planAt({ WORLD: 126, GOVB: 100 }, ['fin']));
+    const taxIdBefore = currentTaxLines(log, 'budget').get('acc-bath')?.transactionId;
+    const p2 = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'rev00002', date: '2026-10-14', log });
+    check('P/L measured from the account without its tax line', p2.accounts.map(a => [a.destinationKey, a.bookValue, a.delta, a.taxTarget, a.taxSeen]), [
+        ['goal:g-bath', 1320, -60, -67.6, -83.2], ['portfolio:growth', 5280, -240, -270.4, -332.8],
+    ]);
+    const updatesBefore = y.updates;
+    const r2 = await executeRevaluation(y, p2, new Set(p2.accounts.map(a => a.destinationKey)), config, { report: keep, now });
+    check('the same tax line, updated in place', [r2.ok, y.updates - updatesBefore, currentTaxLines(log, 'budget').get('acc-bath')?.transactionId === taxIdBefore], [true, 2, true]);
+    check('balances after', [y.cleared('acc-bath'), y.balance('acc-bath')], [1260, 1192.4]);
+    check('one tax line per account in YNAB', [...y.txs.values()].filter(t => t.accountId === 'acc-bath' && t.cleared === 'uncleared').length, 1);
+
+    console.log('Revaluation: rollback');
+    check('the first waits for the second', rollbackDependents(log, 'rev00001').map(e => e.id), ['rev00002']);
+    await rollbackWriteEntry(y, log.find(e => e.id === 'rev00002')!, config, { report: keep, now });
+    check('second undone: tax line back to its previous amount, same line', [y.cleared('acc-bath'), y.balance('acc-bath'), currentTaxLines(log, 'budget').get('acc-bath')?.amount], [1320, 1236.8, -83.2]);
+    await rollbackWriteEntry(y, log.find(e => e.id === 'rev00001')!, config, { report: keep, now });
+    check('first undone: back to the migration', [y.balance('acc-bath'), y.balance(growthId()), currentTaxLines(log, 'budget').size], [1200, 4800, 0]);
+
+    console.log('Revaluation: a move bigger than the market');
+    y.txs.set('manual-1', { id: 'manual-1', accountId: 'acc-bath', amount: 500_000, cleared: 'uncleared' }); // a transfer the tool does not know about
+    ({ plan, accounts } = await planAt({ WORLD: 121, GOVB: 100 }, ['fin']));
+    const p3 = buildRevaluationPreview({ plan, accounts, config, budgetId: 'budget', entryId: 'rev00003', date: '2026-10-15', log });
+    check('flagged as suspicious, so left unticked', p3.accounts.find(a => a.destinationKey === 'goal:g-bath')?.suspicious, true);
+    const narrow = { ...config, guardAccountIds: config.guardAccountIds!.filter(id => id !== growthId()) };
+    const p4 = buildRevaluationPreview({ plan, accounts, config: narrow, budgetId: 'budget', entryId: 'rev00004', date: '2026-10-15', log });
+    check('an account outside the guard is shown but blocked', p4.accounts.find(a => a.destinationKey === 'portfolio:growth')?.blocked?.includes('not among'), true);
+    const early = buildRevaluationPreview({ plan: (await planAt({ WORLD: 121, GOVB: 100 }, [])).plan, accounts, config, budgetId: 'budget', entryId: 'x', date: '2026-10-15', log });
+    check('nothing to revalue before a migration', early.blockers.some(b => b.includes('Nothing is migrated')), true);
+
+    console.log('Migration where everything stays');
+    const staysOnly: MigrationPreview = {
+        entryId: 'stay0001', budgetId: 'budget', brokerId: 'pens', brokerName: 'Pension', date: '2026-10-15',
+        source: { accountId: 'acc-house', name: 'Pension', balanceSeen: 250000 }, realignment: 0, realignMemo: '', realignImportId: 'PRB:stay0001:0',
+        createAccounts: [], transfers: [], staysInPlace: [{ destinationKey: 'portfolio:pension', accountName: 'Pension', amount: 250000 }], quotes: [], blockers: [],
+    };
+    check('nothing to write, still a valid migration', migrationWritePlan(staysOnly).allowNoWrites, true);
+};
+
+run().then(reassignments).then(revaluations).then(() => {
     if (failures > 0) { console.log(`\n${failures} check(s) failed`); process.exit(1); }
     console.log('\nAll checks passed');
 });

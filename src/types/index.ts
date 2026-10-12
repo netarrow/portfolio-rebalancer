@@ -385,10 +385,17 @@ export interface YnabWriteLogTransaction {
   accountId: string;
   amount: number;                // €, signed as booked on accountId
   importId: string;
-  role: 'realign' | 'transfer';
+  // realign: balance set to the tool's value before a migration; transfer;
+  // revalue: the P/L of a revaluation (cleared); tax: the latent-tax line
+  // (uncleared), created once per account and then updated in place.
+  role: 'realign' | 'transfer' | 'revalue' | 'tax';
   destinationKey?: string;
   transferAccountId?: string;    // the other account of a transfer
   transferTransactionId?: string;// the other side of a transfer
+  // Set when the write updated an existing transaction instead of creating
+  // one: rolling back puts this amount back rather than deleting it.
+  previousAmount?: number;
+  updatedInPlace?: boolean;
 }
 
 export type YnabWriteLogStatus = 'pending' | 'applied' | 'failed' | 'rolled-back' | 'rollback-partial';
@@ -396,8 +403,9 @@ export type YnabWriteLogStatus = 'pending' | 'applied' | 'failed' | 'rolled-back
 export interface YnabWriteLogEntry {
   id: string;
   // 'migration' splits one broker account; 'reassignment' moves goal shares
-  // between accounts by purpose (goal → goal, portfolio → goal, goal → portfolio).
-  kind: 'migration' | 'reassignment';
+  // between accounts by purpose (goal → goal, portfolio → goal, goal → portfolio);
+  // 'revaluation' books the P/L since the last one and updates the latent tax.
+  kind: 'migration' | 'reassignment' | 'revaluation';
   budgetId: string;
   brokerId: string;              // the migrated broker; '' for a reassignment
   label: string;                 // e.g. "Migration of Broker X"

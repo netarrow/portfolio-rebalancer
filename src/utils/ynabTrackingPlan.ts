@@ -118,6 +118,13 @@ export interface TrackingDestination {
      * reassignment would move.
      */
     desiredValue: number;
+    /**
+     * The part of `value` already in YNAB: the pieces at migrated brokers.
+     * It is what a revaluation brings the account to (gross), with its own
+     * latent tax.
+     */
+    migratedValue: number;
+    migratedLatentTax: number;
     cost: number;
     latentTax: number;
     net: number;              // value − latentTax
@@ -190,7 +197,8 @@ export type TrackingWarningKind =
     | 'account-missing'       // a linked account is gone (closed/deleted)
     | 'guard'                 // the write guard does not allow this budget
     | 'account-not-allowed'   // a linked account is outside the write guard
-    | 'quote-exceeds-holding';// frozen shares claim more units than are held
+    | 'quote-exceeds-holding' // frozen shares claim more units than are held
+    | 'liquidity-on-mixed-account'; // liquidity read from an account still holding securities
 
 export interface TrackingWarning {
     kind: TrackingWarningKind;
@@ -237,6 +245,11 @@ export interface TrackingPlanInput {
      * migrated broker.
      */
     goalQuotes?: YnabGoalQuote[];
+    /**
+     * accountId -> amount of the tool's latent-tax line in it (≤ 0). Balances
+     * are compared without it: the value is gross, the tax is a line apart.
+     */
+    taxLineAmounts?: Record<string, number>;
 }
 
 export const quoteHoldingKey = (q: Pick<YnabGoalQuote, 'portfolioId' | 'brokerId' | 'ticker'>) =>
@@ -454,7 +467,20 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         const broker = brokerById.get(brokerId);
         const { included, excludedBy } = isBrokerIncluded(broker, config);
         includedBroker.set(brokerId, included);
-        const kind: TrackingBrokerKind = brokerId !== NO_BROKER_ID && input.liquidityMappings[brokerId] ? 'A' : 'B';
+        // Type A = its cash is an ON-budget account. A liquidity link to an
+        // off-budget account (the broker's own 💵 cash account, once migrated)
+        // keeps it type B: the cash still sits off budget.
+        const link = brokerId !== NO_BROKER_ID ? input.liquidityMappings[brokerId] : undefined;
+        const linkedAccount = link ? accountById.get(link.accountId) : undefined;
+        const ownAccounts = new Set([config.brokerSources[brokerId], config.destinationAccounts[cashDestinationKey(brokerId)]].filter(Boolean));
+        const kind: TrackingBrokerKind = !link ? 'B'
+            : linkedAccount ? (linkedAccount.onBudget ? 'A' : 'B')
+                : ownAccounts.has(link.accountId) ? 'B' : 'A';
+        if (link && kind === 'B' && config.brokerSources[brokerId] === link.accountId
+            && !(input.migratedBrokerIds ?? []).includes(brokerId)) {
+            warn('liquidity-on-mixed-account',
+                `${brokerName(brokerId)}'s liquidity is read from its YNAB account, which still holds securities too: the liquidity update would count them as cash. Link it after the migration, when only the cash stays there.`);
+        }
         const securities = holdings.filter(h => h.brokerId === brokerId).reduce((s, h) => s + h.value, 0);
         const cash = kind === 'B' && broker ? Math.max(0, broker.currentLiquidity ?? 0) : 0;
         const sourceAccountId = config.brokerSources[brokerId];
@@ -491,10 +517,10 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     tree.standalones.forEach(p => rootOf.set(p.id, { root: p, members: [p] }));
 
     const destinations = new Map<string, TrackingDestination>();
-    const destination = (key: string, init: () => Omit<TrackingDestination, 'value' | 'desiredValue' | 'cost' | 'latentTax' | 'net' | 'pieces'>) => {
+    const destination = (key: string, init: () => Omit<TrackingDestination, 'value' | 'desiredValue' | 'migratedValue' | 'migratedLatentTax' | 'cost' | 'latentTax' | 'net' | 'pieces'>) => {
         let d = destinations.get(key);
         if (!d) {
-            d = { ...init(), value: 0, desiredValue: 0, cost: 0, latentTax: 0, net: 0, pieces: [] };
+            d = { ...init(), value: 0, desiredValue: 0, migratedValue: 0, migratedLatentTax: 0, cost: 0, latentTax: 0, net: 0, pieces: [] };
             destinations.set(key, d);
         }
         return d;
@@ -513,6 +539,10 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         d.value += value;
         d.cost += cost;
         d.latentTax += latentTax;
+        if (migratedSet.has(h.brokerId)) {
+            d.migratedValue += value;
+            d.migratedLatentTax += latentTax;
+        }
     };
 
     // A portfolio bucket is "pension" when everything it holds sits at illiquid brokers.
@@ -611,13 +641,15 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
             ...d,
             value,
             desiredValue: cents(d.desiredValue),
+            migratedValue: cents(d.migratedValue),
+            migratedLatentTax: cents(d.migratedLatentTax),
             cost: cents(d.cost),
             latentTax,
             net: cents(value - latentTax),
             pieces: d.pieces.sort((a, b) => b.value - a.value),
             accountId,
             account,
-            accountDifference: account ? cents(value - account.balance) : undefined,
+            accountDifference: account ? cents(value - (account.balance - (input.taxLineAmounts?.[account.id] ?? 0))) : undefined,
         };
     }).sort((a, b) => kindOrder[a.kind] - kindOrder[b.kind] || a.baseName.localeCompare(b.baseName));
 
@@ -664,7 +696,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
             .filter(m => !m.done && m.sourceAccountId === d.accountId)
             .reduce((s, m) => s + m.transfers.filter(t => !t.staysInPlace).reduce((x, t) => x + t.amount, 0), 0);
         if (outflow > 0) {
-            d.accountDifference = cents(d.value - (d.account.balance - outflow));
+            d.accountDifference = cents(d.value - (d.account.balance - (input.taxLineAmounts?.[d.account.id] ?? 0) - outflow));
             d.sharesSourceAccount = true;
         }
     }
