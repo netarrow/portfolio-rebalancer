@@ -5,9 +5,9 @@
  * ("Broker X Investments" …). What the budget wants to show is what that money is
  * FOR, so the same value is re-cut into:
  *   🎯 one account per YNAB goal (or category) that investments cover;
- *   💼 one per portfolio — a parent and its children merged into one — holding
+ *   🏦 one per portfolio — a parent and its children merged into one — holding
  *      whatever no goal claims (long-term money included);
- *   🏦 the same, for a portfolio held only at illiquid brokers (pension funds);
+ *   🏛 the same, for a portfolio held only at illiquid brokers (pension funds);
  *   💵 the cash of a broker whose cash lives in YNAB off-budget, mixed with its
  *      securities, because it has no on-budget account of its own.
  *
@@ -52,8 +52,8 @@ type MarketData = Record<string, { price: number; lastUpdated: string }>;
 /** Account-name prefixes, so each kind of account reads at a glance in YNAB's sidebar. */
 export const TRACKING_PREFIX = {
     goal: '🎯',
-    portfolio: '💼',
-    pension: '🏦',
+    portfolio: '🏦',
+    pension: '🏛',
     'broker-cash': '💵',
 } as const;
 
@@ -145,8 +145,13 @@ export interface TrackingBroker {
     expected: number;         // securities + cash
     sourceAccountId?: string;
     sourceAccount?: TrackingAccountRef;
-    /** expected − the source account's working balance: what a realignment would book. */
+    /**
+     * expected − the source account's working balance: what a realignment would
+     * book. Once migrated, the account should only hold what stays in it.
+     */
     realignment?: number;
+    /** Its account has already been split by a write-back that is still in place. */
+    migrated: boolean;
 }
 
 export interface TrackingTransfer {
@@ -161,6 +166,8 @@ export interface TrackingMigration {
     sourceAccountId?: string;
     transfers: TrackingTransfer[];
     total: number;
+    /** Already applied to YNAB: shown for reference, not to be applied again. */
+    done: boolean;
 }
 
 export type TrackingWarningKind =
@@ -211,6 +218,8 @@ export interface TrackingPlanInput {
     accounts?: TrackingAccountRef[];
     /** Budget the accounts belong to (the primary one), checked against the write guard. */
     budgetId?: string;
+    /** Brokers whose account a still-applied write-back has already split. */
+    migratedBrokerIds?: string[];
 }
 
 export const NO_BROKER_ID = '';
@@ -392,6 +401,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
             sourceAccountId,
             sourceAccount,
             realignment: sourceAccount ? cents(securities + cash - sourceAccount.balance) : undefined,
+            migrated: (input.migratedBrokerIds ?? []).includes(brokerId),
         });
         if (brokerId === NO_BROKER_ID && securities > 0) {
             warn('no-broker', `${cents(securities)} € of holdings have no broker on their transactions: they cannot be traced to a YNAB account.`);
@@ -550,7 +560,13 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
             sourceAccountId: b.sourceAccountId,
             transfers,
             total: cents(transfers.reduce((s, t) => s + t.amount, 0)),
+            done: b.migrated,
         });
+        // After the split the broker account only keeps what stays in it.
+        if (b.migrated && b.sourceAccount) {
+            const stays = transfers.filter(t => t.staysInPlace).reduce((x, t) => x + t.amount, 0);
+            b.realignment = cents(stays - b.sourceAccount.balance);
+        }
     }
 
     // A destination that is also a broker's own account (its cash, or a
@@ -559,7 +575,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     for (const d of destinationList) {
         if (!d.account) continue;
         const outflow = migrations
-            .filter(m => m.sourceAccountId === d.accountId)
+            .filter(m => !m.done && m.sourceAccountId === d.accountId)
             .reduce((s, m) => s + m.transfers.filter(t => !t.staysInPlace).reduce((x, t) => x + t.amount, 0), 0);
         if (outflow > 0) {
             d.accountDifference = cents(d.value - (d.account.balance - outflow));

@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState, YnabTrackingConfig } from '../types';
+import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -42,6 +42,10 @@ export interface SyncPayload {
     // How the off-budget accounts are split by purpose (off-budget map). A
     // mapping of YNAB account ids, not a credential, so it travels.
     ynabTrackingConfig?: YnabTrackingConfig;
+    // Every write the tool made to YNAB (ids and amounts, to show and roll
+    // back) and the goal shares frozen by a migration.
+    ynabWriteLog?: YnabWriteLogEntry[];
+    ynabGoalQuotes?: YnabGoalQuote[];
     ynabGoalsGroupId?: string;
     ynabGoalsGroupName?: string;
     ynabLastGoalsSyncAt?: string;

@@ -375,6 +375,55 @@ export interface YnabTrackingConfig {
 
 export const EMPTY_YNAB_TRACKING_CONFIG: YnabTrackingConfig = { brokerSources: {}, destinationAccounts: {} };
 
+// ── YNAB write-back log ─────────────────────────────────────────────
+// Every write the tool makes to YNAB is recorded here, before and after it
+// happens, so it can be shown and rolled back. Kept with the other YNAB
+// mappings (local + backup/Azure): it holds YNAB ids and amounts, no credential.
+
+export interface YnabWriteLogTransaction {
+  id: string;                    // YNAB transaction id (the side the tool created)
+  accountId: string;
+  amount: number;                // €, signed as booked on accountId
+  importId: string;
+  role: 'realign' | 'transfer';
+  destinationKey?: string;
+  transferAccountId?: string;    // the other account of a transfer
+  transferTransactionId?: string;// the other side of a transfer
+}
+
+export type YnabWriteLogStatus = 'pending' | 'applied' | 'failed' | 'rolled-back' | 'rollback-partial';
+
+export interface YnabWriteLogEntry {
+  id: string;
+  kind: 'migration';
+  budgetId: string;
+  brokerId: string;
+  label: string;                 // e.g. "Migration of Broker X"
+  date: string;                  // date booked on the transactions, 'YYYY-MM-DD'
+  createdAt: string;
+  updatedAt: string;
+  status: YnabWriteLogStatus;
+  createdAccounts: { id: string; name: string; destinationKey: string }[];
+  transactions: YnabWriteLogTransaction[];
+  duplicateImportIds?: string[];
+  error?: string;
+  rolledBackAt?: string;
+}
+
+// A goal's share of one holding, frozen in units when the holding's broker is
+// migrated: from then on the goal's value follows the market (quantity × price)
+// instead of the euro amount of its allocation.
+export interface YnabGoalQuote {
+  entryId: string;               // write-log entry that froze it
+  goalId: string;
+  portfolioId: string;
+  brokerId: string;
+  ticker: string;
+  quantity: number;
+  cost: number;                  // € cost basis of that quantity
+  frozenAt: string;
+}
+
 // One row of the "update broker liquidity" preview. A row is one operation on
 // one broker: either its YNAB account balance (kind 'ynab') or the interest its
 // own remuneration plan has accrued (kind 'interest'). A broker with both

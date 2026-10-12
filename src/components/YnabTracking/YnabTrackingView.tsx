@@ -8,10 +8,13 @@ import {
     type TrackingDestinationKind,
 } from '../../utils/ynabTrackingPlan';
 import { checkYnabGuardBudget, checkYnabWriteTarget } from '../../utils/ynabWriteGuard';
+import MigrationModal from './MigrationModal';
+import Swal from 'sweetalert2';
 
 // The off-budget map: how the per-broker tracking accounts of the primary
-// budget would be re-cut by purpose. Preview only — the page reads the account
-// list from YNAB and never writes to it.
+// budget are re-cut by purpose. The page previews the split and migrates one
+// broker account at a time; the write itself goes through utils/ynabWriteBack
+// (guarded, confirmed, logged, reversible) via MigrationModal.
 
 const KIND_TITLE: Record<TrackingDestinationKind, string> = {
     goal: 'Goals and categories covered by investments',
@@ -70,7 +73,12 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         setYnabTrackingDestinationAccount,
         setYnabTrackingBrokerInclusion,
         people,
+        ynabMigratedBrokerIds,
+        ynabWriteLog,
+        rollbackYnabWrite,
+        ynabWriting,
     } = usePortfolio();
+    const [migrating, setMigrating] = useState<string | null>(null);
 
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const eur = useCallback((v: number) => new Intl.NumberFormat('en-IE', {
@@ -78,7 +86,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
     }).format(v), [currencyIso]);
     const signed = (v: number) => `${v > 0 ? '+' : ''}${eur(v)}`;
 
-    const [accounts, setAccounts] = useState<TrackingAccountRef[] | null>(null);
+    const [accounts, setAccounts] = useState<(TrackingAccountRef & { transferPayeeId?: string })[] | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [loadedAt, setLoadedAt] = useState<string | null>(null);
@@ -98,6 +106,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
             onBudget: a.onBudget,
             balance: a.balanceMilliunits / 1000,
             clearedBalance: a.clearedBalanceMilliunits / 1000,
+            transferPayeeId: a.transferPayeeId,
         })));
         setLoadedAt(new Date().toISOString());
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,8 +135,9 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         config: ynabTrackingConfig,
         accounts: accounts ?? undefined,
         budgetId: ynabConfig?.budgetId,
+        migratedBrokerIds: ynabMigratedBrokerIds,
     }), [portfolios, transactions, brokers, effectiveAssetSettings, marketData, ynabGoals, ynabGoalAllocations,
-        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId]);
+        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId, ynabMigratedBrokerIds]);
 
     // Write guard: the active budget must be the allowed one, and only the
     // off-budget accounts ticked in Settings can be linked.
@@ -161,6 +171,34 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         return offBudget.find(a => stripPrefix(a.name) === target) ?? null;
     };
 
+    const handleRollback = async (entryId: string) => {
+        const entry = ynabWriteLog.find(e => e.id === entryId);
+        if (!entry) return;
+        const confirm = await Swal.fire({
+            title: 'Roll back this write?',
+            html: `${entry.label}: ${entry.transactions.length} transaction(s) created by the tool will be deleted from YNAB, both sides of each transfer.`
+                + (entry.createdAccounts.length ? `<br/><br/>The ${entry.createdAccounts.length} account(s) it created stay in YNAB, empty: close them there if you no longer want them.` : ''),
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Roll back',
+            confirmButtonColor: '#d33',
+        });
+        if (!confirm.isConfirmed) return;
+        const res = await rollbackYnabWrite(entryId);
+        await loadAccounts();
+        if (res.ok) {
+            Swal.fire({
+                title: 'Rolled back',
+                html: res.accountsLeft && res.accountsLeft.length
+                    ? `Close these empty accounts in YNAB if you no longer want them:<br/><strong>${res.accountsLeft.map(a => a.name).join('<br/>')}</strong>`
+                    : 'Everything it wrote has been deleted.',
+                icon: 'success',
+            });
+        } else {
+            Swal.fire({ title: 'Rollback incomplete', text: res.error, icon: 'error' });
+        }
+    };
+
     const linkedCount = plan.destinations.filter(d => d.accountId).length;
     const toCreate = plan.destinations.length - linkedCount;
 
@@ -185,7 +223,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                     <h2 className="ytv-title">YNAB Off-budget</h2>
                     <div className="ytv-subtitle">
                         From one tracking account per broker to one per purpose.
-                        <span className="ytv-readonly">Preview only — nothing is written to YNAB</span>
+                        <span className="ytv-readonly">Writes to YNAB only after you confirm, inside the write guard</span>
                     </div>
                 </div>
                 <div className="ytv-load">
@@ -200,7 +238,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
 
             {!guard.ok ? (
                 <div className="ytv-guard ytv-guard-locked">
-                    <span>🛡 <strong>Linking is locked.</strong> {guard.message} Until then the figures below are a preview and no account can be linked.</span>
+                    <span>🛡 <strong>Linking is locked.</strong> {guard.message} Until then the figures below are a preview: no account can be linked and nothing can be migrated.</span>
                     {onNavigateToSettings && <button type="button" className="btn" onClick={onNavigateToSettings}>Open Settings</button>}
                 </div>
             ) : (
@@ -259,6 +297,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                     {b.illiquid && <span className="ytv-tag">illiquid</span>}
                                     {b.excludedBy === 'family' && <span className="ytv-tag">family</span>}
                                     {personName(b.ownerId) && <span className="ytv-tag">{personName(b.ownerId)}</span>}
+                                    {b.migrated && <span className="ytv-tag ytv-tag-done">✓ migrated</span>}
                                 </span>
                             </div>
                             <div className="ytv-cell">
@@ -392,10 +431,10 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
 
             {/* ── 3. Migration preview ───────────────────────────── */}
             <section className="ytv-section">
-                <h3 className="ytv-section-title">3 · Migration preview</h3>
+                <h3 className="ytv-section-title">3 · Migration</h3>
                 <p className="ytv-hint">
-                    The transfers that would empty each broker account into the accounts above. Tracking-to-tracking transfers: no category, no effect on Ready to Assign.
-                    A difference with YNAB is realigned first, so the split starts from the right figures.
+                    The transfers that empty each broker account into the accounts above. Tracking-to-tracking transfers: no category, no effect on Ready to Assign.
+                    A difference with YNAB is realigned first, so the split starts from the right figures. One broker at a time: <strong>Migrate</strong> shows the exact operations and writes only after you confirm.
                 </p>
                 {plan.migrations.length === 0 && <div className="ytv-muted">Nothing to migrate.</div>}
                 <div className="ytv-migrations">
@@ -403,12 +442,12 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                         const b = brokerById.get(m.brokerId);
                         const source = accountName(m.sourceAccountId);
                         return (
-                            <div key={m.brokerId || 'none'} className="ytv-migration">
+                            <div key={m.brokerId || 'none'} className={`ytv-migration${m.done ? ' ytv-migration-done' : ''}`}>
                                 <div className="ytv-migration-head">
-                                    <span className="ytv-strong">{b?.name}</span>
+                                    <span className="ytv-strong">{b?.name}{m.done && <span className="ytv-tag ytv-tag-done"> ✓ migrated</span>}</span>
                                     <span className="ytv-muted">from {source ? `“${source}”` : 'an account not linked yet'}</span>
                                 </div>
-                                {b?.realignment !== undefined && Math.abs(b.realignment) >= 0.01 && (
+                                {!m.done && b?.realignment !== undefined && Math.abs(b.realignment) >= 0.01 && (
                                     <div className="ytv-transfer ytv-transfer-realign">
                                         <span>Realign the balance first</span>
                                         <span className={b.realignment > 0 ? 'ytv-up' : 'ytv-down'}>{signed(b.realignment)}</span>
@@ -431,11 +470,62 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                     <span>Total</span>
                                     <span className="ytv-num">{eur(m.total)}</span>
                                 </div>
+                                {m.done ? (
+                                    <div className="ytv-muted ytv-small">Applied — see the write-back log to roll it back.</div>
+                                ) : (
+                                    <button
+                                        type="button"
+                                        className="btn btn-primary ytv-migrate"
+                                        onClick={() => setMigrating(m.brokerId)}
+                                        disabled={!guard.ok || !accounts || ynabWriting || !m.brokerId}
+                                        title={!guard.ok ? guard.message : undefined}
+                                    >Migrate…</button>
+                                )}
                             </div>
                         );
                     })}
                 </div>
             </section>
+
+            {/* ── 4. Write-back log ──────────────────────────────── */}
+            <section className="ytv-section">
+                <h3 className="ytv-section-title">4 · Write-back log</h3>
+                <p className="ytv-hint">Every write the tool made to YNAB. A rollback deletes the transactions it created, both sides of each transfer; accounts it created stay, empty, for you to close in YNAB.</p>
+                {ynabWriteLog.length === 0 && <div className="ytv-muted">Nothing written to YNAB yet.</div>}
+                <div className="ytv-list">
+                    {ynabWriteLog.map(e => {
+                        const canRollback = e.status === 'applied' || e.status === 'failed' || e.status === 'rollback-partial';
+                        return (
+                            <div key={e.id} className="ytv-log">
+                                <div className="ytv-cell">
+                                    <span className="ytv-strong">{e.label}</span>
+                                    <span className="ytv-muted ytv-small">
+                                        {new Date(e.createdAt).toLocaleString('en-IE')} · {e.transactions.length} transaction{e.transactions.length === 1 ? '' : 's'}
+                                        {e.createdAccounts.length > 0 && ` · ${e.createdAccounts.length} account${e.createdAccounts.length === 1 ? '' : 's'} created`}
+                                    </span>
+                                    {e.error && <span className="ytv-small ytv-down">{e.error}</span>}
+                                </div>
+                                <span className={`ytv-status ytv-status-${e.status}`}>{e.status.replace('-', ' ')}</span>
+                                <div className="ytv-cell ytv-log-action">
+                                    {canRollback && (
+                                        <button type="button" className="btn ytv-rollback" disabled={ynabWriting} onClick={() => handleRollback(e.id)}>Roll back</button>
+                                    )}
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </section>
+
+            {migrating !== null && (
+                <MigrationModal
+                    plan={plan}
+                    brokerId={migrating}
+                    accounts={accounts}
+                    format={eur}
+                    onClose={changed => { setMigrating(null); if (changed) void loadAccounts(); }}
+                />
+            )}
 
             <style>{`
                 .ytv-page { display: flex; flex-direction: column; gap: var(--space-6); }
@@ -520,9 +610,21 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 .ytv-transfer > span:first-child { min-width: 0; overflow-wrap: anywhere; }
                 .ytv-transfer-stay { color: var(--text-muted); }
                 .ytv-transfer-realign { padding-bottom: var(--space-2); border-bottom: 1px dashed var(--bg-surface); }
+                .ytv-migration-done { opacity: 0.7; }
+                .ytv-migrate { align-self: flex-start; margin-top: var(--space-2); }
+                .ytv-tag-done { background: rgba(16, 185, 129, 0.16); color: var(--color-success); }
+                .ytv-log { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--bg-surface); }
+                .ytv-log:last-child { border-bottom: none; }
+                .ytv-status { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; border-radius: 999px; padding: 0.15rem 0.6rem; background: var(--bg-surface); color: var(--text-secondary); white-space: nowrap; }
+                .ytv-status-applied { background: rgba(16, 185, 129, 0.16); color: var(--color-success); }
+                .ytv-status-failed, .ytv-status-rollback-partial { background: rgba(239, 68, 68, 0.14); color: var(--color-danger); }
+                .ytv-status-pending { background: rgba(245, 158, 11, 0.14); color: var(--color-warning); }
                 .ytv-transfer-total { padding-top: var(--space-2); border-top: 1px solid var(--bg-surface); font-weight: 600; }
 
                 @media (max-width: 900px) {
+                    .ytv-log { grid-template-columns: 1fr auto; }
+                    .ytv-log-action { grid-column: 1 / -1; align-items: flex-end; }
+                    .ytv-migrate, .ytv-rollback { min-height: 44px; }
                     .ytv-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
                     .ytv-head { display: none; }
                     .ytv-row { gap: var(--space-2) var(--space-3); padding: var(--space-3); }

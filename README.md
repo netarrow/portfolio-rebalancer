@@ -451,21 +451,30 @@ Sync a chosen "Investment Goals" YNAB category group and fund each goal from one
 
 ### YNAB Off-budget
 
-A preview of how the investments would read in YNAB by **purpose** rather than by broker: instead of one tracking account per broker ("Broker X Investments"), one per goal, one per portfolio and one for the cash a broker keeps off budget. **Read only** — the page loads the account list of the primary budget and never writes to YNAB.
+How the investments read in YNAB by **purpose** rather than by broker: instead of one tracking account per broker ("Broker X Investments"), one per goal, one per portfolio and one for the cash a broker keeps off budget. The page previews the split, then **migrates one broker account at a time** — the only place the app ever writes to YNAB, always behind an explicit confirmation and inside the [write guard](#settings).
 
 ![YNAB off-budget map](screenshots/ynab_offbudget.png)
 
 - **Accounts by purpose**, each with its expected balance:
   - 🎯 one per [YNAB goal](#ynab-goals) — or category — covered by investments: its share of the holdings it is allocated to, split across the brokers that hold them;
-  - 💼 one per portfolio, a **parent and its children merged** into one account: whatever no goal claims, long-term money included;
-  - 🏦 the same for a portfolio held only at illiquid brokers (a pension fund), which simply stays where it is;
+  - 🏦 one per portfolio, a **parent and its children merged** into one account: whatever no goal claims, long-term money included;
+  - 🏛 the same for a portfolio held only at illiquid brokers (a pension fund), which simply stays where it is;
   - 💵 the cash of a broker that has **no on-budget account** — cash and securities sit together off budget today, and the cash stays there.
 - **Brokers**: each is linked to the off-budget account that holds it in YNAB today. A broker whose cash is an on-budget account (the one linked for the liquidity sync) is type **A**: its off-budget account holds securities only. Otherwise it is type **B**. Family brokers are left out by default; any broker can be switched in or out.
 - **A goal's share** is read off its allocations: pinned to an asset or a group, from those holdings in that portfolio; on the whole portfolio, from all of it — pro rata to what each holding is worth, in units, so it follows the market from then on. A holding never gives away more than it is worth: over-claimed holdings scale their claims down, and the page says so.
 - **Latent tax**: the capital-gains tax on each account's gain today, at the asset's own rate — the figure that would sit as the uncleared part of the account.
 - **Checks**: the accounts add up to the securities plus the off-budget cash (*Balanced*); each broker account's YNAB balance is compared with the tool's value (*To realign*); a linked account that is on budget, missing, or linked twice is flagged, as is an allocation no holding backs.
-- **Migration preview**: per broker account, the tracking-to-tracking transfers that would empty it into the accounts above (no category, no effect on Ready to Assign) — the cash of a type-B broker and a pension fund *stay in place*.
-- **Write guard**: accounts can be linked only once [Settings](#settings) names the one budget allowed and ticks its off-budget accounts the tool may use. Until then — or while the active budget is another one — linking is locked. Every link is checked against the guard when it is made, and a link outside it is flagged; on-budget accounts and anything left unticked (a house, a car, a loan) are never offered. The same check is meant to gate any future write-back.
+- **Migration**: per broker account, the tracking-to-tracking transfers that empty it into the accounts above (no category, no effect on Ready to Assign) — the cash of a type-B broker and a pension fund *stay in place*. **Migrate…** opens the exact operations: a realignment of the broker account to the tool's value when YNAB differs, the tracking accounts to create (named with their prefix, editable), and one transfer per destination with its memo. Nothing is sent until the confirmation box is ticked.
+  - Before writing, YNAB is read again: if the broker account's balance moved since the preview, nothing is written.
+  - Every transaction carries the `[PRB]` memo prefix, the **purple** flag and an import id unique to the migration, so the tool's writes are easy to find in YNAB and a retried request cannot book them twice. The memo lists the holdings moved.
+  - Accounts created by a migration are added to the write guard and linked to their destination.
+  - The goal shares moved are **frozen in units** (quantity and cost of each holding), so from then on a goal's value follows the market rather than the euro amount of its allocation.
+  - A migrated broker is marked as such and cannot be migrated twice; its account is then compared with what stays in it.
+
+![Migrating one broker account](screenshots/ynab_offbudget_migrate.png)
+
+- **Write-back log**: every write the tool made, recorded before and after each step (so a migration interrupted halfway is still listed). **Roll back** deletes every transaction it created, both sides of each transfer, and releases its frozen shares; the accounts it created stay in YNAB, empty, to close by hand — the API cannot delete accounts. The log travels with the backup and Azure sync.
+- **Write guard**: accounts can be linked only once [Settings](#settings) names the one budget allowed and ticks its off-budget accounts the tool may use. Until then — or while the active budget is another one — linking and migrating are locked. Every link, every write and every rollback is checked against the guard; on-budget accounts and anything left unticked (a house, a car, a loan) are never offered nor written.
 
 <img src="screenshots/mobile_ynab_offbudget.png" alt="YNAB off-budget map on a phone" width="300">
 

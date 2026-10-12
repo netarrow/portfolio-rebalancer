@@ -1,16 +1,17 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import { checkYnabWriteTarget } from '../utils/ynabWriteGuard';
+import { executeMigration, rollbackWriteEntry, normalizeYnabWriteLog, normalizeYnabGoalQuotes, migratedBrokerIds, upsertWriteLogEntry, type MigrationPreview, type YnabWriteApi } from '../utils/ynabWriteBack';
 import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
 import { fetchAssetHistory } from '../services/marketData';
-import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, listAccounts as ynabListAccounts, listAccountsByBudget as ynabListAccountsByBudget, rollingMonthsIso, milliunitsToEur } from '../services/ynabApi';
+import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, listAccounts as ynabListAccounts, listAccountsByBudget as ynabListAccountsByBudget, rollingMonthsIso, milliunitsToEur, createTransactions as ynabCreateTransactions, deleteTransaction as ynabDeleteTransaction, createTrackingAccount as ynabCreateTrackingAccount } from '../services/ynabApi';
 import type { YnabBudgetSummary, YnabAccountSummary } from '../services/ynabApi';
 import { assignYnabAccountMapping, groupMappingsByBudget, normalizeYnabAccountMappings } from '../utils/ynabAccountMappings';
 import { computeBrokerAccrual, isRemunerationActive, todayIso as currentIsoDate } from '../utils/brokerRemuneration';
@@ -157,6 +158,14 @@ interface PortfolioContextType {
     // off-budget map may link and any write-back may touch.
     setYnabWriteGuardBudget: (budgetId: string | null) => void;
     setYnabWriteGuardAccounts: (accountIds: string[]) => void;
+    // Write-back: every write to YNAB, recorded before and after it happens,
+    // and the goal shares frozen in units by a migration.
+    ynabWriteLog: YnabWriteLogEntry[];
+    ynabGoalQuotes: YnabGoalQuote[];
+    ynabMigratedBrokerIds: string[];
+    executeYnabMigration: (preview: MigrationPreview) => Promise<{ ok: boolean; entry?: YnabWriteLogEntry; error?: string }>;
+    rollbackYnabWrite: (entryId: string) => Promise<{ ok: boolean; error?: string; accountsLeft?: { id: string; name: string }[] }>;
+    ynabWriting: boolean;
     // YNAB Goals (entità separata dai Goal manuali)
     ynabGoals: YnabGoal[];
     ynabGoalAllocations: YnabGoalAllocation[];
@@ -298,6 +307,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [ynabAccountMappings, setYnabAccountMappings] = useLocalStorage<YnabAccountMappings>('portfolio_ynab_account_mappings', {});
     const [storedYnabTrackingConfig, setYnabTrackingConfig] = useLocalStorage<YnabTrackingConfig>('portfolio_ynab_tracking_config', EMPTY_YNAB_TRACKING_CONFIG);
     const ynabTrackingConfig = useMemo(() => normalizeYnabTrackingConfig(storedYnabTrackingConfig), [storedYnabTrackingConfig]);
+    const [storedYnabWriteLog, setYnabWriteLog] = useLocalStorage<YnabWriteLogEntry[]>('portfolio_ynab_write_log', []);
+    const ynabWriteLog = useMemo(() => normalizeYnabWriteLog(storedYnabWriteLog), [storedYnabWriteLog]);
+    const [storedYnabGoalQuotes, setYnabGoalQuotes] = useLocalStorage<YnabGoalQuote[]>('portfolio_ynab_goal_quotes', []);
+    const ynabGoalQuotes = useMemo(() => normalizeYnabGoalQuotes(storedYnabGoalQuotes), [storedYnabGoalQuotes]);
+    const [ynabWriting, setYnabWriting] = useState(false);
     const [ynabSyncing, setYnabSyncing] = useState(false);
     const [brokerLiquiditySyncing, setBrokerLiquiditySyncing] = useState(false);
     const [ynabGoals, setYnabGoals] = useLocalStorage<YnabGoal[]>('portfolio_ynab_goals', []);
@@ -1030,6 +1044,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabMacroMappings,
                 ynabBudgetOwners,
                 ynabTrackingConfig,
+                ynabWriteLog,
+                ynabGoalQuotes,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -1061,7 +1077,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates, ynabMappings, ynabFundingSettings, ynabAccountMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabTrackingConfig, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabTrackingConfig, ynabWriteLog, ynabGoalQuotes, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -1087,6 +1103,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                         ynabGoalAllocations,
                         ynabBudgetOwners,
                         ynabTrackingConfig,
+                        ynabWriteLog,
+                        ynabGoalQuotes,
                         ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                         ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                         ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -2746,6 +2764,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const importedYnabAccountMappings: YnabAccountMappings =
                 normalizeYnabAccountMappings(data.ynabAccountMappings, ynabConfig?.budgetId);
             const importedYnabTrackingConfig: YnabTrackingConfig = normalizeYnabTrackingConfig(data.ynabTrackingConfig);
+            const importedYnabWriteLog: YnabWriteLogEntry[] = normalizeYnabWriteLog(data.ynabWriteLog);
+            const importedYnabGoalQuotes: YnabGoalQuote[] = normalizeYnabGoalQuotes(data.ynabGoalQuotes);
             const importedPacPlans: PacPlan[] = Array.isArray(data.pacPlans) ? data.pacPlans : [];
             const importedPacExecutions: PacExecution[] = Array.isArray(data.pacExecutions) ? data.pacExecutions : [];
             const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
@@ -2780,6 +2800,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             localStorage.setItem('portfolio_people', JSON.stringify(importedPeople));
             localStorage.setItem('portfolio_ynab_account_mappings', JSON.stringify(importedYnabAccountMappings));
             localStorage.setItem('portfolio_ynab_tracking_config', JSON.stringify(importedYnabTrackingConfig));
+            localStorage.setItem('portfolio_ynab_write_log', JSON.stringify(importedYnabWriteLog));
+            localStorage.setItem('portfolio_ynab_goal_quotes', JSON.stringify(importedYnabGoalQuotes));
             localStorage.setItem('portfolio_pac_plans', JSON.stringify(importedPacPlans));
             localStorage.setItem('portfolio_pac_executions', JSON.stringify(importedPacExecutions));
 
@@ -2810,6 +2832,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setPeople(importedPeople);
             setYnabAccountMappings(importedYnabAccountMappings);
             setYnabTrackingConfig(importedYnabTrackingConfig);
+            setYnabWriteLog(importedYnabWriteLog);
+            setYnabGoalQuotes(importedYnabGoalQuotes);
             setPacPlans(importedPacPlans);
             setPacExecutions(importedPacExecutions);
             if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
@@ -2851,6 +2875,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 ynabMacroMappings,
                 ynabBudgetOwners,
                 ynabTrackingConfig,
+                ynabWriteLog,
+                ynabGoalQuotes,
                 ynabGoalsGroupId: ynabConfig?.goalsGroupId,
                 ynabGoalsGroupName: ynabConfig?.goalsGroupName,
                 ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
@@ -3169,6 +3195,67 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             if (!cur.guardBudgetId) return cur;
             return { ...cur, guardAccountIds: [...new Set(accountIds)] };
         });
+    };
+
+    // ── Write-back (the only path to YNAB writes) ──────────────────────
+    const ynabMigratedBrokerIds = useMemo(
+        () => migratedBrokerIds(ynabWriteLog, ynabConfig?.budgetId),
+        [ynabWriteLog, ynabConfig?.budgetId],
+    );
+
+    const ynabWriteApi = (apiKey: string, budgetId: string): YnabWriteApi => ({
+        listAccounts: () => ynabListAccounts(apiKey, budgetId),
+        createTrackingAccount: name => ynabCreateTrackingAccount(apiKey, budgetId, name),
+        createTransactions: txs => ynabCreateTransactions(apiKey, budgetId, txs),
+        deleteTransaction: id => ynabDeleteTransaction(apiKey, budgetId, id),
+    });
+    const recordWrite = (entry: YnabWriteLogEntry) => setYnabWriteLog(prev => upsertWriteLogEntry(normalizeYnabWriteLog(prev), entry));
+
+    const executeYnabMigration = async (preview: MigrationPreview) => {
+        if (!ynabConfig?.apiKey || !ynabConfig.budgetId) return { ok: false, error: 'YNAB not configured.' };
+        if (preview.budgetId !== ynabConfig.budgetId) return { ok: false, error: 'The active budget changed since the preview.' };
+        if (ynabWriting) return { ok: false, error: 'Another write to YNAB is in progress.' };
+        setYnabWriting(true);
+        try {
+            const result = await executeMigration(ynabWriteApi(ynabConfig.apiKey, ynabConfig.budgetId), preview, ynabTrackingConfig, {
+                report: recordWrite,
+                // A destination the migration just created: allowed by the
+                // guard (it was created under confirmation) and linked to it.
+                onAccountCreated: (destinationKey, account) => setYnabTrackingConfig(prev => {
+                    const cur = normalizeYnabTrackingConfig(prev);
+                    return {
+                        ...cur,
+                        guardAccountIds: [...new Set([...(cur.guardAccountIds ?? []), account.id])],
+                        destinationAccounts: { ...cur.destinationAccounts, [destinationKey]: account.id },
+                    };
+                }),
+            });
+            if (result.ok) {
+                const frozenAt = new Date().toISOString();
+                setYnabGoalQuotes(prev => [
+                    ...normalizeYnabGoalQuotes(prev),
+                    ...preview.quotes.map(q => ({ ...q, entryId: result.entry.id, frozenAt })),
+                ]);
+            }
+            return { ok: result.ok, entry: result.entry, error: result.error };
+        } finally {
+            setYnabWriting(false);
+        }
+    };
+
+    const rollbackYnabWrite = async (entryId: string) => {
+        const entry = ynabWriteLog.find(e => e.id === entryId);
+        if (!entry) return { ok: false, error: 'Write not found in the log.' };
+        if (!ynabConfig?.apiKey) return { ok: false, error: 'YNAB not configured.' };
+        if (ynabWriting) return { ok: false, error: 'Another write to YNAB is in progress.' };
+        setYnabWriting(true);
+        try {
+            const result = await rollbackWriteEntry(ynabWriteApi(ynabConfig.apiKey, entry.budgetId), entry, ynabTrackingConfig, { report: recordWrite });
+            if (result.ok) setYnabGoalQuotes(prev => normalizeYnabGoalQuotes(prev).filter(q => q.entryId !== entryId));
+            return { ok: result.ok, error: result.error, accountsLeft: result.accountsLeft };
+        } finally {
+            setYnabWriting(false);
+        }
     };
 
     // Refresh the cached list of budgets reachable with the stored token, so the
@@ -3845,6 +3932,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabTrackingBrokerInclusion,
         setYnabWriteGuardBudget,
         setYnabWriteGuardAccounts,
+        ynabWriteLog,
+        ynabGoalQuotes,
+        ynabMigratedBrokerIds,
+        executeYnabMigration,
+        rollbackYnabWrite,
+        ynabWriting,
         refreshYnabBudgets,
         listYnabAccounts,
         prepareBrokerLiquiditySync,
