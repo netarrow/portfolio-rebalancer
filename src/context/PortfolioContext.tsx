@@ -37,6 +37,8 @@ const GROUP_RATIO_MIGRATION_KEY = 'portfolio_group_ratio_migrated_v2';
 import Swal from 'sweetalert2';
 import { encrypt, decrypt, uploadToAzure, downloadFromAzure } from '../services/azureSync';
 import type { AzureConfig, SyncPayload } from '../services/azureSync';
+import { backupStorageEntries, buildBackupData, parseBackupData, type BackupData, type ParsedBackup, type StoredBackupField } from '../utils/backupPayload';
+import { SecurityContext } from './SecurityContext';
 
 // Legacy Type for Migration
 type Target = AssetDefinition & { targetPercentage?: number };
@@ -91,6 +93,8 @@ interface PortfolioContextType {
     // Deprecated accessors for compatibility during transition
     targets: AssetDefinition[];
     importData: (data: any) => Promise<boolean>;
+    // Everything the JSON backup and the Azure blob carry (one definition).
+    getBackupData: () => BackupData;
     updateMarketData: (ticker: string, price: number, lastUpdated: string, extra?: { spreadPercent?: number | null; volatility?: number | null; indexationCoefficient?: number | null }) => void;
     addTransactionsBulk: (newTransactions: Transaction[], opts?: { skipCashSync?: boolean }) => void;
     /** brokerId → € added to currentLiquidity. Delta-based, so it composes. */
@@ -258,6 +262,8 @@ export const usePortfolio = () => {
 
 
 export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+    // Local encryption (SLE), so the restore persists exactly as useLocalStorage does.
+    const security = useContext(SecurityContext);
     const [transactions, setTransactions] = useLocalStorage<Transaction[]>('portfolio_transactions', []);
     const [assetSettings, setAssetSettings] = useLocalStorage<AssetDefinition[]>('portfolio_assets_v1', []);
     // Legacy state for migration only
@@ -1021,6 +1027,36 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return latest;
     }, [ynabSpendingHistory]);
 
+    // Everything a backup carries — the Azure blob and the JSON file alike, so
+    // the two cannot drift apart. Add a new persisted, synced state here (and
+    // to BackupData / parseBackupData / importData), not in each caller.
+    const currentBackupData = (): BackupData => buildBackupData({
+        transactions, assetSettings, portfolios, brokers, marketData,
+        assetAllocationSettings: storedAssetAllocationSettings,
+        macroAllocations, goalAllocations, goals,
+        aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
+        ynabMappings,
+        ynabFundingSettings,
+        ynabAccountMappings,
+        ynabGoals,
+        ynabGoalAllocations,
+        ynabMacroMappings,
+        ynabBudgetOwners,
+        ynabTrackingConfig,
+        ynabWriteLog,
+        ynabGoalQuotes,
+        ynabGoalsGroupId: ynabConfig?.goalsGroupId,
+        ynabGoalsGroupName: ynabConfig?.goalsGroupName,
+        ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
+        virtualBonds,
+        freeCommissionPeriods,
+        plannedForecastExpenses: storedPlannedForecastExpenses,
+        assetScope,
+        people,
+        pacPlans,
+        pacExecutions,
+    });
+
     // Debounced Azure sync: fires 3s after any portfolio data change
     // azureConfig intentionally excluded from deps to avoid loop when lastSync updates
     useEffect(() => {
@@ -1035,30 +1071,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             const payload: SyncPayload = {
                 syncVersion: 1,
                 syncTimestamp: new Date().toISOString(),
-                transactions, assetSettings, portfolios, brokers, marketData,
-                assetAllocationSettings: storedAssetAllocationSettings,
-                macroAllocations, goalAllocations, goals,
-                aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
-                ynabMappings,
-                ynabFundingSettings,
-                ynabAccountMappings,
-                ynabGoals,
-                ynabGoalAllocations,
-                ynabMacroMappings,
-                ynabBudgetOwners,
-                ynabTrackingConfig,
-                ynabWriteLog,
-                ynabGoalQuotes,
-                ynabGoalsGroupId: ynabConfig?.goalsGroupId,
-                ynabGoalsGroupName: ynabConfig?.goalsGroupName,
-                ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
-                virtualBonds,
-                freeCommissionPeriods,
-                plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
-                assetScope,
-                people,
-                pacPlans,
-                pacExecutions,
+                ...currentBackupData(),
             };
             try {
                 setAzureSyncing(true);
@@ -1095,29 +1108,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     const initPayload: SyncPayload = {
                         syncVersion: 1,
                         syncTimestamp: new Date().toISOString(),
-                        transactions, assetSettings, portfolios, brokers, marketData,
-                        assetAllocationSettings: storedAssetAllocationSettings,
-                        macroAllocations, goalAllocations, goals,
-                        aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
-                        ynabMappings,
-                        ynabFundingSettings,
-                        ynabAccountMappings,
-                        ynabGoals,
-                        ynabGoalAllocations,
-                        ynabBudgetOwners,
-                        ynabTrackingConfig,
-                        ynabWriteLog,
-                        ynabGoalQuotes,
-                        ynabGoalsGroupId: ynabConfig?.goalsGroupId,
-                        ynabGoalsGroupName: ynabConfig?.goalsGroupName,
-                        ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
-                        virtualBonds,
-                        freeCommissionPeriods,
-                        plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
-                        assetScope,
-                        people,
-                        pacPlans,
-                        pacExecutions,
+                        ...currentBackupData(),
                     };
                     const encrypted = await encrypt(JSON.stringify(initPayload), config.passphrase);
                     await uploadToAzure(config.sasUrl, encrypted);
@@ -2713,138 +2704,70 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setOldTargets([]);
     };
 
+    // Restores a backup (JSON file or decrypted Azure payload). The core fields
+    // always replace the local ones; any other field the backup does not carry
+    // (an older file or blob, written before the field existed) keeps its local
+    // value rather than being wiped — so restoring an old backup never erases
+    // YNAB mappings, virtual bonds or planner settings it never knew about.
     const importData = async (data: any): Promise<boolean> => {
         try {
-            // Basic Validation
-            if (!Array.isArray(data.transactions) || !Array.isArray(data.assetSettings)) {
-                throw new Error('Invalid data format');
+            const parsed = parseBackupData(data, ynabConfig?.budgetId);
+
+            // Write the storage first to guarantee persistence regardless of
+            // React effect scheduling or migration effects ordering — encrypted
+            // when local encryption is on, exactly as useLocalStorage would.
+            const persist = (key: string, value: unknown) => {
+                const json = JSON.stringify(value);
+                if (security?.sleEnabled && !security.isLocked) security.writeEncryptedKey(key, json);
+                else localStorage.setItem(key, json);
+            };
+            // One setter per restored field: the mapped type makes a field
+            // added to the backup without a setter here a compile error.
+            const setters: { [K in StoredBackupField]-?: (v: Exclude<ParsedBackup[K], undefined>) => void } = {
+                transactions: setTransactions,
+                assetSettings: setAssetSettings,
+                portfolios: setPortfolios,
+                brokers: setBrokers,
+                marketData: setMarketData,
+                assetAllocationSettings: setStoredAssetAllocationSettings,
+                macroAllocations: setMacroAllocations,
+                goalAllocations: setGoalAllocations,
+                goals: setGoals,
+                aggregateExcludedTickers: setAggregateExcludedTickers,
+                goalModeTargets: setGoalModeTargets,
+                goalFlowPortfolioStates: setGoalFlowPortfolioStates,
+                ynabMappings: setYnabMappings,
+                ynabFundingSettings: setYnabFundingSettings,
+                ynabAccountMappings: setYnabAccountMappings,
+                ynabGoals: setYnabGoals,
+                ynabGoalAllocations: setYnabGoalAllocations,
+                ynabMacroMappings: setYnabMacroMappings,
+                ynabBudgetOwners: setYnabBudgetOwners,
+                ynabTrackingConfig: setYnabTrackingConfig,
+                ynabWriteLog: setYnabWriteLog,
+                ynabGoalQuotes: setYnabGoalQuotes,
+                virtualBonds: setVirtualBonds,
+                freeCommissionPeriods: setFreeCommissionPeriods,
+                plannedForecastExpenses: setStoredPlannedForecastExpenses,
+                assetScope: setAssetScope,
+                people: setPeople,
+                pacPlans: setPacPlans,
+                pacExecutions: setPacExecutions,
+            };
+            for (const [field, key, value] of backupStorageEntries(parsed)) {
+                persist(key, value);
+                (setters[field] as (v: unknown) => void)(value);
             }
-
-            const transactions = data.transactions || [];
-            const assetSettings = data.assetSettings || [];
-            const portfolios = data.portfolios || [];
-            const brokers = data.brokers || [];
-            const marketData = data.marketData || {};
-            const assetAllocationSettings = normalizeAssetAllocationSettings(data.assetAllocationSettings);
-            const macroAllocations = data.macroAllocations || {};
-            const goalAllocations = data.goalAllocations || {};
-            const goals = data.goals || [];
-            const aggregateExcludedTickers = Array.isArray(data.aggregateExcludedTickers) ? data.aggregateExcludedTickers : [];
-            const goalModeTargets = (data.goalModeTargets && typeof data.goalModeTargets === 'object') ? data.goalModeTargets : {};
-            const goalFlowPortfolioStates = (data.goalFlowPortfolioStates && typeof data.goalFlowPortfolioStates === 'object') ? data.goalFlowPortfolioStates : {};
-            const importedYnabMappings: YnabCategoryMapping[] = Array.isArray(data.ynabMappings) ? data.ynabMappings : [];
-            // Absent in older backups: fall back to the defaults rather than an
-            // empty object, which would leave the funding plan without a source field.
-            const importedYnabFundingSettings: YnabFundingSettings = (data.ynabFundingSettings && typeof data.ynabFundingSettings === 'object')
-                ? { ...DEFAULT_YNAB_FUNDING_SETTINGS, ...data.ynabFundingSettings }
-                : DEFAULT_YNAB_FUNDING_SETTINGS;
-            const importedYnabGoals: YnabGoal[] = Array.isArray(data.ynabGoals) ? data.ynabGoals : [];
-            const importedYnabGoalAllocations: YnabGoalAllocation[] = Array.isArray(data.ynabGoalAllocations) ? data.ynabGoalAllocations : [];
-            const importedYnabMacroMappings: YnabMacroMappings = (data.ynabMacroMappings && typeof data.ynabMacroMappings === 'object')
-                ? { groups: data.ynabMacroMappings.groups ?? {}, categories: data.ynabMacroMappings.categories ?? {} }
-                : { groups: {}, categories: {} };
-            const importedYnabBudgetOwners: Record<string, string> =
-                (data.ynabBudgetOwners && typeof data.ynabBudgetOwners === 'object' && !Array.isArray(data.ynabBudgetOwners))
-                    ? Object.fromEntries(
-                        Object.entries(data.ynabBudgetOwners as Record<string, unknown>)
-                            .filter(([budgetId, owner]) => !!budgetId && typeof owner === 'string' && owner.length > 0)
-                    ) as Record<string, string>
-                    : {};
-            const importedVirtualBonds: VirtualBond[] = Array.isArray(data.virtualBonds) ? data.virtualBonds : [];
-            const importedFreeCommissionPeriods: FreeCommissionPeriod[] = Array.isArray(data.freeCommissionPeriods) ? data.freeCommissionPeriods : [];
-            // null (not []) when absent from the backup so the auto-seed re-runs
-            const importedPlannedForecastExpenses: PlannedForecastExpense[] | null = Array.isArray(data.plannedForecastExpenses) ? data.plannedForecastExpenses : null;
-            const importedAssetScope: AssetScope = (data.assetScope && typeof data.assetScope === 'object')
-                ? {
-                    includeFamily: data.assetScope.includeFamily !== false,
-                    includeIlliquid: data.assetScope.includeIlliquid !== false,
-                    excludedPersonIds: Array.isArray(data.assetScope.excludedPersonIds) ? data.assetScope.excludedPersonIds : [],
-                }
-                : { includeFamily: true, includeIlliquid: true, excludedPersonIds: [] };
-            const importedPeople: Person[] = Array.isArray(data.people) ? data.people : [];
-            // Backups/payloads written before mappings were budget-qualified hold
-            // bare account ids; attach them to the budget configured here.
-            const importedYnabAccountMappings: YnabAccountMappings =
-                normalizeYnabAccountMappings(data.ynabAccountMappings, ynabConfig?.budgetId);
-            const importedYnabTrackingConfig: YnabTrackingConfig = normalizeYnabTrackingConfig(data.ynabTrackingConfig);
-            const importedYnabWriteLog: YnabWriteLogEntry[] = normalizeYnabWriteLog(data.ynabWriteLog);
-            const importedYnabGoalQuotes: YnabGoalQuote[] = normalizeYnabGoalQuotes(data.ynabGoalQuotes);
-            const importedPacPlans: PacPlan[] = Array.isArray(data.pacPlans) ? data.pacPlans : [];
-            const importedPacExecutions: PacExecution[] = Array.isArray(data.pacExecutions) ? data.pacExecutions : [];
-            const importedYnabGoalsGroupId: string | undefined = typeof data.ynabGoalsGroupId === 'string' ? data.ynabGoalsGroupId : undefined;
-            const importedYnabGoalsGroupName: string | undefined = typeof data.ynabGoalsGroupName === 'string' ? data.ynabGoalsGroupName : undefined;
-            const importedYnabLastGoalsSyncAt: string | undefined = typeof data.ynabLastGoalsSyncAt === 'string' ? data.ynabLastGoalsSyncAt : undefined;
-
-            // Write directly to localStorage first to guarantee persistence
-            // regardless of React effect scheduling or migration effects ordering
-            localStorage.setItem('portfolio_transactions', JSON.stringify(transactions));
-            localStorage.setItem('portfolio_assets_v1', JSON.stringify(assetSettings));
-            localStorage.setItem('portfolio_list', JSON.stringify(portfolios));
-            localStorage.setItem('portfolio_brokers', JSON.stringify(brokers));
-            localStorage.setItem('portfolio_market_data', JSON.stringify(marketData));
-            localStorage.setItem('portfolio_asset_allocation_v1', JSON.stringify(assetAllocationSettings));
             localStorage.removeItem('portfolio_global_rebalancing_v1');
-            localStorage.setItem('portfolio_macro_targets', JSON.stringify(macroAllocations));
-            localStorage.setItem('portfolio_goal_targets', JSON.stringify(goalAllocations));
-            localStorage.setItem('portfolio_goals', JSON.stringify(goals));
-            localStorage.setItem('portfolio_targets_v2', JSON.stringify([]));
-            localStorage.setItem('aggregate-excluded-tickers', JSON.stringify(aggregateExcludedTickers));
-            localStorage.setItem('goal_mode_targets', JSON.stringify(goalModeTargets));
-            localStorage.setItem('goal_flow_portfolio_states', JSON.stringify(goalFlowPortfolioStates));
-            localStorage.setItem('portfolio_ynab_mappings', JSON.stringify(importedYnabMappings));
-            localStorage.setItem('portfolio_ynab_goals', JSON.stringify(importedYnabGoals));
-            localStorage.setItem('portfolio_ynab_goal_allocations', JSON.stringify(importedYnabGoalAllocations));
-            localStorage.setItem('portfolio_ynab_macro_mappings', JSON.stringify(importedYnabMacroMappings));
-            localStorage.setItem('portfolio_ynab_budget_owners', JSON.stringify(importedYnabBudgetOwners));
-            localStorage.setItem('portfolio_virtual_bonds', JSON.stringify(importedVirtualBonds));
-            localStorage.setItem('portfolio_free_commissions', JSON.stringify(importedFreeCommissionPeriods));
-            localStorage.setItem('portfolio_forecast_planned_expenses', JSON.stringify(importedPlannedForecastExpenses));
-            localStorage.setItem('portfolio_asset_scope', JSON.stringify(importedAssetScope));
-            localStorage.setItem('portfolio_people', JSON.stringify(importedPeople));
-            localStorage.setItem('portfolio_ynab_account_mappings', JSON.stringify(importedYnabAccountMappings));
-            localStorage.setItem('portfolio_ynab_tracking_config', JSON.stringify(importedYnabTrackingConfig));
-            localStorage.setItem('portfolio_ynab_write_log', JSON.stringify(importedYnabWriteLog));
-            localStorage.setItem('portfolio_ynab_goal_quotes', JSON.stringify(importedYnabGoalQuotes));
-            localStorage.setItem('portfolio_pac_plans', JSON.stringify(importedPacPlans));
-            localStorage.setItem('portfolio_pac_executions', JSON.stringify(importedPacExecutions));
-
-            // Then update React state
-            setTransactions(transactions);
-            setAssetSettings(assetSettings);
-            setPortfolios(portfolios);
-            setBrokers(brokers);
-            setMarketData(marketData);
-            setStoredAssetAllocationSettings(assetAllocationSettings);
-            setMacroAllocations(macroAllocations);
-            setGoalAllocations(goalAllocations);
-            setGoals(goals);
+            persist('portfolio_targets_v2', []);
             setOldTargets([]);
-            setAggregateExcludedTickers(aggregateExcludedTickers);
-            setGoalModeTargets(goalModeTargets);
-            setGoalFlowPortfolioStates(goalFlowPortfolioStates);
-            setYnabMappings(importedYnabMappings);
-            setYnabFundingSettings(importedYnabFundingSettings);
-            setYnabGoals(importedYnabGoals);
-            setYnabGoalAllocations(importedYnabGoalAllocations);
-            setYnabMacroMappings(importedYnabMacroMappings);
-            setYnabBudgetOwners(importedYnabBudgetOwners);
-            setVirtualBonds(importedVirtualBonds);
-            setFreeCommissionPeriods(importedFreeCommissionPeriods);
-            setStoredPlannedForecastExpenses(importedPlannedForecastExpenses);
-            setAssetScope(importedAssetScope);
-            setPeople(importedPeople);
-            setYnabAccountMappings(importedYnabAccountMappings);
-            setYnabTrackingConfig(importedYnabTrackingConfig);
-            setYnabWriteLog(importedYnabWriteLog);
-            setYnabGoalQuotes(importedYnabGoalQuotes);
-            setPacPlans(importedPacPlans);
-            setPacExecutions(importedPacExecutions);
-            if (importedYnabGoalsGroupId !== undefined || importedYnabGoalsGroupName !== undefined || importedYnabLastGoalsSyncAt !== undefined) {
+            const { ynabGoalsGroupId, ynabGoalsGroupName, ynabLastGoalsSyncAt } = parsed;
+            if (ynabGoalsGroupId !== undefined || ynabGoalsGroupName !== undefined || ynabLastGoalsSyncAt !== undefined) {
                 setYnabConfigState(prev => prev ? {
                     ...prev,
-                    goalsGroupId: importedYnabGoalsGroupId ?? prev.goalsGroupId,
-                    goalsGroupName: importedYnabGoalsGroupName ?? prev.goalsGroupName,
-                    lastGoalsSyncAt: importedYnabLastGoalsSyncAt ?? prev.lastGoalsSyncAt,
+                    goalsGroupId: ynabGoalsGroupId ?? prev.goalsGroupId,
+                    goalsGroupName: ynabGoalsGroupName ?? prev.goalsGroupName,
+                    lastGoalsSyncAt: ynabLastGoalsSyncAt ?? prev.lastGoalsSyncAt,
                 } : prev);
             }
 
@@ -2866,30 +2789,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             // local-only, with its own export/import JSON in Settings.
             const payload: SyncPayload = {
                 syncVersion: 1, syncTimestamp: new Date().toISOString(),
-                transactions, assetSettings, portfolios, brokers, marketData,
-                assetAllocationSettings: storedAssetAllocationSettings,
-                macroAllocations, goalAllocations, goals,
-                aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates,
-                ynabMappings,
-                ynabFundingSettings,
-                ynabAccountMappings,
-                ynabGoals,
-                ynabGoalAllocations,
-                ynabMacroMappings,
-                ynabBudgetOwners,
-                ynabTrackingConfig,
-                ynabWriteLog,
-                ynabGoalQuotes,
-                ynabGoalsGroupId: ynabConfig?.goalsGroupId,
-                ynabGoalsGroupName: ynabConfig?.goalsGroupName,
-                ynabLastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
-                virtualBonds,
-                freeCommissionPeriods,
-                plannedForecastExpenses: storedPlannedForecastExpenses ?? undefined,
-                assetScope,
-                people,
-                pacPlans,
-                pacExecutions,
+                ...currentBackupData(),
             };
             const payloadJson = JSON.stringify(payload);
             const encrypted = await encrypt(payloadJson, config.passphrase);
@@ -3963,6 +3863,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateLiquidityTarget,
         resetAssetAllocationSettings,
         importData,
+        getBackupData: currentBackupData,
         updateMarketData,
         addTransactionsBulk,
         adjustBrokerLiquidity,

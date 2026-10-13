@@ -507,7 +507,7 @@ The control room for data, sync, price refresh and integrations.
 
 ![Settings — YNAB write guard](screenshots/settings_ynab_write_guard.png)
 
-- **Data Management** — JSON backup / restore of all local data (plaintext).
+- **Data Management** — JSON backup / restore (plaintext). The file carries exactly what the Azure sync carries — portfolios, transactions, targets, goals, virtual bonds, PAC plans, people, scope and planner settings, and every YNAB mapping, goal, write-back log and frozen share — and nothing local-only (credentials, price history, YNAB spending history). Restoring an older backup only replaces what that file carries: anything it predates (e.g. YNAB mappings in a pre-v7 file) keeps its current value instead of being wiped. With Azure sync on, the restored data also replaces the Azure copy a few seconds later — the restore dialog says so.
 - **Price History** — a *separate* backup for the daily price-history series; **Update History** backfills each asset from its first purchase date.
 - **Cloud Sync (Azure)** — optional encrypted Blob sync: data is encrypted with AES-256-GCM in the browser before upload, so Azure only ever stores an opaque blob.
 

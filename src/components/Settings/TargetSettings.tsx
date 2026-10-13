@@ -11,6 +11,7 @@ import PrivateTierPriceCard from './PrivateTierPriceCard';
 import FreeCommissionCard from './FreeCommissionCard';
 import PeopleCard from './PeopleCard';
 import YnabWriteGuardCard from './YnabWriteGuardCard';
+import { BACKUP_VERSION } from '../../utils/backupPayload';
 const TargetSettings: React.FC = () => {
 
     // ... (existing imports)
@@ -20,20 +21,9 @@ const TargetSettings: React.FC = () => {
         assets,
         resetPortfolio,
         loadMockData,
-        // Get all state for backup
-        transactions,
-        portfolios,
         brokers,
-        marketData,
-        assetAllocationSettings,
-        macroAllocations,
-        goalAllocations,
-        goals,
-        freeCommissionPeriods,
-        plannedForecastExpenses,
-        people,
-        pacPlans,
-        pacExecutions,
+        // Backup / restore (the same data the Azure sync carries)
+        getBackupData,
         importData,
         // Price history (separate backup JSON, local-only)
         priceHistory,
@@ -198,27 +188,13 @@ const TargetSettings: React.FC = () => {
     };
 
     const handleBackup = () => {
+        // Built by the same function as the Azure payload, so the file carries
+        // every synced state. v7 adds the YNAB, virtual-bond and planner fields
+        // v6 lacked; older files still restore (missing fields stay as they are).
         const backupData = {
-            // v6 makes broker↔YNAB account mappings budget-qualified (v5 stored a
-            // bare account id); older backups restore fine, since missing fields
-            // default and v5 mappings are attached to the configured budget.
-            version: 6,
+            version: BACKUP_VERSION,
             timestamp: new Date().toISOString(),
-            transactions,
-            assetSettings,
-            portfolios,
-            brokers,
-            marketData,
-            assetAllocationSettings,
-            macroAllocations,
-            goalAllocations,
-            goals,
-            freeCommissionPeriods,
-            plannedForecastExpenses,
-            people,
-            ynabAccountMappings,
-            pacPlans,
-            pacExecutions
+            ...getBackupData(),
         };
 
         const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
@@ -242,9 +218,13 @@ const TargetSettings: React.FC = () => {
                 const content = e.target?.result as string;
                 const data = JSON.parse(content);
 
+                // With Azure sync on, the restored data is what the next debounced
+                // sync uploads: say so up front, since it replaces the Azure copy.
+                const azureOn = azureConfig.enabled && !!azureConfig.sasUrl && !!azureConfig.passphrase;
                 Swal.fire({
                     title: 'Restore Backup?',
-                    text: "This will overwrite ALL current data with the backup. This action cannot be undone!",
+                    text: 'This will overwrite ALL current data with the backup. This action cannot be undone!'
+                        + (azureOn ? ' Azure sync is on: the restored data will also replace the Azure copy in a few seconds.' : ''),
                     icon: 'warning',
                     showCancelButton: true,
                     confirmButtonColor: '#3085d6',
@@ -256,7 +236,8 @@ const TargetSettings: React.FC = () => {
                         if (success) {
                             Swal.fire(
                                 'Restored!',
-                                'Your data has been restored successfully.',
+                                'Your data has been restored successfully.'
+                                    + (azureOn ? ' The Azure copy is being updated.' : ''),
                                 'success'
                             );
                         } else {
