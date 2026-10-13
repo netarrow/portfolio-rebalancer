@@ -168,7 +168,12 @@ async function scrollAndShoot(page, base) {
 }
 
 (async () => {
-  const browser = await puppeteer.launch({ headless: 'new', defaultViewport: VIEW });
+  // PUPPETEER_NO_SANDBOX=1 when running as root (containers, CI).
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    defaultViewport: VIEW,
+    args: process.env.PUPPETEER_NO_SANDBOX ? ['--no-sandbox'] : [],
+  });
   const page = await browser.newPage();
   await page.setViewport(VIEW);
 
@@ -1010,11 +1015,62 @@ async function scrollAndShoot(page, base) {
     await closeTopModal(page);
   }
 
+  // ---------- YNAB OFF-BUDGET ----------
+  // The mock YNAB key is fake, so the YNAB API is answered here: the accounts
+  // of the mock budgets (ids match the mock off-budget map and write guard).
+  // Every other YNAB call is refused, so a screenshot run never writes anything.
+  console.log('YNAB Off-budget');
+  const mockYnabAccounts = {
+    'mock-budget-id': [
+      { id: 'mock-acc-checking', name: 'Conto Corrente', type: 'checking', on_budget: true, balance: 12000000, cleared_balance: 12000000 },
+      { id: 'mock-acc-degiro', name: 'Degiro', type: 'otherAsset', on_budget: false, balance: 41515000, cleared_balance: 41515000, transfer_payee_id: 'pay-degiro' },
+      { id: 'mock-acc-directa', name: 'Directa', type: 'otherAsset', on_budget: false, balance: 92266500, cleared_balance: 92266500, transfer_payee_id: 'pay-directa' },
+      { id: 'mock-acc-goal-house', name: '🎯 House', type: 'otherAsset', on_budget: false, balance: 0, cleared_balance: 0, transfer_payee_id: 'pay-house' },
+      { id: 'mock-acc-goal-car', name: '🎯 New car', type: 'otherAsset', on_budget: false, balance: 0, cleared_balance: 0, transfer_payee_id: 'pay-car' },
+      { id: 'mock-acc-growth', name: '🏦 Main Strategy', type: 'otherAsset', on_budget: false, balance: 0, cleared_balance: 0, transfer_payee_id: 'pay-growth' },
+      { id: 'mock-acc-fondo', name: 'Fondo Pensione', type: 'otherAsset', on_budget: false, balance: 14200000, cleared_balance: 14200000, transfer_payee_id: 'pay-fondo' },
+    ],
+    'mock-budget-personal': [
+      { id: 'mock-acc-tr', name: 'Trade Republic', type: 'otherAsset', on_budget: false, balance: 18500000, cleared_balance: 18500000 },
+    ],
+  };
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    const url = req.url();
+    if (!url.startsWith('https://api.ynab.com/')) return req.continue();
+    const m = url.match(/\/budgets\/([^/]+)\/accounts$/);
+    if (req.method() === 'GET' && m && mockYnabAccounts[decodeURIComponent(m[1])]) {
+      return req.respond({
+        status: 200,
+        contentType: 'application/json',
+        headers: { 'Access-Control-Allow-Origin': '*' },
+        body: JSON.stringify({ data: { accounts: mockYnabAccounts[decodeURIComponent(m[1])] } }),
+      });
+    }
+    if (req.method() === 'OPTIONS') {
+      return req.respond({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' } });
+    }
+    return req.respond({ status: 401, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: '{"error":{"id":"401","name":"unauthorized","detail":"mock"}}' });
+  });
+  await navTo(page, 'YNAB Off-budget');
+  await sleep(1500);
+  await shot(page, 'ynab_offbudget');
+
   // ---------- SETTINGS ----------
   console.log('Settings');
   await navTo(page, 'Settings');
   await sleep(700);
   await scrollAndShoot(page, 'settings');
+  // YNAB write guard card (accounts served by the interception above).
+  const guardCard = await page.$('.ywg');
+  if (guardCard) {
+    await page.evaluate(() => document.querySelector('.ywg')?.scrollIntoView({ block: 'center' }));
+    await sleep(600);
+    const file = path.join(OUT, 'settings_ynab_write_guard.png');
+    await guardCard.screenshot({ path: file });
+    console.log('  ->', path.relative(ROOT, file));
+    await page.evaluate(() => window.scrollTo(0, 0));
+  }
   // Private Update Price card (public tier vs unlocked)
   const privateTierFound = await page.evaluate(() => {
     const h = [...document.querySelectorAll('h3')].find((e) => /private update price/i.test(e.textContent));

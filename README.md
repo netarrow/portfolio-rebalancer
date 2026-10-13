@@ -33,14 +33,22 @@ If you are comfortable with the above, you are welcome to use it as-is.
 ```bash
 npm install
 npm run build      # builds the Vite frontend into dist/
-npm start          # Express serves API + frontend on http://localhost:3002
+npm start          # Express serves API + frontend on http://localhost:3001 (PORT to change it)
 ```
 
 Then open the app and go to **Settings → Load Mock Data** to populate a full demo dataset that exercises every feature (this is also exactly what the screenshots below show).
 
 **Tech stack:** React 19 + TypeScript + Vite, Recharts & ApexCharts, SweetAlert2 · Node.js + Express + Socket.IO · Puppeteer + Cheerio for scraping · `localStorage` with optional AES-256-GCM Azure Blob sync · Docker + GitHub Actions.
 
-> All screenshots below are generated from the bundled mock dataset via `scripts/take_screenshots.js`.
+> All screenshots below are generated from the bundled mock dataset via `scripts/take_screenshots.js`. To regenerate them, serve the build on port 3002 and run the script (it answers the YNAB API itself with the mock accounts and never writes to YNAB):
+>
+> ```bash
+> npm run build && NODE_ENV=production PORT=3002 npm start
+> node scripts/take_screenshots.js   # APP_URL to point elsewhere, PUPPETEER_NO_SANDBOX=1 when running as root
+> ```
+>
+> The calculation engines have known-answer checks in `scripts/verify-*.ts`, e.g. the backup round trip:
+> `npx esbuild scripts/verify-backup-payload.ts --bundle --platform=node --format=esm | node --input-type=module`
 
 ---
 
@@ -114,6 +122,7 @@ Either end can be a **whole parent/child group** as well as a single portfolio �
 ![Fund Relocation — form and cost](screenshots/fund_relocation_top.png)
 
 - **Goal flows — the editable pyramid.** Drag the target bar to say where your wealth should sit across the goals; because each portfolio is attached to a goal, the answer is a list of **moves between whole portfolios** (out of the portfolios of the goals over target, into those of the goals under it), never a pick of assets inside them. Donors and receivers are matched largest-first so the plan uses as few round trips as possible, each goal is drained proportionally to what its portfolios hold, and any leg too small to be worth its friction is dropped and reported. A **parent/child group counts as one portfolio** for that split — the same unit the pyramid counts it as — and the amount landing on it is then shared across its members by the **configured parent/child ratio**, taken from whoever is heaviest against it and given to whoever is lightest, so closing a goal gap also closes the group's ratio instead of handing it its money in the proportion it is already wrong in. *Queue* hands the moves to the sequence below, where they get priced like any other — and the before/after pyramid at the bottom shows whether the split you dragged is worth what it costs to reach.
+- **Portfolios in play — Move, Freeze or Skip.** Under the bar, each portfolio of the pyramid says how it takes part: **Move** joins the plan in full; **Freeze** still counts toward its goal but is never sold or bought (a bond ladder answering to its dated goals); **Skip** leaves the split altogether, so the percentages are recomputed without it. It is a planner setting for this page only — every other view keeps counting all of them. The pyramid also has a **Liquidity** level, the cash not earmarked to a portfolio, so a target can deploy idle cash (*deploying cash, nothing is sold*) as well as move money between goals. When a goal under target has only frozen or skipped portfolios, the page says so instead of leaving the gap silently. The targets and the states are saved, and travel with the backup and Azure sync.
 - **Source and destination are the same kind of thing** — either a **portfolio** or **cash**. That one switch covers a divestment (portfolio → cash), an investment (cash → portfolio, so no sale and no tax) and the full round trip (portfolio → portfolio).
 - **Spend — money that simply stops being there.** The destination has a third option the source cannot have: *Spend*. Part of the cash is treated as **spent**, so it is no longer part of anything — net worth, liquidity, the macro split and the goal pyramid are all read without it. It is **never written to Transactions**: the ledger records positions, and a holiday or a new kitchen is not a position. That is the whole point of the endpoint — it exists to answer *what do my stats look like once this money is gone*, not to book it. Spend straight out of cash and nothing is sold and nothing is charged; spend more than the cash on hand and the same overdraft and minimum-liquidity warnings apply as anywhere else. Fund it out of a **portfolio** instead and the sale is priced in full (tax and fee included) and sized backwards from the amount you want to spend — the amount is exact, so the change whole shares leave behind stays in the account instead of being spent by accident, and it is reported. Net worth then falls by the spend **plus** the friction, and the before/after line names the two apart: friction is money paid to someone else, a spend is money you chose to use.
 - **The exact asset is optional on each side, independently.** Pin nothing and the solver picks: it sells whatever is most overweight against the source's targets — so a relocation leaves the source *closer* to its allocation, not skewed — and buys the destination's most underweight units, routing an allocation group's order to the same member the Dashboard's *Buy Only* column would. Pin one side to sell (or buy) only that ticker; pin both for a straight X → Y swap.
@@ -142,10 +151,11 @@ Historical net-worth and price charts, powered by the **daily price history** th
 
 ![Performance — net worth](screenshots/performance_page.png)
 
-- **Scope selector** — chart your whole **Net Worth**, a **parent/child group** as one portfolio, a single **portfolio**, or a single **asset**. Groups and their members are both listed, and the selector is single-choice, so a group is never charted on top of its own members.
+- **Scope selector** — chart your whole **Net Worth**, a **parent/child group** as one portfolio, a single **portfolio**, a **broker**, or a single **asset**. Groups and their members are both listed, and the selector is single-choice, so a group is never charted on top of its own members.
+- **An asset, by the position you hold** — by default an asset is measured as *My position*: the value of the units you hold, with buys and sells as cash flows, so TWR and MWR are the return you actually earned on it. *Unit price* shows the bare instrument instead, regardless of what you hold.
 - **Ranges** — 1M / 6M / 1Y / MAX.
 - **Net worth** can optionally overlay today's liquidity as a constant line.
-- **Return toggle** — switch between **TWR** (Time-Weighted Return, strips out deposits/withdrawals) and **MWR** (Money-Weighted Return, which on MAX matches the Dashboard's Total Appreciation).
+- **Return toggle** — switch between **TWR** (Time-Weighted Return, strips out deposits/withdrawals), **MWR** (Money-Weighted Return, which on MAX matches the Dashboard's Total Appreciation) and **XIRR** — the annual internal rate of return on the dated flows: the starting value and the buys paid in, the sells (and, with *Total return* on, the coupons/dividends on their pay date) and the final value received, so each euro weighs for as long as it was invested. Over a range shorter than a year it says so, since a small gain compounds into a large yearly figure.
 - **Risk metrics** — flow-adjusted **annualised return**, **annualised volatility**, **Sharpe ratio** (with a configurable risk-free rate) and **max drawdown**, all computed on the return stream net of deposits/withdrawals so a withdrawal never counts as a "loss". A **liquidity overlay** tracks uninvested sale proceeds, so the chart doesn't show fake crashes when you sell.
 - **Distance from peak** — a dedicated row measuring the scope against its **high-water mark** instead of against the invested capital: how far below the peak it sits **right now**, the gain (**% and €, at today's capital**) still needed to get back, the **days under water** (and the longest such stretch), and the **max drawdown** with its peak → trough → recovery dates. Built on the same flow-adjusted index as the other risk metrics, so new money paid in never sets a fake peak and a disinvestment never digs a fake drawdown. A toggle opens the **underwater chart**, the whole curve of distance-from-peak over time.
 - **Caveat badges** flag where history isn't directly comparable — e.g. bonds held at *corso secco* (clean price, no accrued interest), monthly-NAV sources, or assets with no history yet.
@@ -523,7 +533,7 @@ The saved lists are **broker-aware**: they pre-arm the free-buy toggle in the Da
 - **People** — the members of your household. A broker marked *Personal* can be attributed to one of them, which is what powers the per-person counting-scope chips. Deleting a person leaves their brokers personal but unattributed, so nothing disappears from the totals.
 - **YNAB** — personal access token, budget selection, the "Investment Goals" category group and the **broker ↔ YNAB account** mapping used by *Update liquidity* on the Brokers page. Each broker picks its own **budget** and then an account inside it, so brokers can be split across several budgets of the same token; the budget saved at the top stays the primary one, the one category import, YNAB Goals and spending analysis read from. The relation is one-to-one *within a budget*: assigning an account that already backs another broker moves it, while the same account id in a different budget is a different account.
 - **Asset Registry & Settings** — asset classes/subclasses, custom labels, macro and goal targets.
-- **Developer Tools** — *Load Mock Data* (full feature coverage) and the *Danger Zone* clear-all.
+- **Developer Tools** — *Load Mock Data* (full feature coverage: portfolios and groups, targets in €, virtual bonds, PAC plans, people and scope, free-buy promos, a year of price history, and the YNAB side — budgets, category mappings, goals and their allocations, spending history, broker ↔ account mappings, the off-budget map with its write guard — plus Fund Relocation targets with a frozen portfolio) and the *Danger Zone* clear-all. The mock YNAB token is fake, so nothing ever reaches YNAB, and the write-back log starts empty.
 
 ![Load Mock Data confirm](screenshots/settings_mock_confirm.png)
 
