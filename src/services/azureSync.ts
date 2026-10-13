@@ -1,4 +1,4 @@
-import type { Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal, YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
+import type { BackupData } from '../utils/backupPayload';
 
 export interface AzureConfig {
     sasUrl: string;
@@ -7,60 +7,11 @@ export interface AzureConfig {
     lastSync: string | null;
 }
 
-export interface SyncPayload {
+// The Azure blob carries exactly what the JSON backup carries (BackupData,
+// built and restored in one place), plus the sync stamp.
+export interface SyncPayload extends BackupData {
     syncVersion: number;
     syncTimestamp: string;
-    transactions: Transaction[];
-    assetSettings: AssetDefinition[];
-    portfolios: Portfolio[];
-    brokers: Broker[];
-    marketData: Record<string, { price: number; lastUpdated: string }>;
-    assetAllocationSettings: AssetAllocationSettings;
-    macroAllocations: MacroAllocation;
-    goalAllocations: GoalAllocation;
-    goals: Goal[];
-    aggregateExcludedTickers?: string[];
-    goalModeTargets?: Record<string, number>;
-    // Which portfolios the Fund Relocation pyramid may move / freeze / ignore.
-    // A planner preference, not a counting one — no other view reads it.
-    goalFlowPortfolioStates?: Record<string, GoalFlowPortfolioState>;
-    ynabMappings?: YnabCategoryMapping[];
-    // How the funding plan sizes the orders and the wires it asks for. A
-    // preference, like the mappings it reads.
-    ynabFundingSettings?: YnabFundingSettings;
-    // brokerId -> { budgetId, accountId }: a mapping, not a credential, so it
-    // travels. Older payloads hold a bare account id and are normalized on read.
-    ynabAccountMappings?: YnabAccountMappings;
-    ynabGoals?: YnabGoal[];
-    ynabGoalAllocations?: YnabGoalAllocation[];
-    // Macro-class mappings for spending analysis; the spending history itself
-    // is local-only (like priceHistory) and rebuilt from YNAB on sync.
-    ynabMacroMappings?: YnabMacroMappings;
-    // budgetId -> 'family' | Person id: which source a budget's income and
-    // expenses count as in the Forecast. A mapping, not a credential.
-    ynabBudgetOwners?: Record<string, string>;
-    // How the off-budget accounts are split by purpose (off-budget map). A
-    // mapping of YNAB account ids, not a credential, so it travels.
-    ynabTrackingConfig?: YnabTrackingConfig;
-    // Every write the tool made to YNAB (ids and amounts, to show and roll
-    // back) and the goal shares frozen by a migration.
-    ynabWriteLog?: YnabWriteLogEntry[];
-    ynabGoalQuotes?: YnabGoalQuote[];
-    ynabGoalsGroupId?: string;
-    ynabGoalsGroupName?: string;
-    ynabLastGoalsSyncAt?: string;
-    virtualBonds?: VirtualBond[];
-    freeCommissionPeriods?: FreeCommissionPeriod[];
-    // Forecast expenses imported from YNAB goals (with per-entry enabled flag).
-    // Absent = never seeded on the source device.
-    plannedForecastExpenses?: PlannedForecastExpense[];
-    // Include/exclude family, illiquid and per-person brokers in the counting views.
-    assetScope?: AssetScope;
-    // Household members personal brokers can be attributed to.
-    people?: Person[];
-    // PAC (piano di accumulo) auto-tracking plans and their installment ledger.
-    pacPlans?: PacPlan[];
-    pacExecutions?: PacExecution[];
 }
 
 const PBKDF2_ITERATIONS = 100000;

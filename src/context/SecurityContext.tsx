@@ -19,7 +19,8 @@ const DEFAULT_IDLE_TIMEOUT_MIN = 15;
 // so we can read it before unlocking.
 function isAppDataKey(key: string): boolean {
     if (key === SLE_CONFIG_KEY) return false;
-    return key.startsWith('portfolio_') || key === 'aggregate-excluded-tickers' || key === 'goal_mode_targets';
+    return key.startsWith('portfolio_') || key === 'aggregate-excluded-tickers' || key === 'goal_mode_targets'
+        || key === 'goal_flow_portfolio_states';
 }
 
 function listAppDataKeys(): string[] {
