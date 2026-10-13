@@ -26,6 +26,7 @@ import io, { Socket } from 'socket.io-client';
 import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/PriceUpdateModal';
 import { migrateRatioGroups, normalizeAssetAllocationSettings } from '../utils/assetAllocation';
 import { buildPortfolioTree } from '../utils/portfolioGroups';
+import { LIQUIDITY_LEVEL_ID } from '../utils/goalFlows';
 import { MERGED_PORTFOLIO_PREFIX, isMergedPortfolioId } from '../utils/mergedGroup';
 
 /**
@@ -2696,6 +2697,45 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 'ynab-cat-9': 'compressible', // Restaurants & Takeaway overrides its group
             },
         });
+
+        // 8d. Broker ↔ YNAB account mappings: spread over both budgets, so the
+        // liquidity sync and the budget grouping have something to show.
+        setYnabAccountMappings({
+            b1: { budgetId: 'mock-budget-id', accountId: 'mock-acc-degiro' },
+            b2: { budgetId: 'mock-budget-id', accountId: 'mock-acc-directa' },
+            b6: { budgetId: 'mock-budget-id', accountId: 'mock-acc-checking' },
+            b3: { budgetId: 'mock-budget-personal', accountId: 'mock-acc-tr' },
+        });
+
+        // 8e. YNAB Off-budget map: Degiro and Directa are split by purpose,
+        // with a few destinations already linked and the write guard set on the
+        // primary budget. Nothing has been written to YNAB: the log and the
+        // frozen goal shares start empty (a mock write would point at YNAB
+        // transactions that do not exist, and rolling it back would fail).
+        setYnabTrackingConfig({
+            brokerSources: { b1: 'mock-acc-degiro', b2: 'mock-acc-directa' },
+            destinationAccounts: {
+                'goal:yg-house': 'mock-acc-goal-house',
+                'goal:yg-car': 'mock-acc-goal-car',
+                [`portfolio:${pIdMain}`]: 'mock-acc-growth',
+            },
+            guardBudgetId: 'mock-budget-id',
+            guardAccountIds: ['mock-acc-degiro', 'mock-acc-directa', 'mock-acc-goal-house', 'mock-acc-goal-car', 'mock-acc-growth'],
+        });
+        setYnabWriteLog([]);
+        setYnabGoalQuotes([]);
+
+        // 8f. Forecast planned expenses: re-seeded from the mock YNAB goals.
+        setStoredPlannedForecastExpenses(null);
+
+        // 8g. Fund Relocation: a goal split (cash level included) that asks to
+        // move part of the oversized Safety Net into Growth and Security, with
+        // Bond Allocation frozen — Growth still has its other portfolios to land in.
+        setGoalModeTargets({ [LIQUIDITY_LEVEL_ID]: 10, 'goal-growth': 40, 'goal-protection': 42, 'goal-security': 8 });
+        setGoalFlowPortfolioStates({ [pIdBonds]: 'frozen' });
+
+        // 8h. Asset scope: start from everything included.
+        setAssetScope({ includeFamily: true, includeIlliquid: true, excludedPersonIds: [] });
 
         // 9. Aggregate UI: exclude VWRL from the aggregate view
         setAggregateExcludedTickers(['IE00B3RBWM25']);
