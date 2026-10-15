@@ -414,16 +414,34 @@ const TargetSettings: React.FC<TargetSettingsProps> = ({ section = 'general' }) 
             Swal.fire({ title: 'No budgets found', icon: 'info' });
             return;
         }
-        // Auto-select the first budget if none chosen yet
+        // A verified token is saved right away when the budget is not in doubt:
+        // the one already active, or the only one the token reaches. Otherwise
+        // the token waits for "Save budget" (the user picks the budget first).
+        const keep = result.budgets.find(b => b.id === ynabSelectedBudgetId)
+            ?? (result.budgets.length === 1 ? result.budgets[0] : undefined);
+        if (keep) {
+            setYnabSelectedBudgetId(keep.id);
+            saveYnabBudget(result.budgets, keep.id);
+            return;
+        }
         if (!ynabSelectedBudgetId) {
             setYnabSelectedBudgetId(result.budgets[0].id);
         }
-        Swal.fire({ title: 'YNAB connection OK', icon: 'success', timer: 1500, showConfirmButton: false });
+        Swal.fire({
+            title: 'YNAB connection OK',
+            text: 'Pick the budget and press "Save budget" to store the token.',
+            icon: 'success',
+        });
     };
 
     const handleYnabSaveBudget = () => {
-        if (!ynabApiKeyInput.trim() || !ynabSelectedBudgetId || !ynabBudgets) return;
-        const selected = ynabBudgets.find(b => b.id === ynabSelectedBudgetId);
+        if (!ynabBudgets) return;
+        saveYnabBudget(ynabBudgets, ynabSelectedBudgetId);
+    };
+
+    const saveYnabBudget = (budgets: YnabBudgetSummary[], budgetId: string) => {
+        if (!ynabApiKeyInput.trim() || !budgetId) return;
+        const selected = budgets.find(b => b.id === budgetId);
         if (!selected) return;
         setYnabConfig({
             ...ynabConfig,
@@ -433,11 +451,24 @@ const TargetSettings: React.FC<TargetSettingsProps> = ({ section = 'general' }) 
             currencyIso: selected.currencyIso,
             // Cache every budget of the token: broker mappings can target any of
             // them, not just the primary one saved here.
-            budgets: ynabBudgets.map(b => ({ id: b.id, name: b.name, currencyIso: b.currencyIso })),
+            budgets: budgets.map(b => ({ id: b.id, name: b.name, currencyIso: b.currencyIso })),
             lastSyncAt: ynabConfig?.lastSyncAt,
         });
-        Swal.fire({ title: 'YNAB configured', icon: 'success', timer: 1500, showConfirmButton: false });
+        Swal.fire({ title: 'YNAB token saved', text: `Budget: ${selected.name}`, icon: 'success', timer: 1800, showConfirmButton: false });
     };
+
+    // The token typed in the field differs from the stored one until it is saved.
+    const ynabKeyUnsaved = ynabApiKeyInput.trim() !== (ynabConfig?.apiKey ?? '');
+
+    // Keep the field in step with the stored token (a restore, a disconnect, a
+    // config that arrives after mount) unless the user is editing it.
+    const storedYnabKey = ynabConfig?.apiKey ?? '';
+    const lastStoredKey = React.useRef(storedYnabKey);
+    useEffect(() => {
+        if (storedYnabKey === lastStoredKey.current) return;
+        setYnabApiKeyInput(prev => (prev.trim() === lastStoredKey.current ? storedYnabKey : prev));
+        lastStoredKey.current = storedYnabKey;
+    }, [storedYnabKey]);
 
     const handleYnabDisconnect = async () => {
         const confirm = await Swal.fire({
@@ -578,6 +609,11 @@ const TargetSettings: React.FC<TargetSettingsProps> = ({ section = 'general' }) 
                             <small style={{ color: 'var(--text-muted)' }}>
                                 Generate the token at app.ynab.com → Account Settings → Developer Settings → New Token.
                             </small>
+                            {ynabKeyUnsaved && ynabApiKeyInput.trim() && (
+                                <small style={{ color: 'var(--color-warning, #f59e0b)', display: 'block', marginTop: '0.25rem' }}>
+                                    ⚠ Not saved yet: press <strong>Verify and load budget</strong>{ynabBudgets ? <> and then <strong>Save budget</strong></> : null} to store this token.
+                                </small>
+                            )}
                         </div>
 
                         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
