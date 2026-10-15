@@ -1137,7 +1137,7 @@ const ForecastView: React.FC = () => {
                                     </div>
                                     {ynabCashflow.avgMonthlyUnmapped >= 1 && (
                                         <div style={{ fontSize: '0.7rem', color: 'var(--color-warning, #F59E0B)', marginTop: '0.35rem' }}>
-                                            ⚠ €{Math.round(ynabCashflow.avgMonthlyUnmapped).toLocaleString()}/month sits in categories with no expense class — map them in Summary to count them.
+                                            ⚠ €{Math.round(ynabCashflow.avgMonthlyUnmapped).toLocaleString()}/month sits in categories with no expense class — map them in Expense Analysis to count them.
                                         </div>
                                     )}
                                 </>

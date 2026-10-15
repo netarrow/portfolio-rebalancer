@@ -38,7 +38,12 @@ const monthsText = (g: GoalCoverage) => {
     return `${g.monthsLeft} mo left`;
 };
 
-const YnabCoveragePanel: React.FC = () => {
+interface Props {
+    /** Expense Analysis: capex live on their own page, so their horizon, column and list are left out. */
+    hideCapex?: boolean;
+}
+
+const YnabCoveragePanel: React.FC<Props> = ({ hideCapex = false }) => {
     const { brokers, updateBroker, ynabCategories, setYnabFundingSettings, setYnabMappingEmergency } = usePortfolio();
     const { report, settings } = useYnabCoverage();
     const [detailId, setDetailId] = useState<string | null>(null);
@@ -79,7 +84,7 @@ const YnabCoveragePanel: React.FC = () => {
                 <div>
                     <h3 style={{ margin: 0 }}>Liquidity &amp; coverage</h3>
                     <div className="cov-sub">
-                        Read from where each category's money sits and what kind of spending it is (Location &amp; nature above).
+                        Read from where each category's money sits and what kind of spending it is ({hideCapex ? 'Category mapping' : 'Location & nature'} above).
                     </div>
                 </div>
                 <div className="cov-settings">
@@ -95,19 +100,21 @@ const YnabCoveragePanel: React.FC = () => {
                             onChange={e => setSetting('workingCapitalMonths', e.target.value)} />
                         <small>months</small>
                     </label>
+                    {!hideCapex && (
                     <label title="A capex due within this horizon must already be cash">
                         <span>Capex due within</span>
                         <input type="number" className="form-input" min={0} max={60} value={settings.goalHorizonMonths}
                             onChange={e => setSetting('goalHorizonMonths', e.target.value)} />
                         <small>months</small>
                     </label>
+                    )}
                 </div>
             </div>
 
             {/* ── Accounts ─────────────────────────────────────────── */}
             <h4 className="cov-title">Accounts</h4>
             {accounts.length === 0 ? (
-                <p className="cov-empty">No category sits on an account yet: set <em>Cash at</em> in Location &amp; nature.</p>
+                <p className="cov-empty">No category sits on an account yet: set <em>Cash at</em> in {hideCapex ? 'Category mapping' : 'Location & nature'}.</p>
             ) : (
                 <div className="cov-table-wrap">
                     <table className="cov-table">
@@ -118,7 +125,7 @@ const YnabCoveragePanel: React.FC = () => {
                                 <th className="num" title="Σ Available of the categories on this account">Categories</th>
                                 <th>Coverage</th>
                                 <th className="num" title="Average monthly spending of its fixed, variable and compressible categories">Day-to-day / mo</th>
-                                <th className="num" title="Cash still missing for capex due within the horizon">Capex due</th>
+                                {!hideCapex && <th className="num" title="Cash still missing for capex due within the horizon">Capex due</th>}
                                 <th className="num">Suggested min</th>
                                 <th className="num">Current min</th>
                             </tr>
@@ -140,7 +147,7 @@ const YnabCoveragePanel: React.FC = () => {
                                                 : <span className="pill pill-ok">Covered · +{eur(a.surplus)}</span>}
                                         </td>
                                         <td className="num" data-label="Day-to-day / mo">{eur(a.monthlySpend)}</td>
-                                        <td className="num" data-label="Capex due">{a.dueGoals > 0 ? eur(a.dueGoals) : '—'}</td>
+                                        {!hideCapex && <td className="num" data-label="Capex due">{a.dueGoals > 0 ? eur(a.dueGoals) : '—'}</td>}
                                         <td className="num" data-label="Suggested min"><strong>{eur(a.recommendedMin)}</strong></td>
                                         <td className="num" data-label="Current min">
                                             <span>
@@ -162,7 +169,7 @@ const YnabCoveragePanel: React.FC = () => {
             {unlocated.amount > 0 && (
                 <p className="cov-note">
                     {eur(unlocated.amount)} of Available sits on no account ({unlocated.categoryIds.map(nameOf).join(', ')}):
-                    pick a <em>Cash at</em> account or a default <em>Wire from</em> account in the funding plan.
+                    pick a <em>Cash at</em> account{hideCapex ? '' : <> or a default <em>Wire from</em> account in the funding plan</>}.
                 </p>
             )}
 
@@ -207,8 +214,8 @@ const YnabCoveragePanel: React.FC = () => {
             </div>
 
             {/* ── Goals ────────────────────────────────────────────── */}
-            <h4 className="cov-title">Capex</h4>
-            {goals.length === 0 ? (
+            {!hideCapex && <h4 className="cov-title">Capex</h4>}
+            {hideCapex ? null : goals.length === 0 ? (
                 <p className="cov-empty">No capex yet: classify a category as <em>Capex (dated expense)</em> or give it a target.</p>
             ) : (
                 <ul className="cov-goals">

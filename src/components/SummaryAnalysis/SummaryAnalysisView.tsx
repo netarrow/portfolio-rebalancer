@@ -3,16 +3,15 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import type { YnabMacroCategory } from '../../types';
 import {
     analyzeSpending,
-    generateNarrative,
-    generateSuggestions,
     effectiveMacro,
     MACRO_ORDER,
     MACRO_LABELS,
     MACRO_DESCRIPTIONS,
-    PROTECTION_FUND_MONTHS,
-    SECURITY_HORIZON_YEARS,
+    COMPRESSIBLE_INCOME_SHARE_ALERT,
+    PAST_SAVINGS_SHARE_ALERT,
 } from '../../utils/spendingAnalysis';
 import Swal from 'sweetalert2';
+import YnabCoveragePanel from '../YnabImport/YnabCoveragePanel';
 
 interface Props {
     onNavigateToSettings?: () => void;
@@ -29,12 +28,6 @@ const MACRO_COLORS: Record<YnabMacroCategory, string> = {
     compressible: '#f59e0b',
     sinking: '#14b8a6',
     investments: '#8b5cf6',
-};
-
-const INSIGHT_COLORS: Record<'info' | 'suggestion' | 'warning', string> = {
-    info: '#94a3b8',
-    suggestion: '#3b82f6',
-    warning: '#ef4444',
 };
 
 const monthLabel = (isoMonth: string): string =>
@@ -64,11 +57,16 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
         ynabSpendingLastSyncAt,
         ynabMacroMappings,
         syncYnabSpending,
+        syncYnabBudget,
+        ynabSyncing,
         setYnabGroupMacro,
         setYnabCategoryMacro,
         ynabSpendingSyncing,
-        ynabGoals,
         refreshYnabBudgets,
+        brokers,
+        ynabMappings,
+        setYnabMappingSource,
+        ynabFundingSettings,
     } = usePortfolio();
 
     const [showMapping, setShowMapping] = useState(false);
@@ -93,11 +91,6 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
         () => analyzeSpending(ynabSpendingHistory, ynabMacroMappings),
         [ynabSpendingHistory, ynabMacroMappings],
     );
-    const narrative = useMemo(() => generateNarrative(analysis, currencyIso), [analysis, currencyIso]);
-    const suggestions = useMemo(
-        () => generateSuggestions(analysis, ynabGoals, currencyIso),
-        [analysis, ynabGoals, currencyIso],
-    );
 
     // Union of every group/category seen in the rolling window — the mapping
     // editor works even for categories no longer present in the current month.
@@ -118,10 +111,25 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [ynabSpendingHistory]);
 
+    // One button for the whole page: the spending history of the analysed
+    // budget and, for the primary one, this month's categories that the
+    // mapping and the liquidity coverage read.
+    // Account each category's money sits on ("Cash at"), from the category mappings.
+    const sourceByCategory = useMemo(
+        () => new Map(ynabMappings.filter(m => m.sourceBrokerId).map(m => [m.categoryId, m.sourceBrokerId as string])),
+        [ynabMappings],
+    );
+    const defaultSourceName = brokers.find(b => b.id === ynabFundingSettings.defaultSourceBrokerId)?.name;
+
     const handleSync = async () => {
         const result = await syncYnabSpending();
         if (!result.ok) {
             Swal.fire({ title: 'Sync error', text: result.error, icon: 'error' });
+            return;
+        }
+        if (isPrimaryBudget) {
+            const budget = await syncYnabBudget();
+            if (!budget.ok) Swal.fire({ title: 'Sync error', text: budget.error, icon: 'error' });
         }
     };
 
@@ -139,7 +147,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                 <h2 style={{ marginBottom: '1rem' }}>YNAB not configured</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    The Summary Analysis is built from your YNAB budget. Enter your YNAB API key in Settings › YNAB Integration first.
+                    The Expense Analysis is built from your YNAB budget. Enter your YNAB API key in Settings › YNAB Integration first.
                 </p>
                 {onNavigateToSettings && (
                     <button
@@ -158,7 +166,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div>
-                    <h2 style={{ margin: 0 }}>Summary Analysis</h2>
+                    <h2 style={{ margin: 0 }}>Expense Analysis</h2>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                         <label htmlFor="summary-budget" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Budget:</label>
                         <select
@@ -188,22 +196,13 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                             <> · Last sync: {new Date(ynabSpendingLastSyncAt).toLocaleString('en-IE')}</>
                         )}
                     </div>
-                    {/* Goals are only synced from the primary budget, so the goal-based
-                        suggestions keep referring to it whatever budget is analysed. */}
-                    {!isPrimaryBudget && (
-                        <div style={{ color: '#f59e0b', fontSize: '0.82rem', marginTop: '0.35rem', maxWidth: 620 }}>
-                            Planned Capex is only synced from the primary budget
-                            (<strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong>), so the goal-based
-                            suggestions still refer to it, not to “{selectedBudgetName}”.
-                        </div>
-                    )}
                 </div>
                 <button
                     onClick={handleSync}
-                    disabled={ynabSpendingSyncing}
+                    disabled={ynabSpendingSyncing || ynabSyncing}
                     style={{ padding: '0.7rem 1.4rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                 >
-                    {ynabSpendingSyncing ? 'Syncing…' : 'Sync spending'}
+                    {ynabSpendingSyncing || ynabSyncing ? 'Syncing…' : 'Sync from YNAB'}
                 </button>
             </div>
 
@@ -237,34 +236,100 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         ))}
                     </div>
 
-                    {/* Yearly narrative */}
-                    <div style={cardStyle}>
-                        <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Yearly summary</h3>
-                        <ul style={{ margin: 0, paddingLeft: '1.25rem', color: 'var(--text-primary)', lineHeight: 1.7 }}>
-                            {narrative.map((line, i) => <li key={i}>{line}</li>)}
-                        </ul>
-                    </div>
-
-                    {/* Suggestions */}
-                    <div style={cardStyle}>
-                        <h3 style={{ marginTop: 0, marginBottom: '0.35rem' }}>Suggestions</h3>
-                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '0.9rem' }}>
-                            Deterministic rules: protection fund = {PROTECTION_FUND_MONTHS} months of recurring expenses,
-                            security bucket = goals due within {SECURITY_HORIZON_YEARS} years,
-                            past-savings drawdown = spending beyond what was assigned during the period.
-                        </div>
-                        {suggestions.length === 0 ? (
-                            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Nothing to report.</p>
-                        ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                                {suggestions.map(s => (
-                                    <div key={s.id} style={{ borderLeft: `4px solid ${INSIGHT_COLORS[s.kind]}`, padding: '0.5rem 0.9rem', background: 'var(--bg-secondary, rgba(128,128,128,0.06))', borderRadius: 'var(--radius-md)' }}>
-                                        {s.text}
+                    {/* Key figures: monthly averages and ratios, no prose */}
+                    {(() => {
+                        const months = Math.max(1, analysis.monthsCount);
+                        const income = analysis.totalIncome;
+                        const pct = (v: number, of: number) => (of > 0 ? `${Math.round((v / of) * 100)}%` : '—');
+                        const monthly = (v: number) => formatCurrency(v / months, currencyIso);
+                        const consumption = analysis.consumptionOutflow;
+                        const compressible = analysis.macros.compressible.totalOutflow;
+                        const rows: { label: string; value: string; share: string; color?: string; warn?: boolean }[] = [
+                            { label: 'Income', value: monthly(income), share: '100%' },
+                            ...MACRO_ORDER.map(m => ({
+                                label: MACRO_LABELS[m],
+                                value: monthly(analysis.macros[m].totalOutflow),
+                                share: pct(analysis.macros[m].totalOutflow, income),
+                                color: MACRO_COLORS[m],
+                                warn: m === 'compressible' && income > 0 && compressible / income > COMPRESSIBLE_INCOME_SHARE_ALERT,
+                            })),
+                            { label: 'Unmapped', value: monthly(analysis.unmappedOutflow), share: pct(analysis.unmappedOutflow, income), warn: analysis.unmappedOutflow > 0.5 },
+                            { label: 'Net savings', value: monthly(analysis.netSavings), share: analysis.savingsRate != null ? `${Math.round(analysis.savingsRate * 100)}%` : '—' },
+                        ];
+                        const ratios: { label: string; value: string; hint: string; warn?: boolean }[] = [
+                            { label: 'Savings rate', value: analysis.savingsRate != null ? `${Math.round(analysis.savingsRate * 100)}%` : '—', hint: 'net savings / income' },
+                            { label: 'Consumption / income', value: pct(consumption, income), hint: 'structural + variable + compressible' },
+                            { label: 'Compressible / income', value: pct(compressible, income), hint: `alert above ${Math.round(COMPRESSIBLE_INCOME_SHARE_ALERT * 100)}%`, warn: income > 0 && compressible / income > COMPRESSIBLE_INCOME_SHARE_ALERT },
+                            { label: 'From past savings', value: pct(analysis.pastSavingsSpent, analysis.totalOutflow), hint: `of outflows · alert above ${Math.round(PAST_SAVINGS_SHARE_ALERT * 100)}%`, warn: analysis.totalOutflow > 0 && analysis.pastSavingsSpent / analysis.totalOutflow > PAST_SAVINGS_SHARE_ALERT },
+                            { label: 'Unmapped categories', value: String(analysis.unmappedCategories.length), hint: formatCurrency(analysis.unmappedOutflow, currencyIso), warn: analysis.unmappedCategories.length > 0 },
+                        ];
+                        const drawdown = [...analysis.pastSavingsCategories].slice(0, 5);
+                        return (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(320px, 100%), 1fr))', gap: '1.5rem', marginBottom: '1.5rem' }}>
+                                <div style={{ ...cardStyle, marginBottom: 0 }}>
+                                    <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Monthly averages</h3>
+                                    <table className="ea-table">
+                                        <thead><tr><th>Line</th><th className="num">€ / month</th><th className="num">% of income</th></tr></thead>
+                                        <tbody>
+                                            {rows.map(row => (
+                                                <tr key={row.label}>
+                                                    <td>
+                                                        {row.color && <span className="ea-dot" style={{ background: row.color }} />}
+                                                        {row.label}
+                                                    </td>
+                                                    <td className="num">{row.value}</td>
+                                                    <td className={`num${row.warn ? ' ea-warn' : ''}`}>{row.share}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div style={{ ...cardStyle, marginBottom: 0 }}>
+                                    <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Ratios</h3>
+                                    <div className="ea-ratios">
+                                        {ratios.map(r => (
+                                            <div key={r.label} className={`ea-ratio${r.warn ? ' is-warn' : ''}`}>
+                                                <div className="ea-ratio-label">{r.label}</div>
+                                                <div className="ea-ratio-value">{r.value}</div>
+                                                <div className="ea-ratio-hint">{r.hint}</div>
+                                            </div>
+                                        ))}
                                     </div>
-                                ))}
+                                    {drawdown.length > 0 && (
+                                        <>
+                                            <h4 style={{ margin: '1rem 0 0.5rem' }}>Spent from past savings</h4>
+                                            <table className="ea-table">
+                                                <tbody>
+                                                    {drawdown.map(c => (
+                                                        <tr key={c.categoryId}>
+                                                            <td>{c.name}<span className="ea-muted"> · {c.groupName}</span></td>
+                                                            <td className="num">{formatCurrency(c.pastSavingsOutflow, currencyIso)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </>
+                                    )}
+                                </div>
+                                <style>{`
+                                    .ea-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+                                    .ea-table th { text-align: left; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-secondary); padding: 0.35rem 0.4rem; border-bottom: 1px solid var(--border-color); }
+                                    .ea-table td { padding: 0.45rem 0.4rem; border-bottom: 1px solid var(--border-color); }
+                                    .ea-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+                                    .ea-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 0.5rem; }
+                                    .ea-warn { color: #f59e0b; font-weight: 600; }
+                                    .ea-muted { color: var(--text-muted); font-size: 0.8rem; }
+                                    .ea-ratios { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.6rem; }
+                                    .ea-ratio { border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 0.6rem 0.75rem; }
+                                    .ea-ratio.is-warn { border-color: #f59e0b; }
+                                    .ea-ratio-label { font-size: 0.75rem; color: var(--text-secondary); }
+                                    .ea-ratio-value { font-size: 1.25rem; font-weight: 700; }
+                                    .ea-ratio.is-warn .ea-ratio-value { color: #f59e0b; }
+                                    .ea-ratio-hint { font-size: 0.72rem; color: var(--text-muted); }
+                                `}</style>
                             </div>
-                        )}
-                    </div>
+                        );
+                    })()}
 
                     {/* Macro breakdown */}
                     <div style={cardStyle}>
@@ -300,13 +365,15 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         </div>
                     </div>
 
-                    {/* Macro mapping editor */}
+                    {/* Category mapping: nature per group (categories may override) and,
+                        on the primary budget, the account each category's money sits on. */}
                     <div style={cardStyle}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            <div>
-                                <h3 style={{ margin: 0 }}>Macro category mapping</h3>
+                            <div style={{ flex: '1 1 420px', minWidth: 0 }}>
+                                <h3 style={{ margin: 0 }}>Category mapping</h3>
                                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
                                     Assign each YNAB category group to a macro class; individual categories can override their group.
+                                    {isPrimaryBudget && <> Pick the account each category's money sits on.</>}
                                     {analysis.unmappedCategories.length > 0 && (
                                         <span style={{ color: '#f59e0b' }}> {analysis.unmappedCategories.length} unmapped.</span>
                                     )}
@@ -350,14 +417,29 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                                     </span>
                                                                 )}
                                                             </span>
-                                                            <select
-                                                                value={override}
-                                                                onChange={e => setYnabCategoryMacro(c.id, (e.target.value || null) as YnabMacroCategory | null)}
-                                                                style={{ ...selectStyle, fontSize: '0.85rem' }}
-                                                            >
-                                                                <option value="">Inherit from group</option>
-                                                                {MACRO_ORDER.map(m => <option key={m} value={m}>{MACRO_LABELS[m]}</option>)}
-                                                            </select>
+                                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                                <select
+                                                                    value={override}
+                                                                    onChange={e => setYnabCategoryMacro(c.id, (e.target.value || null) as YnabMacroCategory | null)}
+                                                                    style={{ ...selectStyle, fontSize: '0.85rem' }}
+                                                                    aria-label={`Macro class of ${c.name}`}
+                                                                >
+                                                                    <option value="">Inherit from group</option>
+                                                                    {MACRO_ORDER.map(m => <option key={m} value={m}>{MACRO_LABELS[m]}</option>)}
+                                                                </select>
+                                                                {isPrimaryBudget && (
+                                                                    <select
+                                                                        value={sourceByCategory.get(c.id) ?? ''}
+                                                                        onChange={e => setYnabMappingSource(c.id, e.target.value || null)}
+                                                                        style={{ ...selectStyle, fontSize: '0.85rem', minWidth: 170 }}
+                                                                        aria-label={`Account holding ${c.name}`}
+                                                                        title="Account the category's money sits on"
+                                                                    >
+                                                                        <option value="">{defaultSourceName ? `🏦 Default · ${defaultSourceName}` : '🏦 No account'}</option>
+                                                                        {brokers.map(b => <option key={b.id} value={b.id}>🏦 {b.name}</option>)}
+                                                                    </select>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     );
                                                 })}
@@ -370,6 +452,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                     </div>
                 </>
             )}
+
+            {isPrimaryBudget && <YnabCoveragePanel hideCapex />}
         </div>
     );
 };

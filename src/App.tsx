@@ -4,7 +4,7 @@ import { SecurityProvider } from './context/SecurityContext';
 import UnlockGate from './components/Security/UnlockGate';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -22,7 +22,6 @@ import { usePortfolio } from './context/PortfolioContext';
 import GoalList from './components/Goals/GoalList';
 import ForecastView from './components/Forecast/ForecastView';
 import GlobalRebalancingView from './components/GlobalRebalancing/GlobalRebalancingView';
-import YnabImportView from './components/YnabImport/YnabImportView';
 import YnabGoalsView from './components/YnabGoals/YnabGoalsView';
 import YnabTrackingView from './components/YnabTracking/YnabTrackingView';
 import SummaryAnalysisView from './components/SummaryAnalysis/SummaryAnalysisView';
@@ -117,8 +116,8 @@ function App() {
       case 'portfolios': return <PortfoliosView />;
       case 'brokers': return <BrokersView />;
       case 'goals': return <GoalsView />;
-      case 'ynabGoals': return <YnabGoalsView onNavigateToYnab={() => setCurrentView('ynab')} />;
-      case 'ynabTracking': return <YnabTrackingView onNavigateToYnab={() => setCurrentView('ynab')} onNavigateToSettings={() => setCurrentView('ynabSettings')} />;
+      case 'ynabGoals': return <YnabGoalsView />;
+      case 'ynabTracking': return <YnabTrackingView onNavigateToYnab={() => setCurrentView('ynabSettings')} onNavigateToSettings={() => setCurrentView('ynabSettings')} />;
       case 'summary': return <SummaryAnalysisView onNavigateToSettings={() => setCurrentView('ynabSettings')} />;
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
@@ -126,7 +125,6 @@ function App() {
       case 'performance': return <PerformanceView />;
       case 'disclaimer': return <DisclaimerView />;
       case 'globalRebalancing': return <GlobalRebalancingPage />;
-      case 'ynab': return <YnabImportView onNavigateToSettings={() => setCurrentView('ynabSettings')} />;
       case 'pac': return <PacView />;
       default: return <DashboardView onNavigateToDisclaimer={() => setCurrentView('disclaimer')} />;
     }

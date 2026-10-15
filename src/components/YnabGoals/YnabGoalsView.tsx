@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import type { YnabGoalAllocation } from '../../types';
+import type { YnabCategoryGroupSummary, YnabGoalAllocation } from '../../types';
 import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import GoalSetupModal from './GoalSetupModal';
@@ -13,7 +13,7 @@ const MAX_WHERE_CHIPS = 2;
 const formatShortDate = (iso: string) =>
     new Date(iso).toLocaleDateString('en-IE', { year: 'numeric', month: 'short' });
 
-const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigateToYnab }) => {
+const YnabGoalsView: React.FC = () => {
     const {
         ynabGoals,
         portfolios,
@@ -24,7 +24,26 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
         effectiveAssetSettings,
         marketData,
         virtualBonds,
+        listYnabCategoryGroups,
+        setYnabGoalsGroup,
     } = usePortfolio();
+
+    // The YNAB category group the planned capex are read from. Picked here,
+    // next to the sync that reads it.
+    const [capexGroups, setCapexGroups] = useState<YnabCategoryGroupSummary[]>([]);
+    const [groupsLoading, setGroupsLoading] = useState(false);
+    useEffect(() => {
+        if (!ynabConfig) return;
+        let cancelled = false;
+        (async () => {
+            setGroupsLoading(true);
+            const res = await listYnabCategoryGroups();
+            if (!cancelled && res.ok && res.groups) setCapexGroups(res.groups);
+            if (!cancelled) setGroupsLoading(false);
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ynabConfig?.apiKey, ynabConfig?.budgetId]);
 
     // An allocation pinned to an asset of a goal-matching portfolio is a
     // target, not money set aside: what it actually covers is its share of
@@ -56,6 +75,30 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
 
     const [setupGoalId, setSetupGoalId] = useState<string | null>(null);
     const capexSync = useCapexSync();
+    const groupPicker = ynabConfig && (
+        <select
+            className="form-select"
+            value={ynabConfig.goalsGroupId || ''}
+            onChange={e => {
+                const group = capexGroups.find(g => g.id === e.target.value);
+                if (group) setYnabGoalsGroup(group.id, group.name);
+            }}
+            disabled={groupsLoading || capexGroups.length === 0}
+            aria-label="YNAB category group holding the planned capex"
+            style={{ minWidth: 220, width: 'auto' }}
+        >
+            <option value="" disabled>
+                {groupsLoading ? 'Loading groups…' : capexGroups.length === 0 ? 'No groups available' : '— YNAB category group —'}
+            </option>
+            {/* Keep the stored group visible while the list loads. */}
+            {ynabConfig.goalsGroupId && !capexGroups.some(g => g.id === ynabConfig.goalsGroupId) && (
+                <option value={ynabConfig.goalsGroupId}>{ynabConfig.goalsGroupName || ynabConfig.goalsGroupId}</option>
+            )}
+            {capexGroups.map(g => (
+                <option key={g.id} value={g.id}>{g.name} ({g.categoryCount})</option>
+            ))}
+        </select>
+    );
     const syncButton = (
         <button
             type="button"
@@ -64,7 +107,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
             disabled={!capexSync.canSync || capexSync.syncing}
             title={capexSync.canSync
                 ? 'Re-read the planned capex categories from YNAB'
-                : 'Pick the category group on the YNAB page first'}
+                : 'Pick the YNAB category group first'}
         >
             {capexSync.syncing ? 'Preparing…' : '↻ Sync from YNAB'}
         </button>
@@ -110,13 +153,11 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                 <h2 style={{ marginBottom: '1rem' }}>No planned capex synced yet</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                    Go to the YNAB section, pick the category group that holds your planned capex and run a sync.
+                    Pick the YNAB category group that holds your planned capex, then sync it.
                 </p>
                 <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                    {capexSync.canSync && syncButton}
-                    {onNavigateToYnab && (
-                        <button className="btn" onClick={onNavigateToYnab}>Go to YNAB</button>
-                    )}
+                    {groupPicker}
+                    {syncButton}
                 </div>
                 {capexSync.modal}
             </div>
@@ -135,7 +176,10 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                         )}
                     </div>
                 </div>
-                {syncButton}
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {groupPicker}
+                    {syncButton}
+                </div>
             </header>
             {capexSync.modal}
 
