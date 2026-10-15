@@ -274,15 +274,15 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
             {!guard.ok ? (
                 <div className="ytv-guard ytv-guard-locked">
                     <span>🛡 <strong>Linking is locked.</strong> {guard.message} Until then the figures below are a preview: no account can be linked and nothing can be migrated.</span>
-                    {onNavigateToSettings && <button type="button" className="btn" onClick={onNavigateToSettings}>Open Settings</button>}
+                    {onNavigateToSettings && <button type="button" className="btn" onClick={onNavigateToSettings}>Open YNAB Integration</button>}
                 </div>
             ) : (
                 <div className={`ytv-guard${allowedCount === 0 ? ' ytv-guard-locked' : ''}`}>
                     <span>
                         🛡 Write guard: only <strong>{allowedCount}</strong> off-budget account{allowedCount === 1 ? '' : 's'} of this budget can be linked.
-                        {allowedCount === 0 && ' Tick the allowed ones in Settings → YNAB write guard.'}
+                        {allowedCount === 0 && ' Tick the allowed ones in Settings › YNAB Integration → write guard.'}
                     </span>
-                    {onNavigateToSettings && <button type="button" className="ytv-link" onClick={onNavigateToSettings}>Change in Settings</button>}
+                    {onNavigateToSettings && <button type="button" className="ytv-link" onClick={onNavigateToSettings}>Change in YNAB Integration</button>}
                 </div>
             )}
 
