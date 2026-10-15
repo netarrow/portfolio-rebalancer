@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import type { YnabCategoryGroupSummary, YnabGoalSyncCandidate } from '../../types';
+import type { YnabCategoryGroupSummary } from '../../types';
 import Swal from 'sweetalert2';
-import YnabGoalsSyncModal from './YnabGoalsSyncModal';
+import { useCapexSync } from './useCapexSync';
 import YnabCategoryMappings from './YnabCategoryMappings';
 import YnabFundingPlanView from './YnabFundingPlanView';
 import YnabCoveragePanel from './YnabCoveragePanel';
@@ -18,16 +18,13 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
         ynabSyncing,
         listYnabCategoryGroups,
         setYnabGoalsGroup,
-        prepareYnabGoalsSync,
-        applyYnabGoalsSync,
-        ynabGoalsSyncing,
     } = usePortfolio();
+    const capexSync = useCapexSync();
 
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
 
     const [goalGroups, setGoalGroups] = useState<YnabCategoryGroupSummary[]>([]);
     const [groupsLoading, setGroupsLoading] = useState(false);
-    const [syncCandidates, setSyncCandidates] = useState<YnabGoalSyncCandidate[] | null>(null);
 
     const handleSync = async () => {
         const result = await syncYnabBudget();
@@ -55,43 +52,20 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
         setYnabGoalsGroup(group.id, group.name);
     };
 
-    const handlePrepareGoalsSync = async () => {
-        const res = await prepareYnabGoalsSync();
-        if (!res.ok) {
-            Swal.fire({ title: 'Sync error', text: res.error, icon: 'error' });
-            return;
-        }
-        setSyncCandidates(res.candidates || []);
-    };
-
-    const handleConfirmGoalsSync = (candidates: YnabGoalSyncCandidate[]) => {
-        const res = applyYnabGoalsSync(candidates);
-        setSyncCandidates(null);
-        if (!res.ok) {
-            Swal.fire({ title: 'Sync error', text: res.error, icon: 'error' });
-            return;
-        }
-        const r = res.report!;
-        Swal.fire({
-            title: 'Sync complete',
-            html: `Created ${r.created}, updated ${r.updated}, skipped ${r.skipped}, archived ${r.archived}, deleted ${r.deleted}.`,
-            icon: 'success',
-        });
-    };
 
     if (!ynabConfig) {
         return (
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                 <h2 style={{ marginBottom: '1rem' }}>YNAB not configured</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    To import your budget categories, enter your YNAB API key in Settings.
+                    To import your budget categories, enter your YNAB API key in Settings › YNAB Integration.
                 </p>
                 {onNavigateToSettings && (
                     <button
                         onClick={onNavigateToSettings}
                         style={{ padding: '0.7rem 1.5rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                     >
-                        Go to Settings
+                        Go to YNAB Integration
                     </button>
                 )}
             </div>
@@ -153,10 +127,10 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                     <button
                         type="button"
                         className="btn btn-primary"
-                        onClick={handlePrepareGoalsSync}
-                        disabled={!ynabConfig.goalsGroupId || ynabGoalsSyncing}
+                        onClick={capexSync.prepare}
+                        disabled={!capexSync.canSync || capexSync.syncing}
                     >
-                        {ynabGoalsSyncing ? 'Preparing…' : 'Prepare capex sync'}
+                        {capexSync.syncing ? 'Preparing…' : 'Prepare capex sync'}
                     </button>
                 </div>
             </div>
@@ -166,14 +140,7 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
             <YnabCoveragePanel />
             <YnabFundingPlanView />
 
-            {syncCandidates !== null && (
-                <YnabGoalsSyncModal
-                    candidates={syncCandidates}
-                    currencyIso={currencyIso}
-                    onConfirm={handleConfirmGoalsSync}
-                    onCancel={() => setSyncCandidates(null)}
-                />
-            )}
+            {capexSync.modal}
         </div>
     );
 };
