@@ -694,6 +694,10 @@ export interface YnabMacroMappings {
   // groupId → macro class; a category override (categoryId key) wins over its group.
   groups: Record<string, YnabMacroCategory>;
   categories: Record<string, YnabMacroCategory>;
+  // categoryId → id of another budget: the category is money handed to that
+  // budget (e.g. a personal "family expenses" line), so the analysis splits its
+  // outflow by that budget's own spending mix instead of giving it one class.
+  linkedBudgets?: Record<string, string>;
 }
 
 export interface YnabMonthCategorySnapshot {

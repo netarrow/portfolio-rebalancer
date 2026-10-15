@@ -198,7 +198,11 @@ export function parseBackupData(raw: unknown, fallbackBudgetId?: string): Parsed
         ynabGoals: optional(data, 'ynabGoals', r => asArray<YnabGoal>(r)),
         ynabGoalAllocations: optional(data, 'ynabGoalAllocations', r => asArray<YnabGoalAllocation>(r)),
         ynabMacroMappings: optional(data, 'ynabMacroMappings', r => isPlainObject(r)
-            ? { groups: asRecord(r.groups), categories: asRecord(r.categories) } as YnabMacroMappings
+            ? {
+                groups: asRecord(r.groups),
+                categories: asRecord(r.categories),
+                ...(isPlainObject(r.linkedBudgets) ? { linkedBudgets: asRecord(r.linkedBudgets) } : {}),
+            } as YnabMacroMappings
             : { groups: {}, categories: {} }),
         ynabBudgetOwners: optional(data, 'ynabBudgetOwners', r => Object.fromEntries(
             Object.entries(asRecord<unknown>(r))

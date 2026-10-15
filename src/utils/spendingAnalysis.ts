@@ -76,11 +76,26 @@ export interface SpendingAnalysis {
     pastSavingsSpent: number;
     budgetFundedSpending: number; // totalOutflow − pastSavingsSpent
     pastSavingsCategories: (MacroCategoryTotal & { pastSavingsOutflow: number })[]; // drawdown desc
+    // Categories handed to another budget, split by that budget's spending mix.
+    linkedSplits: LinkedBudgetSplit[];
+}
+
+export interface LinkedBudgetSplit {
+    categoryId: string;
+    name: string;
+    groupName: string;
+    budgetId: string;
+    totalOutflow: number;
+    /** Share of the linked budget's mapped spending per class; null = that budget has no synced history. */
+    shares: Record<YnabMacroCategory, number> | null;
 }
 
 export function analyzeSpending(
     history: YnabMonthSnapshot[],
     mappings: YnabMacroMappings,
+    // Spending history of the other budgets, by id: a category linked to one of
+    // them (mappings.linkedBudgets) is split by that budget's own class mix.
+    linkedHistories?: Record<string, YnabMonthSnapshot[]>,
 ): SpendingAnalysis {
     const months = [...history].sort((a, b) => a.month.localeCompare(b.month));
     const monthsCount = months.length;
@@ -118,6 +133,25 @@ export function analyzeSpending(
         }
     }
 
+    // Class mix of a linked budget: the share of its mapped spending per class,
+    // computed once per budget, without following its own links (no cycles).
+    const mixCache = new Map<string, Record<YnabMacroCategory, number> | null>();
+    const mixOf = (budgetId: string): Record<YnabMacroCategory, number> | null => {
+        if (mixCache.has(budgetId)) return mixCache.get(budgetId)!;
+        const linkedHistory = linkedHistories?.[budgetId];
+        let mix: Record<YnabMacroCategory, number> | null = null;
+        if (linkedHistory && linkedHistory.length > 0) {
+            const other = analyzeSpending(linkedHistory, { ...mappings, linkedBudgets: {} });
+            const mapped = MACRO_ORDER.reduce((sum, m) => sum + Math.max(0, other.macros[m].totalOutflow), 0);
+            if (mapped > 0) {
+                mix = Object.fromEntries(MACRO_ORDER.map(m => [m, Math.max(0, other.macros[m].totalOutflow) / mapped])) as Record<YnabMacroCategory, number>;
+            }
+        }
+        mixCache.set(budgetId, mix);
+        return mix;
+    };
+    const linkedSplits: LinkedBudgetSplit[] = [];
+
     const unmappedCategories: MacroCategoryTotal[] = [];
     const pastSavingsCategories: (MacroCategoryTotal & { pastSavingsOutflow: number })[] = [];
     let pastSavingsSpent = 0;
@@ -130,7 +164,23 @@ export function analyzeSpending(
             pastSavingsSpent += pastSavingsOutflow;
             pastSavingsCategories.push({ ...cat, pastSavingsOutflow });
         }
-        if (macro) {
+        const linkedId = mappings.linkedBudgets?.[cat.categoryId];
+        if (linkedId) {
+            const shares = mixOf(linkedId);
+            linkedSplits.push({ categoryId: cat.categoryId, name: cat.name, groupName: cat.groupName, budgetId: linkedId, totalOutflow: cat.totalOutflow, shares });
+            if (shares) {
+                for (const m of MACRO_ORDER) {
+                    if (shares[m] <= 0) continue;
+                    const part = { ...cat, totalOutflow: cat.totalOutflow * shares[m], totalBudgeted: cat.totalBudgeted * shares[m] };
+                    macros[m].totalOutflow += part.totalOutflow;
+                    macros[m].totalBudgeted += part.totalBudgeted;
+                    macros[m].categories.push(part);
+                }
+                continue;
+            }
+            // Linked budget not synced yet: the category stays unmapped below.
+        }
+        if (macro && !linkedId) {
             macros[macro].totalOutflow += cat.totalOutflow;
             macros[macro].totalBudgeted += cat.totalBudgeted;
             macros[macro].categories.push(cat);
@@ -166,6 +216,7 @@ export function analyzeSpending(
         pastSavingsSpent,
         budgetFundedSpending: totalOutflow - pastSavingsSpent,
         pastSavingsCategories,
+        linkedSplits,
     };
 }
 
