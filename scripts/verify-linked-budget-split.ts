@@ -47,6 +47,24 @@ assertEq('one linked split', a.linkedSplits.length, 1);
 assertEq('split share structural', a.linkedSplits[0].shares!.structural, 0.5);
 assertEq('total outflow is unchanged', a.totalOutflow, 2400);
 
+// The split lands on the linked budget's own categories, tagged with their source.
+const rentShare = a.macros.structural.categories.find(c => c.categoryId === 'family-share>rent');
+assertTrue('rent of the family budget appears under structural', !!rentShare);
+assertEq('rent share = 2000 × 50%', rentShare!.totalOutflow, 1000);
+assertTrue('rent share comes from the family-share category', rentShare!.linkedFrom?.categoryId === 'family-share' && rentShare!.linkedFrom?.budgetId === 'family');
+const dining = a.macros.compressible.categories.find(c => c.categoryId === 'family-share>dining');
+assertEq('dining share = 2000 × 20%', dining!.totalOutflow, 400);
+const own = a.macros.compressible.categories.find(c => c.categoryId === 'fun');
+assertTrue('own categories are not tagged', !!own && !own.linkedFrom);
+const sumOf = (m: 'structural' | 'variable' | 'compressible') => a.macros[m].categories.reduce((s, c) => s + c.totalOutflow, 0);
+assertEq('categories add up to the class (compressible)', sumOf('compressible'), a.macros.compressible.totalOutflow);
+
+// A refund in the linked budget does not inflate the other categories.
+const familyWithRefund = [month('2026-01-01', 0, [['rent', 'g-home', 1000], ['food', 'g-food', 600], ['dining', 'g-out', 400], ['refund', 'g-out', -100]])];
+const withRefund = analyzeSpending(personal, mappings, { family: familyWithRefund });
+const compSplit = withRefund.macros.compressible.categories.filter(c => c.linkedFrom).reduce((s, c) => s + c.totalOutflow, 0);
+assertEq('linked compressible = 2000 × share of the class', compSplit, 2000 * withRefund.linkedSplits[0].shares!.compressible);
+
 const noHistory = analyzeSpending(personal, mappings, {});
 assertTrue('unsynced budget: shares are null', noHistory.linkedSplits[0].shares === null);
 assertEq('unsynced budget: the category is unmapped', noHistory.unmappedOutflow, 2000);

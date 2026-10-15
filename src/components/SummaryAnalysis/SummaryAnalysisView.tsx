@@ -72,6 +72,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
     } = usePortfolio();
 
     const [showMapping, setShowMapping] = useState(false);
+    // Macro cards opened to list every category, not just the top ones.
+    const [openMacros, setOpenMacros] = useState<Record<string, boolean>>({});
     const [reloadingBudgets, setReloadingBudgets] = useState(false);
 
     // Every budget of the token can be analysed. Before the cached list is
@@ -400,16 +402,53 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                             {formatCurrency(m.avgMonthlyOutflow, currencyIso)}/month
                                             {m.shareOfIncome != null && <> · {Math.round(m.shareOfIncome * 100)}% of income</>}
                                         </div>
-                                        {m.categories.length > 0 && (
-                                            <div style={{ marginTop: '0.6rem', fontSize: '0.82rem' }}>
-                                                {m.categories.slice(0, 3).map(c => (
-                                                    <div key={c.categoryId} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', color: 'var(--text-secondary)' }}>
-                                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
-                                                        <span>{formatCurrency(c.totalOutflow, currencyIso)}</span>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                        {m.categories.length > 0 && (() => {
+                                            const open = !!openMacros[macro];
+                                            const own = m.categories.filter(c => !c.linkedFrom);
+                                            // Shares of linked categories, grouped by the category they came from.
+                                            const linkedBlocks = new Map<string, { name: string; budgetId: string; total: number; items: typeof m.categories }>();
+                                            for (const c of m.categories) {
+                                                if (!c.linkedFrom) continue;
+                                                const block = linkedBlocks.get(c.linkedFrom.categoryId)
+                                                    ?? { name: c.linkedFrom.name, budgetId: c.linkedFrom.budgetId, total: 0, items: [] };
+                                                block.total += c.totalOutflow;
+                                                block.items.push(c);
+                                                linkedBlocks.set(c.linkedFrom.categoryId, block);
+                                            }
+                                            const ownShown = open ? own : own.slice(0, 3);
+                                            const childLimit = open ? Infinity : 3;
+                                            const hidden = (own.length - ownShown.length)
+                                                + [...linkedBlocks.values()].reduce((n, b) => n + Math.max(0, b.items.length - childLimit), 0);
+                                            const line = (key: string, name: React.ReactNode, value: number, indent = false) => (
+                                                <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', color: 'var(--text-secondary)', paddingLeft: indent ? '0.9rem' : 0 }}>
+                                                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                                                    <span>{formatCurrency(value, currencyIso)}</span>
+                                                </div>
+                                            );
+                                            return (
+                                                <div style={{ marginTop: '0.6rem', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                                                    {ownShown.map(c => line(c.categoryId, c.name, c.totalOutflow))}
+                                                    {[...linkedBlocks.entries()].map(([fromId, b]) => (
+                                                        <div key={fromId} style={{ marginTop: '0.35rem' }}>
+                                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                                                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>↔ {b.name} · {budgetName(b.budgetId)}</span>
+                                                                <span>{formatCurrency(b.total, currencyIso)}</span>
+                                                            </div>
+                                                            {b.items.slice(0, childLimit).map(c => line(c.categoryId, c.name, c.totalOutflow, true))}
+                                                        </div>
+                                                    ))}
+                                                    {(hidden > 0 || open) && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setOpenMacros(prev => ({ ...prev, [macro]: !open }))}
+                                                            style={{ alignSelf: 'flex-start', marginTop: '0.35rem', background: 'transparent', border: 0, padding: 0, color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.8rem' }}
+                                                        >
+                                                            {open ? 'Show less' : `Show all (+${hidden})`}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            );
+                                        })()}
                                     </div>
                                 );
                             })}
