@@ -688,18 +688,18 @@ export function buildReassignmentPreview(input: ReassignmentInput): Reassignment
     const budgetVerdict = checkYnabGuardBudget(config, budgetId);
     if (!budgetVerdict.ok) blockers.push(budgetVerdict.message);
     if (!from) { blockers.push('The account to move from is not in the plan.'); return preview; }
-    if (!to) { blockers.push('The account to move to is not in the plan: give the goal an allocation first.'); return preview; }
+    if (!to) { blockers.push('The account to move to is not in the plan: give the capex an allocation first.'); return preview; }
     const sharesKind = (k: string) => k === 'goal' ? 'goal' : (k === 'portfolio' || k === 'pension') ? 'portfolio' : null;
     const fromKind = sharesKind(from.kind);
     const toKind = sharesKind(to.kind);
-    if (!fromKind || !toKind) { blockers.push('Only goal and portfolio accounts hold shares that can be reassigned.'); return preview; }
+    if (!fromKind || !toKind) { blockers.push('Only capex and portfolio accounts hold shares that can be reassigned.'); return preview; }
     if (fromKey === toKey) blockers.push('Pick two different accounts.');
-    if (fromKind === 'portfolio' && toKind === 'portfolio') blockers.push('Holdings belong to their own portfolio: move them to a goal instead.');
+    if (fromKind === 'portfolio' && toKind === 'portfolio') blockers.push('Holdings belong to their own portfolio: move them to a capex instead.');
 
     const available = from.pieces.filter(p => migrated.has(p.brokerId));
     const availableValue = available.reduce((s, p) => s + p.value, 0);
     if (available.length === 0) {
-        blockers.push(`${from.accountName} holds nothing at a migrated broker yet: change the goal allocations instead, the migration will follow them.`);
+        blockers.push(`${from.accountName} holds nothing at a migrated broker yet: change the capex allocations instead, the migration will follow them.`);
         return preview;
     }
     const amount = cents(input.amount);

@@ -304,7 +304,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
                                 onClick={() => setPortfolioTargetMode(portfolioId, mode)}
                                 style={{ padding: '6px 14px', border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, background: active ? 'var(--color-primary)' : 'transparent', color: active ? '#fff' : 'var(--text-secondary)' }}
                             >
-                                {mode === 'percent' ? 'Target in %' : 'Target in € (goal matching)'}
+                                {mode === 'percent' ? 'Target in %' : 'Target in € (capex matching)'}
                             </button>
                         );
                     })}
@@ -312,7 +312,7 @@ const PortfolioAllocations: React.FC<PortfolioAllocationsProps> = ({ portfolioId
 
                 <p style={{ color: 'var(--text-secondary)', marginBottom: 'var(--space-6)' }}>
                     {isAmount
-                        ? 'Give each asset the € it must reach. Rows linked to YNAB goals (YNAB Goals → Allocations → covering asset) take the sum of those goals. Liquidity fills the gaps nearest due date first; nothing is ever sold.'
+                        ? 'Give each asset the € it must reach. Rows linked to planned capex (Planned Capex → Allocations → covering asset) take the sum of those capex items. Liquidity fills the gaps nearest due date first; nothing is ever sold.'
                         : 'Set target percentages for this portfolio. Total should be 100%.'}
                 </p>
 

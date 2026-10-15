@@ -37,7 +37,7 @@ const GoalSetupModal: React.FC<Props> = ({ row, currencyIso, coveredBy, isPinned
 
     const handleDeleteGoal = () => {
         Swal.fire({
-            title: 'Delete YNAB goal?',
+            title: 'Delete planned capex?',
             text: `This removes "${g.name}" from the tool. Allocations must be empty.`,
             icon: 'warning',
             showCancelButton: true,
@@ -223,7 +223,7 @@ const GoalSetupModal: React.FC<Props> = ({ row, currencyIso, coveredBy, isPinned
                 </section>
 
                 <div className="gsm-footer">
-                    <button type="button" className="btn gsm-delete" onClick={handleDeleteGoal}>Delete goal</button>
+                    <button type="button" className="btn gsm-delete" onClick={handleDeleteGoal}>Delete capex</button>
                     <button type="button" className="btn" onClick={onClose}>Close</button>
                 </div>
             </div>

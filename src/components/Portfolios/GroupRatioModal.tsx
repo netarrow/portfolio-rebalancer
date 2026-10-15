@@ -99,7 +99,7 @@ const GroupRatioModal: React.FC<Props> = ({ parent, onClose }) => {
         const titleOf = (id?: string) => goals.find(g => g.id === id)?.title;
         return rows
             .filter(r => !r.isParent && r.portfolio.goalId && r.portfolio.goalId !== parent.goalId)
-            .map(r => ({ name: r.portfolio.name, goalTitle: titleOf(r.portfolio.goalId) ?? 'another goal' }));
+            .map(r => ({ name: r.portfolio.name, goalTitle: titleOf(r.portfolio.goalId) ?? 'another bucket' }));
     }, [rows, goals, parent.goalId]);
 
     const goallessMembers = useMemo(
@@ -243,9 +243,9 @@ const GroupRatioModal: React.FC<Props> = ({ parent, onClose }) => {
                         {divergentGoals.map(d => `${d.name} (${d.goalTitle})`).join(', ')}
                         {divergentGoals.length === 1 ? ' is' : ' are'} attached to a different goal than the parent
                         — which is what a sleeve inside a core usually is. A rolling bond ETF, say, has no maturity
-                        to hold to, so it is Security shaded toward the parent's goal rather than either one alone.
+                        to hold to, so it is Security shaded toward the parent's bucket rather than either one alone.
                         Because the group counts as one portfolio, that value sits at the parent's level in the
-                        pyramid, drawn in a lighter shade of it and naming its own goal on hover. The pyramid's
+                        pyramid, drawn in a lighter shade of it and naming its own bucket on hover. The pyramid's
                         total does not change.
                     </p>
                 )}
@@ -253,7 +253,7 @@ const GroupRatioModal: React.FC<Props> = ({ parent, onClose }) => {
                     <p className="ratio-note">
                         {goallessMembers.join(', ')} {goallessMembers.length === 1 ? 'has' : 'have'} no goal, so
                         {goallessMembers.length === 1 ? ' it stays' : ' they stay'} out of the pyramid — the same
-                        as any portfolio without a goal, group or not.
+                        as any portfolio without a bucket, group or not.
                     </p>
                 )}
 

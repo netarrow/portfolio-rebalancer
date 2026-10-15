@@ -451,12 +451,12 @@ const goalSegmentTitle = (goal: GoalSegment): string | undefined => {
     const eur = (v: number) => `€${Math.round(v).toLocaleString('en-IE')}`;
     return [
         `${goal.name}: ${eur(goal.value)}`,
-        `  attached to this goal: ${eur(goal.nativeValue)}`,
+        `  attached to this bucket: ${eur(goal.nativeValue)}`,
         ...goal.inherited.map(h => `  merged from ${h.fromGoalTitle}: ${eur(h.value)}`),
     ].join('\n');
 };
 
-export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number; title?: string }> = ({ data, total, title = 'Goal Distribution' }) => {
+export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: number; title?: string }> = ({ data, total, title = 'Bucket Distribution' }) => {
     const [hoveredId, setHoveredId] = useState<string | null>(null);
     const hoveredGoal = data.find(g => g.id === hoveredId);
     const visible = data.filter(g => g.value > 0);
@@ -530,7 +530,7 @@ export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: numbe
                                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', color: 'var(--text-secondary)' }}>
                                         <span>
                                             <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 2, backgroundColor: hoveredGoal.color, marginRight: 6 }} />
-                                            Attached to this goal
+                                            Attached to this bucket
                                         </span>
                                         <span>€{hoveredGoal.nativeValue.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>
                                     </div>
@@ -573,7 +573,7 @@ export const GoalDistributionChart: React.FC<{ data: GoalSegment[]; total: numbe
                 {visible.some(g => g.inherited.length > 0) && (
                     <div style={{ marginTop: '0.6rem', fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.5 }}>
                         <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, backgroundColor: tintForInherited('#9CA3AF'), marginRight: 6, verticalAlign: 'middle' }} />
-                        The lighter part of a level is a sleeve whose own goal is a different one,
+                        The lighter part of a level is a sleeve whose own bucket is a different one,
                         counted here because its parent/child group is one portfolio — a rolling bond
                         ETF inside a growth core, say: Security by intent, shaded toward Growth because
                         it never matures. Hover a level for the split; totals are unchanged.

@@ -158,7 +158,7 @@ export const calculateForecastWithState = (
                     hasRuleBreach = true;
                     // Only overwrite reason if it's the first breach, or if we escalate to insolvency later
                     if (!failureReason || !hasInsolvency) {
-                        const sourcesLabel = expense.allowedGoalLabels?.join(', ') || 'the allowed goals';
+                        const sourcesLabel = expense.allowedGoalLabels?.join(', ') || 'the allowed buckets';
                         failureReason = `Risk Warning Year ${currentYear}: Insufficient funds in portfolios linked to ${sourcesLabel}. Needed €${expenseAmount.toFixed(0)}.`;
                     }
                 }

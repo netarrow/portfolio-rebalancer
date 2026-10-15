@@ -74,21 +74,21 @@ const PortfolioForm: React.FC<PortfolioFormProps> = ({ initialData, onSubmit, on
                             id="description"
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Brief description of this portfolio's goal"
+                            placeholder="Brief description of this portfolio's purpose"
                             className="form-input"
                             rows={3}
                         />
                     </div>
 
                     <div className="form-group">
-                        <label htmlFor="goalId">Goal</label>
+                        <label htmlFor="goalId">Bucket</label>
                         <select
                             id="goalId"
                             value={goalId}
                             onChange={(e) => setGoalId(e.target.value)}
                             className="form-input"
                         >
-                            <option value="">-- No Goal --</option>
+                            <option value="">-- No Bucket --</option>
                             {[...goals].sort((a, b) => a.order - b.order).map(g => (
                                 <option key={g.id} value={g.id}>{g.title}</option>
                             ))}

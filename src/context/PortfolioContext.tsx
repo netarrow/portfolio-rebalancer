@@ -3554,13 +3554,13 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             return { ok: false, error: 'YNAB not configured.' };
         }
         if (!ynabConfig?.goalsGroupId) {
-            return { ok: false, error: 'Select an Investment Goals category group first.' };
+            return { ok: false, error: 'Select the Planned Capex category group first.' };
         }
         try {
             setYnabGoalsSyncing(true);
             const res = await ynabGetGoalCategories(ynabConfig.apiKey, ynabConfig.budgetId, ynabConfig.goalsGroupId);
             if (!res.success || !res.data) {
-                return { ok: false, error: res.error || 'Failed to fetch goal categories.' };
+                return { ok: false, error: res.error || 'Failed to fetch capex categories.' };
             }
             const existingById = new Map<string, YnabGoal>();
             for (const g of ynabGoals) existingById.set(g.id, g);
@@ -3633,12 +3633,12 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const deleteYnabGoal = (ynabGoalId: string) => {
         const hasAllocs = ynabGoalAllocations.some(a => a.ynabGoalId === ynabGoalId);
         if (hasAllocs) {
-            return { ok: false as const, error: 'Remove allocations linked to this YNAB goal first.' };
+            return { ok: false as const, error: 'Remove allocations linked to this planned capex first.' };
         }
         // Its YNAB account still holds investments: deleting it here would leave
         // them there with no goal to answer for them.
         if (goalHeldUnits(ynabGoalQuotes, ynabGoalId) > 1e-9) {
-            return { ok: false as const, error: 'This goal still holds investments in its YNAB account. Move them with Reassign (YNAB Off-budget page) before deleting it.' };
+            return { ok: false as const, error: 'This capex still holds investments in its YNAB account. Move them with Reassign (YNAB Off-budget page) before deleting it.' };
         }
         setYnabGoals(prev => prev.filter(g => g.id !== ynabGoalId));
         return { ok: true as const };
@@ -3697,7 +3697,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const { portfolioId, ynabGoalId, amount, ticker, allowOverallocation } = input;
         if (!(amount > 0)) return { ok: false as const, error: 'Amount must be greater than zero.' };
         if (!portfolios.some(p => p.id === portfolioId)) return { ok: false as const, error: 'Portfolio not found.' };
-        if (!ynabGoals.some(g => g.id === ynabGoalId)) return { ok: false as const, error: 'YNAB goal not found.' };
+        if (!ynabGoals.some(g => g.id === ynabGoalId)) return { ok: false as const, error: 'Planned capex not found.' };
         const summary = getPortfolioAllocationSummary(portfolioId);
         // On a row of an amount-mode portfolio the amount is the € the row must
         // reach, not value set aside today — it may well exceed what is held.

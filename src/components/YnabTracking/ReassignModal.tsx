@@ -87,13 +87,13 @@ const ReassignModal: React.FC<Props> = ({ plan, accounts, format, initial, onClo
                     <span className="rsm-writes">Writes to YNAB</span>
                 </div>
                 <p className="rsm-hint">
-                    Moves holdings, in units with their cost basis, from one account by purpose to another — goal → goal, portfolio → goal,
+                    Moves holdings, in units with their cost basis, from one account by purpose to another — capex → capex, portfolio → capex,
                     or goal → its own portfolio. Only shares at migrated brokers move this way. One tracking-to-tracking transfer, dated {date}.
                 </p>
 
                 {!result && suggestions.length > 0 && (
                     <section className="rsm-sec">
-                        <h4>Suggested by the goal allocations</h4>
+                        <h4>Suggested by the capex allocations</h4>
                         <div className="rsm-sugs">
                             {suggestions.map(s => (
                                 <button

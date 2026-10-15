@@ -40,7 +40,7 @@ const NATURE_OPTIONS: { value: YnabMacroCategory; label: string }[] = [
     { value: 'structural', label: 'Fixed (structural)' },
     { value: 'variable', label: 'Variable' },
     { value: 'compressible', label: 'Compressible' },
-    { value: 'sinking', label: 'Goal (dated expense)' },
+    { value: 'sinking', label: 'Capex (dated expense)' },
     { value: 'investments', label: 'Investments' },
 ];
 const natureLabel = (nature: YnabMacroCategory) => NATURE_OPTIONS.find(o => o.value === nature)?.label ?? nature;
@@ -315,7 +315,7 @@ const YnabCategoryMappings: React.FC = () => {
                             : '+ Add'}
                     </button>
                 </td>
-                <td className="map-cell-goal" data-label="Goal">
+                <td className="map-cell-goal" data-label="Capex">
                     <button type="button" className={`cell-link${goalText ? '' : ' cell-link-muted'}`} onClick={() => setDetailId(categoryId)}>
                         {goalText ?? (position.nature === 'sinking' ? 'Set target' : 'Set')}
                     </button>
@@ -406,7 +406,7 @@ const YnabCategoryMappings: React.FC = () => {
                                 <th>Nature</th>
                                 <th>Cash at</th>
                                 <th style={{ textAlign: 'right' }}>Invested</th>
-                                <th>Goal</th>
+                                <th>Capex</th>
                             </tr>
                         )}
                     </thead>

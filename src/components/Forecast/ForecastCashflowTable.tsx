@@ -82,7 +82,7 @@ const ForecastCashflowTable: React.FC<Props> = ({ table, granularity, sourceLabe
                         <tr>
                             <th style={{ ...th, textAlign: 'left' }}>{granularity === 'year' ? 'Year' : 'Month'}</th>
                             <th style={th} title="Recurring income minus recurring expenses over the period">Income</th>
-                            <th style={th} title="One-off planned expenses (manual + YNAB goals) due in the period. They erode liquidity first, then the portfolios allowed by their goal.">Expenses</th>
+                            <th style={th} title="One-off planned expenses (manual + planned capex) due in the period. They erode liquidity first, then the portfolios allowed by their bucket.">Expenses</th>
                             <th style={th} title="What the market added or took away: the return on the invested capital over the period">Market</th>
                             <th style={th} title="Deepest dip below the high-water mark reached inside the period">Dip</th>
                             <th style={th} title="Liquidity left on the brokers at the end of the period, and how much it moved">Cash</th>
@@ -128,7 +128,7 @@ const ForecastCashflowTable: React.FC<Props> = ({ table, granularity, sourceLabe
                                             <span title="From here the plan cannot pay an expense at all" style={{ marginLeft: '0.4rem', color: '#EF4444' }}>⛔</span>
                                         )}
                                         {!r.insolvencyStarts && r.ruleBreachStarts && (
-                                            <span title="From here an expense has to be paid from portfolios its goal does not allow" style={{ marginLeft: '0.4rem', color: '#F59E0B' }}>⚠</span>
+                                            <span title="From here an expense has to be paid from portfolios its bucket does not allow" style={{ marginLeft: '0.4rem', color: '#F59E0B' }}>⚠</span>
                                         )}
                                     </td>
                                     <td style={{ ...td, color: r.income >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>

@@ -288,7 +288,7 @@ const RelocationWhatIf: React.FC<RelocationWhatIfProps> = ({ before, after, fric
 
             {before.goalPyramid.length > 0 && (
                 <div className="reloc-card">
-                    <h3 className="reloc-section-title">Goal pyramid</h3>
+                    <h3 className="reloc-section-title">Bucket pyramid</h3>
                     <div className="reloc-pyramids">
                         <GoalDistributionChart data={before.goalPyramid} total={before.goalPyramidTotal} title="Before" />
                         <GoalDistributionChart data={after.goalPyramid} total={after.goalPyramidTotal} title={copy?.afterLabel ?? (plural ? `After ${moveCount} moves` : 'After')} />

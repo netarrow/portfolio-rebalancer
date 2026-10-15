@@ -192,7 +192,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         suggestions keep referring to it whatever budget is analysed. */}
                     {!isPrimaryBudget && (
                         <div style={{ color: '#f59e0b', fontSize: '0.82rem', marginTop: '0.35rem', maxWidth: 620 }}>
-                            YNAB Goals are only synced from the primary budget
+                            Planned Capex is only synced from the primary budget
                             (<strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong>), so the goal-based
                             suggestions still refer to it, not to “{selectedBudgetName}”.
                         </div>

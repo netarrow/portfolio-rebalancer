@@ -124,9 +124,9 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
             <div style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', padding: '1.25rem', marginBottom: '1.5rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
                     <div>
-                        <h3 style={{ margin: 0 }}>Investment Goals</h3>
+                        <h3 style={{ margin: 0 }}>Planned Capex</h3>
                         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem' }}>
-                            Pick the YNAB category group that holds your long-term saving goals.
+                            Pick the YNAB category group that holds your planned capex (long-term saving targets).
                             {ynabConfig.lastGoalsSyncAt && (
                                 <> · Last goals sync: {new Date(ynabConfig.lastGoalsSyncAt).toLocaleString('en-IE')}</>
                             )}
@@ -156,7 +156,7 @@ const YnabImportView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         onClick={handlePrepareGoalsSync}
                         disabled={!ynabConfig.goalsGroupId || ynabGoalsSyncing}
                     >
-                        {ynabGoalsSyncing ? 'Preparing…' : 'Prepare goals sync'}
+                        {ynabGoalsSyncing ? 'Preparing…' : 'Prepare capex sync'}
                     </button>
                 </div>
             </div>

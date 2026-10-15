@@ -74,11 +74,11 @@ const AllowedGoalsChips: React.FC<{
         </div>
         {goals.length === 0 ? (
             <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
-                No goals defined — the expense can draw from all portfolios.
+                No buckets defined — the expense can draw from all portfolios.
             </div>
         ) : selected.length === 0 && (
             <div style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginTop: '0.35rem' }}>
-                No goal selected — the expense can draw from all portfolios.
+                No bucket selected — the expense can draw from all portfolios.
             </div>
         )}
     </>
@@ -340,8 +340,8 @@ const ForecastView: React.FC = () => {
     // portfolio allocations. YNAB itself is contacted only by the Goals sync.
     const handleSyncYnabExpenses = async () => {
         const result = await Swal.fire({
-            title: 'Sync from YNAB Goals?',
-            text: 'The planned expense list is rebuilt from the goals in the YNAB Goals section, with their targets and portfolio allocations. Removed entries come back and enable/disable flags are reset; the per-expense liquidity-erosion choice is kept.',
+            title: 'Sync from Planned Capex?',
+            text: 'The planned expense list is rebuilt from the capex in the Planned Capex section, with their targets and portfolio allocations. Removed entries come back and enable/disable flags are reset; the per-expense liquidity-erosion choice is kept.',
             icon: 'question',
             showCancelButton: true,
             confirmButtonText: 'Sync',
@@ -352,9 +352,9 @@ const ForecastView: React.FC = () => {
         const rebuilt = restorePlannedForecastExpenses();
         Swal.fire({
             title: 'Synced',
-            html: `${rebuilt.length} planned expense${rebuilt.length === 1 ? '' : 's'} from the YNAB Goals section.`
+            html: `${rebuilt.length} planned expense${rebuilt.length === 1 ? '' : 's'} from the Planned Capex section.`
                 + (rebuilt.length === 0
-                    ? '<br/><span style="font-size:0.85rem">No goal there carries both a target amount and a target date — set one in YNAB Goals, or sync the goals from YNAB first.</span>'
+                    ? '<br/><span style="font-size:0.85rem">No capex there carries both a target amount and a target date — set one in Planned Capex, or sync the capex from YNAB first.</span>'
                     : ''),
             icon: rebuilt.length === 0 ? 'info' : 'success',
             timer: rebuilt.length === 0 ? undefined : 2500,
@@ -1277,7 +1277,7 @@ const ForecastView: React.FC = () => {
                                 onChange={e => setNewExpErosionAllowed(e.target.checked)}
                             />
                         </div>
-                        <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Allowed Goals (linked portfolios):</label>
+                        <label style={{ display: 'block', color: 'var(--text-secondary)', marginBottom: '0.25rem' }}>Allowed Buckets (linked portfolios):</label>
                         <AllowedGoalsChips goals={sortedGoals} selected={newExpAllowedGoalIds} onToggle={toggleAllowedGoal} />
                     </div>
 
@@ -1312,7 +1312,7 @@ const ForecastView: React.FC = () => {
                                     <span>|</span>
                                     <button
                                         onClick={() => toggleSourcesEditor(expense.id)}
-                                        title="Change which Goals (linked portfolios) fund this expense"
+                                        title="Change which Buckets (linked portfolios) fund this expense"
                                         style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: '0.75rem', textAlign: 'left', textDecoration: 'underline dotted' }}
                                     >
                                         {expense.allowedGoalIds.length === 0 || expense.allowedGoalIds.length === goals.length
@@ -1323,7 +1323,7 @@ const ForecastView: React.FC = () => {
                                 </div>
                                 {editingSourcesFor === expense.id && (
                                     <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)' }}>
-                                        <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.35rem' }}>Allowed Goals (linked portfolios):</label>
+                                        <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.35rem' }}>Allowed Buckets (linked portfolios):</label>
                                         <AllowedGoalsChips
                                             goals={sortedGoals}
                                             selected={expense.allowedGoalIds}
@@ -1338,13 +1338,13 @@ const ForecastView: React.FC = () => {
 
                 <div className="form-group" style={{ marginBottom: '1.5rem', borderTop: '1px solid var(--border-color)', paddingTop: '1rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                        <label style={{ color: 'var(--text-secondary)' }}>YNAB Goal Expenses</label>
+                        <label style={{ color: 'var(--text-secondary)' }}>Planned Capex Expenses</label>
                         <button
                             onClick={handleSyncYnabExpenses}
-                            title="Rebuild this list from the goals in the YNAB Goals section"
+                            title="Rebuild this list from the capex in the Planned Capex section"
                             style={{ padding: '0.2rem 0.6rem', background: 'var(--bg-input)', color: 'var(--text-secondary)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: '0.8rem' }}
                         >
-                            ↻ Sync from YNAB Goals
+                            ↻ Sync from Planned Capex
                         </button>
                     </div>
                     {ynabPlannedExpenses.length === 0 ? (
@@ -1397,7 +1397,7 @@ const ForecastView: React.FC = () => {
                                             <span>|</span>
                                             <button
                                                 onClick={() => toggleSourcesEditor(expense.id)}
-                                                title="Change which Goals (linked portfolios) fund this expense. Syncing from YNAB Goals resets it."
+                                                title="Change which Buckets (linked portfolios) fund this expense. Syncing from Planned Capex resets it."
                                                 style={{ background: 'none', border: 'none', padding: 0, color: 'var(--text-tertiary)', cursor: 'pointer', fontSize: '0.75rem', textAlign: 'left', textDecoration: 'underline dotted' }}
                                             >
                                                 {expense.allowedGoalIds.length === 0
@@ -1414,7 +1414,7 @@ const ForecastView: React.FC = () => {
                                         </div>
                                         {editingSourcesFor === expense.id && (
                                             <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)' }}>
-                                                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.35rem' }}>Allowed Goals (linked portfolios):</label>
+                                                <label style={{ display: 'block', color: 'var(--text-secondary)', fontSize: '0.8rem', marginBottom: '0.35rem' }}>Allowed Buckets (linked portfolios):</label>
                                                 <AllowedGoalsChips
                                                     goals={sortedGoals}
                                                     selected={expense.allowedGoalIds}
@@ -1656,8 +1656,8 @@ const ForecastView: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                     {portfolios.map(p => {
                         const perf = portfolioPerformance[p.id] || { cagr: 0, years: 0, unrealizedGain: 0, realizedGain: 0, totalIncome: 0, totalGain: 0, totalCost: 0 };
-                        const goal = (p.goalId && goalTitleById[p.goalId]) || 'No goal';
-                        const goalColor = goal === 'No goal' ? '#6B7280' : goal === 'Security' ? '#8B5CF6' : goal === 'Protection' ? '#10B981' : '#3B82F6';
+                        const goal = (p.goalId && goalTitleById[p.goalId]) || 'No bucket';
+                        const goalColor = goal === 'No bucket' ? '#6B7280' : goal === 'Security' ? '#8B5CF6' : goal === 'Protection' ? '#10B981' : '#3B82F6';
                         const hasRealized = perf.realizedGain !== 0 || perf.totalIncome !== 0;
                         const fmt = (n: number) => n.toLocaleString('en-IE', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 

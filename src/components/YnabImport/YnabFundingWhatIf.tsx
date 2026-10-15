@@ -167,7 +167,7 @@ const YnabFundingWhatIf: React.FC<Props> = ({ plan, creditTransfers }) => {
                                     {after.goalPyramidTotal >= before.goalPyramidTotal ? 'higher' : 'lower'}, the same
                                     change as the net worth above. Money wired from an account the app already counts
                                     only changes shape, so the total moves by the commissions and fees alone; what the
-                                    purchases do change is how the total is split across the goals.
+                                    purchases do change is how the total is split across the buckets.
                                 </>
                             ),
                         }}

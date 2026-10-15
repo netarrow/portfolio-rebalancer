@@ -174,7 +174,7 @@ export const buildGoalDistribution = (input: GoalDistributionInput): GoalSegment
             .filter(([, entry]) => entry.value > 0)
             .map(([fromGoalId, entry], i) => ({
                 fromGoalId,
-                fromGoalTitle: goalTitleById.get(fromGoalId) ?? 'Unknown goal',
+                fromGoalTitle: goalTitleById.get(fromGoalId) ?? 'Unknown bucket',
                 value: entry.value,
                 color: tintForInherited(color, i),
                 portfolioNames: entry.portfolioNames,

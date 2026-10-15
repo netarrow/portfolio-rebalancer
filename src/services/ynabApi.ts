@@ -215,10 +215,10 @@ export async function getGoalCategories(
         const categoryGroups: any[] = groupsResp.data?.data?.category_groups ?? [];
         const group = categoryGroups.find(g => g.id === groupId);
         if (!group) {
-            return { success: false, error: 'Goal category group not found in YNAB.' };
+            return { success: false, error: 'Capex category group not found in YNAB.' };
         }
         if (group.hidden || group.deleted) {
-            return { success: false, error: 'Goal category group is hidden or deleted in YNAB.' };
+            return { success: false, error: 'Capex category group is hidden or deleted in YNAB.' };
         }
 
         const monthResp = await axios.get(

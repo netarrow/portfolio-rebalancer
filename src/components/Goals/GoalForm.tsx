@@ -33,7 +33,7 @@ const GoalForm: React.FC<GoalFormProps> = ({ initialData, onSubmit, onCancel }) 
         <div className="modal-overlay">
             <div className="modal-content" style={{ position: 'relative' }}>
                 <button className="modal-close-btn" type="button" onClick={onCancel}>×</button>
-                <h3>{initialData ? 'Edit Goal' : 'New Goal'}</h3>
+                <h3>{initialData ? 'Edit Bucket' : 'New Bucket'}</h3>
                 <form onSubmit={handleSubmit} className="portfolio-form">
                     <div className="form-group">
                         <label htmlFor="goal-title">Title</label>
@@ -54,7 +54,7 @@ const GoalForm: React.FC<GoalFormProps> = ({ initialData, onSubmit, onCancel }) 
                             id="goal-description"
                             value={description}
                             onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Brief description of this goal"
+                            placeholder="Brief description of this bucket"
                             className="form-input"
                             rows={3}
                         />
@@ -78,7 +78,7 @@ const GoalForm: React.FC<GoalFormProps> = ({ initialData, onSubmit, onCancel }) 
                             Cancel
                         </button>
                         <button type="submit" className="btn btn-primary">
-                            Save Goal
+                            Save Bucket
                         </button>
                     </div>
                 </form>

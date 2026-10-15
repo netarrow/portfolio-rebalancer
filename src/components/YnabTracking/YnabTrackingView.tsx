@@ -20,7 +20,7 @@ import Swal from 'sweetalert2';
 // (guarded, confirmed, logged, reversible) via MigrationModal.
 
 const KIND_TITLE: Record<TrackingDestinationKind, string> = {
-    goal: 'Goals and categories covered by investments',
+    goal: 'Planned capex and categories covered by investments',
     portfolio: 'Portfolios (parent and children merged)',
     pension: 'Pension',
     'broker-cash': 'Broker cash kept off budget',
@@ -188,7 +188,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
     const handleReleaseOrphans = async () => {
         const confirm = await Swal.fire({
             title: 'Release orphan shares?',
-            html: 'The goals stop holding these units in the tool. <strong>Nothing is written to YNAB</strong>: if a goal account still holds their value '
+            html: 'The capex items stop holding these units in the tool. <strong>Nothing is written to YNAB</strong>: if a capex account still holds their value '
                 + '(a sale not moved out yet), transfer it in YNAB yourself. The release is logged and can be rolled back.',
             icon: 'question',
             showCancelButton: true,
@@ -316,7 +316,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 <div className="ytv-orphans">
                     <div>
                         <strong>Orphan shares</strong>
-                        <span className="ytv-small ytv-muted"> — frozen units of holdings that no longer exist (sold, or moved to another portfolio). They count nowhere, but would come back to the goal if the same ticker were bought there again.</span>
+                        <span className="ytv-small ytv-muted"> — frozen units of holdings that no longer exist (sold, or moved to another portfolio). They count nowhere, but would come back to the capex if the same ticker were bought there again.</span>
                     </div>
                     <ul>
                         {plan.orphanShares.map(o => (
@@ -419,14 +419,14 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                             type="button"
                             className="btn ytv-reassign-all"
                             disabled={!guard.ok || !accounts || ynabWriting}
-                            title={!guard.ok ? guard.message : 'Move goal shares between accounts by purpose'}
+                            title={!guard.ok ? guard.message : 'Move capex shares between accounts by purpose'}
                             onClick={() => setReassigning({})}
                         >Reassign shares…</button>
                         </div>
                     )}
                 </div>
                 <p className="ytv-hint">
-                    Expected balance of each account: a goal's share of the holdings, what is left of each portfolio, the pension fund and the cash that stays at a type-B broker.
+                    Expected balance of each account: a capex's share of the holdings, what is left of each portfolio, the pension fund and the cash that stays at a type-B broker.
                     Latent tax is the capital-gains tax on today's gain — it would be the uncleared part of the account.
                 </p>
                 {groupedDestinations.length === 0 && <div className="ytv-muted">No holdings to split yet.</div>}
@@ -444,7 +444,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                         <div className="ytv-cell ytv-name">
                                             <span className="ytv-name-text" title={d.accountName}>
                                                 {d.accountName}
-                                                {d.inactiveGoal && <span className="ytv-tag ytv-tag-inactive" title="The goal is gone from the tool but its YNAB account still holds investments: reassign them">{d.inactiveGoal}</span>}
+                                                {d.inactiveGoal && <span className="ytv-tag ytv-tag-inactive" title="The capex is gone from the tool but its YNAB account still holds investments: reassign them">{d.inactiveGoal}</span>}
                                             </span>
                                             <span className="ytv-muted ytv-small">
                                                 {d.memberNames && d.memberNames.length > 1 && <>{d.memberNames.join(' + ')} · </>}
@@ -456,7 +456,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                             <span className="ytv-mlabel">Expected</span>
                                             <span className="ytv-strong">{eur(d.value)}</span>
                                             {Math.abs(d.desiredValue - d.value) >= 1 && (
-                                                <span className="ytv-small ytv-warn-inline" title="The goal allocations ask for a different amount than the shares this account holds at migrated brokers: a reassignment would move the difference.">
+                                                <span className="ytv-small ytv-warn-inline" title="The capex allocations ask for a different amount than the shares this account holds at migrated brokers: a reassignment would move the difference.">
                                                     allocations: {eur(d.desiredValue)} <span className="ytv-nowrap">({signed(d.desiredValue - d.value)})</span>
                                                 </span>
                                             )}
