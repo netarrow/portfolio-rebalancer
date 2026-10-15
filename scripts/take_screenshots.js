@@ -29,7 +29,7 @@ async function fullShot(page, name) {
 }
 
 // Navbar entries carry an emoji prefix, and most views live inside a dropdown
-// group (Portfolio / Analysis / Planning) that has to be opened first — so
+// group (Decidere / Agire / Capire / Fonti) that has to be opened first — so
 // match on the emoji-stripped label and fall back to walking the groups.
 /**
  * Fills a React-controlled field matched by the text of its <label>, so the
@@ -192,7 +192,7 @@ async function scrollAndShoot(page, base) {
 
   // Goal matching: the table of the portfolio whose targets are in €
   const goalMatchingFound = await page.evaluate(() => {
-    const h = [...document.querySelectorAll('h3')].find((e) => /^goal matching:/i.test(e.textContent.trim()));
+    const h = [...document.querySelectorAll('h3')].find((e) => /^capex matching:/i.test(e.textContent.trim()));
     if (h) { h.scrollIntoView({ block: 'start' }); window.scrollBy(0, -80); return true; }
     return false;
   });
@@ -282,7 +282,7 @@ async function scrollAndShoot(page, base) {
     const all = [...document.querySelectorAll('button')].filter(
       (b) => b.textContent.trim() === 'Concretizza'
     );
-    const btn = all.find((b) => /goal matching:/i.test(b.closest('.allocation-card')?.textContent || '')) || all[0];
+    const btn = all.find((b) => /capex matching:/i.test(b.closest('.allocation-card')?.textContent || '')) || all[0];
     if (btn) {
       btn.scrollIntoView({ block: 'center' });
       btn.click();
@@ -696,13 +696,13 @@ async function scrollAndShoot(page, base) {
   await scrollAndShoot(page, 'global_rebalancing');
 
   // ---------- GOALS ----------
-  console.log('Goals');
-  await navTo(page, 'Goals');
+  console.log('Buckets');
+  await navTo(page, 'Buckets');
   await sleep(800);
   await shot(page, 'goals_page');
   const newGoal = await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')].find((b) =>
-      /new goal|add goal|create goal|\+ goal/i.test(b.textContent)
+      /new bucket|add bucket|create bucket|\+ bucket/i.test(b.textContent)
     );
     if (btn) {
       btn.click();
@@ -995,8 +995,8 @@ async function scrollAndShoot(page, base) {
   }
 
   // ---------- YNAB GOALS ----------
-  console.log('YNAB Goals');
-  await navTo(page, 'YNAB Goals');
+  console.log('Planned Capex');
+  await navTo(page, 'Planned Capex');
   await sleep(800);
   await shot(page, 'ynab_goals');
   // Edit an allocation pinned to an asset of the goal-matching portfolio:

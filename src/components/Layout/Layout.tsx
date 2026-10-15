@@ -8,38 +8,46 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+// Grouped by what the user is doing (see docs/ui-rework-plan.md): the data
+// sources everything else reads from, deciding targets and buckets, acting on
+// money, and understanding the results.
 const menuStructure = [
   { label: '🏠 Dashboard', view: 'dashboard' as const },
   {
-    label: '💼 Portfolio',
+    label: '🗂️ Fonti',
     items: [
       { label: '💱 Transactions', view: 'transactions' as const },
       { label: '📋 Portfolios', view: 'portfolios' as const },
       { label: '🏦 Brokers', view: 'brokers' as const },
+      { label: '🧾 YNAB Off-budget', view: 'ynabTracking' as const },
+      { label: '⚙️ Settings', view: 'settings' as const },
+    ],
+  },
+  {
+    label: '🧭 Decidere',
+    items: [
       { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
+      { label: '🔺 Buckets', view: 'goals' as const },
+      { label: '🏁 Planned Capex', view: 'ynabGoals' as const },
     ],
   },
   {
-    label: '📊 Analysis',
+    label: '⚡ Agire',
     items: [
-      { label: '📈 Stats', view: 'stats' as const },
       { label: '🔀 Fund Relocation', view: 'fundRelocation' as const },
-      { label: '📉 Performance', view: 'performance' as const },
-      { label: '📋 Summary', view: 'summary' as const },
-    ],
-  },
-  {
-    label: '📅 Planning',
-    items: [
-      { label: '🎯 Goals', view: 'goals' as const },
-      { label: '🔮 Forecast', view: 'forecast' as const },
       { label: '📊 PAC', view: 'pac' as const },
       { label: '💰 YNAB', view: 'ynab' as const },
-      { label: '🎯 YNAB Goals', view: 'ynabGoals' as const },
-      { label: '🧾 YNAB Off-budget', view: 'ynabTracking' as const },
     ],
   },
-  { label: '⚙️ Settings', view: 'settings' as const },
+  {
+    label: '🔍 Capire',
+    items: [
+      { label: '📈 Stats', view: 'stats' as const },
+      { label: '📉 Performance', view: 'performance' as const },
+      { label: '🗒️ Summary', view: 'summary' as const },
+      { label: '🔮 Forecast', view: 'forecast' as const },
+    ],
+  },
   { label: '⚠️ Disclaimer', view: 'disclaimer' as const },
 ];
 
@@ -134,7 +142,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
               return (
                 <div key={idx} className="nav-group">
                   <button
-                    className="nav-group-toggle"
+                    className={`nav-group-toggle ${item.items.some(sub => sub.view === currentView) ? 'active' : ''}`}
                     onClick={e => toggleMenu(item.label, e.currentTarget)}
                   >
                     {item.label}
@@ -313,6 +321,13 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
         .nav-group-toggle:hover {
           color: var(--text-primary);
           background-color: var(--bg-card);
+        }
+
+        /* The group holding the current page reads as active, since its
+           sublink is only visible while the dropdown is open. */
+        .nav-group-toggle.active {
+          color: var(--text-primary);
+          background-color: var(--color-primary);
         }
 
         .toggle-icon {
