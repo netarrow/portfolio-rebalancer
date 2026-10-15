@@ -28,3 +28,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Local-only design references (not versioned)
+docs/mock-ui-rework.pdf
