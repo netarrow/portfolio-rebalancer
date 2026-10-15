@@ -208,6 +208,8 @@ interface PortfolioContextType {
     syncYnabSpending: (budgetId?: string) => Promise<{ ok: boolean; error?: string }>;
     setYnabGroupMacro: (groupId: string, macro: YnabMacroCategory | null) => void;
     setYnabCategoryMacro: (categoryId: string, macro: YnabMacroCategory | null) => void;
+    /** Split a category's outflow by another budget's spending mix (null = unlink). */
+    setYnabCategoryLinkedBudget: (categoryId: string, budgetId: string | null) => void;
     ynabSpendingSyncing: boolean;
     // Free-buy promo lists (ISINs commission-free to buy in a given month)
     freeCommissionPeriods: FreeCommissionPeriod[];
@@ -3522,6 +3524,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
+    const setYnabCategoryLinkedBudget = (categoryId: string, budgetId: string | null) => {
+        setYnabMacroMappings(prev => {
+            const linkedBudgets = { ...(prev.linkedBudgets ?? {}) };
+            if (budgetId === null) delete linkedBudgets[categoryId];
+            else linkedBudgets[categoryId] = budgetId;
+            return { ...prev, linkedBudgets };
+        });
+    };
+
     const disconnectYnab = () => {
         setYnabConfigState(null);
         setYnabCategories([]);
@@ -3994,6 +4005,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         syncYnabSpending,
         setYnabGroupMacro,
         setYnabCategoryMacro,
+        setYnabCategoryLinkedBudget,
         ynabSpendingSyncing,
         freeCommissionPeriods,
         setFreeCommissionPeriods,

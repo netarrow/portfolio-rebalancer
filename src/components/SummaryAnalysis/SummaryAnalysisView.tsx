@@ -54,6 +54,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
         ynabSummaryBudgetId,
         setYnabSummaryBudget,
         ynabSpendingHistory,
+        ynabSpendingHistoryByBudget,
         ynabSpendingLastSyncAt,
         ynabMacroMappings,
         syncYnabSpending,
@@ -61,6 +62,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
         ynabSyncing,
         setYnabGroupMacro,
         setYnabCategoryMacro,
+        setYnabCategoryLinkedBudget,
         ynabSpendingSyncing,
         refreshYnabBudgets,
         brokers,
@@ -88,8 +90,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
     const currencyIso = selectedBudget?.currencyIso || ynabConfig?.currencyIso || 'EUR';
 
     const analysis = useMemo(
-        () => analyzeSpending(ynabSpendingHistory, ynabMacroMappings),
-        [ynabSpendingHistory, ynabMacroMappings],
+        () => analyzeSpending(ynabSpendingHistory, ynabMacroMappings, ynabSpendingHistoryByBudget),
+        [ynabSpendingHistory, ynabMacroMappings, ynabSpendingHistoryByBudget],
     );
 
     // Union of every group/category seen in the rolling window — the mapping
@@ -120,6 +122,9 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
         [ynabMappings],
     );
     const defaultSourceName = brokers.find(b => b.id === ynabFundingSettings.defaultSourceBrokerId)?.name;
+
+    const budgetName = (id: string) => budgets.find(b => b.id === id)?.name ?? id;
+    const otherBudgets = budgets.filter(b => b.id !== ynabSummaryBudgetId);
 
     const handleSync = async () => {
         const result = await syncYnabSpending();
@@ -168,17 +173,20 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                 <div>
                     <h2 style={{ margin: 0 }}>Expense Analysis</h2>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
-                        <label htmlFor="summary-budget" style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>Budget:</label>
-                        <select
-                            id="summary-budget"
-                            value={ynabSummaryBudgetId ?? ''}
-                            onChange={e => setYnabSummaryBudget(e.target.value)}
-                            style={{ ...selectStyle, fontWeight: 600 }}
-                        >
+                        <div className="ea-budget-tabs" role="tablist" aria-label="Budget">
                             {budgets.map(b => (
-                                <option key={b.id} value={b.id}>{b.name}{b.id === ynabConfig.budgetId ? ' (primary)' : ''}</option>
+                                <button
+                                    key={b.id}
+                                    type="button"
+                                    role="tab"
+                                    aria-selected={b.id === ynabSummaryBudgetId}
+                                    className={b.id === ynabSummaryBudgetId ? 'active' : ''}
+                                    onClick={() => setYnabSummaryBudget(b.id)}
+                                >
+                                    {b.name}{b.id === ynabConfig.budgetId ? ' · primary' : ''}
+                                </button>
                             ))}
-                        </select>
+                        </div>
                         <button
                             onClick={handleReloadBudgets}
                             disabled={reloadingBudgets}
@@ -331,6 +339,49 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         );
                     })()}
 
+                    {/* Linked budgets: categories handed to another budget, split by its mix */}
+                    {analysis.linkedSplits.length > 0 && (
+                        <div style={cardStyle}>
+                            <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Linked budgets</h3>
+                            <table className="ea-table">
+                                <thead>
+                                    <tr>
+                                        <th>Category</th>
+                                        <th>Split by</th>
+                                        <th className="num">€ / month</th>
+                                        {(['structural', 'variable', 'compressible', 'sinking', 'investments'] as YnabMacroCategory[]).map(m => (
+                                            <th key={m} className="num"><span className="ea-dot" style={{ background: MACRO_COLORS[m] }} />{MACRO_LABELS[m]}</th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {analysis.linkedSplits.map(l => {
+                                        const months = Math.max(1, analysis.monthsCount);
+                                        return (
+                                            <tr key={l.categoryId}>
+                                                <td>{l.name}<span className="ea-muted"> · {l.groupName}</span></td>
+                                                <td>{budgetName(l.budgetId)}</td>
+                                                <td className="num">{formatCurrency(l.totalOutflow / months, currencyIso)}</td>
+                                                {l.shares
+                                                    ? (['structural', 'variable', 'compressible', 'sinking', 'investments'] as YnabMacroCategory[]).map(m => (
+                                                        <td key={m} className="num">
+                                                            {l.shares![m] > 0
+                                                                ? <>{formatCurrency((l.totalOutflow * l.shares![m]) / months, currencyIso)}<span className="ea-muted"> {Math.round(l.shares![m] * 100)}%</span></>
+                                                                : '—'}
+                                                        </td>
+                                                    ))
+                                                    : <td colSpan={5} className="ea-warn">No spending history for {budgetName(l.budgetId)}: open its tab and sync it.</td>}
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                            <div className="ea-muted" style={{ marginTop: '0.5rem' }}>
+                                Each linked category is split by the linked budget's own mix of mapped spending over its synced months.
+                            </div>
+                        </div>
+                    )}
+
                     {/* Macro breakdown */}
                     <div style={cardStyle}>
                         <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Spending by macro category</h3>
@@ -365,6 +416,13 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         </div>
                     </div>
 
+                </>
+            )}
+
+            {isPrimaryBudget && <YnabCoveragePanel hideCapex />}
+
+            {analysis.monthsCount > 0 && (
+                <>
                     {/* Category mapping: nature per group (categories may override) and,
                         on the primary budget, the account each category's money sits on. */}
                     <div style={cardStyle}>
@@ -407,11 +465,16 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                 {g.categories.map(c => {
                                                     const override = ynabMacroMappings.categories[c.id] ?? '';
                                                     const effective = effectiveMacro(ynabMacroMappings, g.id, c.id);
+                                                    const linked = ynabMacroMappings.linkedBudgets?.[c.id];
                                                     return (
                                                         <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', paddingLeft: '1rem', fontSize: '0.9rem' }}>
                                                             <span style={{ color: 'var(--text-secondary)' }}>
                                                                 {c.name}
-                                                                {effective && (
+                                                                {linked ? (
+                                                                    <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#94a3b8' }}>
+                                                                        ↔ split by {budgetName(linked)}
+                                                                    </span>
+                                                                ) : effective && (
                                                                     <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: MACRO_COLORS[effective] }}>
                                                                         {MACRO_LABELS[effective]}{override ? ' (override)' : ''}
                                                                     </span>
@@ -419,13 +482,29 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                             </span>
                                                             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                                                                 <select
-                                                                    value={override}
-                                                                    onChange={e => setYnabCategoryMacro(c.id, (e.target.value || null) as YnabMacroCategory | null)}
+                                                                    value={linked ? `link:${linked}` : override}
+                                                                    onChange={e => {
+                                                                        const v = e.target.value;
+                                                                        if (v.startsWith('link:')) {
+                                                                            setYnabCategoryLinkedBudget(c.id, v.slice(5));
+                                                                            return;
+                                                                        }
+                                                                        if (linked) setYnabCategoryLinkedBudget(c.id, null);
+                                                                        setYnabCategoryMacro(c.id, (v || null) as YnabMacroCategory | null);
+                                                                    }}
                                                                     style={{ ...selectStyle, fontSize: '0.85rem' }}
                                                                     aria-label={`Macro class of ${c.name}`}
                                                                 >
                                                                     <option value="">Inherit from group</option>
                                                                     {MACRO_ORDER.map(m => <option key={m} value={m}>{MACRO_LABELS[m]}</option>)}
+                                                                    {(otherBudgets.length > 0 || linked) && (
+                                                                        <optgroup label="Split by another budget">
+                                                                            {otherBudgets.map(b => <option key={b.id} value={`link:${b.id}`}>↔ {b.name}</option>)}
+                                                                            {linked && !otherBudgets.some(b => b.id === linked) && (
+                                                                                <option value={`link:${linked}`}>↔ {budgetName(linked)}</option>
+                                                                            )}
+                                                                        </optgroup>
+                                                                    )}
                                                                 </select>
                                                                 {isPrimaryBudget && (
                                                                     <select
@@ -452,8 +531,12 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                     </div>
                 </>
             )}
-
-            {isPrimaryBudget && <YnabCoveragePanel hideCapex />}
+            <style>{`
+                .ea-budget-tabs { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--bg-card); flex-wrap: wrap; }
+                .ea-budget-tabs button { border: 0; background: transparent; color: var(--text-secondary); font-weight: 600; font-size: 0.85rem;
+                    padding: 0.4rem 0.8rem; border-radius: var(--radius-sm); cursor: pointer; }
+                .ea-budget-tabs button.active { background: var(--color-primary); color: white; }
+            `}</style>
         </div>
     );
 };
