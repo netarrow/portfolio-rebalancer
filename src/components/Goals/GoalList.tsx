@@ -33,7 +33,7 @@ const GoalList: React.FC = () => {
     const handleDelete = (id: string, title: string) => {
         Swal.fire({
             title: 'Are you sure?',
-            text: `Delete goal "${title}"? Portfolios linked to this goal will be unlinked.`,
+            text: `Delete bucket "${title}"? Portfolios linked to this bucket will be unlinked.`,
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
@@ -42,7 +42,7 @@ const GoalList: React.FC = () => {
         }).then((result) => {
             if (result.isConfirmed) {
                 deleteGoal(id);
-                Swal.fire('Deleted!', 'Goal has been deleted.', 'success');
+                Swal.fire('Deleted!', 'Bucket has been deleted.', 'success');
             }
         });
     };
@@ -69,16 +69,16 @@ const GoalList: React.FC = () => {
     return (
         <div className="goal-list-container">
             <div className="header-actions">
-                <h2>Goals</h2>
+                <h2>Buckets</h2>
                 <button className="btn btn-primary" onClick={openCreateModal}>
-                    + New Goal
+                    + New Bucket
                 </button>
             </div>
 
             <div className="goal-grid">
                 {sortedGoals.length === 0 ? (
                     <div className="empty-state">
-                        <p>No goals created yet. Create goals to categorize your portfolios.</p>
+                        <p>No buckets created yet. Create buckets to categorize your portfolios.</p>
                     </div>
                 ) : (
                     sortedGoals.map(goal => {

@@ -18,14 +18,14 @@ const FIELD_SOURCE_LABEL: Record<YnabGoalFieldSource, string> = {
     'parsed-name': 'from name',
     'parsed-note': 'from note',
     'ynab-goal': 'YNAB target',
-    local: 'kept from Goals',
+    local: 'kept from Planned Capex',
 };
 
 const FIELD_SOURCE_TITLE: Record<YnabGoalFieldSource, string> = {
     'parsed-name': 'Read from the category name',
     'parsed-note': 'Read from the category note',
     'ynab-goal': "Read from YNAB's own goal fields",
-    local: 'Kept from the goal already stored in YNAB Goals — edit it only if it changed',
+    local: 'Kept from the capex already stored in Planned Capex — edit it only if it changed',
 };
 
 const fieldCaption = (source: YnabGoalFieldSource | null) => source && (
@@ -60,7 +60,7 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
     return (
         <div className="modal-overlay" onClick={onCancel}>
             <div className="modal-content goal-sync-modal" onClick={e => e.stopPropagation()}>
-                <h3 style={{ marginTop: 0 }}>Sync YNAB Investment Goals</h3>
+                <h3 style={{ marginTop: 0 }}>Sync Planned Capex from YNAB</h3>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: 0 }}>
                     Edit the parsed values before confirming. Category names written as
                     <code style={{ marginLeft: 4 }}>Laptop - 1800€ - 2031</code> are split into goal name, target
@@ -72,7 +72,7 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                     <code style={{ marginLeft: 4 }}>[target:7000][date:2028-06]</code>,
                     <code style={{ marginLeft: 4 }}>5k entro 2029-05</code>.
                     {' '}Without one, YNAB's own goal target (amount and target month) is used, and failing that the
-                    value already stored in YNAB Goals is proposed again — so a due date typed once does not need
+                    value already stored in Planned Capex is proposed again — so a due date typed once does not need
                     retyping at every sync.
                 </p>
 
@@ -80,12 +80,12 @@ const YnabGoalsSyncModal: React.FC<Props> = ({ candidates, currencyIso, onConfir
                     <table className="goal-sync-table">
                         <thead>
                             <tr>
-                                <th>Goal name</th>
+                                <th>Capex name</th>
                                 <th>Target €</th>
                                 <th>Target date</th>
                                 <th>Confidence</th>
                                 <th>Cash balance</th>
-                                <th>Goal type</th>
+                                <th>YNAB goal type</th>
                                 <th>Action</th>
                             </tr>
                         </thead>

@@ -84,13 +84,13 @@ const CategoryDetailModal: React.FC<Props> = ({ position, onClose }) => {
                 </div>
 
                 <section className="ycd-section">
-                    <h4>Goal</h4>
+                    <h4>Capex</h4>
                     <p className="ycd-hint">
                         {position.goal?.source === 'goal'
-                            ? 'Stored in YNAB Goals — editing it here edits it there too.'
+                            ? 'Stored in Planned Capex — editing it here edits it there too.'
                             : position.goal
-                                ? 'Read from the category name, note or YNAB goal. Saving stores it as a goal.'
-                                : 'Optional: a target and a date turn this category into a tracked goal.'}
+                                ? 'Read from the category name, note or YNAB goal. Saving stores it as a planned capex.'
+                                : 'Optional: a target and a date turn this category into a tracked capex.'}
                     </p>
                     <div className="ycd-goal-row">
                         <label>

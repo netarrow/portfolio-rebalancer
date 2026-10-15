@@ -334,8 +334,8 @@ const FundRelocationView: React.FC = () => {
                 the stats and the pyramid would end up. Queue several moves and the chain is priced in
                 order, each one on the state the previous left behind. A move can also end in
                 <strong> Spend</strong>: the money leaves for good, nothing is written to Transactions, and
-                the before/after simply shows the state without it. Start from the goal split below to
-                let the gaps between your goals propose the moves.
+                the before/after simply shows the state without it. Start from the bucket split below to
+                let the gaps between your buckets propose the moves.
             </p>
 
             <GoalFlowPlanner

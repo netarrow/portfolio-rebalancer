@@ -138,8 +138,8 @@ const AllocationModal: React.FC<Props> = ({ ynabGoal, editing, onClose }) => {
                             </select>
                             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
                                 {selectedPortfolio.targetMode === 'amount'
-                                    ? 'Goal matching portfolio: the asset\'s € target becomes the sum of the goals pinned to it, due by the nearest goal date.'
-                                    : 'Switch this portfolio to "Target in €" to plan buys from the goals pinned to its assets.'}
+                                    ? 'Capex matching portfolio: the asset\'s € target becomes the sum of the capex pinned to it, due by the nearest capex date.'
+                                    : 'Switch this portfolio to "Target in €" to plan buys from the capex pinned to its assets.'}
                             </div>
                         </div>
                     )}

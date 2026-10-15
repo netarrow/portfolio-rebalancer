@@ -57,7 +57,7 @@ const MacroSettings: React.FC = () => {
         });
         updateGoalAllocation(newAlloc);
         if (Math.abs(sum - 100) > 0.1) {
-            alert(`Warning: Goal allocations sum to ${sum}%, not 100%.`);
+            alert(`Warning: Bucket allocations sum to ${sum}%, not 100%.`);
         }
     };
 
@@ -66,7 +66,7 @@ const MacroSettings: React.FC = () => {
 
     return (
         <div style={{ maxWidth: '800px', margin: '2rem auto' }}>
-            <h2 className="section-title">Macro & Goal Targets</h2>
+            <h2 className="section-title">Macro & Bucket Targets</h2>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>
                 Define your high-level allocation targets. These are used for aggregate analysis and portfolio recommendations.
             </p>
@@ -119,7 +119,7 @@ const MacroSettings: React.FC = () => {
                 {/* Goal Allocations */}
                 <div className="card" style={{ padding: '1.5rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)' }}>
                     <h3 style={{ marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
-                        By Goal
+                        By Bucket
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         {(['Liquidity', 'Protection', 'Security', 'Growth'] as FinancialGoal[]).map(goal => (
@@ -155,7 +155,7 @@ const MacroSettings: React.FC = () => {
                                 cursor: 'pointer'
                             }}
                         >
-                            Save Goal Targets
+                            Save Bucket Targets
                         </button>
                     </div>
                 </div>

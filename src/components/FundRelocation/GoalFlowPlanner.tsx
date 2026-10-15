@@ -39,8 +39,8 @@ import GoalAllocationBar, { type GoalBarItem } from './GoalAllocationBar';
  */
 
 const PORTFOLIO_STATES: { state: GoalFlowPortfolioState; label: string; title: string }[] = [
-    { state: 'active', label: 'Move', title: 'Counts in the goal, and the plan may sell from or buy into it.' },
-    { state: 'frozen', label: 'Freeze', title: 'Counts in the goal, but no move ever touches it — the other portfolios have to close the gap.' },
+    { state: 'active', label: 'Move', title: 'Counts in the bucket, and the plan may sell from or buy into it.' },
+    { state: 'frozen', label: 'Freeze', title: 'Counts in the bucket, but no move ever touches it — the other portfolios have to close the gap.' },
     { state: 'excluded', label: 'Skip', title: 'Out of the split entirely: neither counted in the percentages nor moved.' },
 ];
 
@@ -152,10 +152,10 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
     if (!plan.goals.some(g => g.kind === 'goal')) {
         return (
             <div className="reloc-card">
-                <h3 className="reloc-section-title">Goal flows</h3>
+                <h3 className="reloc-section-title">Bucket flows</h3>
                 <p className="reloc-empty">
                     No goals defined yet. Create goals and attach portfolios to them (Planning → Goals)
-                    to plan moves by goal instead of by portfolio.
+                    to plan moves by bucket instead of by portfolio.
                 </p>
             </div>
         );
@@ -163,10 +163,10 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
 
     return (
         <div className="reloc-card">
-            <h3 className="reloc-section-title">Goal flows</h3>
+            <h3 className="reloc-section-title">Bucket flows</h3>
             <p className="reloc-intro" style={{ marginBottom: 'var(--space-5)' }}>
                 Drag the target bar to say where your wealth should sit across the pyramid — the cash you
-                have not earmarked to any portfolio included, on the far left, below every goal. Because each
+                have not earmarked to any portfolio included, on the far left, below every bucket. Because each
                 portfolio is attached to a goal, closing a gap means <strong>moving money between whole
                 portfolios</strong> (or in and out of cash) — never picking assets inside them. Queue the
                 moves below and the page prices what the round trip actually costs.
@@ -315,13 +315,13 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
             {plan.orphanPortfolios.length > 0 && (
                 <p className="reloc-flow-note">
                     Outside the split: {plan.orphanPortfolios.map(p => `${p.name} (${eur0(p.value)})`).join(', ')} —
-                    not attached to any goal, so they neither count toward the percentages nor take part in the moves.
+                    not attached to any bucket, so they neither count toward the percentages nor take part in the moves.
                 </p>
             )}
 
             <p className="reloc-flow-note">
                 The percentages apply to the {eur0(plan.total)} held in the pyramid: the goals plus the cash level.
-                Cash earmarked to a portfolio is not in that level — it already counts inside that portfolio's own goal.
+                Cash earmarked to a portfolio is not in that level — it already counts inside that portfolio's own bucket.
             </p>
         </div>
     );

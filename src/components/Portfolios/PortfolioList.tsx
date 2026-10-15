@@ -176,7 +176,7 @@ const PortfolioList: React.FC = () => {
                                             );
                                         }
                                         return (
-                                            <span className="stat-pill stat-pill-alloc" title={`Allocated to YNAB goals`}>
+                                            <span className="stat-pill stat-pill-alloc" title={`Allocated to planned capex`}>
                                                 ◧ {formatEur(s.allocated)} / {formatEur(s.currentValue)}
                                             </span>
                                         );

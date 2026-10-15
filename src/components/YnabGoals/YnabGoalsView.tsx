@@ -84,7 +84,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                 <h2 style={{ marginBottom: '1rem' }}>YNAB not configured</h2>
                 <p style={{ color: 'var(--text-secondary)' }}>
-                    Configure YNAB first to sync your investment goals.
+                    Configure YNAB first to sync your planned capex.
                 </p>
             </div>
         );
@@ -93,9 +93,9 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
     if (ynabGoals.length === 0) {
         return (
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
-                <h2 style={{ marginBottom: '1rem' }}>No YNAB goals synced yet</h2>
+                <h2 style={{ marginBottom: '1rem' }}>No planned capex synced yet</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-                    Go to the YNAB section, pick an "Investment Goals" category group and run a sync.
+                    Go to the YNAB section, pick the category group that holds your planned capex and run a sync.
                 </p>
                 {onNavigateToYnab && (
                     <button className="btn btn-primary" onClick={onNavigateToYnab}>Go to YNAB</button>
@@ -108,7 +108,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
         <div className="ynab-goals-page">
             <header className="ynab-goals-header">
                 <div>
-                    <h2 className="ynab-goals-title">YNAB Goals</h2>
+                    <h2 className="ynab-goals-title">Planned Capex</h2>
                     <div className="ynab-goals-subtitle">
                         {ynabConfig.goalsGroupName && <>Group <strong>{ynabConfig.goalsGroupName}</strong></>}
                         {ynabConfig.lastGoalsSyncAt && (
@@ -120,7 +120,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
 
             <div className="ygl-totals">
                 <div className="ygl-total">
-                    <span className="ygl-total-label">Goals</span>
+                    <span className="ygl-total-label">Capex</span>
                     <span className="ygl-total-value">{totals.count}</span>
                 </div>
                 <div className="ygl-total">
@@ -143,7 +143,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
 
             <div className="ygl-list" role="list">
                 <div className="ygl-head" aria-hidden>
-                    <span>Goal</span>
+                    <span>Capex</span>
                     <span className="ygl-num">Cash (YNAB)</span>
                     <span className="ygl-num">Invested</span>
                     <span>Where</span>
@@ -238,7 +238,7 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                                     className="ygl-setup"
                                     onClick={e => { e.stopPropagation(); openSetup(); }}
                                     aria-label={`Open setup of ${g.name}`}
-                                    title="Goal setup"
+                                    title="Capex setup"
                                 >
                                     <span aria-hidden>⚙</span><span className="ygl-setup-text">Setup</span>
                                 </button>

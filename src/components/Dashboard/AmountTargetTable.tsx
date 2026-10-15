@@ -157,7 +157,7 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
         }
         const total = txs.reduce((s, t) => s + t.amount * t.price, 0);
         const res = await Swal.fire({
-            title: 'Execute goal-matching buys?',
+            title: 'Execute capex-matching buys?',
             html: `This will create <b>${txs.length}</b> Buy transactions for <b>${eur2(total)}</b> at current prices.<br/><br/>` +
                 `<small style="color:var(--text-muted)">Virtual bonds are bought at price 1: the cash is parked until you concretize them.</small>`,
             icon: 'question',
@@ -180,7 +180,7 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
         <div className="allocation-card">
             <div className="allocation-header-row" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 'var(--space-2)', marginBottom: 'var(--space-4)' }}>
                 <h3 className="section-title" style={{ margin: 0 }}>
-                    Goal matching: {portfolio.name}{' '}
+                    Capex matching: {portfolio.name}{' '}
                     <span style={{ fontSize: '0.9em', fontWeight: 'normal', color: 'var(--text-secondary)' }}>({eur2(summary.totalValue)})</span>
                     <span style={{ fontSize: '0.75em', fontWeight: 'normal', marginLeft: 'var(--space-3)', color: coveragePct >= 99.95 ? 'var(--color-success)' : 'var(--color-warning)' }}>
                         Targets: {eur0(totalTarget)} · covered {coveragePct.toFixed(1)}%
@@ -217,7 +217,7 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
                     {brokerCash > 0 && <> Broker cash earmarked here: {eur0(brokerCash)}.</>}
                 </span>
                 <button className="btn-primary" style={{ fontSize: '0.85rem', padding: '4px 8px' }} onClick={handleExecute}>
-                    Exec Goal Buys
+                    Exec Capex Buys
                 </button>
             </div>
 
@@ -225,7 +225,7 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
                     <thead>
                         <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
-                            <th style={{ ...head, textAlign: 'left' }}>Asset · goals</th>
+                            <th style={{ ...head, textAlign: 'left' }}>Asset · capex</th>
                             <th style={head}>Due</th>
                             <th style={head}>Value</th>
                             <th style={head}>Target</th>
@@ -238,7 +238,7 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
                     <tbody>
                         {orderedRows.length === 0 && (
                             <tr><td colSpan={8} style={{ ...cell, textAlign: 'left', color: 'var(--text-muted)' }}>
-                                No € targets yet. Set them in the portfolio's Allocations, or link YNAB goals to its assets.
+                                No € targets yet. Set them in the portfolio's Allocations, or link planned capex to its assets.
                             </td></tr>
                         )}
                         {orderedRows.map(r => {
@@ -304,7 +304,7 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
                             <tr key={a.ticker} style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
                                 <td style={{ ...cell, textAlign: 'left', whiteSpace: 'normal' }}>
                                     {labelOf(a.ticker)}
-                                    <div style={{ fontSize: '0.72rem' }}>no target — not matched to any goal</div>
+                                    <div style={{ fontSize: '0.72rem' }}>no target — not matched to any capex</div>
                                 </td>
                                 <td style={cell}>—</td>
                                 <td style={cell}>{eur2(a.currentValue)}</td>

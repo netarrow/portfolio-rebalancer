@@ -95,8 +95,8 @@ const YnabCoveragePanel: React.FC = () => {
                             onChange={e => setSetting('workingCapitalMonths', e.target.value)} />
                         <small>months</small>
                     </label>
-                    <label title="A goal due within this horizon must already be cash">
-                        <span>Goals due within</span>
+                    <label title="A capex due within this horizon must already be cash">
+                        <span>Capex due within</span>
                         <input type="number" className="form-input" min={0} max={60} value={settings.goalHorizonMonths}
                             onChange={e => setSetting('goalHorizonMonths', e.target.value)} />
                         <small>months</small>
@@ -118,7 +118,7 @@ const YnabCoveragePanel: React.FC = () => {
                                 <th className="num" title="Σ Available of the categories on this account">Categories</th>
                                 <th>Coverage</th>
                                 <th className="num" title="Average monthly spending of its fixed, variable and compressible categories">Day-to-day / mo</th>
-                                <th className="num" title="Cash still missing for goals due within the horizon">Goals due</th>
+                                <th className="num" title="Cash still missing for capex due within the horizon">Capex due</th>
                                 <th className="num">Suggested min</th>
                                 <th className="num">Current min</th>
                             </tr>
@@ -140,7 +140,7 @@ const YnabCoveragePanel: React.FC = () => {
                                                 : <span className="pill pill-ok">Covered · +{eur(a.surplus)}</span>}
                                         </td>
                                         <td className="num" data-label="Day-to-day / mo">{eur(a.monthlySpend)}</td>
-                                        <td className="num" data-label="Goals due">{a.dueGoals > 0 ? eur(a.dueGoals) : '—'}</td>
+                                        <td className="num" data-label="Capex due">{a.dueGoals > 0 ? eur(a.dueGoals) : '—'}</td>
                                         <td className="num" data-label="Suggested min"><strong>{eur(a.recommendedMin)}</strong></td>
                                         <td className="num" data-label="Current min">
                                             <span>
@@ -207,9 +207,9 @@ const YnabCoveragePanel: React.FC = () => {
             </div>
 
             {/* ── Goals ────────────────────────────────────────────── */}
-            <h4 className="cov-title">Goals</h4>
+            <h4 className="cov-title">Capex</h4>
             {goals.length === 0 ? (
-                <p className="cov-empty">No goal yet: classify a category as <em>Goal (dated expense)</em> or give it a target.</p>
+                <p className="cov-empty">No capex yet: classify a category as <em>Capex (dated expense)</em> or give it a target.</p>
             ) : (
                 <ul className="cov-goals">
                     {goals.map(g => {

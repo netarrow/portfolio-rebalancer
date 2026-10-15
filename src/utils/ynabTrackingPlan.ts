@@ -434,7 +434,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
             const ratio = h.value / claimed;
             for (const [goalId, v] of byGoal) byGoal.set(goalId, v * ratio);
             warn('over-allocated',
-                `${h.label} in ${portfolioName(h.portfolioId)} at ${brokerName(h.brokerId)} is worth ${cents(h.value)} € but goals claim ${cents(claimed)} €: every claim is scaled down by the same ratio.`);
+                `${h.label} in ${portfolioName(h.portfolioId)} at ${brokerName(h.brokerId)} is worth ${cents(h.value)} € but capex items claim ${cents(claimed)} €: every claim is scaled down by the same ratio.`);
         }
     }
 
@@ -449,7 +449,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     const frozenPiece = new Map<string, { quantity: number; cost: number }>(); // `${holdingKey}#${goalId}`
     // Every goal, archived ones included, for the names of frozen-share holders.
     const anyGoalById = new Map(goals.map(g => [g.id, g]));
-    const goalLabel = (goalId: string) => anyGoalById.get(goalId)?.name ?? 'Removed goal';
+    const goalLabel = (goalId: string) => anyGoalById.get(goalId)?.name ?? 'Removed capex';
     // A goal that holds frozen shares keeps holding them in YNAB even once
     // archived or deleted in the tool: it stays a holder until reassigned.
     const holderGoalIds = new Set<string>();
@@ -466,7 +466,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
         const ratio = units > h.quantity + 1e-9 ? h.quantity / units : 1;
         if (ratio < 1) {
             warn('quote-exceeds-holding',
-                `${h.label} in ${portfolioName(h.portfolioId)} at ${brokerName(h.brokerId)}: goals hold ${units.toFixed(4)} units but only ${h.quantity.toFixed(4)} are left (sold?) — every goal share is scaled down.`);
+                `${h.label} in ${portfolioName(h.portfolioId)} at ${brokerName(h.brokerId)}: capex items hold ${units.toFixed(4)} units but only ${h.quantity.toFixed(4)} are left (sold?) — every capex share is scaled down.`);
         }
         const out = new Map<string, number>();
         byGoal.forEach((v, goalId) => {
@@ -481,7 +481,7 @@ export function buildTrackingPlan(input: TrackingPlanInput): TrackingPlan {
     for (const goalId of holderGoalIds) {
         if (goalById.has(goalId)) continue;
         warn('shares-of-inactive-goal',
-            `"${goalLabel(goalId)}" is ${anyGoalById.has(goalId) ? 'archived' : 'no longer in the tool'} but still holds investments in YNAB: reassign them (to its portfolio or another goal) to empty its account.`);
+            `"${goalLabel(goalId)}" is ${anyGoalById.has(goalId) ? 'archived' : 'no longer in the tool'} but still holds investments in YNAB: reassign them (to its portfolio or another capex) to empty its account.`);
     }
     // Frozen shares whose holding no longer exists at a migrated broker.
     const holdingKeys = new Set(holdings.map(h => h.key));

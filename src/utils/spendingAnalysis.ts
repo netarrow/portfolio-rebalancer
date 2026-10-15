@@ -367,7 +367,7 @@ export function generateSuggestions(
         insights.push({
             id: 'security-bucket',
             kind: 'suggestion',
-            text: `Based on your ${securityGoals.length} goal${securityGoals.length > 1 ? 's' : ''} due within the next ${SECURITY_HORIZON_YEARS} years, ` +
+            text: `Based on your ${securityGoals.length} planned capex item${securityGoals.length > 1 ? 's' : ''} due within the next ${SECURITY_HORIZON_YEARS} years, ` +
                 `your security bucket should reach at least ${fmt(need, currencyIso)} ` +
                 `(current cash coverage: ${fmt(coverage, currencyIso)}).`,
         });
