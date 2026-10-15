@@ -139,14 +139,14 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                 <h2 style={{ marginBottom: '1rem' }}>YNAB not configured</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    The Summary Analysis is built from your YNAB budget. Enter your YNAB API key in Settings first.
+                    The Summary Analysis is built from your YNAB budget. Enter your YNAB API key in Settings › YNAB Integration first.
                 </p>
                 {onNavigateToSettings && (
                     <button
                         onClick={onNavigateToSettings}
                         style={{ padding: '0.7rem 1.5rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
                     >
-                        Go to Settings
+                        Go to YNAB Integration
                     </button>
                 )}
             </div>

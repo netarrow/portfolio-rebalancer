@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
 
 interface LayoutProps {
   currentView: View;
@@ -9,22 +9,21 @@ interface LayoutProps {
 }
 
 // Grouped by what the user is doing (see docs/ui-rework-plan.md): the data
-// sources everything else reads from, deciding targets and buckets, acting on
-// money, and understanding the results.
+// everything else reads from, planning targets and buckets, executing moves of
+// money, and analyzing the results.
 const menuStructure = [
   { label: '🏠 Dashboard', view: 'dashboard' as const },
   {
-    label: '🗂️ Fonti',
+    label: '🗂️ Data',
     items: [
       { label: '💱 Transactions', view: 'transactions' as const },
       { label: '📋 Portfolios', view: 'portfolios' as const },
       { label: '🏦 Brokers', view: 'brokers' as const },
       { label: '🧾 YNAB Off-budget', view: 'ynabTracking' as const },
-      { label: '⚙️ Settings', view: 'settings' as const },
     ],
   },
   {
-    label: '🧭 Decidere',
+    label: '🧭 Plan',
     items: [
       { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
       { label: '🔺 Buckets', view: 'goals' as const },
@@ -32,7 +31,7 @@ const menuStructure = [
     ],
   },
   {
-    label: '⚡ Agire',
+    label: '⚡ Execute',
     items: [
       { label: '🔀 Fund Relocation', view: 'fundRelocation' as const },
       { label: '📊 PAC', view: 'pac' as const },
@@ -40,12 +39,19 @@ const menuStructure = [
     ],
   },
   {
-    label: '🔍 Capire',
+    label: '🔍 Analyze',
     items: [
       { label: '📈 Stats', view: 'stats' as const },
       { label: '📉 Performance', view: 'performance' as const },
       { label: '🗒️ Summary', view: 'summary' as const },
       { label: '🔮 Forecast', view: 'forecast' as const },
+    ],
+  },
+  {
+    label: '⚙️ Settings',
+    items: [
+      { label: '🛠️ General', view: 'settings' as const },
+      { label: '🔗 YNAB Integration', view: 'ynabSettings' as const },
     ],
   },
   { label: '⚠️ Disclaimer', view: 'disclaimer' as const },

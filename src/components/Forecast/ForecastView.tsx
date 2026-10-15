@@ -205,7 +205,7 @@ const ForecastView: React.FC = () => {
     // was just attributed or re-included has numbers to contribute.
     const handleSyncCashflow = async () => {
         if (ynabBudgets.length === 0) {
-            Swal.fire({ title: 'YNAB not configured', text: 'Connect YNAB in Settings to import income and expenses.', icon: 'info' });
+            Swal.fire({ title: 'YNAB not configured', text: 'Connect YNAB in Settings › YNAB Integration to import income and expenses.', icon: 'info' });
             return;
         }
         const errors: string[] = [];

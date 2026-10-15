@@ -29,7 +29,7 @@ async function fullShot(page, name) {
 }
 
 // Navbar entries carry an emoji prefix, and most views live inside a dropdown
-// group (Decidere / Agire / Capire / Fonti) that has to be opened first — so
+// group (Data / Plan / Execute / Analyze / Settings) that has to be opened first — so
 // match on the emoji-stripped label and fall back to walking the groups.
 /**
  * Fills a React-controlled field matched by the text of its <label>, so the
@@ -105,7 +105,7 @@ async function navTo(page, label) {
 }
 
 async function loadMock(page) {
-  await navTo(page, 'Settings');
+  await navTo(page, 'General');
   await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')].find((b) =>
       b.textContent.includes('Load Mock Data')
@@ -1058,9 +1058,13 @@ async function scrollAndShoot(page, base) {
 
   // ---------- SETTINGS ----------
   console.log('Settings');
-  await navTo(page, 'Settings');
+  await navTo(page, 'General');
   await sleep(700);
   await scrollAndShoot(page, 'settings');
+  // YNAB settings live on their own page under Settings › YNAB Integration.
+  await navTo(page, 'YNAB Integration');
+  await sleep(700);
+  await scrollAndShoot(page, 'settings_ynab');
   // YNAB write guard card (accounts served by the interception above).
   const guardCard = await page.$('.ywg');
   if (guardCard) {
@@ -1071,6 +1075,8 @@ async function scrollAndShoot(page, base) {
     console.log('  ->', path.relative(ROOT, file));
     await page.evaluate(() => window.scrollTo(0, 0));
   }
+  await navTo(page, 'General');
+  await sleep(500);
   // Private Update Price card (public tier vs unlocked)
   const privateTierFound = await page.evaluate(() => {
     const h = [...document.querySelectorAll('h3')].find((e) => /private update price/i.test(e.textContent));
@@ -1258,7 +1264,7 @@ async function scrollAndShoot(page, base) {
   // prompt. The Puppeteer profile is throwaway, so nothing outlives the run.
   console.log('Lock screen');
   await page.setViewport(VIEW);
-  await navTo(page, 'Settings');
+  await navTo(page, 'General');
   const encryptionStarted = await page.evaluate(() => {
     const btn = [...document.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Enable encryption');
     if (btn) { btn.scrollIntoView({ block: 'center' }); btn.click(); return true; }

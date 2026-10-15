@@ -3312,7 +3312,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 reason: 'empty',
                 error: brokers.some(b => isRemunerationActive(b.remuneration))
                     ? 'Every remunerated broker is up to date: no credit date has come around since the last update.'
-                    : 'No broker is mapped to a YNAB account, and none is remunerated. Set a mapping up in Settings, or give a broker a remuneration plan.',
+                    : 'No broker is mapped to a YNAB account, and none is remunerated. Set a mapping up in Settings › YNAB Integration, or give a broker a remuneration plan.',
             };
         }
 

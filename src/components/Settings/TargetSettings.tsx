@@ -12,7 +12,12 @@ import FreeCommissionCard from './FreeCommissionCard';
 import PeopleCard from './PeopleCard';
 import YnabWriteGuardCard from './YnabWriteGuardCard';
 import { BACKUP_VERSION } from '../../utils/backupPayload';
-const TargetSettings: React.FC = () => {
+interface TargetSettingsProps {
+    /** 'general' = everything but YNAB; 'ynab' = only the YNAB integration block. */
+    section?: 'general' | 'ynab';
+}
+
+const TargetSettings: React.FC<TargetSettingsProps> = ({ section = 'general' }) => {
 
     // ... (existing imports)
     const {
@@ -535,6 +540,227 @@ const TargetSettings: React.FC = () => {
 
     const activeTickers = allTickers; // Show all
 
+    if (section === 'ynab') {
+        return (
+            <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
+                {/* YNAB Integration Section */}
+                <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+                        <h2 className="section-title" style={{ margin: 0 }}>YNAB (You Need A Budget)</h2>
+                        {ynabSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Syncing...</span>}
+                    </div>
+                    <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                        Import your YNAB budget category balances and map each category to an investment asset or to broker cash.
+                    </p>
+                    <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                        YNAB credentials are stored only on this device and are never synced to Azure. Category → asset mappings are.
+                    </p>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '560px' }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Personal Access Token</label>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                <input
+                                    type={showYnabKey ? 'text' : 'password'}
+                                    value={ynabApiKeyInput}
+                                    onChange={e => { setYnabApiKeyInput(e.target.value); setYnabBudgets(null); }}
+                                    placeholder="YNAB token (Account Settings → Developer Settings)"
+                                    style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.8rem' }}
+                                />
+                                <button
+                                    onClick={() => setShowYnabKey(v => !v)}
+                                    style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
+                                    title={showYnabKey ? 'Hide' : 'Show'}
+                                >
+                                    {showYnabKey ? '🙈' : '👁'}
+                                </button>
+                            </div>
+                            <small style={{ color: 'var(--text-muted)' }}>
+                                Generate the token at app.ynab.com → Account Settings → Developer Settings → New Token.
+                            </small>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                            <button
+                                onClick={handleYnabVerify}
+                                disabled={!ynabApiKeyInput.trim() || ynabVerifying}
+                                style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                {ynabVerifying ? 'Verifying…' : 'Verify and load budget'}
+                            </button>
+                            {ynabConfig && (
+                                <button
+                                    onClick={handleYnabDisconnect}
+                                    style={{ padding: '0.6rem 1.2rem', backgroundColor: 'transparent', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                                >
+                                    Disconnect YNAB
+                                </button>
+                            )}
+                        </div>
+
+                        {ynabBudgets && ynabBudgets.length > 0 && (
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Budget</label>
+                                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <select
+                                        className="form-select"
+                                        value={ynabSelectedBudgetId}
+                                        onChange={e => setYnabSelectedBudgetId(e.target.value)}
+                                        style={{ flex: 1, minWidth: '200px' }}
+                                    >
+                                        {ynabBudgets.map(b => (
+                                            <option key={b.id} value={b.id}>
+                                                {b.name} ({b.currencyIso})
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        onClick={handleYnabSaveBudget}
+                                        disabled={!ynabSelectedBudgetId}
+                                        style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
+                                    >
+                                        Save budget
+                                    </button>
+                                </div>
+                                {ynabSelectedBudgetId && (() => {
+                                    const selected = ynabBudgets.find(b => b.id === ynabSelectedBudgetId);
+                                    if (selected && selected.currencyIso !== 'EUR') {
+                                        return (
+                                            <small style={{ color: 'var(--color-warning, orange)' }}>
+                                                ⚠ The budget currency is {selected.currencyIso}, not EUR. Values will be shown in the native currency.
+                                            </small>
+                                        );
+                                    }
+                                    return null;
+                                })()}
+                            </div>
+                        )}
+
+                        {ynabConfig && (
+                            <div style={{ paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                <div>Active budget: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> ({ynabConfig.currencyIso || '—'})</div>
+                                <div>
+                                    Last sync: {ynabConfig.lastSyncAt
+                                        ? new Date(ynabConfig.lastSyncAt).toLocaleString('en-IE')
+                                        : 'never'}
+                                </div>
+                                <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <label htmlFor="ynab-avg-window">Budget average window:</label>
+                                    <input
+                                        id="ynab-avg-window"
+                                        type="number"
+                                        min={1}
+                                        max={24}
+                                        step={1}
+                                        value={ynabConfig.avgMonthsWindow ?? 6}
+                                        onChange={e => {
+                                            const raw = parseInt(e.target.value, 10);
+                                            if (Number.isNaN(raw)) return;
+                                            const clamped = Math.max(1, Math.min(24, raw));
+                                            setYnabConfig({ ...ynabConfig, avgMonthsWindow: clamped });
+                                        }}
+                                        className="form-input"
+                                        style={{ width: '80px' }}
+                                    />
+                                    <span>months (excludes the current month, 1–24)</span>
+                                </div>
+                            </div>
+                        )}
+
+                        {ynabConfig && (
+                            <div style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
+                                <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Broker ↔ YNAB accounts</label>
+                                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0.25rem 0 0.75rem 0' }}>
+                                    Link each broker to the YNAB account that holds its cash, picking the budget that account
+                                    lives in — brokers can be spread over different budgets of the same token. From the Brokers
+                                    page you can then update every mapped broker's liquidity with the account's working balance.
+                                    One account can back a single broker, within its own budget.
+                                    {ynabConfig.lastAccountsSyncAt && (
+                                        <> Last liquidity update: {new Date(ynabConfig.lastAccountsSyncAt).toLocaleString('en-IE')}.</>
+                                    )}
+                                </p>
+
+                                {ynabAccountsError && (
+                                    <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                                        {ynabAccountsError}
+                                    </div>
+                                )}
+
+                                {brokers.length === 0 ? (
+                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No brokers yet.</p>
+                                ) : (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                        {brokers.map(broker => {
+                                            const budgetId = budgetIdForBroker(broker.id);
+                                            const accounts = accountsByBudget[budgetId] ?? [];
+                                            const accountsLoading = loadingBudgetIds.includes(budgetId);
+                                            const mapping = ynabAccountMappings[broker.id];
+                                            return (
+                                                <div key={broker.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                                                    <span style={{ flex: 1, minWidth: '140px', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                                                        {broker.name}
+                                                    </span>
+                                                    {/* Budget + account stay together when the row wraps, so a
+                                                        narrow column never detaches the account from its broker. */}
+                                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', flex: 2, minWidth: '240px' }}>
+                                                    <select
+                                                        className="form-select"
+                                                        aria-label={`YNAB budget for ${broker.name}`}
+                                                        value={budgetId}
+                                                        onChange={e => handleBrokerBudgetChange(broker.id, e.target.value)}
+                                                        disabled={ynabBudgetRefs.length === 0}
+                                                        style={{ flex: 1, minWidth: '160px' }}
+                                                    >
+                                                        {ynabBudgetRefs.map(b => (
+                                                            <option key={b.id} value={b.id}>{b.name}</option>
+                                                        ))}
+                                                    </select>
+                                                    <select
+                                                        className="form-select"
+                                                        aria-label={`YNAB account for ${broker.name}`}
+                                                        value={mapping?.budgetId === budgetId ? mapping.accountId : ''}
+                                                        onChange={e => setYnabAccountMapping(
+                                                            broker.id,
+                                                            e.target.value ? { budgetId, accountId: e.target.value } : null,
+                                                        )}
+                                                        disabled={accountsLoading || accounts.length === 0}
+                                                        style={{ flex: 2, minWidth: '240px' }}
+                                                    >
+                                                        <option value="">
+                                                            {accountsLoading
+                                                                ? 'Loading accounts…'
+                                                                : accounts.length === 0 ? 'No accounts available' : '— No account —'}
+                                                        </option>
+                                                        {accounts.map(account => {
+                                                            const heldBy = brokerIdByAccountKey.get(`${budgetId}:${account.id}`);
+                                                            const otherBroker = heldBy && heldBy !== broker.id
+                                                                ? brokers.find(b => b.id === heldBy)
+                                                                : undefined;
+                                                            return (
+                                                                <option key={account.id} value={account.id}>
+                                                                    {account.name} — €{milliunitsToEur(account.balanceMilliunits).toLocaleString('en-IE', { minimumFractionDigits: 2 })}
+                                                                    {otherBroker ? ` (on ${otherBroker.name})` : ''}
+                                                                </option>
+                                                            );
+                                                        })}
+                                                    </select>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {ynabConfig && <YnabWriteGuardCard budgets={ynabBudgetRefs} />}
+                    </div>
+                </div>
+
+            </div>
+        );
+    }
+
     return (
         <div className="transaction-form-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
             <PrivateTierPriceCard />
@@ -806,222 +1032,6 @@ const TargetSettings: React.FC = () => {
                             </span>
                         </div>
                     )}
-                </div>
-            </div>
-
-            <div style={{ margin: '3rem 0', borderTop: '1px solid var(--border-color)' }}></div>
-
-            {/* YNAB Integration Section */}
-            <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
-                    <h2 className="section-title" style={{ margin: 0 }}>YNAB (You Need A Budget)</h2>
-                    {ynabSyncing && <span style={{ color: 'var(--color-primary)', fontSize: '0.85rem' }}>Syncing...</span>}
-                </div>
-                <p style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
-                    Import your YNAB budget category balances and map each category to an investment asset or to broker cash.
-                </p>
-                <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
-                    YNAB credentials are stored only on this device and are never synced to Azure. Category → asset mappings are.
-                </p>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '560px' }}>
-                    <div className="form-group" style={{ margin: 0 }}>
-                        <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Personal Access Token</label>
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            <input
-                                type={showYnabKey ? 'text' : 'password'}
-                                value={ynabApiKeyInput}
-                                onChange={e => { setYnabApiKeyInput(e.target.value); setYnabBudgets(null); }}
-                                placeholder="YNAB token (Account Settings → Developer Settings)"
-                                style={{ flex: 1, fontFamily: 'monospace', fontSize: '0.8rem' }}
-                            />
-                            <button
-                                onClick={() => setShowYnabKey(v => !v)}
-                                style={{ padding: '0.4rem 0.7rem', backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)', cursor: 'pointer' }}
-                                title={showYnabKey ? 'Hide' : 'Show'}
-                            >
-                                {showYnabKey ? '🙈' : '👁'}
-                            </button>
-                        </div>
-                        <small style={{ color: 'var(--text-muted)' }}>
-                            Generate the token at app.ynab.com → Account Settings → Developer Settings → New Token.
-                        </small>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                        <button
-                            onClick={handleYnabVerify}
-                            disabled={!ynabApiKeyInput.trim() || ynabVerifying}
-                            style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
-                        >
-                            {ynabVerifying ? 'Verifying…' : 'Verify and load budget'}
-                        </button>
-                        {ynabConfig && (
-                            <button
-                                onClick={handleYnabDisconnect}
-                                style={{ padding: '0.6rem 1.2rem', backgroundColor: 'transparent', color: 'var(--color-danger)', border: '1px solid var(--color-danger)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
-                            >
-                                Disconnect YNAB
-                            </button>
-                        )}
-                    </div>
-
-                    {ynabBudgets && ynabBudgets.length > 0 && (
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Budget</label>
-                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                                <select
-                                    className="form-select"
-                                    value={ynabSelectedBudgetId}
-                                    onChange={e => setYnabSelectedBudgetId(e.target.value)}
-                                    style={{ flex: 1, minWidth: '200px' }}
-                                >
-                                    {ynabBudgets.map(b => (
-                                        <option key={b.id} value={b.id}>
-                                            {b.name} ({b.currencyIso})
-                                        </option>
-                                    ))}
-                                </select>
-                                <button
-                                    onClick={handleYnabSaveBudget}
-                                    disabled={!ynabSelectedBudgetId}
-                                    style={{ padding: '0.6rem 1.2rem', backgroundColor: 'var(--color-primary)', color: 'white', border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 600 }}
-                                >
-                                    Save budget
-                                </button>
-                            </div>
-                            {ynabSelectedBudgetId && (() => {
-                                const selected = ynabBudgets.find(b => b.id === ynabSelectedBudgetId);
-                                if (selected && selected.currencyIso !== 'EUR') {
-                                    return (
-                                        <small style={{ color: 'var(--color-warning, orange)' }}>
-                                            ⚠ The budget currency is {selected.currencyIso}, not EUR. Values will be shown in the native currency.
-                                        </small>
-                                    );
-                                }
-                                return null;
-                            })()}
-                        </div>
-                    )}
-
-                    {ynabConfig && (
-                        <div style={{ paddingTop: '0.5rem', borderTop: '1px solid var(--border-color)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                            <div>Active budget: <strong>{ynabConfig.budgetName || ynabConfig.budgetId}</strong> ({ynabConfig.currencyIso || '—'})</div>
-                            <div>
-                                Last sync: {ynabConfig.lastSyncAt
-                                    ? new Date(ynabConfig.lastSyncAt).toLocaleString('en-IE')
-                                    : 'never'}
-                            </div>
-                            <div style={{ marginTop: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                <label htmlFor="ynab-avg-window">Budget average window:</label>
-                                <input
-                                    id="ynab-avg-window"
-                                    type="number"
-                                    min={1}
-                                    max={24}
-                                    step={1}
-                                    value={ynabConfig.avgMonthsWindow ?? 6}
-                                    onChange={e => {
-                                        const raw = parseInt(e.target.value, 10);
-                                        if (Number.isNaN(raw)) return;
-                                        const clamped = Math.max(1, Math.min(24, raw));
-                                        setYnabConfig({ ...ynabConfig, avgMonthsWindow: clamped });
-                                    }}
-                                    className="form-input"
-                                    style={{ width: '80px' }}
-                                />
-                                <span>months (excludes the current month, 1–24)</span>
-                            </div>
-                        </div>
-                    )}
-
-                    {ynabConfig && (
-                        <div style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
-                            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>Broker ↔ YNAB accounts</label>
-                            <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0.25rem 0 0.75rem 0' }}>
-                                Link each broker to the YNAB account that holds its cash, picking the budget that account
-                                lives in — brokers can be spread over different budgets of the same token. From the Brokers
-                                page you can then update every mapped broker's liquidity with the account's working balance.
-                                One account can back a single broker, within its own budget.
-                                {ynabConfig.lastAccountsSyncAt && (
-                                    <> Last liquidity update: {new Date(ynabConfig.lastAccountsSyncAt).toLocaleString('en-IE')}.</>
-                                )}
-                            </p>
-
-                            {ynabAccountsError && (
-                                <div style={{ color: 'var(--color-danger)', fontSize: '0.8rem', marginBottom: '0.5rem' }}>
-                                    {ynabAccountsError}
-                                </div>
-                            )}
-
-                            {brokers.length === 0 ? (
-                                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No brokers yet.</p>
-                            ) : (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                                    {brokers.map(broker => {
-                                        const budgetId = budgetIdForBroker(broker.id);
-                                        const accounts = accountsByBudget[budgetId] ?? [];
-                                        const accountsLoading = loadingBudgetIds.includes(budgetId);
-                                        const mapping = ynabAccountMappings[broker.id];
-                                        return (
-                                            <div key={broker.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                                <span style={{ flex: 1, minWidth: '140px', fontSize: '0.9rem', color: 'var(--text-primary)' }}>
-                                                    {broker.name}
-                                                </span>
-                                                {/* Budget + account stay together when the row wraps, so a
-                                                    narrow column never detaches the account from its broker. */}
-                                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', flex: 2, minWidth: '240px' }}>
-                                                <select
-                                                    className="form-select"
-                                                    aria-label={`YNAB budget for ${broker.name}`}
-                                                    value={budgetId}
-                                                    onChange={e => handleBrokerBudgetChange(broker.id, e.target.value)}
-                                                    disabled={ynabBudgetRefs.length === 0}
-                                                    style={{ flex: 1, minWidth: '160px' }}
-                                                >
-                                                    {ynabBudgetRefs.map(b => (
-                                                        <option key={b.id} value={b.id}>{b.name}</option>
-                                                    ))}
-                                                </select>
-                                                <select
-                                                    className="form-select"
-                                                    aria-label={`YNAB account for ${broker.name}`}
-                                                    value={mapping?.budgetId === budgetId ? mapping.accountId : ''}
-                                                    onChange={e => setYnabAccountMapping(
-                                                        broker.id,
-                                                        e.target.value ? { budgetId, accountId: e.target.value } : null,
-                                                    )}
-                                                    disabled={accountsLoading || accounts.length === 0}
-                                                    style={{ flex: 2, minWidth: '240px' }}
-                                                >
-                                                    <option value="">
-                                                        {accountsLoading
-                                                            ? 'Loading accounts…'
-                                                            : accounts.length === 0 ? 'No accounts available' : '— No account —'}
-                                                    </option>
-                                                    {accounts.map(account => {
-                                                        const heldBy = brokerIdByAccountKey.get(`${budgetId}:${account.id}`);
-                                                        const otherBroker = heldBy && heldBy !== broker.id
-                                                            ? brokers.find(b => b.id === heldBy)
-                                                            : undefined;
-                                                        return (
-                                                            <option key={account.id} value={account.id}>
-                                                                {account.name} — €{milliunitsToEur(account.balanceMilliunits).toLocaleString('en-IE', { minimumFractionDigits: 2 })}
-                                                                {otherBroker ? ` (on ${otherBroker.name})` : ''}
-                                                            </option>
-                                                        );
-                                                    })}
-                                                </select>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {ynabConfig && <YnabWriteGuardCard budgets={ynabBudgetRefs} />}
                 </div>
             </div>
 
