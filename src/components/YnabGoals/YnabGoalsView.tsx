@@ -4,6 +4,7 @@ import type { YnabGoalAllocation } from '../../types';
 import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import GoalSetupModal from './GoalSetupModal';
+import { useCapexSync } from '../YnabImport/useCapexSync';
 import { buildGoalRow, formatCurrency, formatCurrencyExact } from './goalRows';
 
 // Investments shown inline in a row of the list; the rest are summed into "+N".
@@ -54,6 +55,20 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
     };
 
     const [setupGoalId, setSetupGoalId] = useState<string | null>(null);
+    const capexSync = useCapexSync();
+    const syncButton = (
+        <button
+            type="button"
+            className="btn btn-primary"
+            onClick={capexSync.prepare}
+            disabled={!capexSync.canSync || capexSync.syncing}
+            title={capexSync.canSync
+                ? 'Re-read the planned capex categories from YNAB'
+                : 'Pick the category group on the YNAB page first'}
+        >
+            {capexSync.syncing ? 'Preparing…' : '↻ Sync from YNAB'}
+        </button>
+    );
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
 
     const rows = useMemo(() => {
@@ -97,9 +112,13 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem' }}>
                     Go to the YNAB section, pick the category group that holds your planned capex and run a sync.
                 </p>
-                {onNavigateToYnab && (
-                    <button className="btn btn-primary" onClick={onNavigateToYnab}>Go to YNAB</button>
-                )}
+                <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    {capexSync.canSync && syncButton}
+                    {onNavigateToYnab && (
+                        <button className="btn" onClick={onNavigateToYnab}>Go to YNAB</button>
+                    )}
+                </div>
+                {capexSync.modal}
             </div>
         );
     }
@@ -116,7 +135,9 @@ const YnabGoalsView: React.FC<{ onNavigateToYnab?: () => void }> = ({ onNavigate
                         )}
                     </div>
                 </div>
+                {syncButton}
             </header>
+            {capexSync.modal}
 
             <div className="ygl-totals">
                 <div className="ygl-total">
