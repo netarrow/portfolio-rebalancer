@@ -441,27 +441,18 @@ async function scrollAndShoot(page, base) {
     await sleep(300);
   }
 
-  // ---------- SUMMARY ANALYSIS ----------
-  console.log('Summary');
-  await navTo(page, 'Summary');
+  // ---------- EXPENSE ANALYSIS ----------
+  console.log('Expense Analysis');
+  await navTo(page, 'Expense Analysis');
   await sleep(1000);
   await scrollAndShoot(page, 'summary_analysis');
-  // Expand the macro-class mapping editor (collapsed behind "Configure")
-  const mappingOpened = await page.evaluate(() => {
-    const btn = [...document.querySelectorAll('button')].find(
-      (b) => b.textContent.trim() === 'Configure'
-    );
-    if (btn) { btn.click(); return true; }
+  // The category mapping (nature + account) and the liquidity coverage under it.
+  const mappingFound = await page.evaluate(() => {
+    const h = [...document.querySelectorAll('h3')].find((e) => /^category mapping$/i.test(e.textContent.trim()));
+    if (h) { h.scrollIntoView({ block: 'start' }); return true; }
     return false;
   });
-  if (mappingOpened) {
-    await sleep(500);
-    await page.evaluate(() => {
-      const h = [...document.querySelectorAll('h3')].find((e) =>
-        /macro category mapping/i.test(e.textContent)
-      );
-      if (h) h.scrollIntoView({ block: 'start' });
-    });
+  if (mappingFound) {
     await sleep(400);
     await shot(page, 'summary_macro_mapping');
   }
@@ -960,40 +951,6 @@ async function scrollAndShoot(page, base) {
     await sleep(400);
   }
 
-  // ---------- YNAB ----------
-  console.log('YNAB');
-  await navTo(page, 'YNAB');
-  await sleep(700);
-  await shot(page, 'ynab_import');
-  // The funding plan card on its own: the wire per broker and the orders it
-  // pays for, which sit below the fold of the page shot.
-  const planCard = await page.$('.ynab-plan-card');
-  if (planCard) {
-    await page.evaluate(() =>
-      document.querySelector('.ynab-plan-card')?.scrollIntoView({ block: 'start' })
-    );
-    await sleep(400);
-    const file = path.join(OUT, 'ynab_funding_plan.png');
-    await planCard.screenshot({ path: file });
-    console.log('  ->', path.relative(ROOT, file));
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await sleep(200);
-  }
-  // The before/after under the plan: the Fund Relocation what-if applied to
-  // the state Register would leave.
-  const whatIf = await page.$('.ynab-whatif');
-  if (whatIf) {
-    await page.evaluate(() =>
-      document.querySelector('.ynab-whatif')?.scrollIntoView({ block: 'start' })
-    );
-    await sleep(500);
-    const file = path.join(OUT, 'ynab_funding_whatif.png');
-    await whatIf.screenshot({ path: file });
-    console.log('  ->', path.relative(ROOT, file));
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await sleep(200);
-  }
-
   // ---------- YNAB GOALS ----------
   console.log('Planned Capex');
   await navTo(page, 'Planned Capex');
@@ -1236,28 +1193,6 @@ async function scrollAndShoot(page, base) {
   });
   await sleep(500);
   await shot(page, 'mobile_transactions_expanded');
-  // The YNAB funding plan: on a phone its two tables become stacked cards, so
-  // the mapping dropdowns and the wire figures stay on screen.
-  await navTo(page, 'YNAB');
-  await sleep(900);
-  await page.evaluate(() => {
-    const row = [...document.querySelectorAll('.ynab-map-table tbody tr')].find((r) =>
-      r.querySelector('.map-cell-broker:not(.is-empty)')
-    );
-    if (row) row.scrollIntoView({ block: 'center' });
-  });
-  await sleep(400);
-  await shot(page, 'mobile_ynab_mappings');
-  await page.evaluate(() => {
-    const t = [...document.querySelectorAll('.plan-section-title')].find((e) =>
-      /transfers/i.test(e.textContent)
-    );
-    if (t) t.scrollIntoView({ block: 'start' });
-  });
-  // The navbar is sticky: back off so the section title is not behind it.
-  await page.evaluate(() => window.scrollBy(0, -80));
-  await sleep(400);
-  await shot(page, 'mobile_ynab_funding_plan');
 
   // ---------- LOCK SCREEN (local encryption) ----------
   // Last on purpose: once encryption is on, every load stops at the passphrase

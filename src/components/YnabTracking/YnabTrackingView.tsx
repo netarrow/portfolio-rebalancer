@@ -242,7 +242,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
             <div className="ytv-empty">
                 <h2>YNAB not configured</h2>
                 <p>Connect YNAB first: the off-budget map reads the accounts of your primary budget.</p>
-                {onNavigateToYnab && <button className="btn btn-primary" onClick={onNavigateToYnab}>Go to YNAB</button>}
+                {onNavigateToYnab && <button className="btn btn-primary" onClick={onNavigateToYnab}>Go to YNAB Integration</button>}
             </div>
         );
     }

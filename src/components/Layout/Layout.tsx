@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'ynab' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
 
 interface LayoutProps {
   currentView: View;
@@ -35,7 +35,6 @@ const menuStructure = [
     items: [
       { label: '🔀 Fund Relocation', view: 'fundRelocation' as const },
       { label: '📊 PAC', view: 'pac' as const },
-      { label: '💰 YNAB', view: 'ynab' as const },
     ],
   },
   {
@@ -43,7 +42,7 @@ const menuStructure = [
     items: [
       { label: '📈 Stats', view: 'stats' as const },
       { label: '📉 Performance', view: 'performance' as const },
-      { label: '🗒️ Summary', view: 'summary' as const },
+      { label: '🗒️ Expense Analysis', view: 'summary' as const },
       { label: '🔮 Forecast', view: 'forecast' as const },
     ],
   },
@@ -186,7 +185,7 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           })}
         </nav>
       </header>
-      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' || currentView === 'globalRebalancing' || currentView === 'pac' || currentView === 'ynab' ? 'full-width' : ''}`}>
+      <main className={`content ${currentView === 'transactions' || currentView === 'forecast' || currentView === 'globalRebalancing' || currentView === 'pac' ? 'full-width' : ''}`}>
         {children}
       </main>
 

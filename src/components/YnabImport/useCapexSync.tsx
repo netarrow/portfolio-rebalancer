@@ -6,8 +6,8 @@ import YnabGoalsSyncModal from './YnabGoalsSyncModal';
 
 /**
  * The Planned Capex sync from YNAB: read the chosen category group, review the
- * candidates in a modal, apply. Shared by the YNAB page (where the group is
- * picked) and the Planned Capex page, so both run exactly the same command.
+ * candidates in a modal, apply. Used by the Planned Capex page, where the
+ * group is picked too.
  */
 export function useCapexSync() {
     const { ynabConfig, prepareYnabGoalsSync, applyYnabGoalsSync, ynabGoalsSyncing } = usePortfolio();
@@ -49,7 +49,7 @@ export function useCapexSync() {
     return {
         prepare,
         syncing: ynabGoalsSyncing,
-        /** The sync reads one category group: it has to be picked on the YNAB page first. */
+        /** The sync reads one category group: it has to be picked first. */
         canSync: !!ynabConfig?.goalsGroupId,
         modal,
     };
