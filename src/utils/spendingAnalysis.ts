@@ -46,6 +46,9 @@ export interface MacroCategoryTotal {
     groupName: string;
     totalOutflow: number;   // EUR, positive = money spent
     totalBudgeted: number;  // EUR
+    // Set on the share of a linked category attributed to one category of the
+    // linked budget: which category of this budget the money came from.
+    linkedFrom?: { categoryId: string; name: string; budgetId: string };
 }
 
 export interface MacroTotals {
@@ -135,16 +138,18 @@ export function analyzeSpending(
 
     // Class mix of a linked budget: the share of its mapped spending per class,
     // computed once per budget, without following its own links (no cycles).
-    const mixCache = new Map<string, Record<YnabMacroCategory, number> | null>();
-    const mixOf = (budgetId: string): Record<YnabMacroCategory, number> | null => {
+    type Mix = { shares: Record<YnabMacroCategory, number>; other: SpendingAnalysis };
+    const mixCache = new Map<string, Mix | null>();
+    const mixOf = (budgetId: string): Mix | null => {
         if (mixCache.has(budgetId)) return mixCache.get(budgetId)!;
         const linkedHistory = linkedHistories?.[budgetId];
-        let mix: Record<YnabMacroCategory, number> | null = null;
+        let mix: Mix | null = null;
         if (linkedHistory && linkedHistory.length > 0) {
             const other = analyzeSpending(linkedHistory, { ...mappings, linkedBudgets: {} });
             const mapped = MACRO_ORDER.reduce((sum, m) => sum + Math.max(0, other.macros[m].totalOutflow), 0);
             if (mapped > 0) {
-                mix = Object.fromEntries(MACRO_ORDER.map(m => [m, Math.max(0, other.macros[m].totalOutflow) / mapped])) as Record<YnabMacroCategory, number>;
+                const shares = Object.fromEntries(MACRO_ORDER.map(m => [m, Math.max(0, other.macros[m].totalOutflow) / mapped])) as Record<YnabMacroCategory, number>;
+                mix = { shares, other };
             }
         }
         mixCache.set(budgetId, mix);
@@ -166,15 +171,32 @@ export function analyzeSpending(
         }
         const linkedId = mappings.linkedBudgets?.[cat.categoryId];
         if (linkedId) {
-            const shares = mixOf(linkedId);
-            linkedSplits.push({ categoryId: cat.categoryId, name: cat.name, groupName: cat.groupName, budgetId: linkedId, totalOutflow: cat.totalOutflow, shares });
-            if (shares) {
+            const mix = mixOf(linkedId);
+            linkedSplits.push({ categoryId: cat.categoryId, name: cat.name, groupName: cat.groupName, budgetId: linkedId, totalOutflow: cat.totalOutflow, shares: mix?.shares ?? null });
+            if (mix) {
+                // Each class gets its share, attributed to the linked budget's
+                // own categories pro rata, so the breakdown shows where it goes.
                 for (const m of MACRO_ORDER) {
-                    if (shares[m] <= 0) continue;
-                    const part = { ...cat, totalOutflow: cat.totalOutflow * shares[m], totalBudgeted: cat.totalBudgeted * shares[m] };
-                    macros[m].totalOutflow += part.totalOutflow;
-                    macros[m].totalBudgeted += part.totalBudgeted;
-                    macros[m].categories.push(part);
+                    if (mix.shares[m] <= 0) continue;
+                    // Within a class, pro rata to its categories that spent:
+                    // the class total stays exactly its share.
+                    const children = mix.other.macros[m].categories.filter(c => c.totalOutflow > 0);
+                    const spent = children.reduce((sum, c) => sum + c.totalOutflow, 0);
+                    for (const child of children) {
+                        const ratio = mix.shares[m] * (child.totalOutflow / spent);
+                        const part: MacroCategoryTotal = {
+                            categoryId: `${cat.categoryId}>${child.categoryId}`,
+                            name: child.name,
+                            groupId: child.groupId,
+                            groupName: child.groupName,
+                            totalOutflow: cat.totalOutflow * ratio,
+                            totalBudgeted: cat.totalBudgeted * ratio,
+                            linkedFrom: { categoryId: cat.categoryId, name: cat.name, budgetId: linkedId },
+                        };
+                        macros[m].totalOutflow += part.totalOutflow;
+                        macros[m].totalBudgeted += part.totalBudgeted;
+                        macros[m].categories.push(part);
+                    }
                 }
                 continue;
             }
