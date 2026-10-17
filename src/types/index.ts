@@ -191,7 +191,9 @@ export type PortfolioTargetMode =
   | 'excluded'   // Not counted in total, no target
   | 'locked'     // Counts in total, target = current value (does not move)
   | 'fixed'      // Target = fixed EUR amount
-  | 'percent';   // Target = X% of eligible total
+  | 'percent'    // Target = X% of eligible total
+  | 'expense'    // Target = EUR from Expense Planning (emergency fund + capex not in cash)
+  | 'rest';      // Target = what the other rows leave, in equal parts among 'rest' rows
 
 // A row here is a bucket of wealth: a standalone portfolio, or a whole
 // parent/child group counted as one. Ratios are NOT set here — how a group
@@ -199,10 +201,11 @@ export type PortfolioTargetMode =
 // page, and this target is simply shared out by it.
 export interface PortfolioTargetConfig {
   mode: PortfolioTargetMode;
-  value: number;          // fixed: EUR | percent: 0-100 | excluded/locked: ignored
+  value: number;          // fixed: EUR | percent: 0-100 | expense: filled in at use | excluded/locked: ignored
 }
 
-export type LiquidityTargetMode = 'fixed' | 'percent';
+// 'expense': the operating cash Expense Planning computes, filled in at use.
+export type LiquidityTargetMode = 'fixed' | 'percent' | 'expense';
 
 export interface LiquidityTargetConfig {
   mode: LiquidityTargetMode;
