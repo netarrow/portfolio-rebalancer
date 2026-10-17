@@ -192,7 +192,7 @@ export type PortfolioTargetMode =
   | 'locked'     // Counts in total, target = current value (does not move)
   | 'fixed'      // Target = fixed EUR amount
   | 'percent'    // Target = X% of eligible total
-  | 'expense'    // Target = EUR from Expense Planning (emergency fund + capex not in cash)
+  | 'expense'    // Target = EUR from Expense Planning (emergency fund + capex not due, allocated here)
   | 'rest';      // Target = what the other rows leave, in equal parts among 'rest' rows
 
 // A row here is a bucket of wealth: a standalone portfolio, or a whole

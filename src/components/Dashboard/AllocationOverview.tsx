@@ -629,7 +629,7 @@ const AggregateAllocationSection: React.FC = () => {
     }, [portfolios, transactions, effectiveAssetSettings, marketData, brokers]);
 
     // "From Expense Planning" targets: rows here are single portfolios.
-    const { portfolios: expenseByRow, operatingCash } = useExpensePlanningTargets();
+    const { portfolios: expenseByRow, liquidity: expenseLiquidity } = useExpensePlanningTargets();
 
     // Run the Asset Allocation engine to get configured target weights per portfolio
     const allocationResult = useMemo(() => {
@@ -646,9 +646,9 @@ const AggregateAllocationSection: React.FC = () => {
                 currentTotalValue: pc.totalValue,
             })),
             brokerLiquidity,
-            settings: withExpenseTargets(assetAllocationSettings, id => expenseByRow.get(id)?.total, operatingCash ?? undefined),
+            settings: withExpenseTargets(assetAllocationSettings, id => expenseByRow.get(id)?.total, expenseLiquidity ?? undefined),
         });
-    }, [portfolioCalcs, brokers, assetAllocationSettings, expenseByRow, operatingCash]);
+    }, [portfolioCalcs, brokers, assetAllocationSettings, expenseByRow, expenseLiquidity]);
 
     // Map portfolioId → configured target weight (%)
     const portfolioTargetWeightById = useMemo(() => {

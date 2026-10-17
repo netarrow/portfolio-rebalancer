@@ -1,8 +1,10 @@
 // Known-answer checks for the Asset Allocation modes "From Expense Planning"
-// (fund portfolios get the whole emergency fund target; capex portfolios get
-// what each capex still needs beyond cash) and "Take the rest".
+// (fund portfolios get the whole emergency fund target; each portfolio gets
+// the capex not due that are invested there, allocations plus their cash;
+// capex due soon go to liquidity with their investments to sell) and
+// "Take the rest".
 // Run with: npx esbuild scripts/verify-expense-planning-targets.ts --bundle --format=esm | node --input-type=module
-import { buildExpensePlanningTargets, targetsByRow } from '../src/utils/expensePlanningTargets';
+import { buildExpensePlanningTargets, capexRouting, targetsByRow } from '../src/utils/expensePlanningTargets';
 import { calculateAssetAllocation, withExpenseTargets, normalizeAssetAllocationSettings } from '../src/utils/assetAllocation';
 import type { EmergencyCoverage } from '../src/utils/ynabCoverage';
 import type { YnabGoal, YnabGoalAllocation } from '../src/types';
@@ -31,24 +33,26 @@ const t = buildExpensePlanningTargets({
     emergency,
     emergencyPortfolioIds: ['money', 'money2'],
     goals: [
-        goal('car', 25000, 9000),                       // 16,000 to invest
-        goal('house', 60000, 60000),                    // covered by cash: nothing
+        goal('car', 25000, 9000),                       // 3,000 + 1,000 allocated
+        goal('house', 60000, 60000),                    // all cash, nothing allocated
         goal('old', 5000, 0, { archived: true }),       // archived: nothing
     ],
-    allocations: [alloc('car', 'bonds', 3000), alloc('car', 'money', 1000)],
+    allocations: [alloc('car', 'bonds', 3000), alloc('car', 'money', 1000), alloc('old', 'bonds', 500)],
+    horizonMonths: 3,
+    today: '2026-10-17',
 });
 
 // The whole 12,000 target, in equal parts over the two fund portfolios.
 assertEq('fund on money = 12,000 / 2', t.get('money')!.fund, 6000);
 assertEq('fund on money2 = 12,000 / 2', t.get('money2')!.fund, 6000);
-assertEq('car need on bonds = 16,000 × 3/4', t.get('bonds')!.capex, 12000);
-assertEq('car need on money = 16,000 × 1/4', t.get('money')!.capex, 4000);
-assertEq('money adds fund and capex', t.get('money')!.total, 10000);
+assertEq('car on bonds = 3,000 + 9,000 cash × 3/4', t.get('bonds')!.capex, 9750);
+assertEq('car on money = 1,000 + 9,000 cash × 1/4', t.get('money')!.capex, 3250);
+assertEq('money adds fund and capex', t.get('money')!.total, 9250);
 assertEq('a capex covered by cash adds nothing', [...t.values()].reduce((s, x) => s + x.capexItems.filter(c => c.goalId === 'house').length, 0), 0);
 
 // A group row adds up its members.
 const rows = targetsByRow(t, id => (id === 'money' || id === 'money2' ? 'grp' : undefined));
-assertEq('group row = both fund portfolios', rows.get('grp')!.total, 10000 + 6000);
+assertEq('group row = both fund portfolios', rows.get('grp')!.total, 9250 + 6000);
 
 // The engine sizes an expense row like a fixed one, with the value filled in.
 const stored = normalizeAssetAllocationSettings({ portfolioTargets: { bonds: { mode: 'expense', value: 1 }, rest: { mode: 'percent', value: 50 } } });
@@ -62,7 +66,7 @@ const r = calculateAssetAllocation({
     brokerLiquidity: 0,
     settings,
 });
-assertEq('expense row target = 12,000', r.portfolios.find(p => p.portfolioId === 'bonds')!.targetValue, 12000);
+assertEq('expense row target = 9,750', r.portfolios.find(p => p.portfolioId === 'bonds')!.targetValue, 9750);
 assertEq('no Expense Planning value: 0', withExpenseTargets(stored, () => undefined).portfolioTargets.bonds.value, 0);
 
 // Take the rest: what the others leave, in equal parts; none on a shortfall.
@@ -94,5 +98,37 @@ const liqR = calculateAssetAllocation({
 assertEq('liquidity target = operating cash', liqR.liquidity.target, 1936);
 assertEq('rest takes the remainder', liqR.portfolios[0].targetValue, 25000 - 1936);
 assertEq('no operating cash: 0', withExpenseTargets(liq, () => undefined).liquidityTarget!.value, 0);
+
+// Capex routing: not due and invested → portfolios (allocations + cash);
+// due soon → liquidity, cash + investments to sell; not invested → its cash.
+const routed = capexRouting({
+    goals: [
+        goal('car', 25000, 9000, { targetDate: '2027-12-01' }),   // invested, far: its cash
+        goal('trip', 4000, 1000, { targetDate: '2026-12-15' }),   // invested, due in 2 months: whole
+        goal('sofa', 2000, 500, { targetDate: '2028-01-01' }),    // nothing invested: whole
+        goal('late', 3000, 0, { targetDate: '2026-05-01' }),      // overdue counts as due
+        goal('old', 5000, 700, { archived: true }),
+    ],
+    allocations: [alloc('car', 'bonds', 6000), alloc('trip', 'bonds', 2000), alloc('late', 'bonds', 1000)],
+    horizonMonths: 3,
+    today: '2026-10-17',
+});
+const liqOf = (id: string) => routed.liquidity.find(i => i.goalId === id);
+assertEq('car not due: not in liquidity', liqOf('car') ? 1 : 0, 0);
+assertEq('car not due: allocation + cash on its portfolio', routed.invested[0].byPortfolio.get('bonds')!.allocated + routed.invested[0].byPortfolio.get('bonds')!.cash, 15000);
+assertEq('trip due soon: cash 1,000 + 2,000 to sell', liqOf('trip')!.amount, 3000);
+assertEq('trip divest', liqOf('trip')!.divest, 2000);
+assertEq('sofa not invested: its cash, not the target', liqOf('sofa')!.amount, 500);
+assertEq('late overdue: 1,000 to sell, no cash', liqOf('late')!.amount, 1000);
+assertEq('archived left out', liqOf('old') ? 1 : 0, 0);
+assertEq('liquidity total', routed.liquidityTotal, 4500);
+assertEq('only car stays on a portfolio', routed.invested.length, 1);
+const tr = buildExpensePlanningTargets({
+    emergency: null, emergencyPortfolioIds: [],
+    goals: [goal('trip', 4000, 1000, { targetDate: '2026-12-15' })],
+    allocations: [alloc('trip', 'bonds', 2000)],
+    horizonMonths: 3, today: '2026-10-17',
+});
+assertEq('a due capex leaves its portfolio (to be sold)', tr.get('bonds')?.total ?? 0, 0);
 
 console.log('verify-expense-planning-targets: all checks passed');

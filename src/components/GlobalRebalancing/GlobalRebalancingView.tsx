@@ -17,7 +17,7 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recha
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import { buildMergedPortfolioView } from '../../utils/mergedPortfolioView';
 import { GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
-import { targetsByRow, type ExpensePlanningTarget } from '../../utils/expensePlanningTargets';
+import { targetsByRow, type CapexLiquidityReason, type ExpensePlanningTarget } from '../../utils/expensePlanningTargets';
 import { useExpensePlanningTargets } from '../YnabImport/useExpensePlanningTargets';
 
 // ---------------------------------------------------------------------------
@@ -69,6 +69,11 @@ const modeLabels: Record<PortfolioTargetMode, string> = {
     rest: 'Take the rest'
 };
 
+const CAPEX_CASH_REASON: Record<CapexLiquidityReason, string> = {
+    'due-soon': 'due soon',
+    'not-invested': 'nothing invested',
+};
+
 const unitOf = (mode: PortfolioTargetMode): string =>
     mode === 'fixed' || mode === 'expense' ? '€' : mode === 'percent' ? '%' : '—';
 
@@ -78,7 +83,7 @@ const expenseBreakdown = (t: ExpensePlanningTarget | undefined): { text: string;
     const parts = [t.fund > 0 && `fund ${formatCurrency(t.fund)}`, t.capex > 0 && `capex ${formatCurrency(t.capex)}`].filter(Boolean);
     const title = [
         t.fund > 0 && `Emergency fund: ${formatCurrency(t.fund)}`,
-        ...t.capexItems.map(c => `${c.name}: ${formatCurrency(c.amount)} not covered by cash`),
+        ...t.capexItems.map(c => `${c.name}: ${formatCurrency(c.allocated)} allocated${c.cash > 0 ? ` + ${formatCurrency(c.cash)} cash to move here` : ''}`),
     ].filter(Boolean).join('\n');
     return { text: parts.join(' + '), title };
 };
@@ -185,8 +190,8 @@ const GlobalRebalancingView: React.FC = () => {
         return targetsByRow(expense.portfolios, id => groupOf.get(id));
     }, [expense.portfolios, mergedView.groups]);
     const effectiveSettings = useMemo(
-        () => withExpenseTargets(assetAllocationSettings, id => expenseByRow.get(id)?.total, expense.operatingCash ?? undefined),
-        [assetAllocationSettings, expenseByRow, expense.operatingCash]
+        () => withExpenseTargets(assetAllocationSettings, id => expenseByRow.get(id)?.total, expense.liquidity ?? undefined),
+        [assetAllocationSettings, expenseByRow, expense.liquidity]
     );
 
     // Compute each portfolio's current state.
@@ -459,17 +464,29 @@ const GlobalRebalancingView: React.FC = () => {
                         </div>
                         {liquidityTarget.mode === 'expense' ? (
                             <div className="aa-field">
-                                <label>Operating cash (EUR)</label>
+                                <label>Operating cash + capex (EUR)</label>
                                 <div className="aa-readout">
-                                    {expense.operatingCash === null ? '—' : formatCurrency(expense.operatingCash)}
+                                    {expense.liquidity === null ? '—' : formatCurrency(expense.liquidity)}
                                 </div>
-                                <div className="aa-expense-source">
-                                    {expense.operatingCash === null
-                                        ? 'Connect YNAB to compute it'
-                                        : expense.operatingCashByAccount.length > 0
-                                        ? expense.operatingCashByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join(' · ')
-                                        : 'No day-to-day spending found'}
-                                </div>
+                                {expense.liquidity === null ? (
+                                    <div className="aa-expense-source">Connect YNAB to compute it</div>
+                                ) : (
+                                    <>
+                                        <div
+                                            className="aa-expense-source"
+                                            title={expense.operatingCashByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join('\n')}
+                                        >
+                                            operating {formatCurrency(expense.operatingCash ?? 0)}
+                                            {expense.operatingCashByAccount.length > 0 && <> ({expense.operatingCashByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join(' · ')})</>}
+                                        </div>
+                                        {expense.capexCash > 0 && (
+                                            <div className="aa-expense-source">
+                                                + capex {formatCurrency(expense.capexCash)}:{' '}
+                                                {expense.capexCashItems.map(c => `${c.name} ${formatCurrency(c.amount)} (${CAPEX_CASH_REASON[c.reason]}${c.divest > 0 ? `: ${formatCurrency(c.cash)} cash + ${formatCurrency(c.divest)} to sell` : ''})`).join(' · ')}
+                                            </div>
+                                        )}
+                                    </>
+                                )}
                             </div>
                         ) : (
                         <div className="aa-field">
