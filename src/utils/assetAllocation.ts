@@ -1,6 +1,7 @@
 import type {
   AssetAllocationSettings,
   LiquidityTargetConfig,
+  LiquidityTargetMode,
   PortfolioTargetConfig,
   PortfolioTargetMode,
 } from '../types';
@@ -17,7 +18,7 @@ const isFiniteNumber = (value: unknown): value is number =>
 const sanitizeNumber = (value: unknown, fallback = 0): number =>
   isFiniteNumber(value) ? value : fallback;
 
-const VALID_PORTFOLIO_MODES: PortfolioTargetMode[] = ['excluded', 'locked', 'fixed', 'percent'];
+const VALID_PORTFOLIO_MODES: PortfolioTargetMode[] = ['excluded', 'locked', 'fixed', 'percent', 'expense', 'rest'];
 
 // ---------------------------------------------------------------------------
 // Normalizer
@@ -36,7 +37,7 @@ export const normalizeAssetAllocationSettings = (raw: unknown): AssetAllocationS
   let liquidityTarget: LiquidityTargetConfig | undefined;
   if (src.liquidityTarget && typeof src.liquidityTarget === 'object') {
     const lt = src.liquidityTarget as Record<string, unknown>;
-    const mode = lt.mode === 'percent' ? 'percent' : lt.mode === 'fixed' ? 'fixed' : undefined;
+    const mode = lt.mode === 'percent' || lt.mode === 'fixed' || lt.mode === 'expense' ? lt.mode : undefined;
     const value = sanitizeNumber(lt.value, 0);
     if (mode && value >= 0) {
       liquidityTarget = { mode, value: roundToCents(value) };
@@ -59,6 +60,34 @@ export const normalizeAssetAllocationSettings = (raw: unknown): AssetAllocationS
   }
 
   return { liquidityTarget, portfolioTargets };
+};
+
+/**
+ * Fill the € value of every "From Expense Planning" row from `valueOf`, and of
+ * the liquidity target from `liquidityValue`, so the engine sizes them like
+ * fixed targets. Anything with no value gets 0.
+ */
+export const withExpenseTargets = (
+  settings: AssetAllocationSettings,
+  valueOf: (portfolioId: string) => number | undefined,
+  liquidityValue?: number,
+): AssetAllocationSettings => {
+  let changed = false;
+  let liquidityTarget = settings.liquidityTarget;
+  if (liquidityTarget?.mode === 'expense') {
+    changed = true;
+    liquidityTarget = { mode: 'expense', value: roundToCents(Math.max(0, liquidityValue ?? 0)) };
+  }
+  const portfolioTargets: Record<string, PortfolioTargetConfig> = {};
+  for (const [id, cfg] of Object.entries(settings.portfolioTargets)) {
+    if (cfg.mode === 'expense') {
+      changed = true;
+      portfolioTargets[id] = { mode: 'expense', value: roundToCents(Math.max(0, valueOf(id) ?? 0)) };
+    } else {
+      portfolioTargets[id] = cfg;
+    }
+  }
+  return changed ? { ...settings, liquidityTarget, portfolioTargets } : settings;
 };
 
 // ---------------------------------------------------------------------------
@@ -163,8 +192,8 @@ export interface AssetAllocationResult {
   unallocatedRemainder: number;
 }
 
-const resolveValue = (mode: 'fixed' | 'percent', value: number, base: number): number => {
-  if (mode === 'fixed') return Math.max(0, value);
+const resolveValue = (mode: LiquidityTargetMode, value: number, base: number): number => {
+  if (mode === 'fixed' || mode === 'expense') return Math.max(0, value);
   return Math.max(0, (value / 100) * base);
 };
 
@@ -201,14 +230,21 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
 
   for (const p of includedPortfolios) {
     if (p.config.mode === 'locked') lockedBudget += p.currentTotalValue;
-    else if (p.config.mode === 'fixed') fixedBudget += Math.max(0, p.config.value);
+    else if (p.config.mode === 'fixed' || p.config.mode === 'expense') fixedBudget += Math.max(0, p.config.value);
     else if (p.config.mode === 'percent')
       percentBudget += (Math.max(0, p.config.value) / 100) * eligibleTotal;
   }
 
-  // 4. Remainder
+  // 4. Remainder. "Take the rest" rows share what is left, in equal parts;
+  // with none, it is reported as unallocated.
   const totalAssigned = liquidityBudget + lockedBudget + fixedBudget + percentBudget;
-  const remainder = roundToCents(eligibleTotal - totalAssigned);
+  const leftOver = roundToCents(eligibleTotal - totalAssigned);
+  const restRows = includedPortfolios.filter((p) => p.config.mode === 'rest');
+  const restShares = allocateByLargestRemainder(
+    Math.max(0, leftOver),
+    restRows.map((p) => ({ key: p.portfolioId, weight: 1 }))
+  );
+  const remainder = restRows.length > 0 && leftOver > 0 ? 0 : leftOver;
 
   // 5. Sustainability
   let sustainable = true;
@@ -233,10 +269,12 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
       targetValue = 0;
     } else if (mode === 'locked') {
       targetValue = p.currentTotalValue;
-    } else if (mode === 'fixed') {
+    } else if (mode === 'fixed' || mode === 'expense') {
       targetValue = Math.max(0, p.config.value);
     } else if (mode === 'percent') {
       targetValue = (Math.max(0, p.config.value) / 100) * eligibleTotal;
+    } else if (mode === 'rest') {
+      targetValue = restShares[p.portfolioId] ?? 0;
     }
     targetValue = roundToCents(targetValue);
     const currentValue = roundToCents(p.currentTotalValue);
@@ -253,7 +291,7 @@ export const calculateAssetAllocation = (input: AssetAllocationInput): AssetAllo
       targetValue,
       targetWeight,
       delta,
-      fixedValue: mode === 'fixed' ? p.config.value : undefined,
+      fixedValue: mode === 'fixed' || mode === 'expense' ? p.config.value : undefined,
       percentValue: mode === 'percent' ? p.config.value : undefined
     };
   });
@@ -412,7 +450,7 @@ export const migrateRatioGroups = (raw: unknown): RatioGroupMigrationResult => {
     const value = Math.max(0, sanitizeNumber(cfg.value, 0));
 
     if (mode !== 'ratio') {
-      if (mode === 'excluded' || mode === 'locked' || mode === 'fixed' || mode === 'percent') {
+      if (mode === 'excluded' || mode === 'locked' || mode === 'fixed' || mode === 'percent' || mode === 'expense' || mode === 'rest') {
         portfolioTargets[portfolioId] = { mode, value: roundToCents(value) };
       }
       continue;

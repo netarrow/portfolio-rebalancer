@@ -4,6 +4,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import {
     calculateAssetAllocation,
+    withExpenseTargets,
     type AssetAllocationAction,
     type AssetAllocationPortfolioInput
 } from '../../utils/assetAllocation';
@@ -16,6 +17,8 @@ import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recha
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
 import { buildMergedPortfolioView } from '../../utils/mergedPortfolioView';
 import { GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
+import { targetsByRow, type ExpensePlanningTarget } from '../../utils/expensePlanningTargets';
+import { useExpensePlanningTargets } from '../YnabImport/useExpensePlanningTargets';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -61,7 +64,23 @@ const modeLabels: Record<PortfolioTargetMode, string> = {
     excluded: 'Excluded',
     locked: 'Locked at current',
     fixed: 'Fixed EUR',
-    percent: '% of total'
+    percent: '% of total',
+    expense: 'From Expense Planning',
+    rest: 'Take the rest'
+};
+
+const unitOf = (mode: PortfolioTargetMode): string =>
+    mode === 'fixed' || mode === 'expense' ? '€' : mode === 'percent' ? '%' : '—';
+
+/** Where a "From Expense Planning" target comes from, in one line. */
+const expenseBreakdown = (t: ExpensePlanningTarget | undefined): { text: string; title: string } => {
+    if (!t || t.total <= 0) return { text: 'nothing from Expense Planning', title: 'Not a fund portfolio and no planned capex needs money here.' };
+    const parts = [t.fund > 0 && `fund ${formatCurrency(t.fund)}`, t.capex > 0 && `capex ${formatCurrency(t.capex)}`].filter(Boolean);
+    const title = [
+        t.fund > 0 && `Emergency fund: ${formatCurrency(t.fund)}`,
+        ...t.capexItems.map(c => `${c.name}: ${formatCurrency(c.amount)} not covered by cash`),
+    ].filter(Boolean).join('\n');
+    return { text: parts.join(' + '), title };
 };
 
 // ---------------------------------------------------------------------------
@@ -157,6 +176,19 @@ const GlobalRebalancingView: React.FC = () => {
         return out;
     }, [mergedView.groups, portfolios, transactions, assetSettings, marketData]);
 
+    // "From Expense Planning" rows: the emergency fund the opex call for and the
+    // capex not covered by cash, summed on the row (a group adds its members).
+    const expense = useExpensePlanningTargets();
+    const expenseByRow = useMemo(() => {
+        const groupOf = new Map<string, string>();
+        mergedView.groups.forEach(g => g.memberIds.forEach(id => groupOf.set(id, g.id)));
+        return targetsByRow(expense.portfolios, id => groupOf.get(id));
+    }, [expense.portfolios, mergedView.groups]);
+    const effectiveSettings = useMemo(
+        () => withExpenseTargets(assetAllocationSettings, id => expenseByRow.get(id)?.total, expense.operatingCash ?? undefined),
+        [assetAllocationSettings, expenseByRow, expense.operatingCash]
+    );
+
     // Compute each portfolio's current state.
     // Asset Allocation only counts the value of invested assets — non-invested
     // portfolio cash (p.liquidity) is deliberately excluded, so e.g. a portfolio
@@ -187,9 +219,9 @@ const GlobalRebalancingView: React.FC = () => {
             calculateAssetAllocation({
                 portfolios: portfolioInputs,
                 brokerLiquidity,
-                settings: assetAllocationSettings
+                settings: effectiveSettings
             }),
-        [portfolioInputs, brokerLiquidity, assetAllocationSettings]
+        [portfolioInputs, brokerLiquidity, effectiveSettings]
     );
 
     // Simulation: projected asset class allocation after all suggested actions
@@ -225,10 +257,10 @@ const GlobalRebalancingView: React.FC = () => {
         // resolved value (fixed EUR or % of eligible total). Otherwise fall back to
         // current broker liquidity. This matches the engine's own liquidityBudget logic.
         let projectedBrokerCash: number;
-        const liqTarget = assetAllocationSettings.liquidityTarget;
+        const liqTarget = effectiveSettings.liquidityTarget;
         if (liqTarget) {
             const eligibleTotal = result.portfolios.reduce((s, p) => s + p.currentValue, 0) + brokerLiquidity;
-            projectedBrokerCash = liqTarget.mode === 'fixed'
+            projectedBrokerCash = liqTarget.mode !== 'percent'
                 ? Math.max(0, liqTarget.value)
                 : (Math.max(0, liqTarget.value) / 100) * eligibleTotal;
         } else {
@@ -245,7 +277,7 @@ const GlobalRebalancingView: React.FC = () => {
             .filter(([, v]) => v > 0)
             .map(([name, value]) => ({ name, value, percent: value / total, color: CLASS_COLORS[name] ?? DEFAULT_CLASS_COLOR }))
             .sort((a, b) => b.value - a.value);
-    }, [result.portfolios, mergedView, assetSettings, marketData, brokerLiquidity, assetAllocationSettings.liquidityTarget]);
+    }, [result.portfolios, mergedView, assetSettings, marketData, brokerLiquidity, effectiveSettings.liquidityTarget]);
 
     const [projectedIncludeCash, setProjectedIncludeCash] = useState(true);
     const projectedChartData = useMemo(() => {
@@ -274,8 +306,9 @@ const GlobalRebalancingView: React.FC = () => {
         }
     };
 
-    const handleLiquidityModeChange = (mode: 'fixed' | 'percent') => {
-        const val = parseNumericInput(liquidityDraftValue);
+    const handleLiquidityModeChange = (mode: LiquidityTargetConfig['mode']) => {
+        // The Expense Planning value is filled in at use, never stored.
+        const val = mode === 'expense' ? 0 : parseNumericInput(liquidityDraftValue);
         updateLiquidityTarget({ mode, value: val });
     };
 
@@ -291,8 +324,8 @@ const GlobalRebalancingView: React.FC = () => {
             updatePortfolioTarget(portfolioId, { mode: 'excluded', value: 0 });
             return;
         }
-        if (mode === 'locked') {
-            updatePortfolioTarget(portfolioId, { mode: 'locked', value: 0 });
+        if (mode === 'locked' || mode === 'expense' || mode === 'rest') {
+            updatePortfolioTarget(portfolioId, { mode, value: 0 });
             return;
         }
         const existing = assetAllocationSettings.portfolioTargets[portfolioId];
@@ -304,7 +337,7 @@ const GlobalRebalancingView: React.FC = () => {
 
     const handleChangePortfolioValue = (portfolioId: string, rawValue: string) => {
         const existing = assetAllocationSettings.portfolioTargets[portfolioId];
-        if (!existing || existing.mode === 'excluded' || existing.mode === 'locked') return;
+        if (!existing || existing.mode === 'excluded' || existing.mode === 'locked' || existing.mode === 'expense' || existing.mode === 'rest') return;
         const val = parseNumericInput(rawValue);
         updatePortfolioTarget(portfolioId, { ...existing, value: val });
     };
@@ -413,8 +446,32 @@ const GlobalRebalancingView: React.FC = () => {
                                     />
                                     <span>% of total</span>
                                 </label>
+                                <label>
+                                    <input
+                                        type="radio"
+                                        name="liquidity-mode"
+                                        checked={liquidityTarget.mode === 'expense'}
+                                        onChange={() => handleLiquidityModeChange('expense')}
+                                    />
+                                    <span>From Expense Planning</span>
+                                </label>
                             </div>
                         </div>
+                        {liquidityTarget.mode === 'expense' ? (
+                            <div className="aa-field">
+                                <label>Operating cash (EUR)</label>
+                                <div className="aa-readout">
+                                    {expense.operatingCash === null ? '—' : formatCurrency(expense.operatingCash)}
+                                </div>
+                                <div className="aa-expense-source">
+                                    {expense.operatingCash === null
+                                        ? 'Connect YNAB to compute it'
+                                        : expense.operatingCashByAccount.length > 0
+                                        ? expense.operatingCashByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join(' · ')
+                                        : 'No day-to-day spending found'}
+                                </div>
+                            </div>
+                        ) : (
                         <div className="aa-field">
                             <label>
                                 Valore {liquidityTarget.mode === 'fixed' ? '(EUR)' : '(%)'}
@@ -428,6 +485,7 @@ const GlobalRebalancingView: React.FC = () => {
                                 placeholder={liquidityTarget.mode === 'fixed' ? 'e.g. 30000' : 'e.g. 10'}
                             />
                         </div>
+                        )}
                         <div className="aa-field">
                             <label>Calculated target</label>
                             <div className="aa-readout">{formatCurrency(result.liquidity.target)}</div>
@@ -480,15 +538,16 @@ const GlobalRebalancingView: React.FC = () => {
                         </thead>
                         <tbody>
                             {result.portfolios.map((row) => {
-                                const cfg = assetAllocationSettings.portfolioTargets[row.portfolioId];
+                                const cfg = effectiveSettings.portfolioTargets[row.portfolioId];
                                 const mode = cfg?.mode ?? 'excluded';
                                 const muted = mode === 'excluded';
                                 const memberRows = memberRowsByGroup[row.portfolioId];
-                                const valueDisabled = mode === 'excluded' || mode === 'locked';
-                                const unitLabel =
-                                    mode === 'fixed' ? '€' : mode === 'percent' ? '%' : '—';
+                                const fromExpense = mode === 'expense';
+                                const valueDisabled = mode === 'excluded' || mode === 'locked' || mode === 'rest' || fromExpense;
+                                const unitLabel = unitOf(mode);
                                 const displayValue =
-                                    cfg && !valueDisabled ? String(cfg.value) : '';
+                                    cfg && (!valueDisabled || fromExpense) ? String(cfg.value) : '';
+                                const breakdown = fromExpense ? expenseBreakdown(expenseByRow.get(row.portfolioId)) : null;
                                 return (
                                     <React.Fragment key={row.portfolioId}>
                                     <tr className={muted ? 'muted' : ''}>
@@ -532,6 +591,9 @@ const GlobalRebalancingView: React.FC = () => {
                                                 />
                                                 <span className="aa-unit">{unitLabel}</span>
                                             </div>
+                                            {breakdown && (
+                                                <div className="aa-expense-source" title={breakdown.title}>{breakdown.text}</div>
+                                            )}
                                         </td>
                                         <td>{formatCurrency(row.currentValue)}</td>
                                         <td>{muted ? '—' : formatPercent(row.currentWeight)}</td>
@@ -604,7 +666,8 @@ const GlobalRebalancingView: React.FC = () => {
                         <PortfolioTargetMobileRow
                             key={`${row.portfolioId}-m`}
                             row={row}
-                            cfg={assetAllocationSettings.portfolioTargets[row.portfolioId]}
+                            cfg={effectiveSettings.portfolioTargets[row.portfolioId]}
+                            expense={expenseByRow.get(row.portfolioId)}
                             memberRows={memberRowsByGroup[row.portfolioId]}
                             onChangeMode={handleChangePortfolioMode}
                             onChangeValue={handleChangePortfolioValue}
@@ -729,6 +792,7 @@ const GlobalRebalancingView: React.FC = () => {
                     background: var(--bg-app);
                     border: 1px solid var(--border-color);
                 }
+                .aa-expense-source { margin-top: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); overflow-wrap: anywhere; }
                 .aa-metric-label {
                     display: block;
                     color: var(--text-secondary);
@@ -1075,6 +1139,8 @@ interface PortfolioTargetMobileRowProps {
         delta: number;
     };
     cfg?: PortfolioTargetConfig;
+    /** The Expense Planning target of the row, shown when its mode follows it. */
+    expense?: ExpensePlanningTarget;
     /** Set when the row is a parent/child group: its read-only member split. */
     memberRows?: { portfolioId: string; name: string; share: number; currentValue: number }[];
     onChangeMode: (portfolioId: string, mode: PortfolioTargetMode) => void;
@@ -1082,14 +1148,16 @@ interface PortfolioTargetMobileRowProps {
 }
 
 const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
-    row, cfg, memberRows, onChangeMode, onChangeValue,
+    row, cfg, expense, memberRows, onChangeMode, onChangeValue,
 }) => {
     const [expanded, setExpanded] = useState(false);
     const mode = cfg?.mode ?? 'excluded';
     const muted = mode === 'excluded';
-    const valueDisabled = mode === 'excluded' || mode === 'locked';
-    const unitLabel = mode === 'fixed' ? '€' : mode === 'percent' ? '%' : '—';
-    const displayValue = cfg && !valueDisabled ? String(cfg.value) : '';
+    const fromExpense = mode === 'expense';
+    const valueDisabled = mode === 'excluded' || mode === 'locked' || mode === 'rest' || fromExpense;
+    const unitLabel = unitOf(mode);
+    const displayValue = cfg && (!valueDisabled || fromExpense) ? String(cfg.value) : '';
+    const breakdown = fromExpense ? expenseBreakdown(expense) : null;
     const deltaClass = muted || Math.abs(row.delta) < 0.01 ? '' : row.delta > 0 ? 'ok' : 'warn';
 
     return (
@@ -1142,6 +1210,7 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                             placeholder={valueDisabled ? '—' : '0'}
                             style={{ width: '100%' }}
                         />
+                        {breakdown && <div className="aa-expense-source" title={breakdown.title}>{breakdown.text}</div>}
                     </div>
                     <div className="mrow-detail">
                         <span className="mrow-label">Current</span>

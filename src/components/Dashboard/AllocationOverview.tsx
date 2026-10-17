@@ -10,7 +10,8 @@ import { isFreeBuyIsin, currentMonthKey } from '../../utils/freeCommissions';
 import { computeSellFriction, buyBudgetScale, scaledBuyShares, capitalGainsRate, resolveAssetClass, projectBrokerCash, type CashProjection, type SellFriction, type SellLeg } from '../../utils/rebalanceCosts';
 import ConcretizeModal from '../modals/ConcretizeModal';
 import AmountTargetTable from './AmountTargetTable';
-import { calculateAssetAllocation } from '../../utils/assetAllocation';
+import { calculateAssetAllocation, withExpenseTargets } from '../../utils/assetAllocation';
+import { useExpensePlanningTargets } from '../YnabImport/useExpensePlanningTargets';
 import { buildPortfolioTree, GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
 import type { MergedMemberRatio } from '../../utils/mergedGroup';
 import { WithdrawalModal } from './WithdrawalModal';
@@ -627,6 +628,9 @@ const AggregateAllocationSection: React.FC = () => {
         });
     }, [portfolios, transactions, effectiveAssetSettings, marketData, brokers]);
 
+    // "From Expense Planning" targets: rows here are single portfolios.
+    const { portfolios: expenseByRow, operatingCash } = useExpensePlanningTargets();
+
     // Run the Asset Allocation engine to get configured target weights per portfolio
     const allocationResult = useMemo(() => {
         const brokerLiquidity = brokers.reduce((s, b) => {
@@ -642,9 +646,9 @@ const AggregateAllocationSection: React.FC = () => {
                 currentTotalValue: pc.totalValue,
             })),
             brokerLiquidity,
-            settings: assetAllocationSettings,
+            settings: withExpenseTargets(assetAllocationSettings, id => expenseByRow.get(id)?.total, operatingCash ?? undefined),
         });
-    }, [portfolioCalcs, brokers, assetAllocationSettings]);
+    }, [portfolioCalcs, brokers, assetAllocationSettings, expenseByRow, operatingCash]);
 
     // Map portfolioId → configured target weight (%)
     const portfolioTargetWeightById = useMemo(() => {
