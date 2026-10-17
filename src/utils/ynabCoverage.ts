@@ -40,6 +40,10 @@ export interface CoverageSettings {
     emergencyMonths: number;
     workingCapitalMonths: number;
     goalHorizonMonths: number;
+    /** Category groups whose every category is emergency fund. */
+    emergencyGroupIds?: string[];
+    /** Portfolios whose whole value counts toward the emergency fund. */
+    emergencyPortfolioIds?: string[];
 }
 
 /** Natures whose spending is day-to-day money: it has to stay liquid. */
@@ -91,6 +95,13 @@ export interface CoverageInput {
     settings: CoverageSettings;
     /** Today's ISO date; injectable so the checks stay stable. */
     today?: string;
+    /** Current value of a portfolio, for the portfolios counted as emergency fund. */
+    portfolioValueOf?: (portfolioId: string) => number;
+    /**
+     * Monthly history of the same budget (oldest first or any order): gives
+     * each account its real month-by-month flow of day-to-day money.
+     */
+    history?: { month: string; categories: { categoryId: string; activityMilliunits: number; budgetedMilliunits: number }[] }[];
 }
 
 export interface AccountCoverage {
@@ -112,6 +123,59 @@ export interface AccountCoverage {
     recommendedMin: number;
     /** Minimum configured on the broker today. */
     configuredMin: number;
+    // ── Working capital: the day-to-day money that passes through ─────
+    /** Months of history the flow is read from (0 = averages only). */
+    flowMonths: number;
+    /** Average monthly assigned to its day-to-day categories (money in). */
+    avgIn: number;
+    /** Average monthly spent by its day-to-day categories (money out). */
+    avgOut: number;
+    /** The worst month of day-to-day spending in the history. */
+    peakOut: number;
+    /** Cash to keep for day-to-day: avgOut × working-capital months + (peak − avg). */
+    operatingCash: number;
+    /** Cash already set aside here for other purposes: dated expenses, fund, investments. */
+    earmarked: number;
+    /** Of which, the emergency-fund categories. */
+    emergencyHere: number;
+    /** Liquidity left after operating cash and earmarked money (< 0 = short). */
+    free: number;
+    /** Planned capex due within the horizon: € to bring back from investments. */
+    capexToRecover: number;
+    /**
+     * The account once the capex due within the horizon are paid from it:
+     * liquidity + what comes back from investments − the payments, against
+     * the cash it must still hold (operating cash + what stays set aside).
+     * Absent when no capex is due on this account.
+     */
+    afterCapex?: {
+        pay: number;
+        recover: number;
+        liquidityAfter: number;
+        needAfter: number;
+        /** € to deposit to stay in line; 0 = in line. */
+        topUp: number;
+        /** Liquidity left above what it must hold; 0 when a top-up is needed. */
+        spare: number;
+    };
+}
+
+/** A planned capex due within the horizon, and what it still needs in cash. */
+export interface UpcomingCapex {
+    categoryId: string;
+    name: string;
+    date: string;
+    monthsLeft: number;
+    target: number;
+    /** Cash already in the category. */
+    cash: number;
+    invested: number;
+    /** € to sell and bring back to the account from the investments covering it. */
+    toRecover: number;
+    /** € not covered by cash nor investments. */
+    stillMissing: number;
+    brokerId?: string;
+    allocations: YnabGoalAllocation[];
 }
 
 export interface EmergencyCoverage {
@@ -125,7 +189,14 @@ export interface EmergencyCoverage {
     gap: number;
     /** How many months of fixed spending the fund covers today. */
     monthsCovered: number;
+    /** Every category counted in the fund (flagged one by one or by group). */
     categoryIds: string[];
+    /** Of which, flagged one by one. */
+    flaggedCategoryIds: string[];
+    groupIds: string[];
+    /** Value of the portfolios counted as fund. */
+    fromPortfolios: number;
+    portfolios: { portfolioId: string; value: number }[];
 }
 
 export type GoalStatus = 'done' | 'on-track' | 'due-soon' | 'overdue' | 'no-target';
@@ -155,6 +226,8 @@ export interface CoverageReport {
     unlocated: { amount: number; categoryIds: string[] };
     emergency: EmergencyCoverage;
     goals: GoalCoverage[];
+    /** Planned capex due within the horizon, nearest first. */
+    upcoming: UpcomingCapex[];
     totals: {
         available: number;
         budgeted: number;
@@ -194,6 +267,8 @@ export const averageSpentFromHistory = (
 /** Where every category stands: cash, invested, nature, account, goal. */
 export const buildCategoryPositions = (input: CoverageInput): CategoryPosition[] => {
     const { categories, mappings, macroMappings, goals, allocations, coveredOf, spentFallback, defaultSourceBrokerId } = input;
+    const fundGroups = new Set(input.settings.emergencyGroupIds ?? []);
+    const fundPortfolios = new Set(input.settings.emergencyPortfolioIds ?? []);
     const mappingById = new Map(mappings.map(m => [m.categoryId, m]));
     const goalById = new Map(goals.map(g => [g.id, g]));
 
@@ -201,7 +276,12 @@ export const buildCategoryPositions = (input: CoverageInput): CategoryPosition[]
         const mapping = mappingById.get(category.id);
         const goalEntity = goalById.get(category.id);
         const own = allocations.filter(a => a.ynabGoalId === category.id);
-        const invested = roundCents(own.reduce((s, a) => s + (coveredOf ? coveredOf(a) : a.amount), 0));
+        const isFund = !!mapping?.emergencyFund || fundGroups.has(category.groupId);
+        // A fund category invested in a fund portfolio is already counted with
+        // that portfolio's whole value: not twice.
+        const invested = roundCents(own
+            .filter(a => !(isFund && fundPortfolios.has(a.portfolioId)))
+            .reduce((s, a) => s + (coveredOf ? coveredOf(a) : a.amount), 0));
 
         const hasOwnAverage = typeof category.avgSpentMilliunits === 'number';
         const fallback = spentFallback?.get(category.id);
@@ -239,7 +319,7 @@ export const buildCategoryPositions = (input: CoverageInput): CategoryPosition[]
             cashBrokerIsDefault: !explicitBroker && !!defaultSourceBrokerId,
             invested,
             allocations: own,
-            emergencyFund: !!mapping?.emergencyFund,
+            emergencyFund: isFund,
             goal,
         };
     });
@@ -289,7 +369,6 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
             };
         })
         .sort((a, b) => (a.date ?? '9999').localeCompare(b.date ?? '9999') || a.name.localeCompare(b.name));
-    const goalById = new Map(goals.map(g => [g.categoryId, g]));
 
     // ── Accounts ───────────────────────────────────────────────────────
     const byAccount = new Map<string, CategoryPosition[]>();
@@ -308,6 +387,66 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
         byAccount.set(p.cashBrokerId, list);
     });
 
+    // ── Planned capex due soon ─────────────────────────────────────────
+    // Whatever a dated target due within the horizon needs beyond the cash
+    // already in its category must come back from its investments now.
+    const positionById = new Map(positions.map(p => [p.categoryId, p]));
+    // Read from the planned capex themselves (the YNAB goals entity): cash is
+    // the category's Available when the category is synced, else the cash the
+    // goal carries; invested is what its allocations cover today.
+    // Dated targets read off a category's name or YNAB fields but not synced
+    // into Planned Capex yet count too.
+    const entityIds = new Set(input.goals.map(g => g.id));
+    const fromCategories = goals
+        .filter(g => g.source === 'category' && !entityIds.has(g.categoryId) && g.target && g.date)
+        .map(g => ({ id: g.categoryId, name: g.name, targetAmount: g.target, targetDate: g.date, cashCoverage: g.cash, archived: false }));
+    const upcoming: UpcomingCapex[] = [...input.goals, ...fromCategories]
+        .filter(g => !g.archived && g.targetAmount && g.targetAmount > 0 && g.targetDate)
+        .map(g => {
+            const p = positionById.get(g.id);
+            const monthsLeft = monthsUntil(today, g.targetDate!);
+            const cash = roundCents(Math.max(0, p ? p.available : g.cashCoverage));
+            const own = input.allocations.filter(a => a.ynabGoalId === g.id);
+            const invested = roundCents(own.reduce((s, a) => s + (input.coveredOf ? input.coveredOf(a) : a.amount), 0));
+            const needFromCash = Math.max(0, g.targetAmount! - cash);
+            const toRecover = roundCents(Math.min(invested, needFromCash));
+            return {
+                categoryId: g.id,
+                name: g.name,
+                date: g.targetDate!,
+                monthsLeft,
+                target: g.targetAmount!,
+                cash,
+                invested,
+                toRecover,
+                stillMissing: roundCents(Math.max(0, needFromCash - toRecover)),
+                brokerId: p?.cashBrokerId ?? input.defaultSourceBrokerId,
+                allocations: own,
+            };
+        })
+        // Already covered by cash ones stay listed: they are spending on its way.
+        .filter(u => u.monthsLeft <= settings.goalHorizonMonths)
+        .sort((a, b) => a.date.localeCompare(b.date));
+
+    // Month-by-month day-to-day flow of every category, from the history.
+    const months = input.history ?? [];
+    const flowOf = (ids: Set<string>) => {
+        const outs: number[] = [];
+        const ins: number[] = [];
+        months.forEach(m => {
+            let out = 0, inn = 0;
+            m.categories.forEach(c => {
+                if (!ids.has(c.categoryId)) return;
+                out += Math.max(0, -c.activityMilliunits) / 1000;
+                inn += Math.max(0, c.budgetedMilliunits) / 1000;
+            });
+            outs.push(out);
+            ins.push(inn);
+        });
+        const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+        return { months: months.length, avgIn: avg(ins), avgOut: avg(outs), peakOut: outs.length ? Math.max(...outs) : 0 };
+    };
+
     const accounts: AccountCoverage[] = [...byAccount.entries()].map(([brokerId, list]) => {
         const broker = brokerById.get(brokerId)!;
         const liquidity = roundCents(broker.currentLiquidity ?? 0);
@@ -317,22 +456,60 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
             .reduce((s, p) => s + p.avgSpent, 0));
         // A goal due soon cannot wait for its investments to be sold: whatever
         // it still needs beyond its invested part has to be cash here.
-        const dueGoals = roundCents(list.reduce((s, p) => {
-            const g = goalById.get(p.categoryId);
-            if (!g || !g.target || g.monthsLeft === null || g.monthsLeft > settings.goalHorizonMonths) return s;
-            return s + Math.max(0, g.target - g.invested);
-        }, 0));
+        const dueGoals = roundCents(upcoming
+            .filter(u => u.brokerId === brokerId)
+            .reduce((s, u) => s + Math.max(0, u.target - u.invested), 0));
+        const dayToDay = list.filter(p => p.nature && WORKING_CAPITAL_NATURES.includes(p.nature) && !p.emergencyFund);
+        const flow = flowOf(new Set(dayToDay.map(p => p.categoryId)));
+        const avgOut = flow.months > 0 ? flow.avgOut : monthlySpend;
+        const peakOut = flow.months > 0 ? flow.peakOut : monthlySpend;
+        const operatingCash = roundCents(avgOut * settings.workingCapitalMonths + Math.max(0, peakOut - avgOut));
+        const dayToDayIds = new Set(dayToDay.map(p => p.categoryId));
+        const earmarked = roundCents(list.filter(p => !dayToDayIds.has(p.categoryId)).reduce((s, p) => s + Math.max(0, p.available), 0));
+        const emergencyHere = roundCents(list.filter(p => p.emergencyFund).reduce((s, p) => s + Math.max(0, p.available), 0));
+        const dueHere = upcoming.filter(u => u.brokerId === brokerId);
+        const capexToRecover = roundCents(dueHere.reduce((s, u) => s + u.toRecover, 0));
+        // Paying the capex due soon: their full target leaves the account, what
+        // their investments cover comes back first, and their own cash stops
+        // being set aside.
+        let afterCapex: AccountCoverage['afterCapex'];
+        if (dueHere.length > 0) {
+            const pay = roundCents(dueHere.reduce((s, u) => s + u.target, 0));
+            const ownCash = dueHere.reduce((s, u) => s + (list.some(p => p.categoryId === u.categoryId) ? u.cash : 0), 0);
+            const liquidityAfter = roundCents(liquidity + capexToRecover - pay);
+            const needAfter = roundCents(operatingCash + Math.max(0, earmarked - ownCash));
+            afterCapex = {
+                pay,
+                recover: capexToRecover,
+                liquidityAfter,
+                needAfter,
+                topUp: roundCents(Math.max(0, needAfter - liquidityAfter)),
+                spare: roundCents(Math.max(0, liquidityAfter - needAfter)),
+            };
+        }
         return {
             brokerId,
             brokerName: broker.name,
             liquidity,
+            flowMonths: flow.months,
+            avgIn: roundCents(flow.months > 0 ? flow.avgIn : 0),
+            avgOut: roundCents(avgOut),
+            peakOut: roundCents(peakOut),
+            operatingCash,
+            earmarked,
+            emergencyHere,
+            free: roundCents(liquidity - operatingCash - earmarked),
+            capexToRecover,
+            afterCapex,
             required,
             shortfall: roundCents(Math.max(0, required - liquidity)),
             surplus: roundCents(Math.max(0, liquidity - required)),
             categoryIds: list.map(p => p.categoryId),
             monthlySpend,
             dueGoals,
-            recommendedMin: roundCents(monthlySpend * settings.workingCapitalMonths + dueGoals),
+            // Day-to-day cash (average month, plus the swing of the worst one)
+            // and the cash goals due soon need on hand.
+            recommendedMin: roundCents(operatingCash + dueGoals),
             configuredMin: roundCents(minLiquidityOf(broker)),
         };
     }).sort((a, b) => b.required - a.required);
@@ -344,7 +521,11 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
     const fund = positions.filter(p => p.emergencyFund);
     const fundCash = roundCents(fund.reduce((s, p) => s + Math.max(0, p.available), 0));
     const fundInvested = roundCents(fund.reduce((s, p) => s + p.invested, 0));
-    const fundCurrent = roundCents(fundCash + fundInvested);
+    const fundPortfolioList = (settings.emergencyPortfolioIds ?? [])
+        .map(portfolioId => ({ portfolioId, value: roundCents(input.portfolioValueOf?.(portfolioId) ?? 0) }));
+    const fromPortfolios = roundCents(fundPortfolioList.reduce((s, x) => s + x.value, 0));
+    const fundCurrent = roundCents(fundCash + fundInvested + fromPortfolios);
+    const flaggedIds = new Set(input.mappings.filter(m => m.emergencyFund).map(m => m.categoryId));
     const emergencyTarget = roundCents(fixedMonthly * settings.emergencyMonths);
 
     const spentByNature: CoverageReport['totals']['spentByNature'] = {};
@@ -367,8 +548,13 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
             gap: roundCents(Math.max(0, emergencyTarget - fundCurrent)),
             monthsCovered: fixedMonthly > 0 ? Math.round((fundCurrent / fixedMonthly) * 10) / 10 : 0,
             categoryIds: fund.map(p => p.categoryId),
+            flaggedCategoryIds: fund.filter(p => flaggedIds.has(p.categoryId)).map(p => p.categoryId),
+            groupIds: settings.emergencyGroupIds ?? [],
+            fromPortfolios,
+            portfolios: fundPortfolioList,
         },
         goals,
+        upcoming,
         totals: {
             available: roundCents(positions.reduce((s, p) => s + p.available, 0)),
             budgeted: roundCents(input.categories.reduce((s, c) => s + eur(c.budgetedMilliunits), 0)),
