@@ -31,6 +31,7 @@ const YnabCoveragePanel: React.FC<Props> = () => {
     const { brokers, ynabCategories, setYnabFundingSettings, setYnabMappingEmergency, portfolios, effectiveAssetSettings } = usePortfolio();
     const { report, settings } = useYnabCoverage();
     const [editFund, setEditFund] = useState(false);
+    const [openAside, setOpenAside] = useState<Record<string, boolean>>({});
 
     if (ynabCategories.length === 0) return null;
 
@@ -59,6 +60,18 @@ const YnabCoveragePanel: React.FC<Props> = () => {
         months: Math.max(0, ...accounts.map(a => a.flowMonths)),
     };
     const keepOn = accounts.filter(a => a.operatingCash > 0);
+
+    // ── Set aside: cash on the accounts already destined elsewhere ─────
+    const positionById = new Map(report.positions.map(p => [p.categoryId, p]));
+    const asideKind = (id: string) => {
+        const p = positionById.get(id);
+        if (!p) return '';
+        if (p.nature === 'sinking') return 'Sinking fund';
+        if (p.nature === 'investments') return 'To invest';
+        return p.nature ? '' : 'Not mapped';
+    };
+    const asideAccounts = accounts.filter(a => a.earmarked > 0 || a.emergencyHere > 0);
+    const asideTotal = asideAccounts.reduce((s, a) => s + a.earmarked, 0);
 
     // ── Emergency fund ────────────────────────────────────────────────
     const emergencyProgress = emergency.target > 0 ? Math.min(1, emergency.current / emergency.target) : 0;
@@ -123,6 +136,53 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                         <div className="cov-caption">{keepOn.map(a => `${eur(a.operatingCash)} on ${a.brokerName}`).join(' · ')}</div>
                     )}
                     {operating.months === 0 && <div className="cov-caption">From the 12-month averages: sync the spending history for the real month-by-month flow.</div>}
+                </section>
+
+                {/* ── Set aside ──────────────────────────────────── */}
+                <section className="cov-block">
+                    <h4>Set aside</h4>
+                    <div className="cov-big">{eur(asideTotal)}</div>
+                    <div className="cov-caption">cash on the accounts already destined elsewhere (dated expenses, money to invest). The emergency fund is counted on its own.</div>
+                    {asideAccounts.length === 0 && <div className="cov-caption">Nothing set aside on the accounts.</div>}
+                    {asideAccounts.map(a => {
+                        const open = !!openAside[a.brokerId];
+                        const ids = open ? a.earmarkedCategoryIds : a.earmarkedCategoryIds.slice(0, 4);
+                        const hidden = a.earmarkedCategoryIds.length - ids.length;
+                        return (
+                            <div key={a.brokerId} className="cov-aside">
+                                <div className="cov-aside-head">
+                                    <strong>{a.brokerName}</strong>
+                                    <span>{eur(a.earmarked)}</span>
+                                </div>
+                                <ul className="cov-aside-list">
+                                    {ids.map(id => (
+                                        <li key={id}>
+                                            <span>{nameOf(id)}{asideKind(id) && <small> · {asideKind(id)}</small>}</span>
+                                            <span>{eur(positionById.get(id)?.available ?? 0)}</span>
+                                        </li>
+                                    ))}
+                                </ul>
+                                {(hidden > 0 || open) && (
+                                    <button type="button" className="cov-link" onClick={() => setOpenAside(prev => ({ ...prev, [a.brokerId]: !open }))}>
+                                        {open ? 'Show less' : `Show all (+${hidden})`}
+                                    </button>
+                                )}
+                                {a.emergencyHere > 0 && (
+                                    <div className="cov-aside-head cov-aside-fund">
+                                        <span>+ Emergency fund held here</span>
+                                        <span>{eur(a.emergencyHere)}</span>
+                                    </div>
+                                )}
+                                <div className="cov-aside-check" title="Liquidity on the account against operating cash + emergency fund held here + set aside">
+                                    {eur(a.liquidity)} on the account vs {eur(a.operatingCash + a.emergencyHere + a.earmarked)} to hold
+                                    {' '}(operating {eur(a.operatingCash)}{a.emergencyHere > 0 && <> + fund {eur(a.emergencyHere)}</>} + set aside {eur(a.earmarked)}) ·{' '}
+                                    {a.free >= 0
+                                        ? <span className="pill pill-ok">in line +{eur(a.free)}</span>
+                                        : <span className="pill pill-bad">already short {eur(-a.free)}</span>}
+                                </div>
+                            </div>
+                        );
+                    })}
                 </section>
 
                 {/* ── 2 · Emergency fund ─────────────────────────── */}
@@ -258,7 +318,10 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                                                     <strong>{a.brokerName}</strong>
                                                     <div className="cov-caption">
                                                         {eur(a.liquidity)}{x.recover > 0 && <> + {eur(x.recover)} sold</>} − {eur(x.pay)} paid = <strong>{eur(x.liquidityAfter)}</strong>
-                                                        {' '}· must hold {eur(x.needAfter)} (operating cash{x.needAfter > a.operatingCash ? ' + set aside' : ''})
+                                                        {' '}· must hold {eur(x.needAfter)} (operating {eur(a.operatingCash)}
+                                                        {a.emergencyHere > 0 && <> + fund {eur(a.emergencyHere)}</>}
+                                                        {x.needAfter - a.operatingCash - a.emergencyHere > 0.5 && <> + set aside {eur(x.needAfter - a.operatingCash - a.emergencyHere)}</>})
+                                                        {a.free < 0 && <> · already short {eur(-a.free)} before paying</>}
                                                     </div>
                                                 </div>
                                                 {x.topUp > 0
@@ -282,7 +345,8 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                 .cov-settings label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.72rem; color: var(--text-muted); }
                 .cov-settings input { width: 90px; padding: 0.3rem 0.45rem; }
                 .cov-settings small { font-size: 0.68rem; }
-                .cov-blocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+                .cov-blocks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
+                @media (max-width: 1000px) { .cov-blocks { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
                 @media (max-width: 700px) { .cov-blocks { grid-template-columns: 1fr; } }
                 .cov-block { background: var(--bg-app); border-radius: var(--radius-md); padding: 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
                 .cov-block-wide { grid-column: 1 / -1; }
@@ -305,6 +369,13 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                 .cov-chip button { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.2rem; }
                 .cov-add { width: auto; min-width: 150px; padding: 0.25rem 0.4rem; font-size: 0.82rem; }
                 .cov-sources { display: flex; flex-direction: column; gap: 0.5rem; }
+                .cov-aside { border-top: 1px solid var(--border-color); padding-top: 0.5rem; margin-top: 0.3rem; display: flex; flex-direction: column; gap: 0.3rem; }
+                .cov-aside-head { display: flex; justify-content: space-between; font-size: 0.88rem; }
+                .cov-aside-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.15rem; }
+                .cov-aside-list li { display: flex; justify-content: space-between; gap: 0.75rem; font-size: 0.82rem; color: var(--text-secondary); }
+                .cov-aside-list small { color: var(--text-muted); }
+                .cov-aside-check { font-size: 0.78rem; color: var(--text-muted); }
+                .cov-aside-fund { font-size: 0.82rem; color: var(--text-secondary); }
                 .cov-summary { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.2rem 0 0.4rem; }
                 .cov-upcoming { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
                 .cov-upcoming li { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap;

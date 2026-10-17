@@ -154,6 +154,8 @@ const cur = flowReport.accounts.find(a => a.brokerId === 'current')!;
 check('average in / out and the worst month', [cur.flowMonths, cur.avgIn, cur.avgOut, cur.peakOut], [3, 1590, 1590, 1800]);
 check('operating cash = a month of average plus the swing of the worst', cur.operatingCash, 1800);
 check('cash set aside for other purposes (the car service)', cur.earmarked, 1000);
+check('and which categories make it up, the fund kept apart', [cur.earmarkedCategoryIds, flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarkedCategoryIds], [['car'], ['house']]);
+check('the fund is held apart, counted once', [flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarked, flowReport.accounts.find(a => a.brokerId === 'savings')!.emergencyHere, flowReport.accounts.find(a => a.brokerId === 'savings')!.free], [5000, 8000, 2000]);
 check('free = liquidity − operating cash − set aside', cur.free, -1800);
 check('suggested minimum = operating cash + goals due soon', cur.recommendedMin, 4800);
 check('emergency-fund cash is told apart per account',
@@ -192,7 +194,7 @@ check('a capex already covered by cash is listed, needing nothing', [tv.toRecove
 check('each account sums what comes back to it',
     withBoiler.accounts.find(a => a.brokerId === 'savings')!.capexToRecover, 1200);
 // After paying: savings 15,000 + 1,200 back − 2,000 = 14,200 against 13,000 that
-// stays set aside (fund 8,000 + house 5,000) → in line with 1,200 spare.
+// must stay (fund 8,000 held apart + house 5,000 set aside) → in line with 1,200 spare.
 check('an account still in line after the capex',
     withBoiler.accounts.find(a => a.brokerId === 'savings')!.afterCapex, { pay: 2000, recover: 1200, liquidityAfter: 14200, needAfter: 13000, topUp: 0, spare: 1200 });
 // Current: 1,000 − 3,000 = −2,000 against 1,590 of operating cash → top up 3,590.
