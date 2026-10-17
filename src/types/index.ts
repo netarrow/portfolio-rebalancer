@@ -672,6 +672,10 @@ export interface YnabFundingSettings {
   workingCapitalMonths?: number;
   // A dated goal due within this many months must already be cash.
   goalHorizonMonths?: number;
+  // Emergency fund sources beyond single categories: every category of these
+  // YNAB category groups, and the whole value of these portfolios.
+  emergencyGroupIds?: string[];
+  emergencyPortfolioIds?: string[];
 }
 
 export const DEFAULT_YNAB_FUNDING_SETTINGS: YnabFundingSettings = {

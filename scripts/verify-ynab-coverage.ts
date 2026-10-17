@@ -111,6 +111,20 @@ check('the fund counts its cash and its invested money',
 check('and says how many months it covers', report.emergency.monthsCovered, 9.6);
 check('the fund is not listed among the goals', report.goals.some(g => g.categoryId === 'emergency'), false);
 
+console.log('emergency fund from groups and portfolios');
+const fundWide = buildCoverageReport({
+    categories, mappings, macroMappings, brokers, goals, allocations,
+    settings: { emergencyMonths: 6, workingCapitalMonths: 1, goalHorizonMonths: 3, emergencyGroupIds: ['misc'], emergencyPortfolioIds: ['p'] },
+    portfolioValueOf: id => (id === 'p' ? 10000 : 0),
+    today: TODAY,
+});
+// Cash: Emergency 8,000 + Gifts 200 (its whole group is fund). Portfolio p: 10,000.
+// The Emergency category's 2,000 invested in p is inside p's value: not twice.
+check('a group puts every category of it in the fund',
+    [fundWide.emergency.categoryIds, fundWide.emergency.flaggedCategoryIds, fundWide.emergency.groupIds], [['emergency', 'gift'], ['emergency'], ['misc']]);
+check('a portfolio counts with its whole value, without double-counting the fund investments',
+    [fundWide.emergency.cash, fundWide.emergency.invested, fundWide.emergency.fromPortfolios, fundWide.emergency.current], [8200, 0, 10000, 18200]);
+
 console.log('goals');
 check('a goal parsed from the category name', [goal('car').target, goal('car').date, goal('car').source], [3000, '2026-11-30', 'category']);
 check('due within the horizon', [goal('car').status, goal('car').gap, goal('car').requiredMonthly], ['due-soon', 2000, 1000]);
@@ -118,6 +132,74 @@ check('a stored goal counts cash and investments',
     [goal('house').covered, goal('house').gap, goal('house').progress, goal('house').status], [11000, 9000, 0.55, 'on-track']);
 check('months left to the date', goal('house').monthsLeft, 24);
 check('goals come nearest date first', report.goals.map(g => g.categoryId), ['car', 'house']);
+
+console.log('working capital flow');
+// Three months of history on the current account's day-to-day categories:
+// out 1,590 / 1,800 / 1,380 (avg 1,590, worst 1,800), all assigned in the month.
+const month = (m: string, spent: Record<string, number>) => ({
+    month: m,
+    categories: Object.entries(spent).map(([categoryId, v]) => ({ categoryId, activityMilliunits: -v * 1000, budgetedMilliunits: v * 1000 })),
+});
+const history = [
+    month('2026-06-01', { rent: 900, utilities: 140, groceries: 400, dining: 150, car: 0 }),
+    month('2026-07-01', { rent: 900, utilities: 200, groceries: 500, dining: 200 }),
+    month('2026-08-01', { rent: 900, utilities: 80, groceries: 300, dining: 100 }),
+];
+const flowReport = buildCoverageReport({
+    categories, mappings, macroMappings, brokers, goals, allocations, history,
+    settings: { emergencyMonths: 6, workingCapitalMonths: 1, goalHorizonMonths: 3 },
+    today: TODAY,
+});
+const cur = flowReport.accounts.find(a => a.brokerId === 'current')!;
+check('average in / out and the worst month', [cur.flowMonths, cur.avgIn, cur.avgOut, cur.peakOut], [3, 1590, 1590, 1800]);
+check('operating cash = a month of average plus the swing of the worst', cur.operatingCash, 1800);
+check('cash set aside for other purposes (the car service)', cur.earmarked, 1000);
+check('free = liquidity − operating cash − set aside', cur.free, -1800);
+check('suggested minimum = operating cash + goals due soon', cur.recommendedMin, 4800);
+check('emergency-fund cash is told apart per account',
+    flowReport.accounts.find(a => a.brokerId === 'savings')!.emergencyHere, 8000);
+
+console.log('planned capex due soon');
+// A boiler due next month: 2,000, 500 in cash, 1,200 invested — bring 1,200
+// back, 300 still missing. The car service has nothing invested: 2,000 missing.
+const withBoiler = buildCoverageReport({
+    categories: [...categories, cat('boiler', 'savings', 'Boiler', 500, 0)],
+    mappings: [...mappings, { categoryId: 'boiler', target: { kind: 'unmapped' }, sourceBrokerId: 'savings' }],
+    macroMappings, brokers,
+    goals: [...goals, { id: 'boiler', ynabBudgetId: 'b', name: 'Boiler', targetAmount: 2000, targetDate: '2026-10-31',
+        cashCoverage: 500, targetSource: 'manual-override', lastSyncedAt: TODAY }],
+    allocations: [...allocations, { id: 'a3', portfolioId: 'p', ynabGoalId: 'boiler', amount: 1200, createdAt: TODAY, updatedAt: TODAY }],
+    settings: { emergencyMonths: 6, workingCapitalMonths: 1, goalHorizonMonths: 3 },
+    today: TODAY,
+});
+check('due within the horizon, nearest first', withBoiler.upcoming.map(u => u.categoryId), ['boiler', 'car']);
+const boiler = withBoiler.upcoming[0];
+check('what to bring back from investments and what is still missing', [boiler.toRecover, boiler.stillMissing, boiler.brokerId], [1200, 300, 'savings']);
+check('the car service has nothing to bring back', [withBoiler.upcoming[1].toRecover, withBoiler.upcoming[1].stillMissing], [0, 2000]);
+check('a goal beyond the horizon is not listed', withBoiler.upcoming.some(u => u.categoryId === 'house'), false);
+const covered = buildCoverageReport({
+    categories: [...categories, cat('tv', 'savings', 'TV', 900, 0)],
+    mappings: [...mappings, { categoryId: 'tv', target: { kind: 'unmapped' }, sourceBrokerId: 'current' }],
+    macroMappings, brokers,
+    goals: [...goals, { id: 'tv', ynabBudgetId: 'b', name: 'TV', targetAmount: 800, targetDate: '2026-10-15',
+        cashCoverage: 900, targetSource: 'manual-override', lastSyncedAt: TODAY }],
+    allocations,
+    settings: { emergencyMonths: 6, workingCapitalMonths: 1, goalHorizonMonths: 3 },
+    today: TODAY,
+});
+const tv = covered.upcoming.find(u => u.categoryId === 'tv')!;
+check('a capex already covered by cash is listed, needing nothing', [tv.toRecover, tv.stillMissing], [0, 0]);
+check('each account sums what comes back to it',
+    withBoiler.accounts.find(a => a.brokerId === 'savings')!.capexToRecover, 1200);
+// After paying: savings 15,000 + 1,200 back − 2,000 = 14,200 against 13,000 that
+// stays set aside (fund 8,000 + house 5,000) → in line with 1,200 spare.
+check('an account still in line after the capex',
+    withBoiler.accounts.find(a => a.brokerId === 'savings')!.afterCapex, { pay: 2000, recover: 1200, liquidityAfter: 14200, needAfter: 13000, topUp: 0, spare: 1200 });
+// Current: 1,000 − 3,000 = −2,000 against 1,590 of operating cash → top up 3,590.
+check('an account that needs a top-up after the capex',
+    withBoiler.accounts.find(a => a.brokerId === 'current')!.afterCapex, { pay: 3000, recover: 0, liquidityAfter: -2000, needAfter: 1590, topUp: 3590, spare: 0 });
+check('no projection on an account with no capex due',
+    report.accounts.find(a => a.brokerId === 'savings')!.afterCapex, undefined);
 
 console.log('totals and helpers');
 check('available total', report.totals.available, 14750);
