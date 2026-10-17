@@ -1,5 +1,5 @@
 import type { YnabGoal, YnabGoalAllocation } from '../types';
-import type { EmergencyCoverage } from './ynabCoverage';
+import { monthsUntil, type EmergencyCoverage } from './ynabCoverage';
 
 /**
  * Portfolio € targets derived from Expense Planning, for the Asset Allocation
@@ -7,15 +7,18 @@ import type { EmergencyCoverage } from './ynabCoverage';
  *  - fund: the whole emergency fund the opex call for (months × fixed
  *    spending), shared equally over the fund portfolios — what they should
  *    hold, never what they hold today;
- *  - capex: what each planned capex still needs beyond its cash, shared over
- *    the portfolios its allocations point at, by allocated amount.
+ *  - capex not due within the horizon: their allocations (Setup) on the
+ *    portfolio holding each asset, plus their cash, which will end up there;
+ *    capex due soon count on the liquidity target instead, investments
+ *    included, so the sale back to cash is planned (see `capexRouting`).
  * A portfolio can be both: the two parts add up.
  */
 export interface ExpensePlanningTarget {
     fund: number;
     capex: number;
     total: number;
-    capexItems: { goalId: string; name: string; amount: number }[];
+    /** Per capex: allocated here, and of its cash, what will move here. */
+    capexItems: { goalId: string; name: string; amount: number; allocated: number; cash: number }[];
 }
 
 export interface ExpensePlanningTargetsInput {
@@ -23,7 +26,73 @@ export interface ExpensePlanningTargetsInput {
     emergencyPortfolioIds: string[];
     goals: YnabGoal[];
     allocations: YnabGoalAllocation[];
+    /** Capex due within this many months are held as cash. */
+    horizonMonths: number;
+    /** 'YYYY-MM-DD'; defaults to today. */
+    today?: string;
 }
+
+export type CapexLiquidityReason = 'due-soon' | 'not-invested';
+
+export interface CapexLiquidityItem {
+    goalId: string;
+    name: string;
+    /** cash + divest. */
+    amount: number;
+    cash: number;
+    /** Invested € to sell back to cash (due-soon capex only). */
+    divest: number;
+    reason: CapexLiquidityReason;
+}
+
+/** Allocated € of each capex, by portfolio, positive amounts only. */
+const allocatedByGoal = (allocations: YnabGoalAllocation[]): Map<string, Map<string, number>> => {
+    const out = new Map<string, Map<string, number>>();
+    allocations.forEach(a => {
+        if (!a.portfolioId || !(a.amount > 0)) return;
+        const m = out.get(a.ynabGoalId) ?? new Map<string, number>();
+        m.set(a.portfolioId, (m.get(a.portfolioId) ?? 0) + a.amount);
+        out.set(a.ynabGoalId, m);
+    });
+    return out;
+};
+
+/**
+ * Where each active planned capex counts (its real YNAB cash, never the target):
+ *  - due within the horizon (or overdue): on the liquidity target, its cash
+ *    and its investments — those are to be sold back to cash before paying;
+ *  - not due, invested: on the portfolios holding its assets — allocations
+ *    plus its cash, shared by allocated amount, since the cash will go there;
+ *  - not due, nothing invested: its cash on the liquidity target.
+ */
+export const capexRouting = (input: Pick<ExpensePlanningTargetsInput, 'goals' | 'allocations' | 'horizonMonths' | 'today'>) => {
+    const today = input.today ?? new Date().toISOString().slice(0, 10);
+    const allocated = allocatedByGoal(input.allocations);
+    const liquidity: CapexLiquidityItem[] = [];
+    const invested: { goal: YnabGoal; byPortfolio: Map<string, { allocated: number; cash: number }> }[] = [];
+    input.goals.forEach(goal => {
+        if (goal.archived) return;
+        const dueSoon = !!goal.targetDate && monthsUntil(today, goal.targetDate) <= input.horizonMonths;
+        const byPortfolio = allocated.get(goal.id);
+        const allocatedTotal = byPortfolio ? [...byPortfolio.values()].reduce((s, v) => s + v, 0) : 0;
+        const cash = Math.max(0, goal.cashCoverage || 0);
+        if (dueSoon || allocatedTotal <= 0) {
+            const divest = dueSoon ? allocatedTotal : 0;
+            if (cash + divest > 0) {
+                liquidity.push({
+                    goalId: goal.id, name: goal.name,
+                    amount: round(cash + divest), cash: round(cash), divest: round(divest),
+                    reason: dueSoon ? 'due-soon' : 'not-invested',
+                });
+            }
+            return;
+        }
+        const out = new Map<string, { allocated: number; cash: number }>();
+        byPortfolio!.forEach((amount, id) => out.set(id, { allocated: amount, cash: (amount / allocatedTotal) * cash }));
+        invested.push({ goal, byPortfolio: out });
+    });
+    return { liquidity, liquidityTotal: round(liquidity.reduce((s, i) => s + i.amount, 0)), invested };
+};
 
 const round = (x: number) => Math.round(x * 100) / 100;
 
@@ -54,18 +123,12 @@ export const buildExpensePlanningTargets = (input: ExpensePlanningTargetsInput):
             .forEach((v, id) => { entry(id).fund += v; });
     }
 
-    // Capex: only the part not covered by cash.
-    input.goals.forEach(goal => {
-        if (goal.archived || !goal.targetAmount) return;
-        const need = Math.max(0, goal.targetAmount - (goal.cashCoverage || 0));
-        if (need <= 0) return;
-        const rows = input.allocations
-            .filter(a => a.ynabGoalId === goal.id && a.portfolioId)
-            .map(a => ({ id: a.portfolioId, weight: a.amount }));
-        share(need, rows).forEach((v, id) => {
+    // Capex not due: allocations and the cash bound for them, on the portfolio.
+    capexRouting(input).invested.forEach(({ goal, byPortfolio }) => {
+        byPortfolio.forEach(({ allocated, cash }, id) => {
             const t = entry(id);
-            t.capex += v;
-            t.capexItems.push({ goalId: goal.id, name: goal.name, amount: round(v) });
+            t.capex += allocated + cash;
+            t.capexItems.push({ goalId: goal.id, name: goal.name, amount: round(allocated + cash), allocated: round(allocated), cash: round(cash) });
         });
     });
 
