@@ -255,7 +255,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         <div className="ytv-page">
             <header className="ytv-header">
                 <div>
-                    <h2 className="ytv-title">YNAB Off-budget</h2>
+                    <h2 className="ytv-title">YNAB Writeback</h2>
                     <div className="ytv-subtitle">
                         From one tracking account per broker to one per purpose.
                         <span className="ytv-readonly">Writes to YNAB only after you confirm, inside the write guard</span>

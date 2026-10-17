@@ -17,17 +17,17 @@ const menuStructure = [
     label: '🗂️ Data',
     items: [
       { label: '💱 Transactions', view: 'transactions' as const },
-      { label: '📋 Portfolios', view: 'portfolios' as const },
       { label: '🏦 Brokers', view: 'brokers' as const },
-      { label: '🧾 YNAB Off-budget', view: 'ynabTracking' as const },
     ],
   },
   {
     label: '🧭 Plan',
     items: [
       { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
+      { label: '📋 Portfolios', view: 'portfolios' as const },
       { label: '🔺 Buckets', view: 'goals' as const },
       { label: '🏁 Planned Capex', view: 'ynabGoals' as const },
+      { label: '🗒️ Expense Planning', view: 'summary' as const },
     ],
   },
   {
@@ -42,7 +42,6 @@ const menuStructure = [
     items: [
       { label: '📈 Stats', view: 'stats' as const },
       { label: '📉 Performance', view: 'performance' as const },
-      { label: '🗒️ Expense Analysis', view: 'summary' as const },
       { label: '🔮 Forecast', view: 'forecast' as const },
     ],
   },
@@ -51,6 +50,7 @@ const menuStructure = [
     items: [
       { label: '🛠️ General', view: 'settings' as const },
       { label: '🔗 YNAB Integration', view: 'ynabSettings' as const },
+      { label: '🧾 YNAB Writeback', view: 'ynabTracking' as const },
     ],
   },
   { label: '⚠️ Disclaimer', view: 'disclaimer' as const },

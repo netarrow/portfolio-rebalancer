@@ -43,7 +43,7 @@ const YnabWriteGuardCard: React.FC<{ budgets: YnabBudgetRef[] }> = ({ budgets })
         <div className="ywg" style={{ paddingTop: '0.75rem', borderTop: '1px solid var(--border-color)' }}>
             <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>🛡 YNAB write guard</label>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0.25rem 0 0.75rem 0' }}>
-                The only budget, and the only off-budget (tracking) accounts of it, that the YNAB Off-budget page may link
+                The only budget, and the only off-budget (tracking) accounts of it, that the YNAB Writeback page may link
                 and that any write-back may ever touch. Every other budget and account — on-budget accounts, a house, a car,
                 a loan — stays read-only for the tool. Nothing chosen means nothing is allowed.
             </p>
