@@ -953,7 +953,12 @@ async function scrollAndShoot(page, base) {
 
   // ---------- YNAB GOALS ----------
   console.log('Planned Capex');
-  await navTo(page, 'Planned Capex');
+  await navTo(page, 'Expense Planning');
+  await sleep(500);
+  await page.evaluate(() => {
+    const tab = [...document.querySelectorAll('.ep-section-tabs button')].find((b) => b.textContent.trim().startsWith('Capex'));
+    if (tab) tab.click();
+  });
   await sleep(800);
   await shot(page, 'ynab_goals');
   // Edit an allocation pinned to an asset of the goal-matching portfolio:

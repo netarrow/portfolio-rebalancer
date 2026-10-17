@@ -18,6 +18,8 @@ import YnabCoveragePanel from '../YnabImport/YnabCoveragePanel';
 
 interface Props {
     onNavigateToSettings?: () => void;
+    /** Shown inside Expense Planning, which already carries the page title. */
+    embedded?: boolean;
 }
 
 const formatCurrency = (value: number | undefined | null, iso: string = 'EUR') =>
@@ -58,7 +60,7 @@ const selectStyle: React.CSSProperties = {
     color: 'var(--text-primary)',
 };
 
-const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
+const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }) => {
     const {
         ynabConfig,
         ynabSummaryBudgetId,
@@ -187,8 +189,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div>
-                    <h2 style={{ margin: 0 }}>Expense Planning</h2>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                    {!embedded && <h2 style={{ margin: 0 }}>Expense Planning</h2>}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: embedded ? 0 : '0.5rem' }}>
                         <div className="ea-budget-tabs" role="tablist" aria-label="Budget">
                             {budgets.map(b => (
                                 <button

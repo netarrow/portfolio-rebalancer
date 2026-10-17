@@ -13,7 +13,12 @@ const MAX_WHERE_CHIPS = 2;
 const formatShortDate = (iso: string) =>
     new Date(iso).toLocaleDateString('en-IE', { year: 'numeric', month: 'short' });
 
-const YnabGoalsView: React.FC = () => {
+interface Props {
+    /** Shown inside Expense Planning, which already carries the page title. */
+    embedded?: boolean;
+}
+
+const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
     const {
         ynabGoals,
         portfolios,
@@ -168,7 +173,7 @@ const YnabGoalsView: React.FC = () => {
         <div className="ynab-goals-page">
             <header className="ynab-goals-header">
                 <div>
-                    <h2 className="ynab-goals-title">Planned Capex</h2>
+                    {!embedded && <h2 className="ynab-goals-title">Planned Capex</h2>}
                     <div className="ynab-goals-subtitle">
                         {ynabConfig.goalsGroupName && <>Group <strong>{ynabConfig.goalsGroupName}</strong></>}
                         {ynabConfig.lastGoalsSyncAt && (
