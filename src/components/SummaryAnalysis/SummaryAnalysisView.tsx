@@ -90,6 +90,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
     const [openMacros, setOpenMacros] = useState<Record<string, boolean>>({});
     // Macro cards in totals over the window, or as monthly averages.
     const [macroMonthly, setMacroMonthly] = useState(false);
+    // KPI boxes: the whole window, its monthly average, or one month ('YYYY-MM-01').
+    const [kpiView, setKpiView] = useState<'total' | 'avg' | string>('total');
     const [reloadingBudgets, setReloadingBudgets] = useState(false);
 
     // Every budget of the token can be analysed. Before the cached list is
@@ -111,6 +113,22 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
         () => analyzeSpending(ynabSpendingHistory, ynabMacroMappings, ynabSpendingHistoryByBudget),
         [ynabSpendingHistory, ynabMacroMappings, ynabSpendingHistoryByBudget],
     );
+
+    const kpiMonths = useMemo(
+        () => [...new Set(ynabSpendingHistory.map(m => m.month))].sort().reverse(),
+        [ynabSpendingHistory],
+    );
+    const kpiMonth = kpiView !== 'total' && kpiView !== 'avg' && kpiMonths.includes(kpiView) ? kpiView : null;
+    // One month on its own; a linked budget is split by that month's mix when
+    // it has it, else by its whole window.
+    const kpiAnalysis = useMemo(() => {
+        if (!kpiMonth) return analysis;
+        const linked = Object.fromEntries(Object.entries(ynabSpendingHistoryByBudget).map(([id, h]) => {
+            const same = h.filter(m => m.month === kpiMonth);
+            return [id, same.length > 0 ? same : h];
+        }));
+        return analyzeSpending(ynabSpendingHistory.filter(m => m.month === kpiMonth), ynabMacroMappings, linked);
+    }, [kpiMonth, analysis, ynabSpendingHistory, ynabMacroMappings, ynabSpendingHistoryByBudget]);
 
     // Union of every group/category seen in the rolling window — the mapping
     // editor works even for categories no longer present in the current month.
@@ -244,16 +262,38 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
             ) : (
                 <>
                     {/* KPI row */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+                        <div className="ea-budget-tabs" role="tablist" aria-label="Period">
+                            <button type="button" role="tab" aria-selected={kpiView === 'total'} className={kpiView === 'total' ? 'active' : ''} onClick={() => setKpiView('total')}>
+                                Total · {analysis.monthsCount} months
+                            </button>
+                            <button type="button" role="tab" aria-selected={kpiView === 'avg'} className={kpiView === 'avg' ? 'active' : ''} onClick={() => setKpiView('avg')}>
+                                Monthly average
+                            </button>
+                        </div>
+                        <select
+                            className={`ea-month-select${kpiMonth ? ' active' : ''}`}
+                            aria-label="Month"
+                            value={kpiMonth ?? ''}
+                            onChange={e => setKpiView(e.target.value || 'total')}
+                        >
+                            <option value="">Single month…</option>
+                            {kpiMonths.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+                        </select>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
                         {(() => {
+                            const a = kpiAnalysis;
+                            const avg = kpiView === 'avg';
+                            const v = (x: number) => (avg ? x / Math.max(1, a.monthsCount) : x);
                             const ofIncome = (r: number | null) => (r != null ? `${Math.round(r * 100)}% of income` : '');
                             return [
-                                { label: 'Income', value: analysis.totalIncome, sub: `${formatCurrency(analysis.avgMonthlyIncome, currencyIso)}/month`, savings: false },
-                                { label: 'Operating expenses', value: analysis.consumptionOutflow, sub: 'structural + variable + compressible', savings: false },
-                                { label: 'Operating savings', value: analysis.operatingSavings, sub: `${ofIncome(analysis.operatingSavingsRate)} · income − operating expenses`, savings: true },
-                                { label: 'Savings from income', value: analysis.savingsFromIncome, sub: `${ofIncome(analysis.savingsFromIncomeRate)} · after dated expenses paid by income`, savings: true },
-                                { label: 'Drawn from past savings', value: analysis.pastSavingsOnSpending, sub: 'spending paid from previous years', savings: false },
-                                { label: 'Net savings', value: analysis.netSavings, sub: `${ofIncome(analysis.savingsRate)} · of which invested ${formatCurrency(analysis.investmentsOutflow, currencyIso)}`, savings: true },
+                                { label: 'Income', value: v(a.totalIncome), sub: kpiMonth ? monthLabel(kpiMonth) : avg ? `${a.monthsCount}-month average` : `${formatCurrency(a.avgMonthlyIncome, currencyIso)}/month`, savings: false },
+                                { label: 'Operating expenses', value: v(a.consumptionOutflow), sub: 'structural + variable + compressible', savings: false },
+                                { label: 'Operating savings', value: v(a.operatingSavings), sub: `${ofIncome(a.operatingSavingsRate)} · income − operating expenses`, savings: true },
+                                { label: 'Savings from income', value: v(a.savingsFromIncome), sub: `${ofIncome(a.savingsFromIncomeRate)} · after dated expenses paid by income`, savings: true },
+                                { label: 'Drawn from past savings', value: v(a.pastSavingsOnSpending), sub: 'spending paid from previous years', savings: false },
+                                { label: 'Net savings', value: v(a.netSavings), sub: `${ofIncome(a.savingsRate)} · of which invested ${formatCurrency(v(a.investmentsOutflow), currencyIso)}`, savings: true },
                             ];
                         })().map(kpi => (
                             <div key={kpi.label} style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', padding: '1rem 1.25rem' }}>
@@ -704,6 +744,9 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                 .ea-budget-tabs button { border: 0; background: transparent; color: var(--text-secondary); font-weight: 600; font-size: 0.85rem;
                     padding: 0.4rem 0.8rem; border-radius: var(--radius-sm); cursor: pointer; }
                 .ea-budget-tabs button.active { background: var(--color-primary); color: white; }
+                .ea-month-select { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);
+                    border-radius: var(--radius-md); padding: 0.4rem 0.6rem; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+                .ea-month-select.active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
             `}</style>
         </div>
     );
