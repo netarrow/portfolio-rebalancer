@@ -70,7 +70,7 @@ const YnabCoveragePanel: React.FC<Props> = () => {
         if (p.nature === 'investments') return 'To invest';
         return p.nature ? '' : 'Not mapped';
     };
-    const asideAccounts = accounts.filter(a => a.earmarked > 0 || a.emergencyHere > 0);
+    const asideAccounts = accounts.filter(a => a.earmarked > 0 || a.emergencyHere > 0 || a.dueCapexCash > 0);
     const asideTotal = asideAccounts.reduce((s, a) => s + a.earmarked, 0);
 
     // ── Emergency fund ────────────────────────────────────────────────
@@ -90,7 +90,10 @@ const YnabCoveragePanel: React.FC<Props> = () => {
     const missing = upcoming.reduce((s, u) => s + u.stillMissing, 0);
     const coveredCount = upcoming.filter(u => u.toRecover === 0 && u.stillMissing === 0).length;
     const afterPayments = accounts.filter(a => a.afterCapex);
-    const totalTopUp = afterPayments.reduce((s, a) => s + (a.afterCapex?.topUp ?? 0), 0);
+    // What the payments themselves leave uncovered, apart from what the
+    // accounts already lacked before any of them.
+    const paymentsTopUp = afterPayments.reduce((s, a) => s + (a.afterCapex?.fromPayments ?? 0), 0);
+    const alreadyShort = afterPayments.reduce((s, a) => s + (a.afterCapex?.shortBefore ?? 0), 0);
 
     return (
         <div className="ynab-cov-card">
@@ -169,13 +172,20 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                                 )}
                                 {a.emergencyHere > 0 && (
                                     <div className="cov-aside-head cov-aside-fund">
-                                        <span>+ Emergency fund held here</span>
+                                        <span>+ Emergency fund held here{emergency.toMove.some(m => positionById.get(m.categoryId)?.cashBrokerId === a.brokerId) ? ' (incl. cash to move to the fund)' : ''}</span>
                                         <span>{eur(a.emergencyHere)}</span>
                                     </div>
                                 )}
-                                <div className="cov-aside-check" title="Liquidity on the account against operating cash + emergency fund held here + set aside">
-                                    {eur(a.liquidity)} on the account vs {eur(a.operatingCash + a.emergencyHere + a.earmarked)} to hold
-                                    {' '}(operating {eur(a.operatingCash)}{a.emergencyHere > 0 && <> + fund {eur(a.emergencyHere)}</>} + set aside {eur(a.earmarked)}) ·{' '}
+                                {a.dueCapexCash > 0 && (
+                                    <div className="cov-aside-head cov-aside-fund">
+                                        <span>+ Capex due soon, paid from here</span>
+                                        <span>{eur(a.dueCapexCash)}</span>
+                                    </div>
+                                )}
+                                <div className="cov-aside-check" title="Liquidity on the account against operating cash + emergency fund + set aside + cash of the capex due soon">
+                                    {eur(a.liquidity)} on the account vs {eur(a.liquidity - a.free)} to hold
+                                    {' '}(operating {eur(a.operatingCash)}{a.emergencyHere > 0 && <> + fund {eur(a.emergencyHere)}</>} + set aside {eur(a.earmarked)}
+                                    {a.dueCapexCash > 0 && <> + capex due {eur(a.dueCapexCash)}</>}) ·{' '}
                                     {a.free >= 0
                                         ? <span className="pill pill-ok">in line +{eur(a.free)}</span>
                                         : <span className="pill pill-bad">already short {eur(-a.free)}</span>}
@@ -209,6 +219,12 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                             </small></dd></div>
                         )}
                     </dl>
+                    {emergency.toMove.length > 0 && (
+                        <div className="cov-caption">
+                            Cash still to move into the fund:{' '}
+                            {emergency.toMove.map(m => `${eur(m.amount)} ${nameOf(m.categoryId)} → ${portfolioName(m.portfolioId)}`).join(' · ')}
+                        </div>
+                    )}
                     {mixedFund.length > 0 && (
                         <div className="cov-alert">
                             Keep it apart from operating cash: {mixedFund.map(a => `${eur(a.emergencyHere)} sits on ${a.brokerName}`).join(', ')},
@@ -276,9 +292,10 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                                 {toSell > 0 && <span className="pill pill-warn">Sell {eur(toSell)}</span>}
                                 {missing > 0 && <span className="pill pill-bad">Not covered {eur(missing)}</span>}
                                 {coveredCount > 0 && <span className="pill pill-ok">{coveredCount} already in cash</span>}
-                                {afterPayments.length > 0 && (totalTopUp > 0
-                                    ? <span className="pill pill-bad">Top up {eur(totalTopUp)} after paying</span>
-                                    : <span className="pill pill-ok">Accounts in line after paying</span>)}
+                                {afterPayments.length > 0 && (paymentsTopUp > 0
+                                    ? <span className="pill pill-bad">Payments need {eur(paymentsTopUp)} more</span>
+                                    : <span className="pill pill-ok">Payments covered</span>)}
+                                {alreadyShort > 0 && <span className="pill pill-warn">Already short {eur(alreadyShort)} before paying</span>}
                             </div>
                             <ul className="cov-upcoming">
                                 {upcoming.map(u => {
@@ -318,15 +335,28 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                                                     <strong>{a.brokerName}</strong>
                                                     <div className="cov-caption">
                                                         {eur(a.liquidity)}{x.recover > 0 && <> + {eur(x.recover)} sold</>} − {eur(x.pay)} paid = <strong>{eur(x.liquidityAfter)}</strong>
-                                                        {' '}· must hold {eur(x.needAfter)} (operating {eur(a.operatingCash)}
+                                                        {' '}· must still hold {eur(x.needAfter)} (operating {eur(a.operatingCash)}
                                                         {a.emergencyHere > 0 && <> + fund {eur(a.emergencyHere)}</>}
                                                         {x.needAfter - a.operatingCash - a.emergencyHere > 0.5 && <> + set aside {eur(x.needAfter - a.operatingCash - a.emergencyHere)}</>})
-                                                        {a.free < 0 && <> · already short {eur(-a.free)} before paying</>}
+                                                        <div>
+                                                            {x.fromPayments > 0
+                                                                ? <>the capex leave {eur(x.fromPayments)} uncovered</>
+                                                                : <>the capex are covered: paying them does not change the account's position</>}
+                                                        </div>
+                                                        {x.shortBefore > 0 && (
+                                                            <div className="cov-alert">
+                                                                Independent of the capex: the account is already {eur(x.shortBefore)} below what it should hold today
+                                                                (operating cash {eur(a.operatingCash)} = {settings.workingCapitalMonths} month{settings.workingCapitalMonths === 1 ? '' : 's'} of spending + swing).
+                                                                Top it up, or lower the operating-cash months above.
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 </div>
-                                                {x.topUp > 0
-                                                    ? <span className="pill pill-bad">Top up {eur(x.topUp)}</span>
-                                                    : <span className="pill pill-ok">In line · {eur(x.spare)} spare</span>}
+                                                {x.fromPayments > 0
+                                                    ? <span className="pill pill-bad">Top up {eur(x.fromPayments)} for the capex</span>
+                                                    : x.shortBefore > 0
+                                                        ? <span className="pill pill-warn">Capex covered · already short {eur(x.shortBefore)}</span>
+                                                        : <span className="pill pill-ok">In line · {eur(x.spare)} spare</span>}
                                             </div>
                                         );
                                     })}

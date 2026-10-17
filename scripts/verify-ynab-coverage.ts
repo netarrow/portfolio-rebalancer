@@ -125,6 +125,21 @@ check('a group puts every category of it in the fund',
 check('a portfolio counts with its whole value, without double-counting the fund investments',
     [fundWide.emergency.cash, fundWide.emergency.invested, fundWide.emergency.fromPortfolios, fundWide.emergency.current], [8200, 0, 10000, 18200]);
 
+// A category whose funding destination is a fund portfolio is fund money still
+// to be moved there: counted in the fund, not as set aside on its account.
+const inTransit = buildCoverageReport({
+    categories: [...categories, cat('buffer', 'savings', 'Buffer', 3000, 0)],
+    mappings: [...mappings, { categoryId: 'buffer', target: { kind: 'portfolio', portfolioId: 'p' }, sourceBrokerId: 'current' }],
+    macroMappings, brokers, goals, allocations,
+    settings: { emergencyMonths: 6, workingCapitalMonths: 1, goalHorizonMonths: 3, emergencyPortfolioIds: ['p'] },
+    portfolioValueOf: id => (id === 'p' ? 10000 : 0),
+    today: TODAY,
+});
+const curT = inTransit.accounts.find(a => a.brokerId === 'current')!;
+check('cash destined to a fund portfolio is fund, still to move', inTransit.emergency.toMove, [{ categoryId: 'buffer', portfolioId: 'p', amount: 3000 }]);
+check('held apart on its account, not set aside', [curT.emergencyHere, curT.earmarkedCategoryIds.includes('buffer')], [3000, false]);
+check('the fund counts it once next to the portfolio', inTransit.emergency.current, 8000 + 3000 + 10000);
+
 console.log('goals');
 check('a goal parsed from the category name', [goal('car').target, goal('car').date, goal('car').source], [3000, '2026-11-30', 'category']);
 check('due within the horizon', [goal('car').status, goal('car').gap, goal('car').requiredMonthly], ['due-soon', 2000, 1000]);
@@ -153,10 +168,10 @@ const flowReport = buildCoverageReport({
 const cur = flowReport.accounts.find(a => a.brokerId === 'current')!;
 check('average in / out and the worst month', [cur.flowMonths, cur.avgIn, cur.avgOut, cur.peakOut], [3, 1590, 1590, 1800]);
 check('operating cash = a month of average plus the swing of the worst', cur.operatingCash, 1800);
-check('cash set aside for other purposes (the car service)', cur.earmarked, 1000);
-check('and which categories make it up, the fund kept apart', [cur.earmarkedCategoryIds, flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarkedCategoryIds], [['car'], ['house']]);
+check('the car service is due soon: its cash is held as capex due, not set aside', [cur.earmarked, cur.dueCapexCash], [0, 1000]);
+check('and which categories make it up, the fund kept apart', [cur.earmarkedCategoryIds, flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarkedCategoryIds], [[], ['house']]);
 check('the fund is held apart, counted once', [flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarked, flowReport.accounts.find(a => a.brokerId === 'savings')!.emergencyHere, flowReport.accounts.find(a => a.brokerId === 'savings')!.free], [5000, 8000, 2000]);
-check('free = liquidity − operating cash − set aside', cur.free, -1800);
+check('free = liquidity − operating cash − capex-due cash', cur.free, -1800);
 check('suggested minimum = operating cash + goals due soon', cur.recommendedMin, 4800);
 check('emergency-fund cash is told apart per account',
     flowReport.accounts.find(a => a.brokerId === 'savings')!.emergencyHere, 8000);
@@ -191,15 +206,18 @@ const covered = buildCoverageReport({
 });
 const tv = covered.upcoming.find(u => u.categoryId === 'tv')!;
 check('a capex already covered by cash is listed, needing nothing', [tv.toRecover, tv.stillMissing], [0, 0]);
+check('and paying it adds nothing to the top-up (only the car service does)',
+    covered.accounts.find(a => a.brokerId === 'current')!.afterCapex!.fromPayments, 2000);
 check('each account sums what comes back to it',
     withBoiler.accounts.find(a => a.brokerId === 'savings')!.capexToRecover, 1200);
 // After paying: savings 15,000 + 1,200 back − 2,000 = 14,200 against 13,000 that
 // must stay (fund 8,000 held apart + house 5,000 set aside) → in line with 1,200 spare.
 check('an account still in line after the capex',
-    withBoiler.accounts.find(a => a.brokerId === 'savings')!.afterCapex, { pay: 2000, recover: 1200, liquidityAfter: 14200, needAfter: 13000, topUp: 0, spare: 1200 });
-// Current: 1,000 − 3,000 = −2,000 against 1,590 of operating cash → top up 3,590.
+    withBoiler.accounts.find(a => a.brokerId === 'savings')!.afterCapex, { pay: 2000, recover: 1200, liquidityAfter: 14200, needAfter: 13000, topUp: 0, spare: 1200, shortBefore: 0, fromPayments: 0 });
+// Current: 1,000 − 3,000 = −2,000 against 1,590 of operating cash → top up 3,590:
+// 1,590 it already lacked (1,000 held vs 1,590 + 1,000 of car cash) + 2,000 not covered.
 check('an account that needs a top-up after the capex',
-    withBoiler.accounts.find(a => a.brokerId === 'current')!.afterCapex, { pay: 3000, recover: 0, liquidityAfter: -2000, needAfter: 1590, topUp: 3590, spare: 0 });
+    withBoiler.accounts.find(a => a.brokerId === 'current')!.afterCapex, { pay: 3000, recover: 0, liquidityAfter: -2000, needAfter: 1590, topUp: 3590, spare: 0, shortBefore: 1590, fromPayments: 2000 });
 check('no projection on an account with no capex due',
     report.accounts.find(a => a.brokerId === 'savings')!.afterCapex, undefined);
 

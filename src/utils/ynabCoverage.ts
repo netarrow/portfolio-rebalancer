@@ -72,6 +72,11 @@ export interface CategoryPosition {
     invested: number;
     allocations: YnabGoalAllocation[];
     emergencyFund: boolean;
+    /**
+     * Fund portfolio this category's money is destined to (its funding
+     * destination): it counts as emergency fund, as cash still to move there.
+     */
+    fundDestinationId?: string;
     goal?: {
         amount?: number;
         date?: string;
@@ -134,13 +139,15 @@ export interface AccountCoverage {
     peakOut: number;
     /** Cash to keep for day-to-day: avgOut × working-capital months + (peak − avg). */
     operatingCash: number;
-    /** Cash already set aside here for other purposes: dated expenses, money to invest, unmapped. Not the fund. */
+    /** Cash already set aside here for other purposes: dated expenses, money to invest, unmapped. Not the fund, not capex due soon. */
     earmarked: number;
     /** The categories making up `earmarked` (Available > 0), largest first. */
     earmarkedCategoryIds: string[];
     /** Cash of the emergency-fund categories on this account (held apart from `earmarked`). */
     emergencyHere: number;
-    /** Liquidity left after operating cash, the fund held here and set-aside money (< 0 = short). */
+    /** Cash of the planned capex due soon that are paid from this account. */
+    dueCapexCash: number;
+    /** Liquidity left after operating cash, fund, set aside and capex-due cash (< 0 = short). */
     free: number;
     /** Planned capex due within the horizon: € to bring back from investments. */
     capexToRecover: number;
@@ -159,6 +166,10 @@ export interface AccountCoverage {
         topUp: number;
         /** Liquidity left above what it must hold; 0 when a top-up is needed. */
         spare: number;
+        /** Part of the top-up the account already lacked before any payment. */
+        shortBefore: number;
+        /** Part of the top-up caused by the payments (what the capex do not cover). */
+        fromPayments: number;
     };
 }
 
@@ -196,6 +207,8 @@ export interface EmergencyCoverage {
     /** Of which, flagged one by one. */
     flaggedCategoryIds: string[];
     groupIds: string[];
+    /** Cash of fund categories destined to a fund portfolio, not moved there yet. */
+    toMove: { categoryId: string; portfolioId: string; amount: number }[];
     /** Value of the portfolios counted as fund. */
     fromPortfolios: number;
     portfolios: { portfolioId: string; value: number }[];
@@ -278,7 +291,12 @@ export const buildCategoryPositions = (input: CoverageInput): CategoryPosition[]
         const mapping = mappingById.get(category.id);
         const goalEntity = goalById.get(category.id);
         const own = allocations.filter(a => a.ynabGoalId === category.id);
-        const isFund = !!mapping?.emergencyFund || fundGroups.has(category.groupId);
+        // A category whose money is destined to a fund portfolio is fund money
+        // already, still waiting as cash to be moved there.
+        const target = mapping?.target;
+        const destinationId = target && (target.kind === 'portfolio' || target.kind === 'asset') ? target.portfolioId : undefined;
+        const fundDestinationId = destinationId && fundPortfolios.has(destinationId) ? destinationId : undefined;
+        const isFund = !!mapping?.emergencyFund || fundGroups.has(category.groupId) || !!fundDestinationId;
         // A fund category invested in a fund portfolio is already counted with
         // that portfolio's whole value: not twice.
         const invested = roundCents(own
@@ -322,6 +340,7 @@ export const buildCategoryPositions = (input: CoverageInput): CategoryPosition[]
             invested,
             allocations: own,
             emergencyFund: isFund,
+            fundDestinationId,
             goal,
         };
     });
@@ -467,30 +486,40 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
         const peakOut = flow.months > 0 ? flow.peakOut : monthlySpend;
         const operatingCash = roundCents(avgOut * settings.workingCapitalMonths + Math.max(0, peakOut - avgOut));
         const dayToDayIds = new Set(dayToDay.map(p => p.categoryId));
+        // Capex due soon paid from this account: their cash is counted once, on
+        // its own line, whether it sits in a category here or only in Planned Capex.
+        const dueHere = upcoming.filter(u => u.brokerId === brokerId);
+        const dueIds = new Set(dueHere.map(u => u.categoryId));
+        const dueCapexCash = roundCents(dueHere.reduce((s, u) => s + u.cash, 0));
         const earmarkedList = list
-            // The emergency fund is held apart (emergencyHere), not set aside here.
-            .filter(p => !dayToDayIds.has(p.categoryId) && !p.emergencyFund && p.available > 0)
+            // The emergency fund is held apart (emergencyHere) and the capex due
+            // soon too (dueCapexCash): neither is set aside here.
+            .filter(p => !dayToDayIds.has(p.categoryId) && !p.emergencyFund && !dueIds.has(p.categoryId) && p.available > 0)
             .sort((a, b) => b.available - a.available);
         const earmarked = roundCents(earmarkedList.reduce((s, p) => s + p.available, 0));
         const emergencyHere = roundCents(list.filter(p => p.emergencyFund).reduce((s, p) => s + Math.max(0, p.available), 0));
-        const dueHere = upcoming.filter(u => u.brokerId === brokerId);
         const capexToRecover = roundCents(dueHere.reduce((s, u) => s + u.toRecover, 0));
+        const holdNow = roundCents(operatingCash + emergencyHere + earmarked + dueCapexCash);
         // Paying the capex due soon: their full target leaves the account, what
-        // their investments cover comes back first, and their own cash stops
-        // being set aside.
+        // their investments cover comes back first, and their own cash is spent.
+        // A capex covered by cash therefore leaves the account where it was.
         let afterCapex: AccountCoverage['afterCapex'];
         if (dueHere.length > 0) {
             const pay = roundCents(dueHere.reduce((s, u) => s + u.target, 0));
-            const ownCash = dueHere.reduce((s, u) => s + (list.some(p => p.categoryId === u.categoryId) ? u.cash : 0), 0);
+            const leftover = dueHere.reduce((s, u) => s + Math.max(0, u.cash - u.target), 0);
             const liquidityAfter = roundCents(liquidity + capexToRecover - pay);
-            const needAfter = roundCents(operatingCash + emergencyHere + Math.max(0, earmarked - ownCash));
+            const needAfter = roundCents(operatingCash + emergencyHere + earmarked + leftover);
+            const topUp = roundCents(Math.max(0, needAfter - liquidityAfter));
+            const shortBefore = roundCents(Math.max(0, holdNow - liquidity));
             afterCapex = {
                 pay,
                 recover: capexToRecover,
                 liquidityAfter,
                 needAfter,
-                topUp: roundCents(Math.max(0, needAfter - liquidityAfter)),
+                topUp,
                 spare: roundCents(Math.max(0, liquidityAfter - needAfter)),
+                shortBefore,
+                fromPayments: roundCents(Math.max(0, topUp - shortBefore)),
             };
         }
         return {
@@ -505,7 +534,8 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
             earmarked,
             earmarkedCategoryIds: earmarkedList.map(p => p.categoryId),
             emergencyHere,
-            free: roundCents(liquidity - operatingCash - emergencyHere - earmarked),
+            dueCapexCash,
+            free: roundCents(liquidity - holdNow),
             capexToRecover,
             afterCapex,
             required,
@@ -557,6 +587,9 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
             categoryIds: fund.map(p => p.categoryId),
             flaggedCategoryIds: fund.filter(p => flaggedIds.has(p.categoryId)).map(p => p.categoryId),
             groupIds: settings.emergencyGroupIds ?? [],
+            toMove: fund
+                .filter(p => p.fundDestinationId && p.available > 0)
+                .map(p => ({ categoryId: p.categoryId, portfolioId: p.fundDestinationId!, amount: roundCents(p.available) })),
             fromPortfolios,
             portfolios: fundPortfolioList,
         },
