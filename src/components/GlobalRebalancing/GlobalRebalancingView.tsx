@@ -214,19 +214,59 @@ const GlobalRebalancingView: React.FC = () => {
         });
     }, [assetSettings, marketData, mergedView]);
 
-    const brokerLiquidity = useMemo(
+    const brokerCash = useMemo(
         () => brokers.reduce((s, b) => s + (Number.isFinite(b.currentLiquidity) ? b.currentLiquidity || 0 : 0), 0),
         [brokers]
     );
 
+    // Cash of the categories mapped to the emergency fund in Expense Planning,
+    // still on the accounts: it is the fund's money, bound for the fund
+    // portfolios, so it counts there and not as broker liquidity. Only accounts
+    // in the counting scope, and only when a fund portfolio has a row here.
+    const fundCash = useMemo(() => {
+        const groupOf = new Map<string, string>();
+        mergedView.groups.forEach(g => g.memberIds.forEach(id => groupOf.set(id, g.id)));
+        const rowIds = [...new Set(expense.fundPortfolioIds.map(id => groupOf.get(id) ?? id))]
+            .filter(id => portfolioInputs.some(p => p.portfolioId === id)
+                && (effectiveSettings.portfolioTargets[id]?.mode ?? 'excluded') !== 'excluded');
+        const inScope = new Set(brokers.map(b => b.id));
+        const accounts = rowIds.length > 0 ? expense.fundCashByAccount.filter(a => inScope.has(a.brokerId)) : [];
+        const fund = Math.max(0, Math.min(brokerCash, accounts.reduce((s, a) => s + a.amount, 0)));
+        // Only what the accounts can spare moves now: with a liquidity target in
+        // €, the cash left must still cover it. The rest of the fund waits on
+        // the accounts (and counts as liquidity) until there is room.
+        const lt = effectiveSettings.liquidityTarget;
+        const need = lt && lt.mode !== 'percent' ? Math.max(0, lt.value) : null;
+        const movable = need === null ? fund : Math.min(fund, Math.max(0, brokerCash - need));
+        const round = (x: number) => Math.round(x * 100) / 100;
+        const names = new Map(portfolioInputs.map(p => [p.portfolioId, p.name]));
+        return {
+            total: round(movable),
+            waiting: round(fund - movable),
+            need,
+            accounts: accounts.map(a => ({ ...a, amount: fund > 0 ? round(a.amount * movable / fund) : 0 })).filter(a => a.amount > 0),
+            rowIds,
+            rowNames: rowIds.map(id => names.get(id) ?? id),
+        };
+    }, [expense.fundPortfolioIds, expense.fundCashByAccount, mergedView.groups, portfolioInputs, effectiveSettings, brokers, brokerCash]);
+
+    const brokerLiquidity = brokerCash - fundCash.total;
+    const allocationInputs = useMemo(() => {
+        if (fundCash.total <= 0) return portfolioInputs;
+        const each = fundCash.total / fundCash.rowIds.length;
+        return portfolioInputs.map(p => (fundCash.rowIds.includes(p.portfolioId)
+            ? { ...p, currentTotalValue: p.currentTotalValue + each }
+            : p));
+    }, [portfolioInputs, fundCash]);
+
     const result = useMemo(
         () =>
             calculateAssetAllocation({
-                portfolios: portfolioInputs,
+                portfolios: allocationInputs,
                 brokerLiquidity,
                 settings: effectiveSettings
             }),
-        [portfolioInputs, brokerLiquidity, effectiveSettings]
+        [allocationInputs, brokerLiquidity, effectiveSettings]
     );
 
     // Simulation: projected asset class allocation after all suggested actions
@@ -388,6 +428,11 @@ const GlobalRebalancingView: React.FC = () => {
                     </div>
                     <div className="aa-metric">
                         <span className="aa-metric-label">Liquidity (broker)</span>
+                        {fundCash.total > 0 && (
+                            <div className="aa-expense-source">
+                                {formatCurrency(brokerCash)} on the accounts − {formatCurrency(fundCash.total)} of the emergency fund to move
+                            </div>
+                        )}
                         <strong>
                             {formatCurrency(result.liquidity.current)}
                             {result.liquidity.hasTarget && (
@@ -464,7 +509,7 @@ const GlobalRebalancingView: React.FC = () => {
                         </div>
                         {liquidityTarget.mode === 'expense' ? (
                             <div className="aa-field">
-                                <label>Operating cash + capex (EUR)</label>
+                                <label>Operating cash + set aside + capex due (EUR)</label>
                                 <div className="aa-readout">
                                     {expense.liquidity === null ? '—' : formatCurrency(expense.liquidity)}
                                 </div>
@@ -479,6 +524,11 @@ const GlobalRebalancingView: React.FC = () => {
                                             operating {formatCurrency(expense.operatingCash ?? 0)}
                                             {expense.operatingCashByAccount.length > 0 && <> ({expense.operatingCashByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join(' · ')})</>}
                                         </div>
+                                        {expense.setAside > 0 && (
+                                            <div className="aa-expense-source">
+                                                + set aside {formatCurrency(expense.setAside)} ({expense.setAsideByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join(' · ')}), emergency fund excluded
+                                            </div>
+                                        )}
                                         {expense.capexCash > 0 && (
                                             <div className="aa-expense-source">
                                                 + capex {formatCurrency(expense.capexCash)}:{' '}
@@ -570,6 +620,11 @@ const GlobalRebalancingView: React.FC = () => {
                                     <tr className={muted ? 'muted' : ''}>
                                         <td className="td-name">
                                             <strong>{row.name}</strong>
+                                            {fundCash.total > 0 && fundCash.rowIds.includes(row.portfolioId) && (
+                                                <div className="aa-expense-source">
+                                                    current incl. {formatCurrency(fundCash.total / fundCash.rowIds.length)} of fund cash still on the accounts
+                                                </div>
+                                            )}
                                             {memberRows && (
                                                 <span className="aa-group-badge" title="Parent/child group, counted as one portfolio. Its internal split is the ratio set on the Portfolios page.">
                                                     ⬡ group of {memberRows.length}
@@ -685,6 +740,7 @@ const GlobalRebalancingView: React.FC = () => {
                             row={row}
                             cfg={effectiveSettings.portfolioTargets[row.portfolioId]}
                             expense={expenseByRow.get(row.portfolioId)}
+                            fundCashHere={fundCash.rowIds.includes(row.portfolioId) ? fundCash.total / fundCash.rowIds.length : 0}
                             memberRows={memberRowsByGroup[row.portfolioId]}
                             onChangeMode={handleChangePortfolioMode}
                             onChangeValue={handleChangePortfolioValue}
@@ -699,6 +755,29 @@ const GlobalRebalancingView: React.FC = () => {
                     <h3>Suggested actions</h3>
                     <span className="aa-muted">{result.actions.length} actions</span>
                 </div>
+                {(fundCash.total > 0 || fundCash.waiting > 0) && (
+                    <div className="aa-fund-move">
+                        {fundCash.total > 0 && (
+                            <>
+                                <strong>Move the emergency fund cash now: {formatCurrency(fundCash.total)}</strong>
+                                <span>
+                                    {fundCash.accounts.map(a => `${formatCurrency(a.amount)} from ${a.brokerName}`).join(' · ')}
+                                    {' '}→ {fundCash.rowNames.join(', ')}
+                                </span>
+                                <span className="aa-muted">
+                                    Already counted in {fundCash.rowNames.join(', ')} above, not in the liquidity: the actions below come on top of this move.
+                                </span>
+                            </>
+                        )}
+                        {fundCash.waiting > 0 && (
+                            <span className={fundCash.total > 0 ? 'aa-muted' : ''}>
+                                {fundCash.total > 0 ? 'The other ' : ''}{formatCurrency(fundCash.waiting)} of the emergency fund {fundCash.total > 0 ? 'stays' : 'stays for now'} on the accounts:
+                                moving it would leave less than the liquidity target ({formatCurrency(fundCash.need ?? 0)}). It moves once the capex due are paid
+                                or the accounts are topped up; until then it counts as liquidity.
+                            </span>
+                        )}
+                    </div>
+                )}
                 {result.actions.length === 0 ? (
                     <p className="aa-muted">Portfolio is aligned to targets ✓</p>
                 ) : (
@@ -809,6 +888,8 @@ const GlobalRebalancingView: React.FC = () => {
                     background: var(--bg-app);
                     border: 1px solid var(--border-color);
                 }
+                .aa-fund-move { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.6rem 0.8rem; margin-bottom: 0.75rem;
+                    border-left: 3px solid var(--color-primary); background: var(--bg-input); border-radius: var(--radius-md); font-size: 0.85rem; }
                 .aa-expense-source { margin-top: 0.25rem; font-size: 0.75rem; color: var(--text-secondary); overflow-wrap: anywhere; }
                 .aa-metric-label {
                     display: block;
@@ -1158,6 +1239,8 @@ interface PortfolioTargetMobileRowProps {
     cfg?: PortfolioTargetConfig;
     /** The Expense Planning target of the row, shown when its mode follows it. */
     expense?: ExpensePlanningTarget;
+    /** Fund cash still on the accounts, counted in this row's current value. */
+    fundCashHere?: number;
     /** Set when the row is a parent/child group: its read-only member split. */
     memberRows?: { portfolioId: string; name: string; share: number; currentValue: number }[];
     onChangeMode: (portfolioId: string, mode: PortfolioTargetMode) => void;
@@ -1165,7 +1248,7 @@ interface PortfolioTargetMobileRowProps {
 }
 
 const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
-    row, cfg, expense, memberRows, onChangeMode, onChangeValue,
+    row, cfg, expense, fundCashHere = 0, memberRows, onChangeMode, onChangeValue,
 }) => {
     const [expanded, setExpanded] = useState(false);
     const mode = cfg?.mode ?? 'excluded';
@@ -1232,6 +1315,9 @@ const PortfolioTargetMobileRow: React.FC<PortfolioTargetMobileRowProps> = ({
                     <div className="mrow-detail">
                         <span className="mrow-label">Current</span>
                         <span className="mrow-value">{formatCurrency(row.currentValue)}</span>
+                        {fundCashHere > 0 && (
+                            <div className="aa-expense-source">incl. {formatCurrency(fundCashHere)} of fund cash on the accounts</div>
+                        )}
                     </div>
                     <div className="mrow-detail">
                         <span className="mrow-label">Current %</span>
