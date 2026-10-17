@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'ynabGoals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
 
 interface LayoutProps {
   currentView: View;
@@ -14,26 +14,17 @@ interface LayoutProps {
 const menuStructure = [
   { label: '🏠 Dashboard', view: 'dashboard' as const },
   {
-    label: '🗂️ Data',
-    items: [
-      { label: '💱 Transactions', view: 'transactions' as const },
-      { label: '🏦 Brokers', view: 'brokers' as const },
-    ],
-  },
-  {
     label: '🧭 Plan',
     items: [
-      { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
+      { label: '🗒️ Expense Planning', view: 'summary' as const },
       { label: '📋 Portfolios', view: 'portfolios' as const },
       { label: '🔺 Buckets', view: 'goals' as const },
-      { label: '🏁 Planned Capex', view: 'ynabGoals' as const },
-      { label: '🗒️ Expense Planning', view: 'summary' as const },
+      { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
     ],
   },
   {
     label: '⚡ Execute',
     items: [
-      { label: '🔀 Fund Relocation', view: 'fundRelocation' as const },
       { label: '📊 PAC', view: 'pac' as const },
     ],
   },
@@ -42,7 +33,20 @@ const menuStructure = [
     items: [
       { label: '📈 Stats', view: 'stats' as const },
       { label: '📉 Performance', view: 'performance' as const },
+    ],
+  },
+  {
+    label: '🧪 What-If',
+    items: [
+      { label: '🔀 Fund Relocation', view: 'fundRelocation' as const },
       { label: '🔮 Forecast', view: 'forecast' as const },
+    ],
+  },
+  {
+    label: '🗂️ Data',
+    items: [
+      { label: '💱 Transactions', view: 'transactions' as const },
+      { label: '🏦 Brokers', view: 'brokers' as const },
     ],
   },
   {
