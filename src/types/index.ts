@@ -698,7 +698,14 @@ export interface YnabMacroMappings {
   // budget (e.g. a personal "family expenses" line), so the analysis splits its
   // outflow by that budget's own spending mix instead of giving it one class.
   linkedBudgets?: Record<string, string>;
+  // When the spending was decided: 'past' = commitments taken earlier (rent,
+  // loans, contracts), 'current' = chosen now, 'future' = set aside for later.
+  // Per group, with per-category overrides, like the macro class.
+  decisionGroups?: Record<string, YnabDecisionHorizon>;
+  decisionCategories?: Record<string, YnabDecisionHorizon>;
 }
+
+export type YnabDecisionHorizon = 'past' | 'current' | 'future';
 
 export interface YnabMonthCategorySnapshot {
   categoryId: string;

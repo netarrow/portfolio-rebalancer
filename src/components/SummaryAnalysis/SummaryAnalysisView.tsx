@@ -1,9 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import type { YnabMacroCategory } from '../../types';
+import type { YnabDecisionHorizon, YnabMacroCategory } from '../../types';
 import {
     analyzeSpending,
     effectiveMacro,
+    effectiveDecision,
+    DECISION_ORDER,
+    DECISION_LABELS,
     MACRO_ORDER,
     MACRO_LABELS,
     MACRO_DESCRIPTIONS,
@@ -28,6 +31,13 @@ const MACRO_COLORS: Record<YnabMacroCategory, string> = {
     compressible: '#f59e0b',
     sinking: '#14b8a6',
     investments: '#8b5cf6',
+};
+
+const DECISION_COLORS: Record<YnabDecisionHorizon | 'unset', string> = {
+    past: '#a78bfa',
+    current: '#f59e0b',
+    future: '#10b981',
+    unset: '#64748b',
 };
 
 const monthLabel = (isoMonth: string): string =>
@@ -63,6 +73,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
         setYnabGroupMacro,
         setYnabCategoryMacro,
         setYnabCategoryLinkedBudget,
+        setYnabGroupDecision,
+        setYnabCategoryDecision,
         ynabSpendingSyncing,
         refreshYnabBudgets,
         brokers,
@@ -74,6 +86,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
     const [showMapping, setShowMapping] = useState(false);
     // Macro cards opened to list every category, not just the top ones.
     const [openMacros, setOpenMacros] = useState<Record<string, boolean>>({});
+    // Macro cards in totals over the window, or as monthly averages.
+    const [macroMonthly, setMacroMonthly] = useState(false);
     const [reloadingBudgets, setReloadingBudgets] = useState(false);
 
     // Every budget of the token can be analysed. Before the cached list is
@@ -228,17 +242,21 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             ) : (
                 <>
                     {/* KPI row */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-                        {[
-                            { label: 'Income', value: analysis.totalIncome, sub: `${formatCurrency(analysis.avgMonthlyIncome, currencyIso)}/month` },
-                            { label: 'Consumption', value: analysis.consumptionOutflow, sub: 'structural + variable + compressible' },
-                            { label: 'Investments', value: analysis.macros.investments.totalOutflow, sub: analysis.macros.investments.shareOfIncome != null ? `${Math.round(analysis.macros.investments.shareOfIncome * 100)}% of income` : '' },
-                            { label: 'Net savings', value: analysis.netSavings, sub: analysis.savingsRate != null ? `${Math.round(analysis.savingsRate * 100)}% of income` : '' },
-                            { label: 'From past savings', value: analysis.pastSavingsSpent, sub: 'spending drawn from previous years' },
-                        ].map(kpi => (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                        {(() => {
+                            const ofIncome = (r: number | null) => (r != null ? `${Math.round(r * 100)}% of income` : '');
+                            return [
+                                { label: 'Income', value: analysis.totalIncome, sub: `${formatCurrency(analysis.avgMonthlyIncome, currencyIso)}/month`, savings: false },
+                                { label: 'Operating expenses', value: analysis.consumptionOutflow, sub: 'structural + variable + compressible', savings: false },
+                                { label: 'Operating savings', value: analysis.operatingSavings, sub: `${ofIncome(analysis.operatingSavingsRate)} · income − operating expenses`, savings: true },
+                                { label: 'Savings from income', value: analysis.savingsFromIncome, sub: `${ofIncome(analysis.savingsFromIncomeRate)} · after dated expenses paid by income`, savings: true },
+                                { label: 'Drawn from past savings', value: analysis.pastSavingsOnSpending, sub: 'spending paid from previous years', savings: false },
+                                { label: 'Net savings', value: analysis.netSavings, sub: `${ofIncome(analysis.savingsRate)} · of which invested ${formatCurrency(analysis.investmentsOutflow, currencyIso)}`, savings: true },
+                            ];
+                        })().map(kpi => (
                             <div key={kpi.label} style={{ background: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', padding: '1rem 1.25rem' }}>
                                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{kpi.label}</div>
-                                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: kpi.label === 'Net savings' && kpi.value < 0 ? '#ef4444' : 'var(--text-primary)' }}>
+                                <div style={{ fontSize: '1.4rem', fontWeight: 700, color: kpi.savings && kpi.value < 0 ? '#ef4444' : 'var(--text-primary)' }}>
                                     {formatCurrency(kpi.value, currencyIso)}
                                 </div>
                                 {kpi.sub && <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', marginTop: '0.15rem' }}>{kpi.sub}</div>}
@@ -264,13 +282,17 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                 warn: m === 'compressible' && income > 0 && compressible / income > COMPRESSIBLE_INCOME_SHARE_ALERT,
                             })),
                             { label: 'Unmapped', value: monthly(analysis.unmappedOutflow), share: pct(analysis.unmappedOutflow, income), warn: analysis.unmappedOutflow > 0.5 },
-                            { label: 'Net savings', value: monthly(analysis.netSavings), share: analysis.savingsRate != null ? `${Math.round(analysis.savingsRate * 100)}%` : '—' },
+                            { label: 'Operating savings', value: monthly(analysis.operatingSavings), share: pct(analysis.operatingSavings, income) },
+                            { label: 'Savings from income', value: monthly(analysis.savingsFromIncome), share: pct(analysis.savingsFromIncome, income) },
+                            { label: 'Drawn from past savings', value: monthly(analysis.pastSavingsOnSpending), share: pct(analysis.pastSavingsOnSpending, income) },
+                            { label: 'Net savings', value: monthly(analysis.netSavings), share: pct(analysis.netSavings, income) },
                         ];
                         const ratios: { label: string; value: string; hint: string; warn?: boolean }[] = [
-                            { label: 'Savings rate', value: analysis.savingsRate != null ? `${Math.round(analysis.savingsRate * 100)}%` : '—', hint: 'net savings / income' },
+                            { label: 'Operating savings rate', value: pct(analysis.operatingSavings, income), hint: 'income − operating expenses' },
+                            { label: 'Savings rate', value: pct(analysis.savingsFromIncome, income), hint: 'savings from income / income' },
                             { label: 'Consumption / income', value: pct(consumption, income), hint: 'structural + variable + compressible' },
                             { label: 'Compressible / income', value: pct(compressible, income), hint: `alert above ${Math.round(COMPRESSIBLE_INCOME_SHARE_ALERT * 100)}%`, warn: income > 0 && compressible / income > COMPRESSIBLE_INCOME_SHARE_ALERT },
-                            { label: 'From past savings', value: pct(analysis.pastSavingsSpent, analysis.totalOutflow), hint: `of outflows · alert above ${Math.round(PAST_SAVINGS_SHARE_ALERT * 100)}%`, warn: analysis.totalOutflow > 0 && analysis.pastSavingsSpent / analysis.totalOutflow > PAST_SAVINGS_SHARE_ALERT },
+                            { label: 'From past savings', value: pct(analysis.pastSavingsOnSpending, analysis.spendingOutflow), hint: `of spending · alert above ${Math.round(PAST_SAVINGS_SHARE_ALERT * 100)}%`, warn: analysis.spendingOutflow > 0 && analysis.pastSavingsOnSpending / analysis.spendingOutflow > PAST_SAVINGS_SHARE_ALERT },
                             { label: 'Unmapped categories', value: String(analysis.unmappedCategories.length), hint: formatCurrency(analysis.unmappedOutflow, currencyIso), warn: analysis.unmappedCategories.length > 0 },
                         ];
                         const drawdown = [...analysis.pastSavingsCategories].slice(0, 5);
@@ -386,10 +408,22 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
 
                     {/* Macro breakdown */}
                     <div style={cardStyle}>
-                        <h3 style={{ marginTop: 0, marginBottom: '1rem' }}>Spending by macro category</h3>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+                            <h3 style={{ margin: 0 }}>Spending by macro category</h3>
+                            <div className="ea-budget-tabs" role="tablist" aria-label="Amounts shown">
+                                <button type="button" role="tab" aria-selected={!macroMonthly} className={!macroMonthly ? 'active' : ''} onClick={() => setMacroMonthly(false)}>
+                                    Total · {analysis.monthsCount} months
+                                </button>
+                                <button type="button" role="tab" aria-selected={macroMonthly} className={macroMonthly ? 'active' : ''} onClick={() => setMacroMonthly(true)}>
+                                    Monthly average
+                                </button>
+                            </div>
+                        </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(240px, 100%), 1fr))', gap: '1rem' }}>
                             {MACRO_ORDER.map(macro => {
                                 const m = analysis.macros[macro];
+                                // Every amount of the card, in the unit picked above.
+                                const amount = (v: number) => formatCurrency(macroMonthly ? v / Math.max(1, analysis.monthsCount) : v, currencyIso);
                                 return (
                                     <div key={macro} style={{ border: '1px solid var(--border-color, rgba(128,128,128,0.25))', borderRadius: 'var(--radius-md)', padding: '0.9rem 1rem' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
@@ -397,9 +431,11 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                             <strong>{MACRO_LABELS[macro]}</strong>
                                         </div>
                                         <div style={{ color: 'var(--text-secondary)', fontSize: '0.78rem', marginBottom: '0.5rem' }}>{MACRO_DESCRIPTIONS[macro]}</div>
-                                        <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{formatCurrency(m.totalOutflow, currencyIso)}</div>
+                                        <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>{amount(m.totalOutflow)}{macroMonthly && <span style={{ fontSize: '0.8rem', fontWeight: 500, color: 'var(--text-secondary)' }}>/month</span>}</div>
                                         <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-                                            {formatCurrency(m.avgMonthlyOutflow, currencyIso)}/month
+                                            {macroMonthly
+                                                ? <>{formatCurrency(m.totalOutflow, currencyIso)} in {analysis.monthsCount} months</>
+                                                : <>{formatCurrency(m.avgMonthlyOutflow, currencyIso)}/month</>}
                                             {m.shareOfIncome != null && <> · {Math.round(m.shareOfIncome * 100)}% of income</>}
                                         </div>
                                         {m.categories.length > 0 && (() => {
@@ -422,7 +458,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                             const line = (key: string, name: React.ReactNode, value: number, indent = false) => (
                                                 <div key={key} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', color: 'var(--text-secondary)', paddingLeft: indent ? '0.9rem' : 0 }}>
                                                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
-                                                    <span>{formatCurrency(value, currencyIso)}</span>
+                                                    <span>{amount(value)}</span>
                                                 </div>
                                             );
                                             return (
@@ -432,7 +468,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                         <div key={fromId} style={{ marginTop: '0.35rem' }}>
                                                             <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.5rem', color: 'var(--text-primary)', fontWeight: 600 }}>
                                                                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>↔ {b.name} · {budgetName(b.budgetId)}</span>
-                                                                <span>{formatCurrency(b.total, currencyIso)}</span>
+                                                                <span>{amount(b.total)}</span>
                                                             </div>
                                                             {b.items.slice(0, childLimit).map(c => line(c.categoryId, c.name, c.totalOutflow, true))}
                                                         </div>
@@ -455,6 +491,55 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                         </div>
                     </div>
 
+                    {/* Spending by decision horizon: when each outflow was decided */}
+                    {(() => {
+                        const months = Math.max(1, analysis.monthsCount);
+                        const slices = ([...DECISION_ORDER, 'unset'] as (YnabDecisionHorizon | 'unset')[])
+                            .map(key => ({ key, value: Math.max(0, analysis.decisionTotals[key]) }))
+                            .filter(sl => sl.key !== 'unset' || sl.value > 0.5);
+                        const total = slices.reduce((sum, sl) => sum + sl.value, 0);
+                        let cursor = 0;
+                        const stops = slices.map(sl => {
+                            const from = cursor;
+                            cursor += total > 0 ? (sl.value / total) * 100 : 0;
+                            return `${DECISION_COLORS[sl.key]} ${from}% ${cursor}%`;
+                        });
+                        const label = (key: YnabDecisionHorizon | 'unset') => (key === 'unset' ? 'Not set' : DECISION_LABELS[key]);
+                        return (
+                            <div style={cardStyle}>
+                                <h3 style={{ marginTop: 0, marginBottom: '0.25rem' }}>Spending by decision</h3>
+                                <div className="ea-muted" style={{ marginBottom: '1rem' }}>
+                                    Every outflow by when it was decided: commitments taken in the past, choices made now,
+                                    money set aside for the future. A category linked to another budget is spread over the
+                                    decisions mapped on that budget's categories (set them on its tab).
+                                </div>
+                                {total <= 0 ? (
+                                    <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Nothing to show yet: set a decision on the groups in Category mapping.</p>
+                                ) : (
+                                    <div style={{ display: 'flex', gap: '2rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                        <div
+                                            role="img"
+                                            aria-label={slices.map(sl => `${label(sl.key)} ${Math.round((sl.value / total) * 100)}%`).join(', ')}
+                                            style={{ width: 180, height: 180, borderRadius: '50%', background: `conic-gradient(${stops.join(', ')})`, flexShrink: 0 }}
+                                        />
+                                        <table className="ea-table" style={{ flex: '1 1 320px', width: 'auto' }}>
+                                            <thead><tr><th>Decision</th><th className="num">€ / month</th><th className="num">Total</th><th className="num">Share</th></tr></thead>
+                                            <tbody>
+                                                {slices.map(sl => (
+                                                    <tr key={sl.key}>
+                                                        <td><span className="ea-dot" style={{ background: DECISION_COLORS[sl.key] }} />{label(sl.key)}</td>
+                                                        <td className="num">{formatCurrency(sl.value / months, currencyIso)}</td>
+                                                        <td className="num">{formatCurrency(sl.value, currencyIso)}</td>
+                                                        <td className={`num${sl.key === 'unset' ? ' ea-warn' : ''}`}>{Math.round((sl.value / total) * 100)}%</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
                 </>
             )}
 
@@ -491,20 +576,34 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                         <div key={g.id} style={{ border: '1px solid var(--border-color, rgba(128,128,128,0.25))', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem' }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                                                 <strong>{g.name}</strong>
-                                                <select
-                                                    value={groupMacro}
-                                                    onChange={e => setYnabGroupMacro(g.id, (e.target.value || null) as YnabMacroCategory | null)}
-                                                    style={selectStyle}
-                                                >
-                                                    <option value="">Not mapped</option>
-                                                    {MACRO_ORDER.map(m => <option key={m} value={m}>{MACRO_LABELS[m]}</option>)}
-                                                </select>
+                                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                    <select
+                                                        value={groupMacro}
+                                                        onChange={e => setYnabGroupMacro(g.id, (e.target.value || null) as YnabMacroCategory | null)}
+                                                        style={selectStyle}
+                                                        aria-label={`Macro class of the ${g.name} group`}
+                                                    >
+                                                        <option value="">Not mapped</option>
+                                                        {MACRO_ORDER.map(m => <option key={m} value={m}>{MACRO_LABELS[m]}</option>)}
+                                                    </select>
+                                                    <select
+                                                        value={ynabMacroMappings.decisionGroups?.[g.id] ?? ''}
+                                                        onChange={e => setYnabGroupDecision(g.id, (e.target.value || null) as YnabDecisionHorizon | null)}
+                                                        style={selectStyle}
+                                                        aria-label={`Decision of the ${g.name} group`}
+                                                    >
+                                                        <option value="">Decision: not set</option>
+                                                        {DECISION_ORDER.map(d => <option key={d} value={d}>{DECISION_LABELS[d]}</option>)}
+                                                    </select>
+                                                </div>
                                             </div>
                                             <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                                                 {g.categories.map(c => {
                                                     const override = ynabMacroMappings.categories[c.id] ?? '';
                                                     const effective = effectiveMacro(ynabMacroMappings, g.id, c.id);
                                                     const linked = ynabMacroMappings.linkedBudgets?.[c.id];
+                                                    const decision = effectiveDecision(ynabMacroMappings, g.id, c.id);
+                                                    const decisionOverride = ynabMacroMappings.decisionCategories?.[c.id] ?? '';
                                                     return (
                                                         <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', paddingLeft: '1rem', fontSize: '0.9rem' }}>
                                                             <span style={{ color: 'var(--text-secondary)' }}>
@@ -516,6 +615,11 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                                 ) : effective && (
                                                                     <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: MACRO_COLORS[effective] }}>
                                                                         {MACRO_LABELS[effective]}{override ? ' (override)' : ''}
+                                                                    </span>
+                                                                )}
+                                                                {decision && !linked && (
+                                                                    <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: DECISION_COLORS[decision] }}>
+                                                                        {DECISION_LABELS[decision]}{decisionOverride ? ' (override)' : ''}
                                                                     </span>
                                                                 )}
                                                             </span>
@@ -545,6 +649,29 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
                                                                         </optgroup>
                                                                     )}
                                                                 </select>
+                                                                {linked ? (
+                                                                    // A linked category is split by the linked budget's own
+                                                                    // categories, for the decision as for the class.
+                                                                    <select
+                                                                        value=""
+                                                                        disabled
+                                                                        style={{ ...selectStyle, fontSize: '0.85rem', opacity: 0.7 }}
+                                                                        aria-label={`Decision of ${c.name}`}
+                                                                        title={`Split by the decisions mapped on ${budgetName(linked)}'s categories`}
+                                                                    >
+                                                                        <option value="">Decision: ↔ {budgetName(linked)}</option>
+                                                                    </select>
+                                                                ) : (
+                                                                    <select
+                                                                        value={decisionOverride}
+                                                                        onChange={e => setYnabCategoryDecision(c.id, (e.target.value || null) as YnabDecisionHorizon | null)}
+                                                                        style={{ ...selectStyle, fontSize: '0.85rem' }}
+                                                                        aria-label={`Decision of ${c.name}`}
+                                                                    >
+                                                                        <option value="">Decision: inherit</option>
+                                                                        {DECISION_ORDER.map(d => <option key={d} value={d}>{DECISION_LABELS[d]}</option>)}
+                                                                    </select>
+                                                                )}
                                                                 {isPrimaryBudget && (
                                                                     <select
                                                                         value={sourceByCategory.get(c.id) ?? ''}
