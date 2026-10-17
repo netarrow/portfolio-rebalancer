@@ -19,12 +19,12 @@ const menuStructure = [
       { label: '🗒️ Expense Planning', view: 'summary' as const },
       { label: '📋 Portfolios', view: 'portfolios' as const },
       { label: '🔺 Buckets', view: 'goals' as const },
-      { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
     ],
   },
   {
     label: '⚡ Execute',
     items: [
+      { label: '🎯 Asset Allocation', view: 'globalRebalancing' as const },
       { label: '📊 PAC', view: 'pac' as const },
     ],
   },
