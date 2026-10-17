@@ -168,7 +168,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             <div style={{ maxWidth: 720, margin: '2rem auto', padding: '2rem', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-lg)', textAlign: 'center' }}>
                 <h2 style={{ marginBottom: '1rem' }}>YNAB not configured</h2>
                 <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-                    The Expense Analysis is built from your YNAB budget. Enter your YNAB API key in Settings › YNAB Integration first.
+                    Expense Planning is built from your YNAB budget. Enter your YNAB API key in Settings › YNAB Integration first.
                 </p>
                 {onNavigateToSettings && (
                     <button
@@ -187,7 +187,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings }) => {
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
                 <div>
-                    <h2 style={{ margin: 0 }}>Expense Analysis</h2>
+                    <h2 style={{ margin: 0 }}>Expense Planning</h2>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginTop: '0.5rem' }}>
                         <div className="ea-budget-tabs" role="tablist" aria-label="Budget">
                             {budgets.map(b => (

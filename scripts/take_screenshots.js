@@ -442,8 +442,8 @@ async function scrollAndShoot(page, base) {
   }
 
   // ---------- EXPENSE ANALYSIS ----------
-  console.log('Expense Analysis');
-  await navTo(page, 'Expense Analysis');
+  console.log('Expense Planning');
+  await navTo(page, 'Expense Planning');
   await sleep(1000);
   await scrollAndShoot(page, 'summary_analysis');
   // The category mapping (nature + account) and the liquidity coverage under it.
@@ -976,7 +976,7 @@ async function scrollAndShoot(page, base) {
   // The mock YNAB key is fake, so the YNAB API is answered here: the accounts
   // of the mock budgets (ids match the mock off-budget map and write guard).
   // Every other YNAB call is refused, so a screenshot run never writes anything.
-  console.log('YNAB Off-budget');
+  console.log('YNAB Writeback');
   const mockYnabAccounts = {
     'mock-budget-id': [
       { id: 'mock-acc-checking', name: 'Conto Corrente', type: 'checking', on_budget: true, balance: 12000000, cleared_balance: 12000000 },
@@ -1009,7 +1009,7 @@ async function scrollAndShoot(page, base) {
     }
     return req.respond({ status: 401, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*' }, body: '{"error":{"id":"401","name":"unauthorized","detail":"mock"}}' });
   });
-  await navTo(page, 'YNAB Off-budget');
+  await navTo(page, 'YNAB Writeback');
   await sleep(1500);
   await shot(page, 'ynab_offbudget');
 

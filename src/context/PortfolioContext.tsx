@@ -3670,7 +3670,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         // Its YNAB account still holds investments: deleting it here would leave
         // them there with no goal to answer for them.
         if (goalHeldUnits(ynabGoalQuotes, ynabGoalId) > 1e-9) {
-            return { ok: false as const, error: 'This capex still holds investments in its YNAB account. Move them with Reassign (YNAB Off-budget page) before deleting it.' };
+            return { ok: false as const, error: 'This capex still holds investments in its YNAB account. Move them with Reassign (YNAB Writeback page) before deleting it.' };
         }
         setYnabGoals(prev => prev.filter(g => g.id !== ynabGoalId));
         return { ok: true as const };
