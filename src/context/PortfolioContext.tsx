@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import { checkYnabWriteTarget } from '../utils/ynabWriteGuard';
@@ -210,6 +210,9 @@ interface PortfolioContextType {
     setYnabCategoryMacro: (categoryId: string, macro: YnabMacroCategory | null) => void;
     /** Split a category's outflow by another budget's spending mix (null = unlink). */
     setYnabCategoryLinkedBudget: (categoryId: string, budgetId: string | null) => void;
+    /** Decision horizon of a group (null = clear) or of a category (null = inherit from group). */
+    setYnabGroupDecision: (groupId: string, decision: YnabDecisionHorizon | null) => void;
+    setYnabCategoryDecision: (categoryId: string, decision: YnabDecisionHorizon | null) => void;
     ynabSpendingSyncing: boolean;
     // Free-buy promo lists (ISINs commission-free to buy in a given month)
     freeCommissionPeriods: FreeCommissionPeriod[];
@@ -3533,6 +3536,24 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
+    const setYnabGroupDecision = (groupId: string, decision: YnabDecisionHorizon | null) => {
+        setYnabMacroMappings(prev => {
+            const decisionGroups = { ...(prev.decisionGroups ?? {}) };
+            if (decision === null) delete decisionGroups[groupId];
+            else decisionGroups[groupId] = decision;
+            return { ...prev, decisionGroups };
+        });
+    };
+
+    const setYnabCategoryDecision = (categoryId: string, decision: YnabDecisionHorizon | null) => {
+        setYnabMacroMappings(prev => {
+            const decisionCategories = { ...(prev.decisionCategories ?? {}) };
+            if (decision === null) delete decisionCategories[categoryId];
+            else decisionCategories[categoryId] = decision;
+            return { ...prev, decisionCategories };
+        });
+    };
+
     const disconnectYnab = () => {
         setYnabConfigState(null);
         setYnabCategories([]);
@@ -4006,6 +4027,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabGroupMacro,
         setYnabCategoryMacro,
         setYnabCategoryLinkedBudget,
+        setYnabGroupDecision,
+        setYnabCategoryDecision,
         ynabSpendingSyncing,
         freeCommissionPeriods,
         setFreeCommissionPeriods,

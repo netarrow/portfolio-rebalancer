@@ -1,4 +1,4 @@
-import type { YnabGoal, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot } from '../types';
+import type { YnabDecisionHorizon, YnabGoal, YnabMacroCategory, YnabMacroMappings, YnabMonthSnapshot } from '../types';
 
 // Deterministic analysis of the rolling-year YNAB spending history:
 // macro-category totals, income/savings breakdown, narrative sentences
@@ -39,6 +39,21 @@ export function effectiveMacro(
     return mappings.categories[categoryId] ?? mappings.groups[groupId] ?? null;
 }
 
+export function effectiveDecision(
+    mappings: YnabMacroMappings,
+    groupId: string,
+    categoryId: string,
+): YnabDecisionHorizon | null {
+    return mappings.decisionCategories?.[categoryId] ?? mappings.decisionGroups?.[groupId] ?? null;
+}
+
+export const DECISION_ORDER: YnabDecisionHorizon[] = ['past', 'current', 'future'];
+export const DECISION_LABELS: Record<YnabDecisionHorizon, string> = {
+    past: 'Past decision',
+    current: 'Current decision',
+    future: 'Future decision',
+};
+
 export interface MacroCategoryTotal {
     categoryId: string;
     name: string;
@@ -68,7 +83,20 @@ export interface SpendingAnalysis {
     avgMonthlyIncome: number;
     totalOutflow: number;      // every category, mapped or not
     consumptionOutflow: number; // structural + variable + compressible
-    netSavings: number;        // income − total outflows
+    // Money moved into investments is saved, not spent: none of the savings
+    // figures below subtract it.
+    investmentsOutflow: number;
+    spendingOutflow: number;   // totalOutflow − investments (operating + dated + unmapped)
+    // Savings measures, from the narrowest to the broadest:
+    operatingSavings: number;  // income − consumption (operating expenses only)
+    operatingSavingsRate: number | null;
+    // income − the spending this period's income paid for: dated and unmapped
+    // spending count only for the part not drawn from previous years' savings.
+    savingsFromIncome: number;
+    savingsFromIncomeRate: number | null;
+    // Spending (investments excluded) paid from savings built before the window.
+    pastSavingsOnSpending: number;
+    netSavings: number;        // income − spending: savingsFromIncome − pastSavingsOnSpending
     savingsRate: number | null;
     macros: Record<YnabMacroCategory, MacroTotals>;
     unmappedCategories: MacroCategoryTotal[]; // with activity or budgeted, no macro
@@ -81,6 +109,9 @@ export interface SpendingAnalysis {
     pastSavingsCategories: (MacroCategoryTotal & { pastSavingsOutflow: number })[]; // drawdown desc
     // Categories handed to another budget, split by that budget's spending mix.
     linkedSplits: LinkedBudgetSplit[];
+    // Every outflow by when it was decided; linked shares follow the linked
+    // budget's categories. 'unset' = no decision mapped.
+    decisionTotals: Record<YnabDecisionHorizon | 'unset', number>;
 }
 
 export interface LinkedBudgetSplit {
@@ -156,10 +187,15 @@ export function analyzeSpending(
         return mix;
     };
     const linkedSplits: LinkedBudgetSplit[] = [];
+    const decisionTotals: Record<YnabDecisionHorizon | 'unset', number> = { past: 0, current: 0, future: 0, unset: 0 };
+    const addDecision = (groupId: string, categoryId: string, outflow: number) => {
+        decisionTotals[effectiveDecision(mappings, groupId, categoryId) ?? 'unset'] += outflow;
+    };
 
     const unmappedCategories: MacroCategoryTotal[] = [];
     const pastSavingsCategories: (MacroCategoryTotal & { pastSavingsOutflow: number })[] = [];
     let pastSavingsSpent = 0;
+    let pastSavingsInvesting = 0; // the part of pastSavingsSpent that went into investments
     for (const entry of catTotals.values()) {
         const { macro, ...cat } = entry;
         // Outflows beyond the window's assignments were paid from the balance
@@ -170,6 +206,8 @@ export function analyzeSpending(
             pastSavingsCategories.push({ ...cat, pastSavingsOutflow });
         }
         const linkedId = mappings.linkedBudgets?.[cat.categoryId];
+        const investingShare = linkedId ? (mixOf(linkedId)?.shares.investments ?? 0) : macro === 'investments' ? 1 : 0;
+        pastSavingsInvesting += pastSavingsOutflow >= 0.005 ? pastSavingsOutflow * investingShare : 0;
         if (linkedId) {
             const mix = mixOf(linkedId);
             linkedSplits.push({ categoryId: cat.categoryId, name: cat.name, groupName: cat.groupName, budgetId: linkedId, totalOutflow: cat.totalOutflow, shares: mix?.shares ?? null });
@@ -196,12 +234,14 @@ export function analyzeSpending(
                         macros[m].totalOutflow += part.totalOutflow;
                         macros[m].totalBudgeted += part.totalBudgeted;
                         macros[m].categories.push(part);
+                        addDecision(child.groupId, child.categoryId, part.totalOutflow);
                     }
                 }
                 continue;
             }
             // Linked budget not synced yet: the category stays unmapped below.
         }
+        addDecision(cat.groupId, cat.categoryId, cat.totalOutflow);
         if (macro && !linkedId) {
             macros[macro].totalOutflow += cat.totalOutflow;
             macros[macro].totalBudgeted += cat.totalBudgeted;
@@ -220,7 +260,13 @@ export function analyzeSpending(
     unmappedCategories.sort((a, b) => b.totalOutflow - a.totalOutflow);
 
     const consumptionOutflow = macros.structural.totalOutflow + macros.variable.totalOutflow + macros.compressible.totalOutflow;
-    const netSavings = totalIncome - totalOutflow;
+    const investmentsOutflow = macros.investments.totalOutflow;
+    const spendingOutflow = totalOutflow - investmentsOutflow;
+    const pastSavingsOnSpending = pastSavingsSpent - pastSavingsInvesting;
+    const operatingSavings = totalIncome - consumptionOutflow;
+    const savingsFromIncome = totalIncome - (spendingOutflow - pastSavingsOnSpending);
+    const netSavings = totalIncome - spendingOutflow;
+    const rate = (v: number) => (totalIncome > 0 ? v / totalIncome : null);
 
     return {
         monthsCount,
@@ -230,8 +276,15 @@ export function analyzeSpending(
         avgMonthlyIncome: monthsCount > 0 ? totalIncome / monthsCount : 0,
         totalOutflow,
         consumptionOutflow,
+        investmentsOutflow,
+        spendingOutflow,
+        operatingSavings,
+        operatingSavingsRate: rate(operatingSavings),
+        savingsFromIncome,
+        savingsFromIncomeRate: rate(savingsFromIncome),
+        pastSavingsOnSpending,
         netSavings,
-        savingsRate: totalIncome > 0 ? netSavings / totalIncome : null,
+        savingsRate: rate(netSavings),
         macros,
         unmappedCategories,
         unmappedOutflow: unmappedCategories.reduce((s, c) => s + c.totalOutflow, 0),
@@ -239,6 +292,7 @@ export function analyzeSpending(
         budgetFundedSpending: totalOutflow - pastSavingsSpent,
         pastSavingsCategories,
         linkedSplits,
+        decisionTotals,
     };
 }
 

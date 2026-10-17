@@ -65,6 +65,15 @@ const withRefund = analyzeSpending(personal, mappings, { family: familyWithRefun
 const compSplit = withRefund.macros.compressible.categories.filter(c => c.linkedFrom).reduce((s, c) => s + c.totalOutflow, 0);
 assertEq('linked compressible = 2000 × share of the class', compSplit, 2000 * withRefund.linkedSplits[0].shares!.compressible);
 
+// Decision horizon: own categories by their group, linked shares by the
+// linked budget's categories; anything without a decision lands in 'unset'.
+const withDecisions: YnabMacroMappings = { ...mappings, decisionGroups: { 'g-home': 'past', 'g-food': 'current', 'g-fun': 'current' } };
+const d = analyzeSpending(personal, withDecisions, { family }).decisionTotals;
+assertEq('past = rent share', d.past, 1000);
+assertEq('current = food share + own fun', d.current, 600 + 400);
+assertEq('unset = dining share (no decision on g-out)', d.unset, 400);
+assertEq('decisions add up to total outflow', d.past + d.current + d.future + d.unset, 2400);
+
 const noHistory = analyzeSpending(personal, mappings, {});
 assertTrue('unsynced budget: shares are null', noHistory.linkedSplits[0].shares === null);
 assertEq('unsynced budget: the category is unmapped', noHistory.unmappedOutflow, 2000);
