@@ -70,7 +70,7 @@ const YnabCoveragePanel: React.FC<Props> = () => {
         if (p.nature === 'investments') return 'To invest';
         return p.nature ? '' : 'Not mapped';
     };
-    const asideAccounts = accounts.filter(a => a.earmarked > 0 || a.emergencyHere > 0 || a.dueCapexCash > 0);
+    const asideAccounts = accounts.filter(a => a.earmarked > 0 || a.emergencyHere > 0 || a.dueCapexCash > 0 || a.toInvest > 0);
     const asideTotal = asideAccounts.reduce((s, a) => s + a.earmarked, 0);
 
     // ── Emergency fund ────────────────────────────────────────────────
@@ -145,7 +145,7 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                 <section className="cov-block">
                     <h4>Set aside</h4>
                     <div className="cov-big">{eur(asideTotal)}</div>
-                    <div className="cov-caption">cash on the accounts already destined elsewhere (dated expenses, money to invest). The emergency fund is counted on its own.</div>
+                    <div className="cov-caption">cash on the accounts already destined elsewhere (dated expenses). The emergency fund is counted on its own; money to invest is not held, it is on its way to the portfolios.</div>
                     {asideAccounts.length === 0 && <div className="cov-caption">Nothing set aside on the accounts.</div>}
                     {asideAccounts.map(a => {
                         const open = !!openAside[a.brokerId];
@@ -169,6 +169,12 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                                     <button type="button" className="cov-link" onClick={() => setOpenAside(prev => ({ ...prev, [a.brokerId]: !open }))}>
                                         {open ? 'Show less' : `Show all (+${hidden})`}
                                     </button>
+                                )}
+                                {a.toInvest > 0 && (
+                                    <div className="cov-aside-head cov-aside-fund" title={a.toInvestCategoryIds.map(id => `${nameOf(id)}: ${eur(positionById.get(id)?.available ?? 0)}`).join('\n')}>
+                                        <span>Ready to invest, not held ({a.toInvestCategoryIds.map(nameOf).join(', ')})</span>
+                                        <span>{eur(a.toInvest)}</span>
+                                    </div>
                                 )}
                                 {a.emergencyHere > 0 && (
                                     <div className="cov-aside-head cov-aside-fund">

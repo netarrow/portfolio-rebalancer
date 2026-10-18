@@ -139,10 +139,13 @@ export interface AccountCoverage {
     peakOut: number;
     /** Cash to keep for day-to-day: avgOut × working-capital months + (peak − avg). */
     operatingCash: number;
-    /** Cash already set aside here for other purposes: dated expenses, money to invest, unmapped. Not the fund, not capex due soon. */
+    /** Cash already set aside here for other purposes: dated expenses, unmapped. Not the fund, not capex due soon, not money to invest. */
     earmarked: number;
     /** The categories making up `earmarked` (Available > 0), largest first. */
     earmarkedCategoryIds: string[];
+    /** Cash of the "investments" categories here: ready to be invested, not held. */
+    toInvest: number;
+    toInvestCategoryIds: string[];
     /** Cash of the emergency-fund categories on this account (held apart from `earmarked`). */
     emergencyHere: number;
     /** Cash of the planned capex due soon that are paid from this account. */
@@ -491,11 +494,16 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
         const dueHere = upcoming.filter(u => u.brokerId === brokerId);
         const dueIds = new Set(dueHere.map(u => u.categoryId));
         const dueCapexCash = roundCents(dueHere.reduce((s, u) => s + u.cash, 0));
-        const earmarkedList = list
+        const asideCandidates = list
             // The emergency fund is held apart (emergencyHere) and the capex due
             // soon too (dueCapexCash): neither is set aside here.
             .filter(p => !dayToDayIds.has(p.categoryId) && !p.emergencyFund && !dueIds.has(p.categoryId) && p.available > 0)
             .sort((a, b) => b.available - a.available);
+        // Money to invest only waits on the account: it is on its way to the
+        // portfolios, so it is not cash the account has to hold.
+        const toInvestList = asideCandidates.filter(p => p.nature === 'investments');
+        const earmarkedList = asideCandidates.filter(p => p.nature !== 'investments');
+        const toInvest = roundCents(toInvestList.reduce((s, p) => s + p.available, 0));
         const earmarked = roundCents(earmarkedList.reduce((s, p) => s + p.available, 0));
         const emergencyHere = roundCents(list.filter(p => p.emergencyFund).reduce((s, p) => s + Math.max(0, p.available), 0));
         const capexToRecover = roundCents(dueHere.reduce((s, u) => s + u.toRecover, 0));
@@ -533,6 +541,8 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
             operatingCash,
             earmarked,
             earmarkedCategoryIds: earmarkedList.map(p => p.categoryId),
+            toInvest,
+            toInvestCategoryIds: toInvestList.map(p => p.categoryId),
             emergencyHere,
             dueCapexCash,
             free: roundCents(liquidity - holdNow),

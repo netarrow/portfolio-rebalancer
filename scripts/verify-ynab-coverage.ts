@@ -172,6 +172,19 @@ check('the car service is due soon: its cash is held as capex due, not set aside
 check('and which categories make it up, the fund kept apart', [cur.earmarkedCategoryIds, flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarkedCategoryIds], [[], ['house']]);
 check('the fund is held apart, counted once', [flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarked, flowReport.accounts.find(a => a.brokerId === 'savings')!.emergencyHere, flowReport.accounts.find(a => a.brokerId === 'savings')!.free], [5000, 8000, 2000]);
 check('free = liquidity − operating cash − capex-due cash', cur.free, -1800);
+
+// Money to invest waits on the account but is not held there: it is on its
+// way to the portfolios, so it is neither set aside nor part of what to hold.
+const withDca = buildCoverageReport({
+    categories: [...categories, cat('dca', 'savings', 'ETF DCA', 1500, 0)],
+    mappings: [...mappings, { categoryId: 'dca', target: { kind: 'unmapped' }, sourceBrokerId: 'savings' }],
+    macroMappings: { ...macroMappings, categories: { ...macroMappings.categories, dca: 'investments' } },
+    brokers, goals, allocations, history,
+    settings: { emergencyMonths: 6, workingCapitalMonths: 1, goalHorizonMonths: 3 },
+    today: TODAY,
+});
+const sav = withDca.accounts.find(a => a.brokerId === 'savings')!;
+check('money to invest is not set aside, nor held', [sav.earmarked, sav.toInvest, sav.toInvestCategoryIds, sav.free], [5000, 1500, ['dca'], 2000]);
 check('suggested minimum = operating cash + goals due soon', cur.recommendedMin, 4800);
 check('emergency-fund cash is told apart per account',
     flowReport.accounts.find(a => a.brokerId === 'savings')!.emergencyHere, 8000);
