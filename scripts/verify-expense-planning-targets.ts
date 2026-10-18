@@ -5,12 +5,13 @@
 // "Take the rest".
 // Run with: npx esbuild scripts/verify-expense-planning-targets.ts --bundle --format=esm | node --input-type=module
 import { buildExpensePlanningTargets, capexRouting, targetsByRow } from '../src/utils/expensePlanningTargets';
+import { buildMaturityLadder } from '../src/utils/maturityLadder';
 import { calculateAssetAllocation, withExpenseTargets, normalizeAssetAllocationSettings } from '../src/utils/assetAllocation';
 import type { EmergencyCoverage } from '../src/utils/ynabCoverage';
 import type { YnabGoal, YnabGoalAllocation } from '../src/types';
 
 const assertEq = (label: string, actual: number, expected: number, tol = 0.01) => {
-    if (Math.abs(actual - expected) > tol) throw new Error(`${label}: expected ${expected}, got ${actual}`);
+    if (!(Math.abs(actual - expected) <= tol)) throw new Error(`${label}: expected ${expected}, got ${actual}`);
     console.log(`ok ${label} = ${actual}`);
 };
 
@@ -130,5 +131,31 @@ const tr = buildExpensePlanningTargets({
     horizonMonths: 3, today: '2026-10-17',
 });
 assertEq('a due capex leaves its portfolio (to be sold)', tr.get('bonds')?.total ?? 0, 0);
+
+// With the maturity ladder: a capex further out whose portfolio holds the
+// money in bonds maturing too late adds the bond to buy; a gap from holding
+// too little is already in the allocations and is not added twice.
+const ladderCase = (held: number) => {
+    const goalsL = [goal('X', 5000, 0, { targetDate: '2029-12-01' }), goal('Y', 5000, 0, { targetDate: '2030-06-01' }), goal('Z', 5000, 0, { targetDate: '2027-04-30' })];
+    const allocL = [alloc('X', 'sec', 5000), alloc('Y', 'sec', 5000), alloc('Z', 'sec', 5000)];
+    const lad = buildMaturityLadder({ portfolios: [{ id: 'sec', name: 'Security', holdings: [{ key: 'BTP29', label: 'BTP29', value: held, kind: 'bond', maturityDate: '2029-06-01' }] }], goals: goalsL, allocations: allocL });
+    return buildExpensePlanningTargets({
+        emergency: null, emergencyPortfolioIds: [], goals: goalsL, allocations: allocL, horizonMonths: 3, today: '2026-10-17',
+        ladder: lad.goals, heldByPortfolio: { sec: held },
+    }).get('sec')!;
+};
+assertEq('10k held for 15k of capex: target 15k, nothing added', ladderCase(10000).capex, 15000);
+assertEq('15k held, 5k of it unclaimed: Z is covered by selling it, nothing to buy', ladderCase(15000).capex, 15000);
+assertEq('no bond to buy on Z', ladderCase(15000).capexItems.find(c => c.goalId === 'Z')!.toBuy, 0);
+
+// Due soon with the ladder: only what is freed in time comes back, the rest is missing.
+const dueGoals = [goal('S', 6000, 1000, { targetDate: '2026-12-01' })];
+const dueAlloc = [alloc('S', 'p', 5000)];
+const dueLad = buildMaturityLadder({ portfolios: [{ id: 'p', name: 'P', holdings: [{ key: 'B', label: 'B', value: 5000, kind: 'bond', maturityDate: '2028-01-01' }, { key: 'C', label: 'Cash', value: 2000, kind: 'cash' }] }], goals: dueGoals, allocations: dueAlloc });
+const dueItem = capexRouting({ goals: dueGoals, allocations: dueAlloc, horizonMonths: 3, today: '2026-10-17', ladder: dueLad.goals }).liquidity[0];
+assertEq('due soon: its cash', dueItem.cash, 1000);
+assertEq('due soon: 2k cash + 3k by selling the unclaimed late bond come back', dueItem.divest, 5000);
+assertEq('due soon: nothing missing', dueItem.missing ?? 0, 0);
+assertEq('due soon: 6k on the accounts', dueItem.amount, 6000);
 
 console.log('verify-expense-planning-targets: all checks passed');

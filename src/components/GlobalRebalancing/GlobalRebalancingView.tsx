@@ -83,7 +83,7 @@ const expenseBreakdown = (t: ExpensePlanningTarget | undefined): { text: string;
     const parts = [t.fund > 0 && `fund ${formatCurrency(t.fund)}`, t.capex > 0 && `capex ${formatCurrency(t.capex)}`].filter(Boolean);
     const title = [
         t.fund > 0 && `Emergency fund: ${formatCurrency(t.fund)}`,
-        ...t.capexItems.map(c => `${c.name}: ${formatCurrency(c.allocated)} allocated${c.cash > 0 ? ` + ${formatCurrency(c.cash)} cash to move here` : ''}`),
+        ...t.capexItems.map(c => `${c.name}: ${formatCurrency(c.allocated)} allocated${c.cash > 0 ? ` + ${formatCurrency(c.cash)} cash to move here` : ''}${c.toBuy > 0 ? ` + ${formatCurrency(c.toBuy)} bond to buy in time (held bonds mature too late)` : ''}`),
     ].filter(Boolean).join('\n');
     return { text: parts.join(' + '), title };
 };
@@ -527,7 +527,7 @@ const GlobalRebalancingView: React.FC = () => {
                                         {expense.capexCash > 0 && (
                                             <div className="aa-expense-source">
                                                 + capex {formatCurrency(expense.capexCash)}:{' '}
-                                                {expense.capexCashItems.map(c => `${c.name} ${formatCurrency(c.amount)} (${CAPEX_CASH_REASON[c.reason]}${c.divest > 0 ? `: ${formatCurrency(c.cash)} cash + ${formatCurrency(c.divest)} to sell` : ''})`).join(' · ')}
+                                                {expense.capexCashItems.map(c => `${c.name} ${formatCurrency(c.amount)} (${CAPEX_CASH_REASON[c.reason]}${c.divest > 0 || c.missing ? `: ${formatCurrency(c.cash)} cash + ${formatCurrency(c.divest)} back from the portfolios${c.missing ? ` + ${formatCurrency(c.missing)} not there in time` : ''}` : ''})`).join(' · ')}
                                             </div>
                                         )}
                                     </>

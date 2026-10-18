@@ -1,5 +1,6 @@
 import type { YnabGoal, YnabGoalAllocation } from '../types';
 import { monthsUntil, type EmergencyCoverage } from './ynabCoverage';
+import type { GoalLadder } from './maturityLadder';
 
 /**
  * Portfolio € targets derived from Expense Planning, for the Asset Allocation
@@ -17,8 +18,8 @@ export interface ExpensePlanningTarget {
     fund: number;
     capex: number;
     total: number;
-    /** Per capex: allocated here, and of its cash, what will move here. */
-    capexItems: { goalId: string; name: string; amount: number; allocated: number; cash: number }[];
+    /** Per capex: allocated here, of its cash what will move here, and the bond still to buy in time. */
+    capexItems: { goalId: string; name: string; amount: number; allocated: number; cash: number; toBuy: number }[];
 }
 
 export interface ExpensePlanningTargetsInput {
@@ -30,6 +31,14 @@ export interface ExpensePlanningTargetsInput {
     horizonMonths: number;
     /** 'YYYY-MM-DD'; defaults to today. */
     today?: string;
+    /**
+     * The capex maturity ladder: when given, a capex due soon brings back only
+     * what its portfolios can free in time (plus what is missing), and a capex
+     * further out adds to its portfolio the bond still to buy.
+     */
+    ladder?: Map<string, GoalLadder>;
+    /** € held per portfolio, as the ladder counted it. */
+    heldByPortfolio?: Record<string, number>;
 }
 
 export type CapexLiquidityReason = 'due-soon' | 'not-invested';
@@ -42,6 +51,8 @@ export interface CapexLiquidityItem {
     cash: number;
     /** Invested € to sell back to cash (due-soon capex only). */
     divest: number;
+    /** Not in its portfolios in time, nor in cash: to raise on the accounts (due-soon, with a ladder). */
+    missing?: number;
     reason: CapexLiquidityReason;
 }
 
@@ -65,30 +76,41 @@ const allocatedByGoal = (allocations: YnabGoalAllocation[]): Map<string, Map<str
  *    plus its cash, shared by allocated amount, since the cash will go there;
  *  - not due, nothing invested: its cash on the liquidity target.
  */
-export const capexRouting = (input: Pick<ExpensePlanningTargetsInput, 'goals' | 'allocations' | 'horizonMonths' | 'today'>) => {
+export const capexRouting = (input: Pick<ExpensePlanningTargetsInput, 'goals' | 'allocations' | 'horizonMonths' | 'today' | 'ladder'>) => {
     const today = input.today ?? new Date().toISOString().slice(0, 10);
     const allocated = allocatedByGoal(input.allocations);
     const liquidity: CapexLiquidityItem[] = [];
-    const invested: { goal: YnabGoal; byPortfolio: Map<string, { allocated: number; cash: number }> }[] = [];
+    const invested: { goal: YnabGoal; byPortfolio: Map<string, { allocated: number; cash: number; toBuy: number }> }[] = [];
     input.goals.forEach(goal => {
         if (goal.archived) return;
         const dueSoon = !!goal.targetDate && monthsUntil(today, goal.targetDate) <= input.horizonMonths;
         const byPortfolio = allocated.get(goal.id);
         const allocatedTotal = byPortfolio ? [...byPortfolio.values()].reduce((s, v) => s + v, 0) : 0;
         const cash = Math.max(0, goal.cashCoverage || 0);
+        const gl = input.ladder?.get(goal.id);
         if (dueSoon || allocatedTotal <= 0) {
-            const divest = dueSoon ? allocatedTotal : 0;
-            if (cash + divest > 0) {
+            // With the ladder, only what the portfolios free in time comes back,
+            // and what nothing covers has to be raised on the accounts too.
+            const freed = gl ? [...gl.fromMaturity, ...gl.fromCash, ...gl.fromSelling].reduce((s, x) => s + x.amount, 0) : allocatedTotal;
+            const divest = dueSoon ? freed : 0;
+            const missing = dueSoon && gl ? gl.missing : 0;
+            if (cash + divest + missing > 0) {
                 liquidity.push({
                     goalId: goal.id, name: goal.name,
-                    amount: round(cash + divest), cash: round(cash), divest: round(divest),
+                    amount: round(cash + divest + missing), cash: round(cash), divest: round(divest),
+                    ...(missing > 0 ? { missing: round(missing) } : {}),
                     reason: dueSoon ? 'due-soon' : 'not-invested',
                 });
             }
             return;
         }
-        const out = new Map<string, { allocated: number; cash: number }>();
-        byPortfolio!.forEach((amount, id) => out.set(id, { allocated: amount, cash: (amount / allocatedTotal) * cash }));
+        const out = new Map<string, { allocated: number; cash: number; toBuy: number }>();
+        byPortfolio!.forEach((amount, id) => out.set(id, {
+            allocated: amount,
+            cash: (amount / allocatedTotal) * cash,
+            // Bonds there mature too late for it: a new one is to buy in time.
+            toBuy: gl?.missingByPortfolio[id] ?? 0,
+        }));
         invested.push({ goal, byPortfolio: out });
     });
     return { liquidity, liquidityTotal: round(liquidity.reduce((s, i) => s + i.amount, 0)), invested };
@@ -123,12 +145,34 @@ export const buildExpensePlanningTargets = (input: ExpensePlanningTargetsInput):
             .forEach((v, id) => { entry(id).fund += v; });
     }
 
-    // Capex not due: allocations and the cash bound for them, on the portfolio.
-    capexRouting(input).invested.forEach(({ goal, byPortfolio }) => {
-        byPortfolio.forEach(({ allocated, cash }, id) => {
+    // Capex not due: allocations and the cash bound for them, on the portfolio,
+    // plus the bond to buy in time where what is held matures too late. Only
+    // the part of the gap the portfolio does hold (in the wrong maturity) is
+    // added: a gap from holding too little is already in the allocations.
+    const routing = capexRouting(input);
+    const scale = new Map<string, number>();
+    if (input.ladder && input.heldByPortfolio) {
+        const dueIds = new Set(routing.liquidity.filter(i => i.reason === 'due-soon').map(i => i.goalId));
+        const freedHere = (pid: string) => [...dueIds].reduce((s, gid) => {
+            const gl = input.ladder!.get(gid);
+            return s + (gl ? [...gl.fromMaturity, ...gl.fromCash, ...gl.fromSelling].filter(x => x.portfolioId === pid).reduce((a, x) => a + x.amount, 0) : 0);
+        }, 0);
+        const ids = new Set(routing.invested.flatMap(x => [...x.byPortfolio.keys()]));
+        ids.forEach(pid => {
+            const items = routing.invested.map(x => x.byPortfolio.get(pid)).filter((x): x is NonNullable<typeof x> => !!x);
+            const demand = items.reduce((s, x) => s + x.allocated, 0);
+            const late = items.reduce((s, x) => s + x.toBuy, 0);
+            const held = Math.max(0, (input.heldByPortfolio![pid] ?? 0) - freedHere(pid));
+            const extra = Math.max(0, late - Math.max(0, demand - held));
+            scale.set(pid, late > 0 ? extra / late : 0);
+        });
+    }
+    routing.invested.forEach(({ goal, byPortfolio }) => {
+        byPortfolio.forEach(({ allocated, cash, toBuy: late }, id) => {
+            const toBuy = late * (scale.get(id) ?? 0);
             const t = entry(id);
-            t.capex += allocated + cash;
-            t.capexItems.push({ goalId: goal.id, name: goal.name, amount: round(allocated + cash), allocated: round(allocated), cash: round(cash) });
+            t.capex += allocated + cash + toBuy;
+            t.capexItems.push({ goalId: goal.id, name: goal.name, amount: round(allocated + cash + toBuy), allocated: round(allocated), cash: round(cash), toBuy: round(toBuy) });
         });
     });
 

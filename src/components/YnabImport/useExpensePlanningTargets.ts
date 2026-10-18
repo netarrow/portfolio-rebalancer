@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { buildExpensePlanningTargets, capexRouting, type CapexLiquidityItem, type ExpensePlanningTarget } from '../../utils/expensePlanningTargets';
 import { useYnabCoverage } from './useYnabCoverage';
+import { useMaturityLadder } from '../YnabGoals/useMaturityLadder';
 
 export interface ExpensePlanningTargets {
     /** € per portfolio: emergency fund from the opex + capex not due, allocated there with their cash. */
@@ -32,6 +33,7 @@ export interface ExpensePlanningTargets {
 export const useExpensePlanningTargets = (): ExpensePlanningTargets => {
     const { ynabConfig, ynabGoals, ynabGoalAllocations } = usePortfolio();
     const { report, settings } = useYnabCoverage();
+    const { ladder } = useMaturityLadder();
     const fundKey = (settings.emergencyPortfolioIds ?? []).join(',');
     const budgetId = ynabConfig?.budgetId;
     const horizonMonths = settings.goalHorizonMonths;
@@ -45,7 +47,8 @@ export const useExpensePlanningTargets = (): ExpensePlanningTargets => {
             };
         }
         const goals = ynabGoals.filter(g => g.ynabBudgetId === budgetId);
-        const routing = { goals, allocations: ynabGoalAllocations, horizonMonths };
+        const heldByPortfolio = Object.fromEntries(ladder.portfolios.map(p => [p.portfolioId, p.held]));
+        const routing = { goals, allocations: ynabGoalAllocations, horizonMonths, ladder: ladder.goals, heldByPortfolio };
         const cash = capexRouting(routing);
         const byAccount = report.accounts
             .filter(a => a.operatingCash > 0)
@@ -70,5 +73,5 @@ export const useExpensePlanningTargets = (): ExpensePlanningTargets => {
                 .map(a => ({ brokerId: a.brokerId, brokerName: a.brokerName, amount: a.emergencyHere })),
             fundPortfolioIds,
         };
-    }, [budgetId, report.emergency, report.accounts, fundKey, ynabGoals, ynabGoalAllocations, horizonMonths]);
+    }, [budgetId, report.emergency, report.accounts, fundKey, ynabGoals, ynabGoalAllocations, horizonMonths, ladder]);
 };
