@@ -6,11 +6,14 @@ import { BOND_LOT_NOMINAL } from '../../utils/amountTargets';
 import { monthsUntil } from '../../utils/ynabCoverage';
 import { rankCapexBonds } from '../../utils/bondRanking';
 import type { BondProposal, BondUniverse, YnabGoal } from '../../types';
+import type { GoalLadder } from '../../utils/maturityLadder';
 
 interface Props {
     goal: YnabGoal;
-    /** What the capex still misses: target − cash − invested. */
+    /** What the capex still misses: from the maturity ladder when given, else target − cash − invested. */
     gap: number;
+    /** The capex' maturity ladder: the gap already leaves out bonds planned for it. */
+    ladder?: GoalLadder;
     currencyIso: string;
     onClose: () => void;
 }
@@ -25,7 +28,7 @@ const eur = (v: number, iso: string) =>
  * Asset Allocation) count it from now on. The bond is bought later with
  * "Concretize", as any virtual bond.
  */
-const CapexBondModal: React.FC<Props> = ({ goal, gap, currencyIso, onClose }) => {
+const CapexBondModal: React.FC<Props> = ({ goal, gap, ladder, currencyIso, onClose }) => {
     const { portfolios, ynabGoalAllocations, virtualBonds, addVirtualBond, addAllocation } = usePortfolio();
     // Bonds already planned for this capex and not bought yet: their amount is
     // still part of the gap, so it is not proposed a second time.
@@ -34,7 +37,8 @@ const CapexBondModal: React.FC<Props> = ({ goal, gap, currencyIso, onClose }) =>
         .map(a => ({ a, vb: virtualBonds.find(b => `_VBOND_${b.id}` === a.ticker) }))
         .filter(x => x.vb && !x.vb.resolvedIsin);
     const plannedTotal = planned.reduce((s, x) => s + x.a.amount, 0);
-    const toPlan = Math.max(0, gap - plannedTotal);
+    // The ladder already counts planned bonds as planned, not missing.
+    const toPlan = ladder ? Math.max(0, gap) : Math.max(0, gap - plannedTotal);
     const [universe, setUniverse] = useState<BondUniverse>('IT');
     const [minMonths, setMinMonths] = useState(1);
     const [maxMonths, setMaxMonths] = useState(6);
@@ -113,9 +117,20 @@ const CapexBondModal: React.FC<Props> = ({ goal, gap, currencyIso, onClose }) =>
                         <div className="cbm-facts">
                             <div><span>Due</span><strong>{date.slice(0, 10)}</strong></div>
                             <div><span>Target</span><strong>{goal.targetAmount != null ? eur(goal.targetAmount, currencyIso) : '—'}</strong></div>
-                            <div><span>Still missing</span><strong>{eur(gap, currencyIso)}</strong></div>
-                            {plannedTotal > 0 && <div><span>Left to plan</span><strong>{eur(toPlan, currencyIso)}</strong></div>}
+                            <div><span>{ladder ? 'Not there in time' : 'Still missing'}</span><strong>{eur(gap, currencyIso)}</strong></div>
+                            {!ladder && plannedTotal > 0 && <div><span>Left to plan</span><strong>{eur(toPlan, currencyIso)}</strong></div>}
                         </div>
+                        {ladder && (ladder.assigned > 0 || ladder.need > 0) && (
+                            <ul className="cbm-ladder">
+                                {ladder.fromMaturity.map((x, i) => <li key={`m${i}`} className="ok">✓ {eur(x.amount, currencyIso)} {x.label}, matures {x.maturityDate}</li>)}
+                                {ladder.fromCash.map((x, i) => <li key={`c${i}`} className="ok">✓ {eur(x.amount, currencyIso)} cash in the portfolio</li>)}
+                                {ladder.fromSelling.map((x, i) => <li key={`s${i}`} className="warn">⚠ {eur(x.amount, currencyIso)} only by selling {x.label}{x.maturityDate ? ` (matures ${x.maturityDate})` : ''}</li>)}
+                                {ladder.planned.map((x, i) => <li key={`p${i}`} className="plan">◐ {eur(x.amount, currencyIso)} planned on {x.label}, to buy</li>)}
+                                {ladder.locked.map((x, i) => <li key={`l${i}`} className="bad">✗ {x.label} ({eur(x.amount, currencyIso)}) matures {x.maturityDate}: too late{x.usedBy.length ? `, kept for ${x.usedBy.join(', ')}` : ''}</li>)}
+                                {ladder.unassigned > 0.5 && <li className="bad">✗ {eur(ladder.unassigned, currencyIso)} not allocated to any portfolio</li>}
+                                {gap > 0.5 && <li className="bad"><strong>Find a bond for the {eur(gap, currencyIso)} not there in time.</strong></li>}
+                            </ul>
+                        )}
                         {planned.length > 0 && (
                             <div className="cbm-muted">
                                 Already planned, not bought yet:{' '}
@@ -216,6 +231,8 @@ const CapexBondModal: React.FC<Props> = ({ goal, gap, currencyIso, onClose }) =>
                     .cbm-list .num { text-align: right; }
                     .cbm-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
                     .cbm-star { color: #f59e0b; }
+                    .cbm-ladder { margin: 0; padding-left: 1rem; font-size: 0.82rem; display: flex; flex-direction: column; gap: 0.15rem; }
+                    .cbm-ladder .ok { color: #10b981; } .cbm-ladder .warn { color: #f59e0b; } .cbm-ladder .plan { color: #8b5cf6; } .cbm-ladder .bad { color: #ef4444; }
                     .cbm-list tr.fit-2 td { opacity: 0.6; }
                     .cbm-hint { font-size: 0.8rem; color: var(--text-secondary); margin: 0; }
                 `}</style>
