@@ -6,7 +6,7 @@ import { analyzeSpending } from '../src/utils/spendingAnalysis';
 import type { YnabMacroMappings, YnabMonthSnapshot } from '../src/types';
 
 const assertEq = (label: string, actual: number, expected: number, tol = 1e-6) => {
-    if (Math.abs(actual - expected) > tol) throw new Error(`${label}: expected ${expected}, got ${actual}`);
+    if (!(Math.abs(actual - expected) <= tol)) throw new Error(`${label}: expected ${expected}, got ${actual}`);
     console.log(`ok ${label} = ${actual}`);
 };
 
