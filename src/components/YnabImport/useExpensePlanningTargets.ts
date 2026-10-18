@@ -11,16 +11,13 @@ export interface ExpensePlanningTargets {
     /** Of which, per account. */
     operatingCashByAccount: { brokerName: string; amount: number }[];
     /**
-     * Set aside on the accounts (Expense Planning's "Set aside": dated expenses,
-     * money to invest), without the emergency fund categories, the capex due
-     * soon (counted below) and the capex whose cash goes to their portfolio.
+     * Capex held as cash: due soon (cash + investments to sell), or with
+     * nothing invested (their cash). Other money a category keeps on an account
+     * is not held there by force: it is free for the portfolios.
      */
-    setAside: number;
-    setAsideByAccount: { brokerName: string; amount: number }[];
-    /** Capex held as cash: due soon (cash + investments to sell), or not invested and not already set aside. */
     capexCash: number;
     capexCashItems: CapexLiquidityItem[];
-    /** The liquidity target: operating cash + set aside + capex cash; null without YNAB. */
+    /** The liquidity target: operating cash + capex cash; null without YNAB. */
     liquidity: number | null;
     /**
      * Cash of the categories mapped to the emergency fund (one by one, by group,
@@ -43,7 +40,7 @@ export const useExpensePlanningTargets = (): ExpensePlanningTargets => {
         if (!budgetId) {
             return {
                 portfolios: new Map<string, ExpensePlanningTarget>(), operatingCash: null, operatingCashByAccount: [],
-                setAside: 0, setAsideByAccount: [], capexCash: 0, capexCashItems: [], liquidity: null,
+                capexCash: 0, capexCashItems: [], liquidity: null,
                 fundCashByAccount: [], fundPortfolioIds: [],
             };
         }
@@ -57,23 +54,6 @@ export const useExpensePlanningTargets = (): ExpensePlanningTargets => {
         const operatingCash = round(byAccount.reduce((s, a) => s + a.amount, 0));
         const fundPortfolioIds = fundKey.split(',').filter(Boolean);
 
-        // Set aside, less the capex whose cash is bound for their portfolio.
-        const toPortfolio = new Set(cash.invested.map(x => x.goal.id));
-        const available = new Map(report.positions.map(p => [p.categoryId, Math.max(0, p.available)]));
-        const earmarkedIds = new Set<string>();
-        const setAsideByAccount = report.accounts
-            .map(a => {
-                a.earmarkedCategoryIds.forEach(id => earmarkedIds.add(id));
-                const amount = a.earmarkedCategoryIds
-                    .filter(id => !toPortfolio.has(id))
-                    .reduce((s, id) => s + (available.get(id) ?? 0), 0);
-                return { brokerName: a.brokerName, amount: round(amount) };
-            })
-            .filter(a => a.amount > 0);
-        const setAside = round(setAsideByAccount.reduce((s, a) => s + a.amount, 0));
-        // A capex with nothing invested whose cash is already set aside is not added twice.
-        const capexItems = cash.liquidity.filter(i => !(i.reason === 'not-invested' && earmarkedIds.has(i.goalId)));
-        const capexCash = round(capexItems.reduce((s, i) => s + i.amount, 0));
         return {
             portfolios: buildExpensePlanningTargets({
                 emergency: report.emergency,
@@ -82,15 +62,13 @@ export const useExpensePlanningTargets = (): ExpensePlanningTargets => {
             }),
             operatingCash,
             operatingCashByAccount: byAccount,
-            setAside,
-            setAsideByAccount,
-            capexCash,
-            capexCashItems: capexItems,
-            liquidity: round(operatingCash + setAside + capexCash),
+            capexCash: cash.liquidityTotal,
+            capexCashItems: cash.liquidity,
+            liquidity: round(operatingCash + cash.liquidityTotal),
             fundCashByAccount: report.accounts
                 .filter(a => a.emergencyHere > 0)
                 .map(a => ({ brokerId: a.brokerId, brokerName: a.brokerName, amount: a.emergencyHere })),
             fundPortfolioIds,
         };
-    }, [budgetId, report.emergency, report.accounts, report.positions, fundKey, ynabGoals, ynabGoalAllocations, horizonMonths]);
+    }, [budgetId, report.emergency, report.accounts, fundKey, ynabGoals, ynabGoalAllocations, horizonMonths]);
 };

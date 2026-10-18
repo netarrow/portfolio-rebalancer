@@ -509,7 +509,7 @@ const GlobalRebalancingView: React.FC = () => {
                         </div>
                         {liquidityTarget.mode === 'expense' ? (
                             <div className="aa-field">
-                                <label>Operating cash + set aside + capex due (EUR)</label>
+                                <label>Operating cash + capex held as cash (EUR)</label>
                                 <div className="aa-readout">
                                     {expense.liquidity === null ? '—' : formatCurrency(expense.liquidity)}
                                 </div>
@@ -524,11 +524,6 @@ const GlobalRebalancingView: React.FC = () => {
                                             operating {formatCurrency(expense.operatingCash ?? 0)}
                                             {expense.operatingCashByAccount.length > 0 && <> ({expense.operatingCashByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join(' · ')})</>}
                                         </div>
-                                        {expense.setAside > 0 && (
-                                            <div className="aa-expense-source">
-                                                + set aside {formatCurrency(expense.setAside)} ({expense.setAsideByAccount.map(a => `${formatCurrency(a.amount)} on ${a.brokerName}`).join(' · ')}), emergency fund excluded
-                                            </div>
-                                        )}
                                         {expense.capexCash > 0 && (
                                             <div className="aa-expense-source">
                                                 + capex {formatCurrency(expense.capexCash)}:{' '}
