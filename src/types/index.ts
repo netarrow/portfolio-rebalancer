@@ -284,6 +284,8 @@ export interface AssetDefinition {
   source?: PriceSource;
   assetClass?: AssetClass;
   assetSubClass?: AssetSubClass;
+  /** A bond's maturity ('YYYY-MM-DD'): when its money is back, for the capex maturity ladder. */
+  maturityDate?: string;
 }
 
 export type BondUniverse = 'IT' | 'EU';

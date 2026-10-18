@@ -11,7 +11,7 @@ interface Props {
     onConfirm: (fill: {
         isin: string; quantity: number; price: number;
         brokerId?: string; portfolioId?: string;
-        source?: 'ETF' | 'MOT'; label?: string;
+        source?: 'ETF' | 'MOT'; label?: string; maturityDate?: string;
     }) => void;
     onClose: () => void;
     /** € the bond should hold once bought (amount-mode portfolios). */
@@ -80,6 +80,7 @@ const ConcretizeModal: React.FC<Props> = ({ bond, brokers, portfolios, onConfirm
             portfolioId: portfolioId || undefined,
             source,
             label: effectiveLabel || undefined,
+            maturityDate: selectedProposal?.maturityDate?.slice(0, 10),
         });
     };
 

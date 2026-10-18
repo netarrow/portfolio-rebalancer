@@ -1012,6 +1012,26 @@ app.post('/api/bond-proposals', priceLimiter, async (req, res) => {
     }
 });
 
+// --- BOND MATURITIES ---
+// Maturity dates of held bonds by ISIN, read off the same monitors as the
+// proposals (Italian and European govies), for the capex maturity ladder.
+app.post('/api/bond-maturities', priceLimiter, async (req, res) => {
+    const isins = Array.isArray(req.body?.isins) ? req.body.isins.filter(i => typeof i === 'string' && /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(i)).slice(0, 200) : [];
+    if (isins.length === 0) return res.json({ maturities: {} });
+    try {
+        const wanted = new Set(isins);
+        const maturities = {};
+        for (const universe of ['IT', 'EU']) {
+            const bonds = await scrapeBondMonitor(universe);
+            bonds.forEach(b => { if (wanted.has(b.isin) && b.maturityDate && !maturities[b.isin]) maturities[b.isin] = b.maturityDate; });
+        }
+        res.json({ maturities });
+    } catch (err) {
+        console.error('[BondMaturities] Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch bond maturities', maturities: {} });
+    }
+});
+
 // --- BTP ITALIA INDEXATION COEFFICIENT ---
 app.get('/api/btp-italia/:isin/coefficient', priceLimiter, async (req, res) => {
     const { isin } = req.params;

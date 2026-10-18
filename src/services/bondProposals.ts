@@ -22,3 +22,14 @@ export const fetchBondProposals = async (request: BondProposalRequest): Promise<
         return [];
     }
 };
+
+/** Maturity dates of bonds by ISIN, from the bond monitors; unknown ISINs are left out. */
+export const fetchBondMaturities = async (isins: string[]): Promise<Record<string, string>> => {
+    try {
+        const response = await axios.post<{ maturities: Record<string, string> }>('/api/bond-maturities', { isins });
+        return response.data.maturities || {};
+    } catch (error) {
+        console.error('Error fetching bond maturities:', error);
+        return {};
+    }
+};

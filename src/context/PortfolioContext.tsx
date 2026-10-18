@@ -240,7 +240,9 @@ interface PortfolioContextType {
     updateVirtualBond: (bond: VirtualBond) => void;
     deleteVirtualBond: (id: string) => void;
     parkVirtualBond: (id: string, amount: number, brokerId?: string, portfolioId?: string) => void;
-    concretizeVirtualBond: (id: string, fill: { isin: string; quantity: number; price: number; brokerId?: string; portfolioId?: string; source?: 'ETF' | 'MOT'; label?: string }) => void;
+    concretizeVirtualBond: (id: string, fill: { isin: string; quantity: number; price: number; brokerId?: string; portfolioId?: string; source?: 'ETF' | 'MOT'; label?: string; maturityDate?: string }) => void;
+    /** Store bonds' maturity dates (ticker → 'YYYY-MM-DD'), creating the asset row when missing. */
+    setAssetMaturities: (dates: Record<string, string>) => void;
     // PAC (piano di accumulo) auto-tracking
     pacPlans: PacPlan[];
     pacExecutions: PacExecution[];
@@ -3827,10 +3829,26 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
+    const setAssetMaturities = (dates: Record<string, string>) => {
+        const entries = Object.entries(dates).filter(([, d]) => /^\d{4}-\d{2}-\d{2}$/.test(d));
+        if (entries.length === 0) return;
+        setAssetSettings(prev => {
+            const byTicker = new Map(entries.map(([t, d]) => [t.toUpperCase(), d]));
+            const next = prev.map(t => {
+                const d = byTicker.get(t.ticker.toUpperCase());
+                if (!d) return t;
+                byTicker.delete(t.ticker.toUpperCase());
+                return t.maturityDate === d ? t : { ...t, maturityDate: d };
+            });
+            byTicker.forEach((d, ticker) => next.push({ ticker, source: 'MOT', assetClass: 'Bond', maturityDate: d }));
+            return next;
+        });
+    };
+
     const concretizeVirtualBond = (id: string, fill: {
         isin: string; quantity: number; price: number;
         brokerId?: string; portfolioId?: string;
-        source?: 'ETF' | 'MOT'; label?: string;
+        source?: 'ETF' | 'MOT'; label?: string; maturityDate?: string;
     }) => {
         const vbTicker = getVirtualBondTicker(id);
         const vb = virtualBonds.find(b => b.id === id);
@@ -3848,6 +3866,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             'Bond',
             subClass
         );
+
+        if (fill.maturityDate) setAssetMaturities({ [fill.isin.toUpperCase()]: fill.maturityDate });
 
         addTransaction({
             id: crypto.randomUUID(),
@@ -4038,6 +4058,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         deleteVirtualBond,
         parkVirtualBond,
         concretizeVirtualBond,
+        setAssetMaturities,
         pacPlans,
         pacExecutions,
         addPacPlan,
