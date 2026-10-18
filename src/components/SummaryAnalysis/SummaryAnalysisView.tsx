@@ -168,6 +168,17 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
             Swal.fire({ title: 'Sync error', text: result.error, icon: 'error' });
             return;
         }
+        // The budgets its categories are linked to are read for the split and
+        // the decisions: their history is local to this browser, so sync them too.
+        const linked = [...new Set(Object.values(ynabMacroMappings.linkedBudgets ?? {}))]
+            .filter(id => id !== ynabSummaryBudgetId && budgets.some(b => b.id === id));
+        for (const id of linked) {
+            const r = await syncYnabSpending(id);
+            if (!r.ok) {
+                Swal.fire({ title: 'Sync error', text: `${budgetName(id)}: ${r.error}`, icon: 'error' });
+                return;
+            }
+        }
         if (isPrimaryBudget) {
             const budget = await syncYnabBudget();
             if (!budget.ok) Swal.fire({ title: 'Sync error', text: budget.error, icon: 'error' });
@@ -579,6 +590,33 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                         </table>
                                     </div>
                                 )}
+                                {analysis.decisionUnset.length > 0 && (
+                                    <details className="ea-unset">
+                                        <summary>
+                                            Not set: {analysis.decisionUnset.length} categor{analysis.decisionUnset.length === 1 ? 'y' : 'ies'}
+                                            {analysis.decisionUnset.some(u => u.linkedNotSynced)
+                                                ? <> (a linked budget is not synced in this browser)</>
+                                                : analysis.decisionUnset.some(u => u.budgetId) && <> (some in a linked budget: set them on its tab)</>}
+                                        </summary>
+                                        <table className="ea-table">
+                                            <thead><tr><th>Category</th><th>Group</th><th>Budget</th><th className="num">Total</th></tr></thead>
+                                            <tbody>
+                                                {analysis.decisionUnset.map(u => (
+                                                    <tr key={`${u.budgetId ?? ''}|${u.categoryId}`}>
+                                                        <td>{u.name}</td>
+                                                        <td>{u.groupName}</td>
+                                                        <td>
+                                                            {u.linkedNotSynced
+                                                                ? <span className="ea-warn">linked to {budgetName(u.budgetId!)}, not synced in this browser: open its tab and Sync</span>
+                                                                : u.budgetId ? <>↔ {budgetName(u.budgetId)}</> : 'this budget'}
+                                                        </td>
+                                                        <td className="num">{formatCurrency(u.outflow, currencyIso)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </details>
+                                )}
                             </div>
                         );
                     })()}
@@ -744,7 +782,10 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                 .ea-budget-tabs button { border: 0; background: transparent; color: var(--text-secondary); font-weight: 600; font-size: 0.85rem;
                     padding: 0.4rem 0.8rem; border-radius: var(--radius-sm); cursor: pointer; }
                 .ea-budget-tabs button.active { background: var(--color-primary); color: white; }
-                .ea-month-select { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);
+.ea-unset { margin-top: 1rem; font-size: 0.85rem; }
+                .ea-unset summary { cursor: pointer; color: var(--text-secondary); font-weight: 600; }
+                .ea-unset table { margin-top: 0.5rem; }
+                                .ea-month-select { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);
                     border-radius: var(--radius-md); padding: 0.4rem 0.6rem; font-weight: 600; font-size: 0.85rem; cursor: pointer; }
                 .ea-month-select.active { background: var(--color-primary); color: white; border-color: var(--color-primary); }
             `}</style>

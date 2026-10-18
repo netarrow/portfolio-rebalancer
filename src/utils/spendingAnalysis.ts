@@ -112,6 +112,15 @@ export interface SpendingAnalysis {
     // Every outflow by when it was decided; linked shares follow the linked
     // budget's categories. 'unset' = no decision mapped.
     decisionTotals: Record<YnabDecisionHorizon | 'unset', number>;
+    /**
+     * What makes up 'unset', by category, largest first. `budgetId` is set for
+     * a linked budget's category: its decision is mapped on that budget's tab.
+     */
+    decisionUnset: {
+        categoryId: string; name: string; groupId: string; groupName: string; outflow: number; budgetId?: string;
+        /** A category linked to `budgetId`, whose history is not synced here: its decisions cannot be read. */
+        linkedNotSynced?: boolean;
+    }[];
 }
 
 export interface LinkedBudgetSplit {
@@ -188,8 +197,20 @@ export function analyzeSpending(
     };
     const linkedSplits: LinkedBudgetSplit[] = [];
     const decisionTotals: Record<YnabDecisionHorizon | 'unset', number> = { past: 0, current: 0, future: 0, unset: 0 };
-    const addDecision = (groupId: string, categoryId: string, outflow: number) => {
-        decisionTotals[effectiveDecision(mappings, groupId, categoryId) ?? 'unset'] += outflow;
+    const unsetByCategory = new Map<string, SpendingAnalysis['decisionUnset'][number]>();
+    const addDecision = (
+        cat: { categoryId: string; name: string; groupId: string; groupName: string },
+        outflow: number,
+        budgetId?: string,
+        linkedNotSynced?: boolean,
+    ) => {
+        const decision = effectiveDecision(mappings, cat.groupId, cat.categoryId);
+        decisionTotals[decision ?? 'unset'] += outflow;
+        if (decision) return;
+        const key = `${budgetId ?? ''}|${cat.categoryId}`;
+        const e = unsetByCategory.get(key) ?? { categoryId: cat.categoryId, name: cat.name, groupId: cat.groupId, groupName: cat.groupName, outflow: 0, budgetId, linkedNotSynced };
+        e.outflow += outflow;
+        unsetByCategory.set(key, e);
     };
 
     const unmappedCategories: MacroCategoryTotal[] = [];
@@ -234,14 +255,16 @@ export function analyzeSpending(
                         macros[m].totalOutflow += part.totalOutflow;
                         macros[m].totalBudgeted += part.totalBudgeted;
                         macros[m].categories.push(part);
-                        addDecision(child.groupId, child.categoryId, part.totalOutflow);
+                        addDecision(child, part.totalOutflow, linkedId);
                     }
                 }
                 continue;
             }
-            // Linked budget not synced yet: the category stays unmapped below.
+            // Linked budget not synced yet: the category stays unmapped below,
+            // and its decision unknown unless its own group carries one.
         }
-        addDecision(cat.groupId, cat.categoryId, cat.totalOutflow);
+        if (linkedId) addDecision(cat, cat.totalOutflow, linkedId, true);
+        else addDecision(cat, cat.totalOutflow);
         if (macro && !linkedId) {
             macros[macro].totalOutflow += cat.totalOutflow;
             macros[macro].totalBudgeted += cat.totalBudgeted;
@@ -293,6 +316,7 @@ export function analyzeSpending(
         pastSavingsCategories,
         linkedSplits,
         decisionTotals,
+        decisionUnset: [...unsetByCategory.values()].filter(e => Math.abs(e.outflow) >= 0.5).sort((a, b) => b.outflow - a.outflow),
     };
 }
 

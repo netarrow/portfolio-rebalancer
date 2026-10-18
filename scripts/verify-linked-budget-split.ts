@@ -73,6 +73,15 @@ assertEq('past = rent share', d.past, 1000);
 assertEq('current = food share + own fun', d.current, 600 + 400);
 assertEq('unset = dining share (no decision on g-out)', d.unset, 400);
 assertEq('decisions add up to total outflow', d.past + d.current + d.future + d.unset, 2400);
+const unset = analyzeSpending(personal, withDecisions, { family }).decisionUnset;
+assertEq('one category without a decision', unset.length, 1);
+assertTrue('it is dining, from the family budget', unset[0].categoryId === 'dining' && unset[0].budgetId === 'family');
+assertEq('its share', unset[0].outflow, 400);
+// In a browser where the linked budget is not synced, the linked category's
+// decision cannot be read: listed as such, not as a missing mapping.
+const notSynced = analyzeSpending(personal, withDecisions, {}).decisionUnset;
+const fs = notSynced.find(u => u.categoryId === 'family-share');
+assertTrue('family-share flagged as linked, not synced', !!fs && fs.linkedNotSynced === true && fs.budgetId === 'family');
 
 const noHistory = analyzeSpending(personal, mappings, {});
 assertTrue('unsynced budget: shares are null', noHistory.linkedSplits[0].shares === null);
