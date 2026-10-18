@@ -4,6 +4,7 @@ import type { YnabCategoryGroupSummary, YnabGoalAllocation } from '../../types';
 import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import GoalSetupModal from './GoalSetupModal';
+import CapexBondModal from './CapexBondModal';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import { buildGoalRow, formatCurrency, formatCurrencyExact } from './goalRows';
 
@@ -79,6 +80,7 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
     };
 
     const [setupGoalId, setSetupGoalId] = useState<string | null>(null);
+    const [bondGoalId, setBondGoalId] = useState<string | null>(null);
     const capexSync = useCapexSync();
     const groupPicker = ynabConfig && (
         <select
@@ -303,6 +305,17 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                             </div>
 
                             <div className="ygl-cell ygl-action">
+                                {!g.archived && g.targetDate && r.gap > 0 && (
+                                    <button
+                                        type="button"
+                                        className="ygl-setup ygl-bond"
+                                        onClick={e => { e.stopPropagation(); setBondGoalId(g.id); }}
+                                        aria-label={`Find a bond for ${g.name}`}
+                                        title={`Find a bond maturing before ${g.targetDate} for the ${formatCurrency(r.gap, currencyIso)} still missing`}
+                                    >
+                                        <span aria-hidden>🔎</span><span className="ygl-setup-text">Bond</span>
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     className="ygl-setup"
@@ -317,6 +330,11 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                     );
                 })}
             </div>
+
+            {bondGoalId && (() => {
+                const br = rows.find(x => x.goal.id === bondGoalId);
+                return br ? <CapexBondModal goal={br.goal} gap={br.gap} currencyIso={currencyIso} onClose={() => setBondGoalId(null)} /> : null;
+            })()}
 
             {setupRow && (
                 <GoalSetupModal
@@ -393,7 +411,7 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                     display: grid;
                     grid-template-columns:
                         minmax(180px, 2.2fr) minmax(100px, 1fr) minmax(100px, 1fr)
-                        minmax(160px, 2fr) minmax(150px, 1.6fr) 6rem;
+                        minmax(160px, 2fr) minmax(150px, 1.6fr) 11rem;
                     align-items: center;
                     gap: var(--space-4);
                     padding: var(--space-3) var(--space-4);
@@ -443,7 +461,7 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
 
                 .ygl-where { display: flex; flex-wrap: wrap; gap: 0.3rem; padding-left: var(--space-3); }
                 .ygl-head > span:nth-child(4) { padding-left: var(--space-3); }
-                .ygl-action { display: flex; justify-content: flex-end; }
+                .ygl-action { display: flex; justify-content: flex-end; gap: 0.4rem; flex-wrap: wrap; }
                 .ygl-chip {
                     font-size: 0.74rem;
                     background: var(--bg-surface);
@@ -524,7 +542,7 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                    squeezing every column. */
                 @media (max-width: 1100px) and (min-width: 721px) {
                     .ygl-head, .ygl-row {
-                        grid-template-columns: minmax(180px, 2fr) minmax(95px, 1fr) minmax(95px, 1fr) minmax(140px, 1.5fr) 6rem;
+                        grid-template-columns: minmax(180px, 2fr) minmax(95px, 1fr) minmax(95px, 1fr) minmax(140px, 1.5fr) 11rem;
                     }
                     .ygl-head > span:nth-child(4) { display: none; }
                     .ygl-where { grid-column: 1 / 2; grid-row: 2; padding-left: 0; }

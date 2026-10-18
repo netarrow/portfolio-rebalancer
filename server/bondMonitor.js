@@ -70,6 +70,8 @@ async function scrapeBondMonitor(universe) {
         const iCur = colIndex(headers, 'divisa', 'valuta');
         const iMat = colIndex(headers, 'scadenza');
         const iYield = colIndex(headers, 'yield', 'rendimento');
+        const iPrice = colIndex(headers, 'prezzo');
+        const iCalc = colIndex(headers, 'tipocalcolo', 'tipo calcolo');
 
         $(table).find('tbody tr, tr').each((__, tr) => {
             const cells = $(tr).find('td').map((___, td) => $(td).text().trim()).get();
@@ -91,15 +93,32 @@ async function scrapeBondMonitor(universe) {
                 : (cells.find(c => /^[A-Z]{3}$/.test(c)) || 'EUR');
 
             const yieldVal = iYield >= 0 ? parseItNumber(cells[iYield]) : null;
+            const price = iPrice >= 0 ? parseItNumber(cells[iPrice]) : null;
+            // "Fisso" = fixed, redeemed at 100; "Minimo" = inflation-linked,
+            // priced at its floor (no fixed 100 redemption).
+            const calcType = iCalc >= 0 ? (cells[iCalc] || null) : null;
+            const { coupon, zeroCoupon } = parseCoupon(name);
 
             seen.add(isin);
-            results.push({ isin, name, maturityDate, yield: yieldVal, currency, universe });
+            results.push({ isin, name, maturityDate, yield: yieldVal, currency, universe, price, coupon, zeroCoupon, calcType });
         });
     });
 
     bondProposalCache.set(getCacheKey(universe), { data: results, time: Date.now() });
     console.log(`[BondMonitor] found ${results.length} bonds for ${universe} (${results.filter(b => b.maturityDate).length} with maturity)`);
     return results;
+}
+
+// Coupon from the description ("BTP 01/11/2027 6,5%", step-ups take their
+// first rate); zero-coupon when it says ZC, is a BOT/CTZ, or pays 0%.
+function parseCoupon(name) {
+    const named = /\bZC\b|\bBOT\b|\bCTZ\b|ZERO\s*COUPON/i.test(name);
+    const m = name.match(/(\d+(?:[.,]\d+)?)\s*%/);
+    const rate = m ? parseFloat(m[1].replace(',', '.')) : null;
+    // A 0% coupon pays nothing until maturity: a zero-coupon in all but name.
+    const zeroCoupon = named || rate === 0;
+    const coupon = zeroCoupon ? 0 : (Number.isFinite(rate) ? rate : null);
+    return { coupon, zeroCoupon };
 }
 
 function filterByMaturityWindow(bonds, targetDate, minMonthsBefore, maxMonthsBefore) {
@@ -126,4 +145,4 @@ function filterByMaturityWindow(bonds, targetDate, minMonthsBefore, maxMonthsBef
         });
 }
 
-export { scrapeBondMonitor, filterByMaturityWindow, bondProposalCache };
+export { scrapeBondMonitor, filterByMaturityWindow, bondProposalCache, parseCoupon };

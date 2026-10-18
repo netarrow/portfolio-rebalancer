@@ -307,6 +307,13 @@ export interface BondProposal {
   yield?: number;
   currency?: string;
   universe: BondUniverse;
+  /** Reference price per 100 of nominal. */
+  price?: number | null;
+  /** Annual coupon %, read from the description; 0 for zero-coupon. */
+  coupon?: number | null;
+  zeroCoupon?: boolean;
+  /** Monitor's calculation type: 'Fisso' (fixed, redeemed at 100) or 'Minimo' (inflation-linked floor). */
+  calcType?: string | null;
 }
 
 // YNAB integration
