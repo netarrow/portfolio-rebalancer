@@ -4,7 +4,7 @@
 // Layout usato nel gruppo YNAB degli Investment Goals — "nome - importo€ - data",
 // dove la data può essere un anno generico, un mese con anno, o un giorno preciso:
 //   "Laptop - 1800€ - 2031"                  → anno generico
-//   "New Bike - 9500€ - 20/03/2027"        → giorno preciso
+//   "New Bike - 9500€ - 20/03/2027"    → giorno preciso
 //   "Garden Shed - 2800€ - 15/9/2027"  → giorno preciso
 //   "Tech - Tablet - 900€ - 28/02/27"     → anno a due cifre
 //   "Kitchen Refit - 6500€ - 04/2027"        → mese e anno
