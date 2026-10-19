@@ -5,10 +5,7 @@ import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import GoalSetupModal from './GoalSetupModal';
 import CapexBondModal from './CapexBondModal';
-import { useMaturityLadder } from './useMaturityLadder';
-import { fetchBondMaturities } from '../../services/bondProposals';
-import type { GoalLadder } from '../../utils/maturityLadder';
-import Swal from 'sweetalert2';
+import { capexBondMatch, type CapexBondMatch } from '../../utils/capexBondMatch';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import { buildGoalRow, formatCurrency, formatCurrencyExact } from './goalRows';
 
@@ -85,21 +82,11 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
 
     const [setupGoalId, setSetupGoalId] = useState<string | null>(null);
     const [bondGoalId, setBondGoalId] = useState<string | null>(null);
-    const { ladder, unknownMaturity } = useMaturityLadder();
-    const { setAssetMaturities } = usePortfolio();
-    const [lookingUp, setLookingUp] = useState(false);
-    const lookUpMaturities = async () => {
-        setLookingUp(true);
-        const found = await fetchBondMaturities(unknownMaturity.map(u => u.ticker));
-        setLookingUp(false);
-        setAssetMaturities(found);
-        const missing = unknownMaturity.filter(u => !found[u.ticker]);
-        Swal.fire({
-            title: 'Bond maturities',
-            html: `Found ${Object.keys(found).length} of ${unknownMaturity.length}.`
-                + (missing.length ? `<br/>Not on the bond monitors: ${missing.map(m => m.label).join(', ')}. They count as sellable.` : ''),
-            icon: missing.length ? 'info' : 'success',
-        });
+    // Tied to a specific bond, or to the portfolio as a whole (then a bond
+    // maturing before the capex date is still to find).
+    const bondMatchOf = (goalId: string): CapexBondMatch | null => {
+        const g = ynabGoals.find(x => x.id === goalId);
+        return g ? capexBondMatch(g, ynabGoalAllocations, effectiveAssetSettings, virtualBonds) : null;
     };
     const capexSync = useCapexSync();
     const groupPicker = ynabConfig && (
@@ -233,48 +220,13 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                 </div>
             </div>
 
-            {ladder.portfolios.length > 0 && (
-                <div className="ygl-ladder">
-                    <div className="ygl-ladder-head">
-                        <h3>Coverage at maturity</h3>
-                        <span>Each capex takes the bonds of its portfolios maturing before its date, then cash, then a sale. Bonds maturing later are locked for later capex.</span>
-                    </div>
-                    <div className="ygl-ladder-grid">
-                        {ladder.portfolios.map(p => (
-                            <div key={p.portfolioId} className={`ygl-ladder-card${p.missing > 0.5 ? ' is-short' : ''}`}>
-                                <strong>{p.name}</strong>
-                                <span>{formatCurrency(p.held, currencyIso)} held · {formatCurrency(p.demand, currencyIso)} counted on by capex</span>
-                                {p.missing > 0.5
-                                    ? <span className="ygl-ladder-bad">{formatCurrency(p.missing, currencyIso)} not there in time: find a bond for it</span>
-                                    : <span className="ygl-ladder-ok">in time{p.spare > 0.5 ? ` · ${formatCurrency(p.spare, currencyIso)} spare` : ''}</span>}
-                            </div>
-                        ))}
-                    </div>
-                    {(() => {
-                        const un = [...ladder.goals.values()].filter(gl => gl.unassigned > 0.5);
-                        return un.length > 0 && (
-                            <div className="ygl-ladder-unknown">
-                                <span className="ygl-ladder-bad">{formatCurrency(un.reduce((s, gl) => s + gl.unassigned, 0), currencyIso)} of capex not allocated to any portfolio</span>
-                                ({un.map(gl => `${gl.name} ${formatCurrency(gl.unassigned, currencyIso)}`).join(' · ')}): assign it in Setup, or find a bond for it.
-                            </div>
-                        );
-                    })()}
-                    {unknownMaturity.length > 0 && (
-                        <div className="ygl-ladder-unknown">
-                            {unknownMaturity.length} bond{unknownMaturity.length === 1 ? '' : 's'} without a known maturity ({unknownMaturity.map(u => u.label).join(', ')}) count as sellable.
-                            <button type="button" className="btn btn-sm" onClick={lookUpMaturities} disabled={lookingUp}>{lookingUp ? 'Looking up…' : 'Look up maturities'}</button>
-                        </div>
-                    )}
-                </div>
-            )}
-
             <div className="ygl-list" role="list">
                 <div className="ygl-head" aria-hidden>
                     <span>Capex</span>
                     <span className="ygl-num">Cash (YNAB)</span>
                     <span className="ygl-num">Invested</span>
                     <span>Where</span>
-                    <span>Progress · at maturity</span>
+                    <span>Progress · bond</span>
                     <span />
                 </div>
 
@@ -353,7 +305,7 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                                             <div className="goal-bar-cash" style={{ width: `${r.cashSegment}%` }} />
                                             <div className="goal-bar-invest" style={{ width: `${r.investSegment}%` }} />
                                         </div>
-                                        <LadderStatusLine gl={ladder.goals.get(g.id)} iso={currencyIso} />
+                                        <BondMatchLine m={bondMatchOf(g.id)} iso={currencyIso} onSearch={() => setBondGoalId(g.id)} />
                                     </>
                                 ) : (
                                     <span className="ygl-muted">No target</span>
@@ -389,8 +341,8 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
 
             {bondGoalId && (() => {
                 const br = rows.find(x => x.goal.id === bondGoalId);
-                const gl = ladder.goals.get(bondGoalId);
-                return br ? <CapexBondModal goal={br.goal} gap={gl ? gl.missing : br.gap} ladder={gl} currencyIso={currencyIso} onClose={() => setBondGoalId(null)} /> : null;
+                const m = bondMatchOf(bondGoalId);
+                return br ? <CapexBondModal goal={br.goal} gap={m ? m.toMatch : br.gap} plannedIncluded={!!m} currencyIso={currencyIso} onClose={() => setBondGoalId(null)} /> : null;
             })()}
 
             {setupRow && (
@@ -518,21 +470,12 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
 
                 .ygl-where { display: flex; flex-wrap: wrap; gap: 0.3rem; padding-left: var(--space-3); }
                 .ygl-head > span:nth-child(4) { padding-left: var(--space-3); }
-                .ygl-ladder { background: var(--bg-card); border-radius: var(--radius-lg); padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
-                .ygl-ladder-head h3 { margin: 0 0 0.2rem; font-size: 1rem; }
-                .ygl-ladder-head span { font-size: 0.8rem; color: var(--text-secondary); }
-                .ygl-ladder-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: var(--space-3); }
-                .ygl-ladder-card { display: flex; flex-direction: column; gap: 0.15rem; padding: 0.6rem 0.8rem; border-radius: var(--radius-md); background: var(--bg-surface); border-left: 3px solid #10b981; font-size: 0.82rem; }
-                .ygl-ladder-card.is-short { border-left-color: #ef4444; }
-                .ygl-ladder-card span { color: var(--text-secondary); }
-                .ygl-ladder-ok { color: #10b981 !important; }
-                .ygl-ladder-bad { color: #ef4444 !important; font-weight: 600; }
-                .ygl-ladder-unknown { font-size: 0.8rem; color: var(--text-secondary); display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
-                .ygl-ladder-line { margin-top: 0.3rem; font-size: 0.75rem; font-weight: 600; }
-                .ygl-ladder-line.is-covered { color: #10b981; }
-                .ygl-ladder-line.is-selling { color: #f59e0b; }
-                .ygl-ladder-line.is-planned { color: #8b5cf6; }
-                .ygl-ladder-line.is-missing { color: #ef4444; }
+                .ygl-bondline { margin-top: 0.3rem; font-size: 0.75rem; font-weight: 600; display: block; }
+                .ygl-bondline.is-ok { color: #10b981; }
+                .ygl-bondline.is-late { color: #f59e0b; }
+                .ygl-bondline.is-planned { color: #8b5cf6; }
+                button.ygl-bondline { background: color-mix(in srgb, var(--color-primary) 16%, transparent); color: var(--color-primary);
+                    border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent); border-radius: 999px; padding: 0.15rem 0.6rem; cursor: pointer; }
                 .ygl-action { display: flex; justify-content: flex-end; gap: 0.4rem; flex-wrap: wrap; }
                 .ygl-chip {
                     font-size: 0.74rem;
@@ -666,24 +609,30 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
     );
 };
 
-/** One line under a capex' progress: is its money back by its date? */
-const LadderStatusLine: React.FC<{ gl?: GoalLadder; iso: string }> = ({ gl, iso }) => {
-    if (!gl || (gl.need <= 0.5 && gl.assigned <= 0.5)) return null;
-    const parts = [
-        ...gl.fromMaturity.map(x => `${formatCurrency(x.amount, iso)} ${x.label} matures ${x.maturityDate}`),
-        ...gl.fromCash.map(x => `${formatCurrency(x.amount, iso)} cash`),
-        ...gl.fromSelling.map(x => `${formatCurrency(x.amount, iso)} by selling ${x.label}`),
-        ...gl.planned.map(x => `${formatCurrency(x.amount, iso)} planned bond ${x.label}`),
-        ...(gl.unassigned > 0.5 ? [`${formatCurrency(gl.unassigned, iso)} not allocated to a portfolio`] : []),
-        ...gl.locked.map(x => `${x.label} matures ${x.maturityDate}: too late${x.usedBy.length ? `, kept for ${x.usedBy.join(', ')}` : ''}`),
-    ].join('\n');
-    const sell = gl.fromSelling.reduce((s, x) => s + x.amount, 0);
-    const plan = gl.planned.reduce((s, x) => s + x.amount, 0);
-    const text = gl.status === 'missing' ? `✗ ${formatCurrency(gl.missing, iso)} not there in time`
-        : gl.status === 'planned' ? `◐ ${formatCurrency(plan, iso)} on a bond to buy`
-        : gl.status === 'selling' ? `⚠ ${formatCurrency(sell, iso)} only by selling`
-        : '✓ back in time';
-    return <div className={`ygl-ladder-line is-${gl.status}`} title={parts}>{text}</div>;
+/**
+ * One line under a capex' progress: the bond it is tied to and when it
+ * matures, or — allocated to a portfolio as a whole, or not at all — the
+ * bond search still to do for what no bond covers.
+ */
+const BondMatchLine: React.FC<{ m: CapexBondMatch | null; iso: string; onSearch: () => void }> = ({ m, iso, onSearch }) => {
+    if (!m) return null;
+    const detail = m.bonds.map(b => `${formatCurrency(b.amount, iso)} on ${b.label}${b.maturityDate ? `, matures ${b.maturityDate}` : ''}${b.late ? ' (too late)' : ''}${b.planned ? ' (to buy)' : ''}`)
+        .concat(m.generic > 0.5 ? [`${formatCurrency(m.generic, iso)} on the portfolio, no bond chosen`] : [])
+        .join('\n');
+    if (m.needsSearch) {
+        return (
+            <button type="button" className="ygl-bondline" title={detail || 'No bond chosen yet'} onClick={e => { e.stopPropagation(); onSearch(); }}>
+                🔎 Bond search · {formatCurrency(m.toMatch, iso)}
+            </button>
+        );
+    }
+    if (m.bonds.length === 0) return null;
+    const late = m.bonds.find(b => b.late);
+    const planned = m.bonds.some(b => b.planned);
+    const first = late ?? m.bonds[0];
+    const text = late ? `⚠ ${late.label} matures ${late.maturityDate}, after the capex`
+        : `${planned ? '◐' : '✓'} ${first.label}${first.maturityDate ? ` · matures ${first.maturityDate}` : ''}${m.bonds.length > 1 ? ` +${m.bonds.length - 1}` : ''}${planned ? ' · to buy' : ''}`;
+    return <span className={`ygl-bondline ${late ? 'is-late' : planned ? 'is-planned' : 'is-ok'}`} title={detail}>{text}</span>;
 };
 
 export default YnabGoalsView;

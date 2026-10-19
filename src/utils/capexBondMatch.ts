@@ -1,0 +1,67 @@
+import type { AssetDefinition, VirtualBond, YnabGoal, YnabGoalAllocation } from '../types';
+import { getVirtualBondId, isVirtualBondTicker } from '../types';
+import { maturityFromLabel } from './maturityLadder';
+
+/**
+ * Whether a planned capex is matched to a bond by date. An allocation pinned
+ * to a bond (a real one, or a virtual bond) is matched: that bond pays it at
+ * maturity. Anything else — allocated to the portfolio as a whole, pinned to an
+ * ETF, or not allocated at all — still needs a bond maturing before the capex:
+ * that part is flagged for a bond search.
+ */
+export interface CapexBond {
+    label: string;
+    amount: number;
+    maturityDate?: string;
+    /** A virtual bond not bought yet. */
+    planned: boolean;
+    /** Matures after the capex date: it will not be back in time. */
+    late: boolean;
+}
+
+export interface CapexBondMatch {
+    bonds: CapexBond[];
+    /** Allocated to the portfolio as a whole, or to a row that is not a bond. */
+    generic: number;
+    /** target − YNAB cash − what bonds cover: what still needs a bond. */
+    toMatch: number;
+    /** Dated, active, and with something left to match. */
+    needsSearch: boolean;
+}
+
+const ISIN_RE = /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/;
+const round = (x: number) => Math.round(x * 100) / 100;
+
+export const capexBondMatch = (
+    goal: YnabGoal,
+    allocations: YnabGoalAllocation[],
+    assetDefs: AssetDefinition[],
+    virtualBonds: VirtualBond[],
+): CapexBondMatch => {
+    const defByTicker = new Map(assetDefs.map(d => [d.ticker.toUpperCase(), d]));
+    const date = goal.targetDate?.slice(0, 10);
+    const bonds: CapexBond[] = [];
+    let generic = 0;
+    allocations.filter(a => a.ynabGoalId === goal.id && a.amount > 0).forEach(a => {
+        const ticker = a.ticker;
+        if (ticker && isVirtualBondTicker(ticker)) {
+            const vb = virtualBonds.find(b => b.id === getVirtualBondId(ticker));
+            const maturityDate = vb?.targetMaturityDate;
+            bonds.push({ label: vb?.label ?? 'Virtual bond', amount: a.amount, maturityDate, planned: !vb?.resolvedIsin, late: !!(date && maturityDate && maturityDate > date) });
+            return;
+        }
+        const def = ticker ? defByTicker.get(ticker.toUpperCase()) : undefined;
+        if (ticker && def?.assetClass === 'Bond' && def.source !== 'ETF' && ISIN_RE.test(ticker.toUpperCase())) {
+            const label = def.label || ticker;
+            const maturityDate = def.maturityDate ?? maturityFromLabel(label);
+            bonds.push({ label, amount: a.amount, maturityDate, planned: false, late: !!(date && maturityDate && maturityDate > date) });
+            return;
+        }
+        generic += a.amount;
+    });
+    const need = Math.max(0, (goal.targetAmount ?? 0) - (goal.cashCoverage || 0));
+    // A bond maturing too late does not cover the capex.
+    const onTime = bonds.filter(b => !b.late).reduce((s, b) => s + b.amount, 0);
+    const toMatch = round(Math.max(0, need - onTime));
+    return { bonds, generic: round(generic), toMatch, needsSearch: !goal.archived && !!date && toMatch > 0.5 };
+};

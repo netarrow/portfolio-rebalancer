@@ -14,6 +14,8 @@ interface Props {
     gap: number;
     /** The capex' maturity ladder: the gap already leaves out bonds planned for it. */
     ladder?: GoalLadder;
+    /** The gap already leaves out the virtual bonds planned for it. */
+    plannedIncluded?: boolean;
     currencyIso: string;
     onClose: () => void;
 }
@@ -28,7 +30,7 @@ const eur = (v: number, iso: string) =>
  * Asset Allocation) count it from now on. The bond is bought later with
  * "Concretize", as any virtual bond.
  */
-const CapexBondModal: React.FC<Props> = ({ goal, gap, ladder, currencyIso, onClose }) => {
+const CapexBondModal: React.FC<Props> = ({ goal, gap, ladder, plannedIncluded, currencyIso, onClose }) => {
     const { portfolios, ynabGoalAllocations, virtualBonds, addVirtualBond, addAllocation } = usePortfolio();
     // Bonds already planned for this capex and not bought yet: their amount is
     // still part of the gap, so it is not proposed a second time.
@@ -38,7 +40,7 @@ const CapexBondModal: React.FC<Props> = ({ goal, gap, ladder, currencyIso, onClo
         .filter(x => x.vb && !x.vb.resolvedIsin);
     const plannedTotal = planned.reduce((s, x) => s + x.a.amount, 0);
     // The ladder already counts planned bonds as planned, not missing.
-    const toPlan = ladder ? Math.max(0, gap) : Math.max(0, gap - plannedTotal);
+    const toPlan = ladder || plannedIncluded ? Math.max(0, gap) : Math.max(0, gap - plannedTotal);
     const [universe, setUniverse] = useState<BondUniverse>('IT');
     const [minMonths, setMinMonths] = useState(1);
     const [maxMonths, setMaxMonths] = useState(6);
@@ -117,8 +119,8 @@ const CapexBondModal: React.FC<Props> = ({ goal, gap, ladder, currencyIso, onClo
                         <div className="cbm-facts">
                             <div><span>Due</span><strong>{date.slice(0, 10)}</strong></div>
                             <div><span>Target</span><strong>{goal.targetAmount != null ? eur(goal.targetAmount, currencyIso) : '—'}</strong></div>
-                            <div><span>{ladder ? 'Not there in time' : 'Still missing'}</span><strong>{eur(gap, currencyIso)}</strong></div>
-                            {!ladder && plannedTotal > 0 && <div><span>Left to plan</span><strong>{eur(toPlan, currencyIso)}</strong></div>}
+                            <div><span>{ladder ? 'Not there in time' : plannedIncluded ? 'Not tied to a bond' : 'Still missing'}</span><strong>{eur(gap, currencyIso)}</strong></div>
+                            {!ladder && !plannedIncluded && plannedTotal > 0 && <div><span>Left to plan</span><strong>{eur(toPlan, currencyIso)}</strong></div>}
                         </div>
                         {ladder && (ladder.assigned > 0 || ladder.need > 0) && (
                             <ul className="cbm-ladder">
