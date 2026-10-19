@@ -3,26 +3,33 @@ import Swal from 'sweetalert2';
 import { useSecurity } from '../../context/SecurityContext';
 
 const UnlockGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    const { sleEnabled, isLocked, unlock, wipeLocalData } = useSecurity();
-    const [pw, setPw] = useState('');
-    const [error, setError] = useState<string | null>(null);
-    const [busy, setBusy] = useState(false);
+    const { sleEnabled, isLocked } = useSecurity();
 
     if (!sleEnabled || !isLocked) {
         return <>{children}</>;
     }
+    // The form lives only while locked: each lock starts from an empty field,
+    // so the passphrase typed last time is never there again.
+    return <UnlockForm />;
+};
+
+const UnlockForm: React.FC = () => {
+    const { unlock, wipeLocalData } = useSecurity();
+    const [pw, setPw] = useState('');
+    const [error, setError] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
 
     const handleUnlock = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!pw || busy) return;
+        const attempt = pw;
+        // Not kept in state while the key is derived, nor after.
+        setPw('');
         setBusy(true);
         setError(null);
         try {
-            const ok = await unlock(pw);
-            if (!ok) {
-                setError('Wrong passphrase. Try again or wipe local data to start over.');
-                setPw('');
-            }
+            const ok = await unlock(attempt);
+            if (!ok) setError('Wrong passphrase. Try again or wipe local data to start over.');
         } finally {
             setBusy(false);
         }
@@ -56,7 +63,7 @@ const UnlockGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
             background: '#0f172a', color: '#e2e8f0', zIndex: 9999, padding: '1rem',
         }}>
-            <form onSubmit={handleUnlock} style={{
+            <form onSubmit={handleUnlock} autoComplete="off" style={{
                 background: '#1e293b', padding: '2rem', borderRadius: '12px', maxWidth: '420px', width: '100%',
                 boxShadow: '0 10px 40px rgba(0,0,0,0.4)',
             }}>
@@ -66,6 +73,8 @@ const UnlockGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                 </p>
                 <input
                     type="password"
+                    name="sle-passphrase"
+                    autoComplete="off"
                     value={pw}
                     autoFocus
                     onChange={(e) => setPw(e.target.value)}
