@@ -488,7 +488,7 @@ const lifecycle = async () => {
     check('and says so', archived.warnings.some(w => w.kind === 'shares-of-inactive-goal'), true);
     check('suggested back to its portfolio', suggestReassignments(archived), [{ fromKey: 'goal:g-bath', toKey: 'portfolio:growth', amount: 1200 }]);
     const removed = planWith({ goals: goals.filter(g => g.id !== 'g-bath'), allocations: allocations.filter(a => a.ynabGoalId !== 'g-bath') });
-    check('removed goal still listed', [removed.destinations.find(d => d.key === 'goal:g-bath')?.inactiveGoal, removed.destinations.find(d => d.key === 'goal:g-bath')?.accountName], ['removed', '🎯 Removed goal']);
+    check('removed goal still listed', [removed.destinations.find(d => d.key === 'goal:g-bath')?.inactiveGoal, removed.destinations.find(d => d.key === 'goal:g-bath')?.accountName], ['removed', '🎯 Removed capex']);
     check('still balanced', [archived.balanced, removed.balanced], [true, true]);
 
     console.log('Goal sync keeps goals holding shares');
