@@ -180,12 +180,23 @@ export function analyzeSpending(
     // computed once per budget, without following its own links (no cycles).
     type Mix = { shares: Record<YnabMacroCategory, number>; other: SpendingAnalysis };
     const mixCache = new Map<string, Mix | null>();
+    // Categories of a linked budget paid one by one through a specific link
+    // (from any budget): already counted there, so out of the generic split.
+    const pinnedTargets = new Map<string, Set<string>>();
+    Object.values(mappings.linkedCategories ?? {}).forEach(t => {
+        const set = pinnedTargets.get(t.budgetId) ?? new Set<string>();
+        set.add(t.categoryId);
+        pinnedTargets.set(t.budgetId, set);
+    });
     const mixOf = (budgetId: string): Mix | null => {
         if (mixCache.has(budgetId)) return mixCache.get(budgetId)!;
-        const linkedHistory = linkedHistories?.[budgetId];
+        const pinned = pinnedTargets.get(budgetId);
+        const linkedHistory = linkedHistories?.[budgetId]?.map(m => pinned
+            ? { ...m, categories: m.categories.filter(c => !pinned.has(c.categoryId)) }
+            : m);
         let mix: Mix | null = null;
         if (linkedHistory && linkedHistory.length > 0) {
-            const other = analyzeSpending(linkedHistory, { ...mappings, linkedBudgets: {} });
+            const other = analyzeSpending(linkedHistory, { ...mappings, linkedBudgets: {}, linkedCategories: {} });
             const mapped = MACRO_ORDER.reduce((sum, m) => sum + Math.max(0, other.macros[m].totalOutflow), 0);
             if (mapped > 0) {
                 const shares = Object.fromEntries(MACRO_ORDER.map(m => [m, Math.max(0, other.macros[m].totalOutflow) / mapped])) as Record<YnabMacroCategory, number>;
@@ -196,6 +207,14 @@ export function analyzeSpending(
         return mix;
     };
     const linkedSplits: LinkedBudgetSplit[] = [];
+    // A category of a linked budget, as its synced history names it.
+    const targetCategory = (budgetId: string, categoryId: string) => {
+        for (const m of linkedHistories?.[budgetId] ?? []) {
+            const c = m.categories.find(x => x.categoryId === categoryId);
+            if (c) return { categoryId: c.categoryId, name: c.name, groupId: c.groupId, groupName: c.groupName };
+        }
+        return null;
+    };
     const decisionTotals: Record<YnabDecisionHorizon | 'unset', number> = { past: 0, current: 0, future: 0, unset: 0 };
     const unsetByCategory = new Map<string, SpendingAnalysis['decisionUnset'][number]>();
     const addDecision = (
@@ -225,6 +244,34 @@ export function analyzeSpending(
         if (pastSavingsOutflow >= 0.005) {
             pastSavingsSpent += pastSavingsOutflow;
             pastSavingsCategories.push({ ...cat, pastSavingsOutflow });
+        }
+        // Paying for one specific category of another budget: counts as that
+        // category, its class and decision, shown under its name.
+        const pinnedTo = mappings.linkedCategories?.[cat.categoryId];
+        if (pinnedTo) {
+            const target = targetCategory(pinnedTo.budgetId, pinnedTo.categoryId);
+            const tMacro = target ? effectiveMacro(mappings, target.groupId, target.categoryId) : null;
+            pastSavingsInvesting += pastSavingsOutflow >= 0.005 && tMacro === 'investments' ? pastSavingsOutflow : 0;
+            if (target) {
+                addDecision(target, cat.totalOutflow, pinnedTo.budgetId);
+                if (tMacro) {
+                    const part: MacroCategoryTotal = {
+                        categoryId: `${cat.categoryId}>${target.categoryId}`,
+                        name: target.name, groupId: target.groupId, groupName: target.groupName,
+                        totalOutflow: cat.totalOutflow, totalBudgeted: cat.totalBudgeted,
+                        linkedFrom: { categoryId: cat.categoryId, name: cat.name, budgetId: pinnedTo.budgetId },
+                    };
+                    macros[tMacro].totalOutflow += part.totalOutflow;
+                    macros[tMacro].totalBudgeted += part.totalBudgeted;
+                    macros[tMacro].categories.push(part);
+                    continue;
+                }
+            } else {
+                addDecision(cat, cat.totalOutflow, pinnedTo.budgetId, true);
+            }
+            // Target not synced here, or with no class: unmapped.
+            if (Math.abs(cat.totalOutflow) >= 0.005 || Math.abs(cat.totalBudgeted) >= 0.005) unmappedCategories.push(cat);
+            continue;
         }
         const linkedId = mappings.linkedBudgets?.[cat.categoryId];
         const investingShare = linkedId ? (mixOf(linkedId)?.shares.investments ?? 0) : macro === 'investments' ? 1 : 0;

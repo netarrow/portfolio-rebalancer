@@ -92,4 +92,30 @@ const cyclic: YnabMacroMappings = { ...mappings, linkedBudgets: { 'family-share'
 const c = analyzeSpending(personal, cyclic, { family, personal });
 assertEq('a link inside the linked budget is ignored', c.macros.structural.totalOutflow, 1000);
 
+// A category paying for one specific category of the linked budget counts
+// as that category, and that category is left out of the generic split.
+const personalPinned = [
+    month('2026-01-01', 3000, [['family-share', 'g-transfer', 1000], ['fun', 'g-fun', 200], ['nursery-pay', 'g-kids-own', 500]]),
+    month('2026-02-01', 3000, [['family-share', 'g-transfer', 1000], ['fun', 'g-fun', 200], ['nursery-pay', 'g-kids-own', 500]]),
+];
+const familyWithNursery = [
+    month('2026-01-01', 0, [['rent', 'g-home', 1000], ['food', 'g-food', 600], ['dining', 'g-out', 400], ['nursery', 'g-kids', 1000]]),
+];
+const pinnedMappings: YnabMacroMappings = {
+    ...mappings,
+    groups: { ...mappings.groups, 'g-kids': 'variable' },
+    linkedCategories: { 'nursery-pay': { budgetId: 'family', categoryId: 'nursery' } },
+    decisionGroups: { 'g-kids': 'past' },
+};
+const p = analyzeSpending(personalPinned, pinnedMappings, { family: familyWithNursery });
+assertEq('the generic split ignores the nursery: structural 2000 × 50%', p.macros.structural.totalOutflow, 1000);
+assertEq('variable = 2000 × 30% + 1000 of nursery-pay', p.macros.variable.totalOutflow, 600 + 1000);
+assertEq('compressible = 2000 × 20% + 400 own', p.macros.compressible.totalOutflow, 800);
+const nurseryPart = p.macros.variable.categories.find(c => c.categoryId === 'nursery-pay>nursery');
+assertTrue('shown under the family category, from nursery-pay', !!nurseryPart && nurseryPart.name === 'nursery' && nurseryPart.linkedFrom?.categoryId === 'nursery-pay');
+assertEq('its decision is the family category\'s', p.decisionTotals.past, 1000);
+assertEq('nothing unmapped', p.unmappedOutflow, 0);
+const pNotSynced = analyzeSpending(personalPinned, pinnedMappings, {});
+assertTrue('family not synced: flagged, not guessed', pNotSynced.decisionUnset.some(u => u.categoryId === 'nursery-pay' && u.linkedNotSynced));
+
 console.log('verify-linked-budget-split: all checks passed');

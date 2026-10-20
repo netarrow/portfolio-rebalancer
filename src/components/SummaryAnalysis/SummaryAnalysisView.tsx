@@ -75,6 +75,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
         setYnabGroupMacro,
         setYnabCategoryMacro,
         setYnabCategoryLinkedBudget,
+        setYnabCategoryLinkedCategory,
         setYnabGroupDecision,
         setYnabCategoryDecision,
         ynabSpendingSyncing,
@@ -160,6 +161,17 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
     const defaultSourceName = brokers.find(b => b.id === ynabFundingSettings.defaultSourceBrokerId)?.name;
 
     const budgetName = (id: string) => budgets.find(b => b.id === id)?.name ?? id;
+    // The categories of every synced budget, by group, to tie a category to one of them.
+    const categoriesByBudget = useMemo(() => {
+        const out = new Map<string, { id: string; name: string; groupName: string }[]>();
+        Object.entries(ynabSpendingHistoryByBudget).forEach(([bid, history]) => {
+            const seen = new Map<string, { id: string; name: string; groupName: string }>();
+            history.forEach(m => m.categories.forEach(c => { if (!seen.has(c.categoryId)) seen.set(c.categoryId, { id: c.categoryId, name: c.name, groupName: c.groupName }); }));
+            out.set(bid, [...seen.values()].sort((a, b) => a.groupName.localeCompare(b.groupName) || a.name.localeCompare(b.name)));
+        });
+        return out;
+    }, [ynabSpendingHistoryByBudget]);
+    const categoryName = (bid: string, cid: string) => categoriesByBudget.get(bid)?.find(c => c.id === cid)?.name ?? 'category';
     const otherBudgets = budgets.filter(b => b.id !== ynabSummaryBudgetId);
 
     const handleSync = async () => {
@@ -170,7 +182,10 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
         }
         // The budgets its categories are linked to are read for the split and
         // the decisions: their history is local to this browser, so sync them too.
-        const linked = [...new Set(Object.values(ynabMacroMappings.linkedBudgets ?? {}))]
+        const linked = [...new Set([
+            ...Object.values(ynabMacroMappings.linkedBudgets ?? {}),
+            ...Object.values(ynabMacroMappings.linkedCategories ?? {}).map(t => t.budgetId),
+        ])]
             .filter(id => id !== ynabSummaryBudgetId && budgets.some(b => b.id === id));
         for (const id of linked) {
             const r = await syncYnabSpending(id);
@@ -420,6 +435,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                     {analysis.linkedSplits.length > 0 && (
                         <div style={cardStyle}>
                             <h3 style={{ marginTop: 0, marginBottom: '0.75rem' }}>Linked budgets</h3>
+                            <div style={{ overflowX: 'auto' }}>
                             <table className="ea-table">
                                 <thead>
                                     <tr>
@@ -453,6 +469,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                     })}
                                 </tbody>
                             </table>
+                            </div>
                             <div className="ea-muted" style={{ marginTop: '0.5rem' }}>
                                 Each linked category is split by the linked budget's own mix of mapped spending over its synced months.
                             </div>
@@ -682,13 +699,18 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                     const override = ynabMacroMappings.categories[c.id] ?? '';
                                                     const effective = effectiveMacro(ynabMacroMappings, g.id, c.id);
                                                     const linked = ynabMacroMappings.linkedBudgets?.[c.id];
+                                                    const pinnedTo = ynabMacroMappings.linkedCategories?.[c.id];
                                                     const decision = effectiveDecision(ynabMacroMappings, g.id, c.id);
                                                     const decisionOverride = ynabMacroMappings.decisionCategories?.[c.id] ?? '';
                                                     return (
-                                                        <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', paddingLeft: '1rem', fontSize: '0.9rem' }}>
+                                                        <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', paddingLeft: '1rem', fontSize: '0.9rem', flexWrap: 'wrap' }}>
                                                             <span style={{ color: 'var(--text-secondary)' }}>
                                                                 {c.name}
-                                                                {linked ? (
+                                                                {pinnedTo ? (
+                                                                    <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#94a3b8' }}>
+                                                                        → counts as {categoryName(pinnedTo.budgetId, pinnedTo.categoryId)} · {budgetName(pinnedTo.budgetId)}
+                                                                    </span>
+                                                                ) : linked ? (
                                                                     <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#94a3b8' }}>
                                                                         ↔ split by {budgetName(linked)}
                                                                     </span>
@@ -697,25 +719,31 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                         {MACRO_LABELS[effective]}{override ? ' (override)' : ''}
                                                                     </span>
                                                                 )}
-                                                                {decision && !linked && (
+                                                                {decision && !linked && !pinnedTo && (
                                                                     <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: DECISION_COLORS[decision] }}>
                                                                         {DECISION_LABELS[decision]}{decisionOverride ? ' (override)' : ''}
                                                                     </span>
                                                                 )}
                                                             </span>
-                                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0, maxWidth: '100%' }}>
                                                                 <select
-                                                                    value={linked ? `link:${linked}` : override}
+                                                                    value={pinnedTo ? `cat:${pinnedTo.budgetId}:${pinnedTo.categoryId}` : linked ? `link:${linked}` : override}
                                                                     onChange={e => {
                                                                         const v = e.target.value;
                                                                         if (v.startsWith('link:')) {
                                                                             setYnabCategoryLinkedBudget(c.id, v.slice(5));
                                                                             return;
                                                                         }
+                                                                        if (v.startsWith('cat:')) {
+                                                                            const [, budgetId, categoryId] = v.split(':');
+                                                                            setYnabCategoryLinkedCategory(c.id, { budgetId, categoryId });
+                                                                            return;
+                                                                        }
                                                                         if (linked) setYnabCategoryLinkedBudget(c.id, null);
+                                                                        if (pinnedTo) setYnabCategoryLinkedCategory(c.id, null);
                                                                         setYnabCategoryMacro(c.id, (v || null) as YnabMacroCategory | null);
                                                                     }}
-                                                                    style={{ ...selectStyle, fontSize: '0.85rem' }}
+                                                                    style={{ ...selectStyle, fontSize: '0.85rem', maxWidth: '100%' }}
                                                                     aria-label={`Macro class of ${c.name}`}
                                                                 >
                                                                     <option value="">Inherit from group</option>
@@ -728,8 +756,25 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                             )}
                                                                         </optgroup>
                                                                     )}
+                                                                    {otherBudgets.map(b => {
+                                                                        const cats = categoriesByBudget.get(b.id) ?? [];
+                                                                        return cats.length > 0 && (
+                                                                            <optgroup key={`cat-${b.id}`} label={`Counts as a category of ${b.name}`}>
+                                                                                {cats.map(t => <option key={t.id} value={`cat:${b.id}:${t.id}`}>→ {t.groupName} › {t.name}</option>)}
+                                                                            </optgroup>
+                                                                        );
+                                                                    })}
+                                                                    {pinnedTo && !(categoriesByBudget.get(pinnedTo.budgetId) ?? []).some(t => t.id === pinnedTo.categoryId) && (
+                                                                        <option value={`cat:${pinnedTo.budgetId}:${pinnedTo.categoryId}`}>→ {budgetName(pinnedTo.budgetId)} (not synced)</option>
+                                                                    )}
                                                                 </select>
-                                                                {linked ? (
+                                                                {pinnedTo ? (
+                                                                    <select value="" disabled style={{ ...selectStyle, fontSize: '0.85rem', opacity: 0.7 }}
+                                                                        aria-label={`Decision of ${c.name}`}
+                                                                        title={`The decision mapped on ${categoryName(pinnedTo.budgetId, pinnedTo.categoryId)} in ${budgetName(pinnedTo.budgetId)}`}>
+                                                                        <option value="">Decision: → {categoryName(pinnedTo.budgetId, pinnedTo.categoryId)}</option>
+                                                                    </select>
+                                                                ) : linked ? (
                                                                     // A linked category is split by the linked budget's own
                                                                     // categories, for the decision as for the class.
                                                                     <select

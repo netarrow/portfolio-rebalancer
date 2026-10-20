@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabLinkedCategory, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import { checkYnabWriteTarget } from '../utils/ynabWriteGuard';
@@ -210,6 +210,7 @@ interface PortfolioContextType {
     setYnabCategoryMacro: (categoryId: string, macro: YnabMacroCategory | null) => void;
     /** Split a category's outflow by another budget's spending mix (null = unlink). */
     setYnabCategoryLinkedBudget: (categoryId: string, budgetId: string | null) => void;
+    setYnabCategoryLinkedCategory: (categoryId: string, target: YnabLinkedCategory | null) => void;
     /** Decision horizon of a group (null = clear) or of a category (null = inherit from group). */
     setYnabGroupDecision: (groupId: string, decision: YnabDecisionHorizon | null) => void;
     setYnabCategoryDecision: (categoryId: string, decision: YnabDecisionHorizon | null) => void;
@@ -3532,9 +3533,22 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const setYnabCategoryLinkedBudget = (categoryId: string, budgetId: string | null) => {
         setYnabMacroMappings(prev => {
             const linkedBudgets = { ...(prev.linkedBudgets ?? {}) };
+            const linkedCategories = { ...(prev.linkedCategories ?? {}) };
             if (budgetId === null) delete linkedBudgets[categoryId];
-            else linkedBudgets[categoryId] = budgetId;
-            return { ...prev, linkedBudgets };
+            else { linkedBudgets[categoryId] = budgetId; delete linkedCategories[categoryId]; }
+            return { ...prev, linkedBudgets, linkedCategories };
+        });
+    };
+
+    // A category paying for one specific category of another budget: one
+    // link or the other, never both.
+    const setYnabCategoryLinkedCategory = (categoryId: string, target: YnabLinkedCategory | null) => {
+        setYnabMacroMappings(prev => {
+            const linkedBudgets = { ...(prev.linkedBudgets ?? {}) };
+            const linkedCategories = { ...(prev.linkedCategories ?? {}) };
+            if (target === null) delete linkedCategories[categoryId];
+            else { linkedCategories[categoryId] = target; delete linkedBudgets[categoryId]; }
+            return { ...prev, linkedBudgets, linkedCategories };
         });
     };
 
@@ -4047,6 +4061,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabGroupMacro,
         setYnabCategoryMacro,
         setYnabCategoryLinkedBudget,
+        setYnabCategoryLinkedCategory,
         setYnabGroupDecision,
         setYnabCategoryDecision,
         ynabSpendingSyncing,
