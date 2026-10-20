@@ -350,6 +350,7 @@ const FundRelocationView: React.FC = () => {
                 portfolioStates={goalFlowPortfolioStates}
                 onPortfolioStateChange={setPortfolioState}
                 onQueueMoves={queueMoves}
+                queued={queue}
             />
 
             <RelocationForm
@@ -382,7 +383,7 @@ const FundRelocationView: React.FC = () => {
                 onClear={() => setQueue([])}
             />
 
-            <RelocationExecution moves={executionMoves} onExecute={executeQueue} busy={executing} />
+            <RelocationExecution moves={executionMoves} onExecute={executeQueue} onClear={() => setQueue([])} busy={executing} />
 
             {sameEndpoint && (
                 <div className="reloc-warning critical">

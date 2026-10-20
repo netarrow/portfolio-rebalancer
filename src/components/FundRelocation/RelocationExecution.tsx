@@ -84,10 +84,12 @@ const StepRow: React.FC<{ step: ExecutionStep; n: number }> = ({ step, n }) => {
 export interface RelocationExecutionProps {
     moves: ExecutionMove[];
     onExecute: () => void;
+    /** Empties the queue without writing anything. */
+    onClear?: () => void;
     busy?: boolean;
 }
 
-const RelocationExecution: React.FC<RelocationExecutionProps> = ({ moves, onExecute, busy = false }) => {
+const RelocationExecution: React.FC<RelocationExecutionProps> = ({ moves, onExecute, onClear, busy = false }) => {
     // Numbered across the whole queue, not per move: the list is one procedure
     // to follow top to bottom, and step 4 of move 2 is really step 7.
     const numbered = useMemo(() => {
@@ -109,9 +111,17 @@ const RelocationExecution: React.FC<RelocationExecutionProps> = ({ moves, onExec
                     Actions to perform
                     <span className="reloc-count-badge">{total}</span>
                 </h3>
-                <button type="button" className="reloc-btn primary" onClick={onExecute} disabled={busy || !committable}>
-                    ✓ Mark as executed
-                </button>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    {onClear && (
+                        <button type="button" className="reloc-btn ghost" onClick={onClear} disabled={busy}
+                            title="Empty the queue: nothing is written, the moves become available again">
+                            Clear
+                        </button>
+                    )}
+                    <button type="button" className="reloc-btn primary" onClick={onExecute} disabled={busy || !committable}>
+                        ✓ Mark as executed
+                    </button>
+                </div>
             </div>
 
             {numbered.map(({ move, steps }) => (
