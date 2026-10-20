@@ -360,8 +360,8 @@ async function scrollAndShoot(page, base) {
   }
 
   // ---------- FUND RELOCATION ----------
-  console.log('Fund Relocation');
-  await navTo(page, 'Fund Relocation');
+  console.log('Capital Allocation');
+  await navTo(page, 'Capital Allocation');
   await sleep(700);
   // Move money between two different portfolios so the shots show a real plan
   // (sell/buy legs, friction, before/after) instead of an empty form.
@@ -679,12 +679,6 @@ async function scrollAndShoot(page, base) {
     }
     await closeAllocationsModal();
   }
-
-  // ---------- ASSET ALLOCATION (Global Rebalancing) ----------
-  console.log('Asset Allocation / Global Rebalancing');
-  await navTo(page, 'Asset Allocation');
-  await sleep(800);
-  await scrollAndShoot(page, 'global_rebalancing');
 
   // ---------- GOALS ----------
   console.log('Buckets');

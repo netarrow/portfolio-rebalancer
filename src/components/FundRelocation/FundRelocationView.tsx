@@ -326,7 +326,7 @@ const FundRelocationView: React.FC = () => {
     return (
         <div className="reloc-container">
             <AssetScopeToggles style={{ marginBottom: '0.75rem' }} />
-            <h2 className="section-title reloc-page-title">Fund Relocation</h2>
+            <h2 className="section-title reloc-page-title">Capital Allocation</h2>
             <p className="reloc-intro">
                 Portfolios are logical containers over transactions, so moving funds means
                 <strong> selling there and buying back here</strong> — and the round trip leaves tax and
