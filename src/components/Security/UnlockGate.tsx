@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import Swal from 'sweetalert2';
 import { useSecurity } from '../../context/SecurityContext';
 
 const UnlockGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -14,7 +13,7 @@ const UnlockGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 };
 
 const UnlockForm: React.FC = () => {
-    const { unlock, wipeLocalData } = useSecurity();
+    const { unlock } = useSecurity();
     const [pw, setPw] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -29,33 +28,10 @@ const UnlockForm: React.FC = () => {
         setError(null);
         try {
             const ok = await unlock(attempt);
-            if (!ok) setError('Wrong passphrase. Try again or wipe local data to start over.');
+            if (!ok) setError('Wrong passphrase. Try again.');
         } finally {
             setBusy(false);
         }
-    };
-
-    const handleWipe = async () => {
-        const confirm1 = await Swal.fire({
-            title: 'Wipe all local data?',
-            text: 'This will erase every portfolio_* entry from this browser. If you have an Azure backup you can restore it after re-entering the app.',
-            icon: 'warning',
-            showCancelButton: true,
-            confirmButtonText: 'Continue',
-            confirmButtonColor: '#d33',
-        });
-        if (!confirm1.isConfirmed) return;
-        const confirm2 = await Swal.fire({
-            title: 'Are you absolutely sure?',
-            input: 'text',
-            inputLabel: 'Type WIPE to confirm',
-            inputPlaceholder: 'WIPE',
-            showCancelButton: true,
-            confirmButtonColor: '#d33',
-            inputValidator: (v) => (v === 'WIPE' ? null : 'You must type WIPE exactly'),
-        });
-        if (!confirm2.isConfirmed) return;
-        wipeLocalData();
     };
 
     return (
@@ -99,17 +75,6 @@ const UnlockForm: React.FC = () => {
                     }}
                 >
                     {busy ? 'Unlocking…' : 'Unlock'}
-                </button>
-                <button
-                    type="button"
-                    onClick={handleWipe}
-                    disabled={busy}
-                    style={{
-                        width: '100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid #475569',
-                        background: 'transparent', color: '#94a3b8', fontSize: '0.85rem', cursor: 'pointer',
-                    }}
-                >
-                    Reset &amp; wipe local data
                 </button>
                 <div style={{ marginTop: '1rem', textAlign: 'center', color: '#64748b', fontSize: '0.75rem' }}>
                     v{__APP_VERSION__}
