@@ -671,12 +671,13 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                     const groupMacro = ynabMacroMappings.groups[g.id] ?? '';
                                     return (
                                         <div key={g.id} style={{ border: '1px solid var(--border-color, rgba(128,128,128,0.25))', borderRadius: 'var(--radius-md)', padding: '0.75rem 1rem' }}>
-                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                                                <strong>{g.name}</strong>
-                                                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                            <div className="ea-map-row ea-map-group">
+                                                <strong className="ea-map-name">{g.name}</strong>
+                                                <div className="ea-map-ctrls">
                                                     <select
                                                         value={groupMacro}
                                                         onChange={e => setYnabGroupMacro(g.id, (e.target.value || null) as YnabMacroCategory | null)}
+                                                        className="ea-map-sel ea-map-macro"
                                                         style={selectStyle}
                                                         aria-label={`Macro class of the ${g.name} group`}
                                                     >
@@ -686,12 +687,15 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                     <select
                                                         value={ynabMacroMappings.decisionGroups?.[g.id] ?? ''}
                                                         onChange={e => setYnabGroupDecision(g.id, (e.target.value || null) as YnabDecisionHorizon | null)}
+                                                        className="ea-map-sel ea-map-dec"
                                                         style={selectStyle}
                                                         aria-label={`Decision of the ${g.name} group`}
                                                     >
                                                         <option value="">Decision: not set</option>
                                                         {DECISION_ORDER.map(d => <option key={d} value={d}>{DECISION_LABELS[d]}</option>)}
                                                     </select>
+                                                    {/* Keeps the group's selectors over the categories' own columns. */}
+                                                    {isPrimaryBudget && <span className="ea-map-acc ea-map-spacer" aria-hidden />}
                                                 </div>
                                             </div>
                                             <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
@@ -703,8 +707,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                     const decision = effectiveDecision(ynabMacroMappings, g.id, c.id);
                                                     const decisionOverride = ynabMacroMappings.decisionCategories?.[c.id] ?? '';
                                                     return (
-                                                        <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem', paddingLeft: '1rem', fontSize: '0.9rem', flexWrap: 'wrap' }}>
-                                                            <span style={{ color: 'var(--text-secondary)' }}>
+                                                        <div key={c.id} className="ea-map-row" style={{ paddingLeft: '1rem', fontSize: '0.9rem' }}>
+                                                            <span className="ea-map-name" style={{ color: 'var(--text-secondary)' }}>
                                                                 {c.name}
                                                                 {pinnedTo ? (
                                                                     <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#94a3b8' }}>
@@ -725,7 +729,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                     </span>
                                                                 )}
                                                             </span>
-                                                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', minWidth: 0, maxWidth: '100%' }}>
+                                                            <div className="ea-map-ctrls">
                                                                 <select
                                                                     value={pinnedTo ? `cat:${pinnedTo.budgetId}:${pinnedTo.categoryId}` : linked ? `link:${linked}` : override}
                                                                     onChange={e => {
@@ -743,7 +747,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                         if (pinnedTo) setYnabCategoryLinkedCategory(c.id, null);
                                                                         setYnabCategoryMacro(c.id, (v || null) as YnabMacroCategory | null);
                                                                     }}
-                                                                    style={{ ...selectStyle, fontSize: '0.85rem', maxWidth: '100%' }}
+                                                                    className="ea-map-sel ea-map-macro"
+                                                                    style={{ ...selectStyle, fontSize: '0.85rem' }}
                                                                     aria-label={`Macro class of ${c.name}`}
                                                                 >
                                                                     <option value="">Inherit from group</option>
@@ -769,7 +774,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                     )}
                                                                 </select>
                                                                 {pinnedTo ? (
-                                                                    <select value="" disabled style={{ ...selectStyle, fontSize: '0.85rem', opacity: 0.7 }}
+                                                                    <select value="" disabled className="ea-map-sel ea-map-dec" style={{ ...selectStyle, fontSize: '0.85rem', opacity: 0.7 }}
                                                                         aria-label={`Decision of ${c.name}`}
                                                                         title={`The decision mapped on ${categoryName(pinnedTo.budgetId, pinnedTo.categoryId)} in ${budgetName(pinnedTo.budgetId)}`}>
                                                                         <option value="">Decision: → {categoryName(pinnedTo.budgetId, pinnedTo.categoryId)}</option>
@@ -780,6 +785,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                     <select
                                                                         value=""
                                                                         disabled
+                                                                        className="ea-map-sel ea-map-dec"
                                                                         style={{ ...selectStyle, fontSize: '0.85rem', opacity: 0.7 }}
                                                                         aria-label={`Decision of ${c.name}`}
                                                                         title={`Split by the decisions mapped on ${budgetName(linked)}'s categories`}
@@ -790,6 +796,7 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                     <select
                                                                         value={decisionOverride}
                                                                         onChange={e => setYnabCategoryDecision(c.id, (e.target.value || null) as YnabDecisionHorizon | null)}
+                                                                        className="ea-map-sel ea-map-dec"
                                                                         style={{ ...selectStyle, fontSize: '0.85rem' }}
                                                                         aria-label={`Decision of ${c.name}`}
                                                                     >
@@ -801,7 +808,8 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                                                                     <select
                                                                         value={sourceByCategory.get(c.id) ?? ''}
                                                                         onChange={e => setYnabMappingSource(c.id, e.target.value || null)}
-                                                                        style={{ ...selectStyle, fontSize: '0.85rem', minWidth: 170 }}
+                                                                        className="ea-map-sel ea-map-acc"
+                                                                        style={{ ...selectStyle, fontSize: '0.85rem' }}
                                                                         aria-label={`Account holding ${c.name}`}
                                                                         title="Account the category's money sits on"
                                                                     >
@@ -827,7 +835,20 @@ const SummaryAnalysisView: React.FC<Props> = ({ onNavigateToSettings, embedded }
                 .ea-budget-tabs button { border: 0; background: transparent; color: var(--text-secondary); font-weight: 600; font-size: 0.85rem;
                     padding: 0.4rem 0.8rem; border-radius: var(--radius-sm); cursor: pointer; }
                 .ea-budget-tabs button.active { background: var(--color-primary); color: white; }
-.ea-unset { margin-top: 1rem; font-size: 0.85rem; }
+.ea-map-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0.75rem; }
+                .ea-map-name { min-width: 0; overflow-wrap: anywhere; }
+                .ea-map-ctrls { display: flex; gap: 0.5rem; align-items: center; justify-content: flex-end; min-width: 0; }
+                .ea-map-sel { text-overflow: ellipsis; white-space: nowrap; overflow: hidden; box-sizing: border-box; }
+                .ea-map-macro { width: 210px; }
+                .ea-map-dec { width: 180px; }
+                .ea-map-acc { width: 180px; flex: none; }
+                @media (max-width: 900px) {
+                    .ea-map-row { grid-template-columns: minmax(0, 1fr); gap: 0.35rem; }
+                    .ea-map-ctrls { justify-content: flex-start; flex-wrap: wrap; }
+                    .ea-map-sel { flex: 1 1 160px; width: auto; min-width: 0; max-width: 100%; }
+                    .ea-map-spacer { display: none; }
+                }
+                .ea-unset { margin-top: 1rem; font-size: 0.85rem; }
                 .ea-unset summary { cursor: pointer; color: var(--text-secondary); font-weight: 600; }
                 .ea-unset table { margin-top: 0.5rem; }
                                 .ea-month-select { background: var(--bg-card); color: var(--text-secondary); border: 1px solid var(--border-color);
