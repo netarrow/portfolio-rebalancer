@@ -1446,3 +1446,10 @@
     padding: var(--space-4);
     margin-bottom: var(--space-4);
 }
+
+/* Expense Planning asks for more than the pyramid holds. */
+.reloc-pyr-warn { margin: 0 0 var(--space-3); font-size: 0.85rem; color: #f59e0b; }
+
+/* A proposed move already in the queue: greyed out until it leaves it. */
+.reloc-flow.is-queued { opacity: 0.5; }
+.reloc-flow.is-queued .reloc-btn:disabled { cursor: default; }

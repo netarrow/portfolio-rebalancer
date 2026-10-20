@@ -7,6 +7,8 @@ import {
     type GoalFlowEndpoint,
     type GoalFlowMove,
 } from '../../utils/goalFlows';
+import { buildExpensePyramid, type PyramidLevel } from '../../utils/expensePyramid';
+import { useExpensePlanningTargets } from '../YnabImport/useExpensePlanningTargets';
 import type { RelocationRequest } from '../../utils/fundRelocation';
 import GoalAllocationBar, { type GoalBarItem } from './GoalAllocationBar';
 
@@ -58,11 +60,17 @@ export interface GoalFlowPlannerProps {
     portfolioStates: Record<string, GoalFlowPortfolioState>;
     onPortfolioStateChange: (portfolioId: string, state: GoalFlowPortfolioState) => void;
     onQueueMoves: (requests: RelocationRequest[]) => void;
+    /** The relocation queue: a move already in it is shown as queued, not offered again. */
+    queued?: RelocationRequest[];
 }
 
 /** Cash keeps no broker: the relocation planner picks where it comes from. */
 const toEndpoint = (e: GoalFlowEndpoint): RelocationRequest['from'] =>
     e.kind === 'cash' ? { kind: 'cash' } : { kind: 'portfolio', portfolioId: e.portfolioId };
+
+/** Same ends, same amount (to the euro): the identity of a move in the queue. */
+const endKey = (e: RelocationRequest['from']) => (e.kind === 'portfolio' ? `p:${e.portfolioId}` : e.kind);
+const requestKey = (r: RelocationRequest) => `${endKey(r.from)}>${endKey(r.to)}|${Math.round(r.netAmount)}`;
 
 const toRequest = (move: GoalFlowMove): RelocationRequest => ({
     from: toEndpoint(move.from),
@@ -72,7 +80,7 @@ const toRequest = (move: GoalFlowMove): RelocationRequest => ({
 
 const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
     goals, portfolios, transactions, brokers, assetSettings, marketData,
-    targets, onTargetsChange, portfolioStates, onPortfolioStateChange, onQueueMoves,
+    targets, onTargetsChange, portfolioStates, onPortfolioStateChange, onQueueMoves, queued = [],
 }) => {
     const plan = useMemo(
         () => buildGoalFlowPlan({ goals, portfolios, transactions, brokers, assetSettings, marketData, targets, portfolioStates }),
@@ -113,6 +121,29 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
         onTargetsChange(next);
     }, [plan.goals, targets, onTargetsChange]);
 
+    // What Expense Planning implies for each level, drawn between today and the
+    // target; "Use as targets" copies it into the bar, which stays editable.
+    const expense = useExpensePlanningTargets();
+    const pyramid = useMemo(() => buildExpensePyramid({
+        levels: plan.goals.map(g => ({
+            id: g.id, title: g.title, color: g.color, kind: g.kind, currentValue: g.currentValue,
+            portfolioIds: g.portfolios.filter(p => p.state !== 'excluded').map(p => p.id),
+            holdsFund: g.portfolios.some(p => expense.fundPortfolioIds.includes(p.id)),
+        })),
+        total: plan.total,
+        targetOf: id => expense.portfolios.get(id)?.total ?? 0,
+        liquidity: expense.liquidity,
+    }), [plan.goals, plan.total, expense.portfolios, expense.liquidity, expense.fundPortfolioIds]);
+    const hasExpense = expense.liquidity !== null;
+    const matchesExpense = plan.goals.every(g => Math.abs((targets[g.id] ?? 0) - (pyramid.percents[g.id] ?? 0)) < 0.05);
+    const pyramidNotes = useMemo<Record<string, string>>(() => {
+        const text = (l: PyramidLevel) => l.source === 'liquidity' ? 'operating cash + capex held as cash'
+            : l.source === 'expense' ? 'emergency fund and capex of its portfolios'
+            : l.source === 'rest' ? (l.fixed > 0.5 ? `takes the rest (incl. €${Math.round(l.fixed).toLocaleString('en-IE')} of capex)` : 'takes the rest')
+            : 'kept as today';
+        return Object.fromEntries(pyramid.levels.map(l => [l.id, text(l)]));
+    }, [pyramid.levels]);
+
     const goalTitleById = useMemo<Record<string, string>>(() => {
         const map: Record<string, string> = {};
         plan.goals.forEach(g => { map[g.id] = g.title; });
@@ -144,7 +175,20 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
         [plan.goals]
     );
 
-    const movedTotal = plan.moves.reduce((s, m) => s + m.amount, 0);
+    // Which proposed moves are already in the queue, one queue entry per move
+    // (two identical moves need two entries).
+    const queuedFlags = useMemo(() => {
+        const left = new Map<string, number>();
+        queued.forEach(r => left.set(requestKey(r), (left.get(requestKey(r)) ?? 0) + 1));
+        return plan.moves.map(m => {
+            const k = requestKey(toRequest(m));
+            const n = left.get(k) ?? 0;
+            if (n > 0) { left.set(k, n - 1); return true; }
+            return false;
+        });
+    }, [plan.moves, queued]);
+    const openMoves = plan.moves.filter((_, i) => !queuedFlags[i]);
+    const movedTotal = openMoves.reduce((s, m) => s + m.amount, 0);
 
     // The cash level exists even with no goals configured, and a bar with a
     // single segment at 100% is not a split: keep the empty state keyed on the
@@ -172,11 +216,32 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
                 moves below and the page prices what the round trip actually costs.
             </p>
 
+            {hasExpense && pyramid.shortfall > 0.5 && (
+                <p className="reloc-pyr-warn">
+                    Expense Planning asks for {eur0(pyramid.shortfall)} more than the pyramid holds: its split is scaled down to fit.
+                </p>
+            )}
             <GoalAllocationBar
                 goals={barGoals}
                 targetAllocs={targets}
                 onTargetChange={onTargetsChange}
                 total={plan.total}
+                reference={hasExpense ? {
+                    label: 'From Expense Planning',
+                    percents: pyramid.percents,
+                    notes: pyramidNotes,
+                    action: (
+                        <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={() => onTargetsChange(pyramid.percents)}
+                            disabled={matchesExpense}
+                            title={matchesExpense ? 'The target already matches it' : 'Set the target bar to the Expense Planning split'}
+                        >
+                            Use as targets
+                        </button>
+                    ),
+                } : undefined}
             />
 
             {scopeGoals.length > 0 && (
@@ -236,9 +301,12 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
                     <button
                         type="button"
                         className="reloc-btn primary"
-                        onClick={() => onQueueMoves(plan.moves.map(toRequest))}
+                        onClick={() => onQueueMoves(openMoves.map(toRequest))}
+                        disabled={openMoves.length === 0}
                     >
-                        Queue all {plan.moves.length} move{plan.moves.length > 1 ? 's' : ''} · {eur0(movedTotal)}
+                        {openMoves.length === 0
+                            ? 'All queued'
+                            : `Queue ${openMoves.length === plan.moves.length ? 'all ' : ''}${openMoves.length} move${openMoves.length > 1 ? 's' : ''} · ${eur0(movedTotal)}`}
                     </button>
                 )}
             </div>
@@ -250,7 +318,7 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
             ) : (
                 <div className="reloc-flow-list">
                     {plan.moves.map((move, i) => (
-                        <div className="reloc-flow" key={`${move.from.goalId}-${move.from.portfolioId}-${move.to.goalId}-${move.to.portfolioId}-${i}`}>
+                        <div className={`reloc-flow${queuedFlags[i] ? ' is-queued' : ''}`} key={`${move.from.goalId}-${move.from.portfolioId}-${move.to.goalId}-${move.to.portfolioId}-${i}`}>
                             <div className="reloc-flow-main">
                                 <div className="reloc-flow-route">
                                     <span className="reloc-flow-endpoint">
@@ -274,8 +342,10 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
                                 type="button"
                                 className="reloc-btn ghost"
                                 onClick={() => onQueueMoves([toRequest(move)])}
+                                disabled={queuedFlags[i]}
+                                title={queuedFlags[i] ? 'Already in the queue: remove it there to queue it again' : undefined}
                             >
-                                Queue
+                                {queuedFlags[i] ? 'Queued ✓' : 'Queue'}
                             </button>
                         </div>
                     ))}

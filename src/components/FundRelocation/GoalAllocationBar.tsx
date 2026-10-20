@@ -18,6 +18,17 @@ export interface GoalBarItem {
     minPercent?: number;
 }
 
+/** A reference split drawn between today and the target (e.g. Expense Planning's). */
+export interface GoalBarReference {
+    label: string;
+    /** goalId → %. */
+    percents: Record<string, number>;
+    /** goalId → a few words on where the figure comes from. */
+    notes?: Record<string, string>;
+    /** Shown at the right of the row's label (e.g. "Use as targets"). */
+    action?: React.ReactNode;
+}
+
 export interface GoalAllocationBarProps {
     /** In goal order — the pyramid's own order. */
     goals: GoalBarItem[];
@@ -25,6 +36,7 @@ export interface GoalAllocationBarProps {
     targetAllocs: Record<string, number>;
     onTargetChange: (allocs: Record<string, number>) => void;
     total: number;
+    reference?: GoalBarReference;
 }
 
 // A goal is a bucket you keep something in; cash is one you are allowed to
@@ -34,7 +46,7 @@ const MIN_PCT = 5;
 // reads as a decimal point next to them and turns €46.093 into forty-six euros.
 const fmt = (v: number) => `€${Math.round(Math.abs(v)).toLocaleString('en-IE')}`;
 
-const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllocs, onTargetChange, total }) => {
+const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllocs, onTargetChange, total, reference }) => {
     const barRef = useRef<HTMLDivElement>(null);
     /** Where the drag started, so every move is measured from the same origin. */
     const dragRef = useRef<{ startX: number; startAllocs: number[] } | null>(null);
@@ -109,10 +121,12 @@ const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllo
         return r;
     }, [goals, total]);
 
-    const renderStaticBar = () => (
+    const rowLabel: React.CSSProperties = { fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 };
+
+    const renderStaticBar = (percs: Record<string, number>) => (
         <div style={{ display: 'flex', height: 32, borderRadius: 6, overflow: 'hidden', width: '100%' }}>
             {goals.map(g => {
-                const pct = currentPercs[g.id] ?? 0;
+                const pct = percs[g.id] ?? 0;
                 return (
                     <div
                         key={g.id}
@@ -150,16 +164,25 @@ const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllo
 
             {/* Current bar */}
             <div style={{ marginBottom: 'var(--space-3)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
-                    Current
-                </div>
-                {renderStaticBar()}
+                <div style={rowLabel}>{reference ? 'As-is' : 'Current'}</div>
+                {renderStaticBar(currentPercs)}
             </div>
+
+            {/* Reference bar (e.g. what Expense Planning implies) */}
+            {reference && (
+                <div style={{ marginBottom: 'var(--space-3)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: '0.75rem', flexWrap: 'wrap', marginBottom: 4 }}>
+                        <div style={{ ...rowLabel, marginBottom: 0 }}>{reference.label}</div>
+                        {reference.action}
+                    </div>
+                    {renderStaticBar(reference.percents)}
+                </div>
+            )}
 
             {/* Target bar (draggable) */}
             <div style={{ marginBottom: 'var(--space-5)' }}>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
-                    Target{' '}
+                <div style={rowLabel}>
+                    {reference ? 'Fine tune' : 'Target'}{' '}
                     <span style={{ fontStyle: 'italic', textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
                         — drag to adjust
                     </span>
@@ -237,7 +260,13 @@ const GoalAllocationBar: React.FC<GoalAllocationBarProps> = ({ goals, targetAllo
                             </div>
                             <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', lineHeight: 1.8 }}>
                                 <div>Current: {fmt(g.currentValue)} ({(currentPercs[g.id] ?? 0).toFixed(1)}%)</div>
-                                <div>Target: {(targetAllocs[g.id] ?? 0).toFixed(0)}%</div>
+                                {reference && (
+                                    <div title={reference.notes?.[g.id]}>
+                                        Expense Planning: {fmt(((reference.percents[g.id] ?? 0) / 100) * total)} ({(reference.percents[g.id] ?? 0).toFixed(1)}%)
+                                        {reference.notes?.[g.id] && <div style={{ fontSize: '0.72rem', lineHeight: 1.3, marginBottom: '0.2rem' }}>{reference.notes[g.id]}</div>}
+                                    </div>
+                                )}
+                                <div>Target: {(targetAllocs[g.id] ?? 0).toFixed(reference ? 1 : 0)}%</div>
                                 <div style={{ fontWeight: 600, color: gapEur > 50 ? 'var(--color-success)' : gapEur < -50 ? 'var(--color-danger)' : 'var(--text-muted)' }}>
                                     Gap: {gapEur >= 0 ? '+' : '−'}{fmt(gapEur)}{' '}
                                     <span style={{ fontWeight: 400 }}>({gapPct >= 0 ? '+' : ''}{gapPct.toFixed(1)}%)</span>
