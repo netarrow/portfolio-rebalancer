@@ -416,10 +416,38 @@ export function computeForecastCashflow(
     let firstMonth: string | null = null;
     let lastMonth: string | null = null;
 
+    // A category linked to another budget funds that budget's spending. When
+    // the linked budget is counted too, its own categories already carry that
+    // spending: the linking category is dropped here, and the money it moved is
+    // taken off the linked budget's income so it isn't counted twice. When the
+    // linked budget is left out, the category is split by its class mix.
+    const included = new Set(budgetIds);
+    const linkTarget = (categoryId: string): string | undefined =>
+        mappings.linkedCategories?.[categoryId]?.budgetId ?? mappings.linkedBudgets?.[categoryId];
+    const transferredMonthly: Record<string, number> = {};
+
+    const analyses: { budgetId: string; a: SpendingAnalysis }[] = [];
     for (const budgetId of budgetIds) {
-        const history = historyByBudget[budgetId];
-        if (!history || history.length === 0) continue;
-        const a = analyzeSpending(history, mappings);
+        const raw = historyByBudget[budgetId];
+        if (!raw || raw.length === 0) continue;
+        const moved: Record<string, number> = {};
+        const history = raw.map(m => ({
+            ...m,
+            categories: m.categories.filter(c => {
+                const target = linkTarget(c.categoryId);
+                if (!target || target === budgetId || !included.has(target) || !historyByBudget[target]?.length) return true;
+                moved[target] = (moved[target] ?? 0) - toEur(c.activityMilliunits);
+                return false;
+            }),
+        }));
+        for (const [target, total] of Object.entries(moved)) {
+            transferredMonthly[target] = (transferredMonthly[target] ?? 0) + total / history.length;
+        }
+        analyses.push({ budgetId, a: analyzeSpending(history, mappings, historyByBudget) });
+    }
+
+    for (const { budgetId, a: analysis } of analyses) {
+        const a = { ...analysis, avgMonthlyIncome: Math.max(0, analysis.avgMonthlyIncome - (transferredMonthly[budgetId] ?? 0)) };
         const budgetExpenses = MACRO_ORDER
             .filter(m => selected.has(m))
             .reduce((sum, m) => sum + a.macros[m].avgMonthlyOutflow, 0);
