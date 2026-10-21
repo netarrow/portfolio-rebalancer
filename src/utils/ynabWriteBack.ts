@@ -573,7 +573,7 @@ const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
 export function normalizeYnabWriteLog(raw: unknown): YnabWriteLogEntry[] {
     if (!Array.isArray(raw)) return [];
     return raw.filter((e): e is YnabWriteLogEntry =>
-        isObj(e) && typeof e.id === 'string' && (e.kind === 'migration' || e.kind === 'reassignment' || e.kind === 'revaluation' || e.kind === 'release') && typeof e.budgetId === 'string'
+        isObj(e) && typeof e.id === 'string' && (e.kind === 'migration' || e.kind === 'reassignment' || e.kind === 'revaluation' || e.kind === 'release' || e.kind === 'note') && typeof e.budgetId === 'string'
         && typeof e.brokerId === 'string' && typeof e.status === 'string'
         && Array.isArray(e.transactions) && Array.isArray(e.createdAccounts));
 }
@@ -615,9 +615,10 @@ export function rollbackDependents(log: YnabWriteLogEntry[], entryId: string): Y
     const entry = log.find(e => e.id === entryId);
     if (!entry) return [];
     const mine = entryAccounts(entry);
+    const myNotes = new Set((entry.notes ?? []).map(n => n.categoryId));
     return log.filter(e => e.id !== entryId && e.createdAt > entry.createdAt
         && (e.status === 'applied' || e.status === 'rollback-partial')
-        && [...entryAccounts(e)].some(id => mine.has(id)));
+        && ([...entryAccounts(e)].some(id => mine.has(id)) || (e.notes ?? []).some(n => myNotes.has(n.categoryId))));
 }
 
 // ── Reassignment ────────────────────────────────────────────────────

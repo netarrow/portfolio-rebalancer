@@ -421,7 +421,8 @@ export interface YnabWriteLogEntry {
   // 'revaluation' books the P/L since the last one and updates the latent tax.
   // 'release' writes nothing to YNAB: it only drops frozen shares whose
   // holding is gone, so they cannot come back on a later purchase.
-  kind: 'migration' | 'reassignment' | 'revaluation' | 'release';
+  // 'note' rewrites the [PRB] target line in capex category notes.
+  kind: 'migration' | 'reassignment' | 'revaluation' | 'release' | 'note';
   budgetId: string;
   brokerId: string;              // the migrated broker; '' for a reassignment
   label: string;                 // e.g. "Migration of Broker X"
@@ -432,8 +433,17 @@ export interface YnabWriteLogEntry {
   createdAccounts: { id: string; name: string; destinationKey: string }[];
   transactions: YnabWriteLogTransaction[];
   duplicateImportIds?: string[];
+  // kind 'note': each note written, with the one it replaced (to roll back).
+  notes?: YnabWriteLogNote[];
   error?: string;
   rolledBackAt?: string;
+}
+
+export interface YnabWriteLogNote {
+  categoryId: string;
+  categoryName: string;
+  previousNote: string | null;
+  note: string;
 }
 
 // One movement of a goal's share of one holding, in units. The stored list is a
@@ -549,6 +559,9 @@ export interface YnabGoal {
   // group (to track where its money is invested, or to give it a target). A
   // goals-group sync never archives or deletes those: they are not its own.
   origin?: 'goals-group' | 'category';
+  // The category note as last read from (or written to) YNAB: tells a [PRB]
+  // line edited in YNAB apart from one the tool still has to write.
+  ynabNote?: string;
 }
 
 export interface YnabGoalAllocation {

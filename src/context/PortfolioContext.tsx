@@ -4,19 +4,20 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabLinkedCategory, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote } from '../types';
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
-import { checkYnabWriteTarget } from '../utils/ynabWriteGuard';
+import { checkYnabGuardBudget, checkYnabWriteTarget } from '../utils/ynabWriteGuard';
 import { executeMigration, executeReassignment, executeRevaluation, buildOrphanRelease, goalHeldUnits, goalsHoldingShares, rollbackWriteEntry, rollbackDependents, normalizeYnabWriteLog, normalizeYnabGoalQuotes, migratedBrokerIds, upsertWriteLogEntry, type MigrationPreview, type ReassignmentPreview, type RevaluationPreview, type YnabWriteApi } from '../utils/ynabWriteBack';
 import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
 import { fetchAssetHistory } from '../services/marketData';
-import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, listAccounts as ynabListAccounts, listAccountsByBudget as ynabListAccountsByBudget, rollingMonthsIso, milliunitsToEur, createTransactions as ynabCreateTransactions, deleteTransaction as ynabDeleteTransaction, createTrackingAccount as ynabCreateTrackingAccount, updateTransaction as ynabUpdateTransaction } from '../services/ynabApi';
+import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, listAccounts as ynabListAccounts, listAccountsByBudget as ynabListAccountsByBudget, rollingMonthsIso, milliunitsToEur, createTransactions as ynabCreateTransactions, deleteTransaction as ynabDeleteTransaction, createTrackingAccount as ynabCreateTrackingAccount, updateTransaction as ynabUpdateTransaction, updateCategoryNote as ynabUpdateCategoryNote } from '../services/ynabApi';
 import type { YnabBudgetSummary, YnabAccountSummary } from '../services/ynabApi';
 import { assignYnabAccountMapping, groupMappingsByBudget, normalizeYnabAccountMappings } from '../utils/ynabAccountMappings';
 import { computeBrokerAccrual, isRemunerationActive, todayIso as currentIsoDate } from '../utils/brokerRemuneration';
 import { getExcludedBrokerIds, hasScopeFlags } from '../utils/assetScope';
 import { parseGoalDescriptor, nativeGoalTarget } from '../utils/ynabGoalParser';
+import type { CapexNoteRow } from '../utils/ynabCapexNotes';
 import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
 import { mergeYnabGoalsFromCandidates, resolveGoalTarget } from '../utils/ynabGoalSync';
 import { buildFundingCommit, isRegisterableOrder, roundCents } from '../utils/ynabFundingPlan';
@@ -173,6 +174,10 @@ interface PortfolioContextType {
     executeYnabRevaluation: (preview: RevaluationPreview, selected: Set<string>) => Promise<{ ok: boolean; entry?: YnabWriteLogEntry; error?: string }>;
     releaseYnabOrphanShares: (orphans: { goalId: string; goalName: string; holdingKey: string; portfolioId: string; brokerId: string; ticker: string; quantity: number; cost: number }[]) => { ok: boolean; error?: string };
     rollbackYnabWrite: (entryId: string) => Promise<{ ok: boolean; error?: string; accountsLeft?: { id: string; name: string }[] }>;
+    /** The notes of the capex categories, read now from YNAB (id → note). */
+    readCapexNotes: () => Promise<{ ok: boolean; notes?: Map<string, string | null>; error?: string }>;
+    /** Writes the capex [PRB] note lines, one log entry for all of them. */
+    writeCapexNotes: (rows: CapexNoteRow[]) => Promise<{ ok: boolean; written: number; error?: string }>;
     ynabWriting: boolean;
     // YNAB Goals (entità separata dai Goal manuali)
     ynabGoals: YnabGoal[];
@@ -3249,6 +3254,87 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ok: true };
     };
 
+    const readCapexNotes: PortfolioContextType['readCapexNotes'] = async () => {
+        if (!ynabConfig?.apiKey || !ynabConfig.budgetId) return { ok: false, error: 'YNAB not configured.' };
+        if (!ynabConfig.goalsGroupId) return { ok: false, error: 'Select the Planned Capex category group first.' };
+        const res = await ynabGetGoalCategories(ynabConfig.apiKey, ynabConfig.budgetId, ynabConfig.goalsGroupId);
+        if (!res.success || !res.data) return { ok: false, error: res.error || 'Failed to fetch capex categories.' };
+        return { ok: true, notes: new Map(res.data.map(c => [c.id, c.note ?? null])) };
+    };
+
+    // The note each written capex now has in YNAB, kept on the goal: the next
+    // comparison starts from it.
+    const storeCapexNotes = (notes: Map<string, string | null>, targetSource?: YnabGoal['targetSource']) =>
+        setYnabGoals(prev => prev.map(g => {
+            if (!notes.has(g.id)) return g;
+            const note = notes.get(g.id);
+            const next: YnabGoal = { ...g, ...(targetSource ? { targetSource } : {}) };
+            if (note) next.ynabNote = note; else delete next.ynabNote;
+            return next;
+        }));
+
+    const writeCapexNotes: PortfolioContextType['writeCapexNotes'] = async rows => {
+        if (!ynabConfig?.apiKey || !ynabConfig.budgetId) return { ok: false, written: 0, error: 'YNAB not configured.' };
+        if (ynabWriting) return { ok: false, written: 0, error: 'Another write to YNAB is in progress.' };
+        const guard = checkYnabGuardBudget(ynabTrackingConfig, ynabConfig.budgetId);
+        if (!guard.ok) return { ok: false, written: 0, error: guard.message };
+        const toWrite = rows.filter(r => r.status === 'write');
+        if (toWrite.length === 0) return { ok: false, written: 0, error: 'Nothing to write.' };
+        const { apiKey, budgetId } = ynabConfig;
+        const stamp = new Date().toISOString();
+        let entry: YnabWriteLogEntry = {
+            id: crypto.randomUUID(), kind: 'note', budgetId, brokerId: '',
+            label: `Capex notes (${toWrite.length})`, date: stamp.slice(0, 10), createdAt: stamp, updatedAt: stamp,
+            status: 'pending', createdAccounts: [], transactions: [], notes: [],
+        };
+        recordWrite(entry);
+        setYnabWriting(true);
+        const written = new Map<string, string | null>();
+        let error: string | undefined;
+        try {
+            for (const r of toWrite) {
+                const res = await ynabUpdateCategoryNote(apiKey, budgetId, r.goalId, r.after);
+                if (!res.success) { error = `${r.name}: ${res.error ?? 'the write failed.'}`; break; }
+                written.set(r.goalId, res.data?.note ?? r.after);
+                entry = {
+                    ...entry, updatedAt: new Date().toISOString(),
+                    notes: [...(entry.notes ?? []), { categoryId: r.goalId, categoryName: r.name, previousNote: r.before, note: r.after }],
+                };
+                recordWrite(entry);
+            }
+        } finally {
+            entry = { ...entry, updatedAt: new Date().toISOString(), status: error ? 'failed' : 'applied', ...(error ? { error } : {}) };
+            recordWrite(entry);
+            // The note now carries the target.
+            storeCapexNotes(written, 'parsed-note');
+            setYnabWriting(false);
+        }
+        return { ok: !error, written: written.size, error };
+    };
+
+    // Puts back the notes a 'note' entry replaced, newest first.
+    const rollbackCapexNotes = async (entry: YnabWriteLogEntry) => {
+        if (!ynabConfig?.apiKey) return { ok: false, error: 'YNAB not configured.' };
+        const guard = checkYnabGuardBudget(ynabTrackingConfig, entry.budgetId);
+        if (!guard.ok) return { ok: false, error: guard.message };
+        const remaining = [...(entry.notes ?? [])];
+        const restored = new Map<string, string | null>();
+        let error: string | undefined;
+        while (remaining.length > 0) {
+            const n = remaining[remaining.length - 1];
+            const res = await ynabUpdateCategoryNote(ynabConfig.apiKey, entry.budgetId, n.categoryId, n.previousNote ?? '');
+            if (!res.success) { error = `${n.categoryName}: ${res.error ?? 'the write failed.'}`; break; }
+            restored.set(n.categoryId, n.previousNote);
+            remaining.pop();
+        }
+        storeCapexNotes(restored);
+        const stamp = new Date().toISOString();
+        recordWrite(error
+            ? { ...entry, notes: remaining, status: 'rollback-partial', error, updatedAt: stamp }
+            : { ...entry, status: 'rolled-back', rolledBackAt: stamp, error: undefined, updatedAt: stamp });
+        return { ok: !error, error, accountsLeft: [] };
+    };
+
     const rollbackYnabWrite = async (entryId: string) => {
         const entry = ynabWriteLog.find(e => e.id === entryId);
         if (!entry) return { ok: false, error: 'Write not found in the log.' };
@@ -3259,6 +3345,10 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         }
         if (!ynabConfig?.apiKey) return { ok: false, error: 'YNAB not configured.' };
         if (ynabWriting) return { ok: false, error: 'Another write to YNAB is in progress.' };
+        if (entry.kind === 'note') {
+            setYnabWriting(true);
+            try { return await rollbackCapexNotes(entry); } finally { setYnabWriting(false); }
+        }
         setYnabWriting(true);
         try {
             const result = await rollbackWriteEntry(ynabWriteApi(ynabConfig.apiKey, entry.budgetId), entry, ynabTrackingConfig, { report: recordWrite });
@@ -4016,6 +4106,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         executeYnabRevaluation,
         releaseYnabOrphanShares,
         rollbackYnabWrite,
+        readCapexNotes,
+        writeCapexNotes,
         ynabWriting,
         refreshYnabBudgets,
         listYnabAccounts,

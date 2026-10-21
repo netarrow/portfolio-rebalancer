@@ -543,3 +543,24 @@ export async function updateTransaction(
         return { success: false, error: mapError(e) };
     }
 }
+
+// Rewrites a category's note (the capex [PRB] line). Only the note is sent:
+// the name and YNAB's own goal fields are left as they are.
+export async function updateCategoryNote(
+    apiKey: string,
+    budgetId: string,
+    categoryId: string,
+    note: string,
+): Promise<YnabApiResult<{ note: string | null }>> {
+    try {
+        const response = await axios.patch(
+            `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/categories/${encodeURIComponent(categoryId)}`,
+            { category: { note } },
+            { headers: { Authorization: `Bearer ${apiKey}` } },
+        );
+        const saved = response.data?.data?.category;
+        return { success: true, data: { note: saved?.note ?? note } };
+    } catch (e) {
+        return { success: false, error: mapError(e) };
+    }
+}

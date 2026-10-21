@@ -125,6 +125,7 @@ export function mergeYnabGoalsFromCandidates(
             targetSource,
             lastSyncedAt: now,
             archived: false,
+            ...(c.rawNote ? { ynabNote: c.rawNote } : {}),
         });
         if (existing) report.updated += 1;
         else report.created += 1;

@@ -136,7 +136,9 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
         if (!entry) return;
         const confirm = await Swal.fire({
             title: 'Roll back this write?',
-            html: `${entry.label}: ${entry.transactions.length} transaction(s) created by the tool will be deleted from YNAB, both sides of each transfer.`
+            html: entry.kind === 'note'
+                ? `${entry.label}: the ${entry.notes?.length ?? 0} capex note(s) it rewrote get back the text they had before. An edit made in YNAB since then is overwritten.`
+                : `${entry.label}: ${entry.transactions.length} transaction(s) created by the tool will be deleted from YNAB, both sides of each transfer.`
                 + (entry.createdAccounts.length ? `<br/><br/>The ${entry.createdAccounts.length} account(s) it created stay in YNAB, empty: close them there if you no longer want them.` : ''),
             icon: 'warning',
             showCancelButton: true,
@@ -151,7 +153,7 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                 title: 'Rolled back',
                 html: res.accountsLeft && res.accountsLeft.length
                     ? `Close these empty accounts in YNAB if you no longer want them:<br/><strong>${res.accountsLeft.map(a => a.name).join('<br/>')}</strong>`
-                    : 'Everything it wrote has been deleted.',
+                    : entry.kind === 'note' ? 'The notes are back as they were.' : 'Everything it wrote has been deleted.',
                 icon: 'success',
             });
         } else {
@@ -530,7 +532,9 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
                                 <div className="ytv-cell">
                                     <span className="ytv-strong">{e.label}</span>
                                     <span className="ytv-muted ytv-small">
-                                        {new Date(e.createdAt).toLocaleString('en-IE')} · {e.transactions.length} transaction{e.transactions.length === 1 ? '' : 's'}
+                                        {new Date(e.createdAt).toLocaleString('en-IE')} · {e.kind === 'note'
+                                            ? `${e.notes?.length ?? 0} note${e.notes?.length === 1 ? '' : 's'}`
+                                            : `${e.transactions.length} transaction${e.transactions.length === 1 ? '' : 's'}`}
                                         {e.createdAccounts.length > 0 && ` · ${e.createdAccounts.length} account${e.createdAccounts.length === 1 ? '' : 's'} created`}
                                     </span>
                                     {e.error && <span className="ytv-small ytv-down">{e.error}</span>}

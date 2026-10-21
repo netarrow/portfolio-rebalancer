@@ -233,7 +233,21 @@ const confidenceOf = (r: SingleParse): 'high' | 'medium' | 'low' =>
 
 export function parseGoalDescriptor(name: string, note: string | null | undefined): ParsedGoalDescriptor {
     const nameResult = parseSingle(name || '');
-    if (nameResult.amount !== null || nameResult.date !== null) {
+    const nameHasDescriptor = nameResult.amount !== null || nameResult.date !== null;
+
+    // The tool's own line wins over everything, its TBD included.
+    const prb = parsePrbLine(note);
+    if (prb) {
+        return {
+            name: nameHasDescriptor ? nameResult.name : null,
+            amount: prb.amount,
+            date: prb.date,
+            confidence: prb.amount !== null && prb.date !== null ? 'high' : 'medium',
+            source: 'parsed-note',
+        };
+    }
+
+    if (nameHasDescriptor) {
         return {
             name: nameResult.name,
             amount: nameResult.amount,
@@ -283,4 +297,46 @@ export function nativeGoalTarget(cat: {
         ? cat.goalTargetMonth
         : null;
     return { amount, date };
+}
+
+// The line the YNAB Writeback keeps in a capex category's note, so the
+// category name can stay clean and the target lives in the tool:
+//   "[PRB] target: 1800€ · due: 2031-12-31"
+// "TBD" stands for a value not set. It ranks above every other descriptor:
+// edited by hand in YNAB, it wins at the next sync.
+const PRB_LINE_RE = /^[ \t]*\[PRB\][^\n]*$/im;
+const PRB_TARGET_RE = /\btarget\s*:\s*(TBD|\d+(?:[.,]\d+)?)\s*€?/i;
+const PRB_DUE_RE = /\bdue\s*:\s*(TBD|\d{4}-\d{2}-\d{2})\b/i;
+
+export interface PrbLine {
+    amount: number | null;
+    date: string | null;
+}
+
+export function parsePrbLine(note: string | null | undefined): PrbLine | null {
+    const line = (note || '').match(PRB_LINE_RE)?.[0];
+    if (!line) return null;
+    const target = line.match(PRB_TARGET_RE)?.[1];
+    const due = line.match(PRB_DUE_RE)?.[1];
+    const amount = target && !/^tbd$/i.test(target) ? Number(target.replace(',', '.')) : null;
+    const date = due && !/^tbd$/i.test(due) ? due : null;
+    return {
+        amount: amount !== null && Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : null,
+        date,
+    };
+}
+
+export function formatPrbLine(amount: number | null | undefined, date: string | null | undefined): string {
+    const a = amount && amount > 0 ? `${Math.round(amount * 100) / 100}€` : 'TBD';
+    const d = date ? date.slice(0, 10) : 'TBD';
+    return `[PRB] target: ${a} · due: ${d}`;
+}
+
+// The note with its [PRB] line replaced by `line` (or added at the end); the
+// rest of what the note says is kept as it is.
+export function upsertPrbLine(note: string | null | undefined, line: string): string {
+    const text = note || '';
+    if (PRB_LINE_RE.test(text)) return text.replace(PRB_LINE_RE, line);
+    const trimmed = text.replace(/\s+$/, '');
+    return trimmed ? `${trimmed}\n${line}` : line;
 }

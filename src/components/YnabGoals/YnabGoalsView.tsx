@@ -9,6 +9,8 @@ import { capexBondMatch, type CapexBondMatch } from '../../utils/capexBondMatch'
 import { suggestReassignments } from '../../utils/ynabWriteBack';
 import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
 import CapexSyncModal from '../YnabTracking/CapexSyncModal';
+import CapexNotesModal from './CapexNotesModal';
+import { capexNotesOutOfDate } from '../../utils/ynabCapexNotes';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import { buildGoalRow, formatCurrency, formatCurrencyExact } from './goalRows';
 
@@ -145,6 +147,9 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
     }, [writebackMoves]);
     const writebackTotal = writebackMoves.reduce((s, m) => s + m.amount, 0);
     const [syncFocus, setSyncFocus] = useState<string | null | undefined>(undefined);
+    // Targets set in the tool that the YNAB notes do not carry yet.
+    const notesOutOfDate = useMemo(() => capexNotesOutOfDate(ynabGoals), [ynabGoals]);
+    const [notesOpen, setNotesOpen] = useState(false);
     const fmtExact = (v: number) => formatCurrencyExact(v, currencyIso);
 
     const rows = useMemo(() => {
@@ -245,6 +250,15 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                         <strong>YNAB Writeback out of date</strong> · the capex allocations ask for {writebackMoves.length} move{writebackMoves.length === 1 ? '' : 's'} ({formatCurrency(writebackTotal, currencyIso)}) between the accounts by purpose
                     </span>
                     <button type="button" className="btn btn-primary btn-sm" onClick={() => setSyncFocus(null)}>Update YNAB…</button>
+                </div>
+            )}
+
+            {notesOutOfDate.length > 0 && ynabConfig?.goalsGroupId && (
+                <div className="ygl-writeback">
+                    <span>
+                        <strong>YNAB notes out of date</strong> · {notesOutOfDate.length} capex target{notesOutOfDate.length === 1 ? '' : 's'} not yet in the category note ([PRB] line)
+                    </span>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setNotesOpen(true)}>Write notes…</button>
                 </div>
             )}
 
@@ -376,6 +390,8 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                     );
                 })}
             </div>
+
+            {notesOpen && <CapexNotesModal onClose={() => setNotesOpen(false)} />}
 
             {syncFocus !== undefined && (
                 <CapexSyncModal
