@@ -1,7 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import {
-    buildTrackingPlan,
     TRACKING_PREFIX,
     type TrackingAccountRef,
     type TrackingDestination,
@@ -10,8 +9,9 @@ import {
 import { checkYnabGuardBudget, checkYnabWriteTarget } from '../../utils/ynabWriteGuard';
 import MigrationModal from './MigrationModal';
 import ReassignModal from './ReassignModal';
+import { useTrackingPlan } from './useTrackingPlan';
 import RevalueModal from './RevalueModal';
-import { buildRevaluationPreview, currentTaxLines, rollbackDependents } from '../../utils/ynabWriteBack';
+import { buildRevaluationPreview, rollbackDependents } from '../../utils/ynabWriteBack';
 import Swal from 'sweetalert2';
 
 // The off-budget map: how the per-broker tracking accounts of the primary
@@ -61,23 +61,12 @@ const AccountSelect: React.FC<AccountSelectProps> = ({ value, disabled, accounts
 const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSettings?: () => void }> = ({ onNavigateToYnab, onNavigateToSettings }) => {
     const {
         ynabConfig,
-        listYnabAccounts,
-        portfolios,
-        transactions,
-        brokers,
-        effectiveAssetSettings,
-        marketData,
-        ynabGoals,
-        ynabGoalAllocations,
-        virtualBonds,
-        ynabAccountMappings,
         ynabTrackingConfig,
         setYnabTrackingBrokerSource,
         setYnabTrackingDestinationAccount,
         setYnabTrackingBrokerInclusion,
         people,
         ynabMigratedBrokerIds,
-        ynabGoalQuotes,
         ynabWriteLog,
         rollbackYnabWrite,
         releaseYnabOrphanShares,
@@ -86,72 +75,15 @@ const YnabTrackingView: React.FC<{ onNavigateToYnab?: () => void; onNavigateToSe
     const [migrating, setMigrating] = useState<string | null>(null);
     const [reassigning, setReassigning] = useState<{ fromKey?: string; toKey?: string; amount?: number } | null>(null);
     const [revaluing, setRevaluing] = useState(false);
-    // The tool's latent-tax line in each account: balances are compared without it.
-    const taxLineAmounts = useMemo(
-        () => Object.fromEntries([...currentTaxLines(ynabWriteLog, ynabConfig?.budgetId)].map(([id, t]) => [id, t.amount])),
-        [ynabWriteLog, ynabConfig?.budgetId],
-    );
-
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const eur = useCallback((v: number) => new Intl.NumberFormat('en-IE', {
         style: 'currency', currency: currencyIso, minimumFractionDigits: 2, maximumFractionDigits: 2,
     }).format(v), [currencyIso]);
     const signed = (v: number) => `${v > 0 ? '+' : ''}${eur(v)}`;
 
-    const [accounts, setAccounts] = useState<(TrackingAccountRef & { transferPayeeId?: string })[] | null>(null);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [loadedAt, setLoadedAt] = useState<string | null>(null);
-
-    const loadAccounts = useCallback(async () => {
-        setLoading(true);
-        setError(null);
-        const res = await listYnabAccounts();
-        setLoading(false);
-        if (!res.ok || !res.accounts) {
-            setError(res.error || 'Unable to load YNAB accounts.');
-            return;
-        }
-        setAccounts(res.accounts.map(a => ({
-            id: a.id,
-            name: a.name,
-            onBudget: a.onBudget,
-            balance: a.balanceMilliunits / 1000,
-            clearedBalance: a.clearedBalanceMilliunits / 1000,
-            transferPayeeId: a.transferPayeeId,
-        })));
-        setLoadedAt(new Date().toISOString());
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [ynabConfig?.apiKey, ynabConfig?.budgetId]);
-
-    useEffect(() => {
-        if (ynabConfig?.apiKey && ynabConfig?.budgetId) loadAccounts();
-    }, [ynabConfig?.apiKey, ynabConfig?.budgetId, loadAccounts]);
-
-    // Only liquidity links of the primary budget make a broker "type A" here:
-    // the split happens inside that budget.
-    const liquidityMappings = useMemo(() => Object.fromEntries(
-        Object.entries(ynabAccountMappings).filter(([, m]) => m.budgetId === ynabConfig?.budgetId),
-    ), [ynabAccountMappings, ynabConfig?.budgetId]);
-
-    const plan = useMemo(() => buildTrackingPlan({
-        portfolios,
-        transactions,
-        brokers,
-        assetSettings: effectiveAssetSettings,
-        marketData,
-        goals: ynabGoals,
-        allocations: ynabGoalAllocations,
-        virtualBonds,
-        liquidityMappings,
-        config: ynabTrackingConfig,
-        accounts: accounts ?? undefined,
-        budgetId: ynabConfig?.budgetId,
-        migratedBrokerIds: ynabMigratedBrokerIds,
-        goalQuotes: ynabGoalQuotes,
-        taxLineAmounts,
-    }), [portfolios, transactions, brokers, effectiveAssetSettings, marketData, ynabGoals, ynabGoalAllocations,
-        virtualBonds, liquidityMappings, ynabTrackingConfig, accounts, ynabConfig?.budgetId, ynabMigratedBrokerIds, ynabGoalQuotes, taxLineAmounts]);
+    // Accounts, plan and loading are shared with the Capex section.
+    const { plan, accounts, loadAccounts: reloadAccounts, loading, error, loadedAt } = useTrackingPlan();
+    const loadAccounts = useCallback(() => { void reloadAccounts(); }, [reloadAccounts]);
 
     // Write guard: the active budget must be the allowed one, and only the
     // off-budget accounts ticked in Settings can be linked.

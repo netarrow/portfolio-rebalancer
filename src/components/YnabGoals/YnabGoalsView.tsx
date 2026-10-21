@@ -6,6 +6,9 @@ import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import GoalSetupModal from './GoalSetupModal';
 import CapexBondModal from './CapexBondModal';
 import { capexBondMatch, type CapexBondMatch } from '../../utils/capexBondMatch';
+import { suggestReassignments } from '../../utils/ynabWriteBack';
+import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
+import CapexSyncModal from '../YnabTracking/CapexSyncModal';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import { buildGoalRow, formatCurrency, formatCurrencyExact } from './goalRows';
 
@@ -128,6 +131,22 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
     );
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
 
+    // YNAB Writeback: when a remapping leaves the capex accounts out of line
+    // with the allocations, the moves that fix it (accounts to create
+    // included) are one confirmation away. Accounts are read only on demand.
+    const tracking = useTrackingPlan(false);
+    const writebackMoves = useMemo(() => suggestReassignments(tracking.plan), [tracking.plan]);
+    const writebackByGoal = useMemo(() => {
+        const out = new Map<string, number>();
+        writebackMoves.forEach(m => [m.fromKey, m.toKey].forEach(k => {
+            if (k.startsWith('goal:')) out.set(k.slice(5), (out.get(k.slice(5)) ?? 0) + m.amount);
+        }));
+        return out;
+    }, [writebackMoves]);
+    const writebackTotal = writebackMoves.reduce((s, m) => s + m.amount, 0);
+    const [syncFocus, setSyncFocus] = useState<string | null | undefined>(undefined);
+    const fmtExact = (v: number) => formatCurrencyExact(v, currencyIso);
+
     const rows = useMemo(() => {
         return [...ynabGoals]
             .sort((a, b) => {
@@ -220,6 +239,15 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                 </div>
             </div>
 
+            {writebackMoves.length > 0 && (
+                <div className="ygl-writeback">
+                    <span>
+                        <strong>YNAB Writeback out of date</strong> · the capex allocations ask for {writebackMoves.length} move{writebackMoves.length === 1 ? '' : 's'} ({formatCurrency(writebackTotal, currencyIso)}) between the accounts by purpose
+                    </span>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setSyncFocus(null)}>Update YNAB…</button>
+                </div>
+            )}
+
             <div className="ygl-list" role="list">
                 <div className="ygl-head" aria-hidden>
                     <span>Capex</span>
@@ -249,6 +277,16 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                                     {g.targetAmount != null && g.targetDate && <span className="dot-sep">·</span>}
                                     {g.targetDate && <>{formatShortDate(g.targetDate)}{r.monthsRemaining != null && ` (${r.monthsRemaining}m)`}</>}
                                     {g.archived && <span className="badge badge-warn">archived</span>}
+                                    {writebackByGoal.has(g.id) && (
+                                        <button
+                                            type="button"
+                                            className="ygl-wb-chip"
+                                            onClick={e => { e.stopPropagation(); setSyncFocus(g.id); }}
+                                            title="Its YNAB account does not hold what its allocations ask: update the Writeback"
+                                        >
+                                            YNAB ⇄ {formatCurrency(writebackByGoal.get(g.id)!, currencyIso)}
+                                        </button>
+                                    )}
                                     {g.goalType && g.goalType !== 'MF' && (
                                         <span className="ygl-flag" title={`YNAB goal type is ${g.goalType}: switch to MF to avoid underfunded warnings`}>⚠</span>
                                     )}
@@ -338,6 +376,17 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                     );
                 })}
             </div>
+
+            {syncFocus !== undefined && (
+                <CapexSyncModal
+                    plan={tracking.plan}
+                    accounts={tracking.accounts}
+                    loadAccounts={tracking.loadAccounts}
+                    format={fmtExact}
+                    focusGoalId={syncFocus ?? undefined}
+                    onClose={() => setSyncFocus(undefined)}
+                />
+            )}
 
             {bondGoalId && (() => {
                 const br = rows.find(x => x.goal.id === bondGoalId);
@@ -476,6 +525,10 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                 .ygl-bondline.is-planned { color: #8b5cf6; }
                 button.ygl-bondline { background: color-mix(in srgb, var(--color-primary) 16%, transparent); color: var(--color-primary);
                     border: 1px solid color-mix(in srgb, var(--color-primary) 40%, transparent); border-radius: 999px; padding: 0.15rem 0.6rem; cursor: pointer; }
+                .ygl-writeback { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4);
+                    background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: var(--radius-lg); font-size: 0.85rem; }
+                .ygl-wb-chip { margin-left: 0.4rem; font: inherit; font-size: 0.72rem; font-weight: 600; color: #f59e0b; background: rgba(245, 158, 11, 0.12);
+                    border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 999px; padding: 0.05rem 0.5rem; cursor: pointer; }
                 .ygl-action { display: flex; justify-content: flex-end; gap: 0.4rem; flex-wrap: wrap; }
                 .ygl-chip {
                     font-size: 0.74rem;
