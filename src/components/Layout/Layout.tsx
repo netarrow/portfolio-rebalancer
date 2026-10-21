@@ -8,17 +8,23 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
-// Grouped by what the user is doing (see docs/ui-rework-plan.md): the data
-// everything else reads from, planning targets and buckets, executing moves of
-// money, and analyzing the results.
+// Grouped by what the user is doing (see docs/ui-rework-plan.md): deciding
+// what the money is for and the target strategy, planning spending and
+// recurring investments, executing moves of money, analyzing the results, and
+// the data everything else reads from.
 const menuStructure = [
   { label: '🏠 Dashboard', view: 'dashboard' as const },
+  {
+    label: '🎯 Decide',
+    items: [
+      { label: '🔺 Buckets', view: 'goals' as const },
+      { label: '📋 Portfolios', view: 'portfolios' as const },
+    ],
+  },
   {
     label: '🧭 Plan',
     items: [
       { label: '🗒️ Expense Planning', view: 'summary' as const },
-      { label: '📋 Portfolios', view: 'portfolios' as const },
-      { label: '🔺 Buckets', view: 'goals' as const },
       { label: '📊 PAC', view: 'pac' as const },
     ],
   },
@@ -326,6 +332,13 @@ const Layout: React.FC<LayoutProps> = ({ currentView, onNavigate, children }) =>
           align-items: center;
           gap: var(--space-2);
           cursor: pointer;
+        }
+
+        /* Same tightening as .nav-link, declared after the base rule so it wins. */
+        @media (max-width: 1600px) {
+          .nav-group-toggle {
+            padding: var(--space-2) var(--space-2);
+          }
         }
 
         .nav-group-toggle:hover {
