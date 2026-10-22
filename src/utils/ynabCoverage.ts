@@ -139,6 +139,12 @@ export interface AccountCoverage {
     peakOut: number;
     /** Cash to keep for day-to-day: avgOut × working-capital months + (peak − avg). */
     operatingCash: number;
+    /**
+     * Available (> 0) already on its day-to-day spending categories: not the
+     * set aside for dated expenses, not the money to invest, not the emergency
+     * fund, not the capex due soon.
+     */
+    dayToDayAvailable: number;
     /** Cash already set aside here for other purposes: dated expenses, unmapped. Not the fund, not capex due soon, not money to invest. */
     earmarked: number;
     /** The categories making up `earmarked` (Available > 0), largest first. */
@@ -539,6 +545,9 @@ export const buildCoverageReport = (input: CoverageInput): CoverageReport => {
             avgOut: roundCents(avgOut),
             peakOut: roundCents(peakOut),
             operatingCash,
+            dayToDayAvailable: roundCents(dayToDay
+                .filter(p => !dueIds.has(p.categoryId))
+                .reduce((sum, p) => sum + Math.max(0, p.available), 0)),
             earmarked,
             earmarkedCategoryIds: earmarkedList.map(p => p.categoryId),
             toInvest,

@@ -168,6 +168,7 @@ const flowReport = buildCoverageReport({
 const cur = flowReport.accounts.find(a => a.brokerId === 'current')!;
 check('average in / out and the worst month', [cur.flowMonths, cur.avgIn, cur.avgOut, cur.peakOut], [3, 1590, 1590, 1800]);
 check('operating cash = a month of average plus the swing of the worst', cur.operatingCash, 1800);
+check('already on the spending categories: utilities + groceries + dining, not the set aside nor the capex due', cur.dayToDayAvailable, 550);
 check('the car service is due soon: its cash is held as capex due, not set aside', [cur.earmarked, cur.dueCapexCash], [0, 1000]);
 check('and which categories make it up, the fund kept apart', [cur.earmarkedCategoryIds, flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarkedCategoryIds], [[], ['house']]);
 check('the fund is held apart, counted once', [flowReport.accounts.find(a => a.brokerId === 'savings')!.earmarked, flowReport.accounts.find(a => a.brokerId === 'savings')!.emergencyHere, flowReport.accounts.find(a => a.brokerId === 'savings')!.free], [5000, 8000, 2000]);

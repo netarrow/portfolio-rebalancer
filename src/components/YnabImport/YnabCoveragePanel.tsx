@@ -58,7 +58,10 @@ const YnabCoveragePanel: React.FC<Props> = () => {
         worst: sum(a => a.peakOut),
         keep: sum(a => a.operatingCash),
         months: Math.max(0, ...accounts.map(a => a.flowMonths)),
+        // Already budgeted on the day-to-day spending categories.
+        onCategories: sum(a => a.dayToDayAvailable),
     };
+    const monthsOnCategories = operating.avgOut > 0 ? operating.onCategories / operating.avgOut : null;
     const keepOn = accounts.filter(a => a.operatingCash > 0);
 
     // ── Set aside: cash on the accounts already destined elsewhere ─────
@@ -134,7 +137,21 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                         <div><dt>Average month in / out</dt><dd>{eur(operating.avgIn)} / {eur(operating.avgOut)}</dd></div>
                         <div><dt>Worst month out</dt><dd>{eur(operating.worst)}</dd></div>
                         <div><dt>Rule</dt><dd>{settings.workingCapitalMonths} × average + the worst-month swing</dd></div>
+                        <div title="Available on the day-to-day spending categories: set aside for dated expenses, money to invest, the emergency fund and capex due soon are left out">
+                            <dt>Already on spending categories</dt>
+                            <dd>
+                                {eur(operating.onCategories)}
+                                {monthsOnCategories !== null && <> · {monthsOnCategories.toFixed(1)} month{monthsOnCategories.toFixed(1) === '1.0' ? '' : 's'}</>}
+                            </dd>
+                        </div>
                     </dl>
+                    {operating.keep > 0 && (
+                        <div className="cov-caption">
+                            {operating.onCategories >= operating.keep
+                                ? <>The spending categories already hold the operating cash, {eur(operating.onCategories - operating.keep)} more.</>
+                                : <>The spending categories hold {eur(operating.onCategories)} of the {eur(operating.keep)} to keep: {eur(operating.keep - operating.onCategories)} not yet budgeted there.</>}
+                        </div>
+                    )}
                     {keepOn.length > 1 && (
                         <div className="cov-caption">{keepOn.map(a => `${eur(a.operatingCash)} on ${a.brokerName}`).join(' · ')}</div>
                     )}
