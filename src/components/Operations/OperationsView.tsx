@@ -18,6 +18,7 @@ import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import OrdersReviewModal from './OrdersReviewModal';
 import CashTransferModal, { OUTSIDE } from './CashTransferModal';
+import InvestCashModal from './InvestCashModal';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { RESERVE_ALLOCATED_CASH_KEY } from '../../utils/brokerLiquidity';
 import BrokerLiquiditySyncModal from '../Brokers/BrokerLiquiditySyncModal';
@@ -43,7 +44,7 @@ const SNOOZE_DAYS = 7;
  */
 const OperationsView: React.FC = () => {
     const {
-        portfolios, scopedTransactions, scopedBrokers, transactions, brokers, effectiveAssetSettings, marketData,
+        portfolios, scopedTransactions, scopedBrokers, transactions, brokers, assetSettings, effectiveAssetSettings, marketData,
         pacPlans, pacExecutions, skipPacInstalment, ynabGoals, ynabGoalAllocations, virtualBonds, ynabConfig,
         ynabAccountMappings, azureConfig, syncToAzure, refreshPrices, prepareBrokerLiquiditySync,
         applyBrokerLiquiditySync, adjustBrokerLiquidity, addTransactionsBulk, concretizeVirtualBond, operations, recordOperation,
@@ -91,7 +92,8 @@ const OperationsView: React.FC = () => {
             ...detectPac({ plans: pacPlans, executions: pacExecutions, now }),
             ...detectPrices({ tickers: priceTickers, marketData, now }),
             ...detectLiquidity({ brokers, ynabBrokerIds: new Set(Object.keys(ynabAccountMappings)), records: operations, now }),
-            ...detectBrokerCash({ brokers: scopedBrokers, transactions: scopedTransactions, assetSettings: effectiveAssetSettings, marketData, reserveAllocatedCash }),
+            // The Dashboard's Broker Performance cards read the stored asset settings.
+            ...detectBrokerCash({ brokers: scopedBrokers, transactions: scopedTransactions, assetSettings, marketData, reserveAllocatedCash }),
             ...detectRebalance({ portfolios, transactions: scopedTransactions, assetSettings: effectiveAssetSettings, marketData, brokers: scopedBrokers }),
             ...detectVirtualBonds({ virtualBonds, transactions }),
             ...detectCapex({
@@ -122,7 +124,7 @@ const OperationsView: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pacPlans, pacExecutions, priceTickers, marketData, brokers, ynabAccountMappings, operations, portfolios, scopedTransactions,
         effectiveAssetSettings, scopedBrokers, virtualBonds, transactions, ynabGoals, ynabGoalAllocations, tagOf, ynabConfig,
-        azureConfig, reserveAllocatedCash, tracking.accounts, tracking.plan, guard.ok, writebackInUse, ynabTrackingConfig, ynabWriteLog, now]);
+        azureConfig, reserveAllocatedCash, assetSettings, tracking.accounts, tracking.plan, guard.ok, writebackInUse, ynabTrackingConfig, ynabWriteLog, now]);
 
     const todos = useMemo(() => visibleTodos(detected, operations, now), [detected, operations, now]);
     const snoozed = operations.filter(r => r.status === 'snoozed' && r.until && new Date(r.until) > now);
@@ -130,6 +132,9 @@ const OperationsView: React.FC = () => {
 
     // ── Running an item ──
     const [active, setActive] = useState<OperationTodo | null>(null);
+    // Broker cash: invest it (default when there is cash to spare) or transfer it.
+    const [cashMode, setCashMode] = useState<'invest' | 'transfer' | 'review'>('transfer');
+    const [investOrders, setInvestOrders] = useState<{ title: string; orders: Transaction[] } | null>(null);
     const [busyKey, setBusyKey] = useState<string | null>(null);
     const [liquidityRows, setLiquidityRows] = useState<BrokerLiquiditySyncRow[] | null>(null);
     // An item run through a modal is done when, once the modal is closed, it is no longer detected.
@@ -188,6 +193,10 @@ const OperationsView: React.FC = () => {
                 setBusyKey(todo.key);
                 await tracking.loadAccounts();
                 setBusyKey(null);
+                setActive(todo);
+                return;
+            case 'broker-cash':
+                setCashMode((todo.amount ?? 0) > 0 ? 'invest' : 'transfer');
                 setActive(todo);
                 return;
             default:
@@ -279,6 +288,9 @@ const OperationsView: React.FC = () => {
                             </div>
                             <div className="ops-actions">
                                 {t.kind === 'pac' && <button type="button" className="btn btn-sm" onClick={() => skipPac(t)}>Skip</button>}
+                                {t.kind === 'broker-cash' && (t.amount ?? 0) > 0 && (
+                                    <button type="button" className="btn btn-sm" onClick={() => { setCashMode('transfer'); setActive(t); }}>Transfer…</button>
+                                )}
                                 <button type="button" className="btn btn-sm" onClick={() => snooze(t)} title={`Hide for ${SNOOZE_DAYS} days`}>Snooze</button>
                                 <button type="button" className="btn btn-sm btn-primary" onClick={() => run(t)} disabled={busyKey === t.key}>
                                     {busyKey === t.key ? 'Working…' : actionLabel(t)}
@@ -335,7 +347,32 @@ const OperationsView: React.FC = () => {
                     onClose={() => setActive(null)}
                 />
             )}
-            {active?.kind === 'broker-cash' && active.brokerId && (() => {
+            {active?.kind === 'broker-cash' && active.brokerId && cashMode === 'invest' && (() => {
+                const broker = brokers.find(b => b.id === active.brokerId);
+                return broker ? (
+                    <InvestCashModal
+                        broker={broker}
+                        amount={active.amount ?? 0}
+                        portfolios={portfolios}
+                        transactions={scopedTransactions}
+                        brokers={scopedBrokers}
+                        assetSettings={effectiveAssetSettings}
+                        marketData={marketData}
+                        onReview={(p, orders) => { setInvestOrders({ title: `Invest from ${broker.name} in ${p.name}`, orders }); setCashMode('review'); }}
+                        onClose={() => setActive(null)}
+                    />
+                ) : null;
+            })()}
+            {active?.kind === 'broker-cash' && cashMode === 'review' && investOrders && (
+                <OrdersReviewModal
+                    title={investOrders.title}
+                    orders={investOrders.orders}
+                    brokers={brokers}
+                    onConfirm={orders => { setInvestOrders(null); confirmOrders(active, orders); }}
+                    onClose={() => { setInvestOrders(null); setActive(null); }}
+                />
+            )}
+            {active?.kind === 'broker-cash' && active.brokerId && cashMode === 'transfer' && (() => {
                 const t = transferFor(active);
                 return (
                     <CashTransferModal
@@ -450,7 +487,7 @@ const actionLabel = (t: OperationTodo): string => {
     switch (t.kind) {
         case 'prices': return 'Update prices';
         case 'liquidity': return 'Update…';
-        case 'broker-cash': return 'Transfer…';
+        case 'broker-cash': return (t.amount ?? 0) > 0 ? 'Invest…' : 'Transfer…';
         case 'pac': return 'Register…';
         case 'rebalance': return 'Review orders…';
         case 'capex-notes': return 'Update YNAB…';

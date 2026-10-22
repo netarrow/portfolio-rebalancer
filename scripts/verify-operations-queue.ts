@@ -2,7 +2,7 @@
 // only while the condition holds, and snoozed keys stay hidden until their date.
 // Run with: npx esbuild scripts/verify-operations-queue.ts --bundle --format=esm --platform=node | node --input-type=module
 import {
-    addOperationRecord, detectBrokerCash, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
+    addOperationRecord, buildCashInvestOrders, detectBrokerCash, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
     normalizeOperations, visibleTodos, type OperationTodo,
 } from '../src/utils/operationsQueue';
 import type { Broker, OperationRecord, PacPlan, Portfolio, Transaction } from '../src/types';
@@ -88,11 +88,13 @@ check('interest of cents', detectLiquidity({ brokers: [remunerated(0.01)], ynabB
 const bc = (liq: number, min: number, alloc = 0): Broker => ({ id: 'c1', name: 'Cash Broker', currentLiquidity: liq, minLiquidityType: 'fixed', minLiquidityAmount: min, ...(alloc ? { liquidityAllocations: { pf: alloc } } : {}) } as Broker);
 const cash = (b: Broker, reserve = true) => detectBrokerCash({ brokers: [b], transactions: [], assetSettings: [], marketData: {}, reserveAllocatedCash: reserve });
 check('broker cash: below the minimum', cash(bc(800, 1000)).map(t => [t.urgency, t.amount]), [['due', -200]]);
-check('broker cash: within tolerance', cash(bc(980, 1000)).length, 0);
+check('broker cash: within tolerance', cash(bc(950, 1000)).length, 0);
 check('broker cash: allocated cash reserved too', cash(bc(1200, 1000, 500)).map(t => t.amount), [-300]);
-check('broker cash: allocated cash not reserved', cash(bc(1200, 1000, 500), false).length, 0);
-check('broker cash: well above', cash(bc(3000, 1000)).map(t => [t.urgency, t.amount]), [['info', 2000]]);
-check('broker cash: a little above is fine', cash(bc(1400, 1000)).length, 0);
+check('broker cash: allocated cash not reserved', cash(bc(1200, 1000, 500), false).map(t => t.amount), [200]);
+check('broker cash: you can invest', cash(bc(3000, 1000)).map(t => [t.title, t.amount]), [['You can invest €2,000 from Cash Broker', 2000]]);
+check('broker cash: from €100, like the Dashboard', [cash(bc(1100, 1000)).length, cash(bc(1099, 1000)).length], [1, 0]);
 check('broker cash: no minimum, nothing to say', cash(bc(3000, 0)).length, 0);
 check('broker cash: negative without a minimum', cash(bc(-400, 0)).map(t => t.amount), [-400]);
+const invest = buildCashInvestOrders({ portfolio: pf, amount: 1000, broker: bc(3000, 1000), transactions: [tx('AAA', 50, 10), tx('BBB', 50, 10)], assetSettings: [], marketData: prices, brokers: [] });
+check('invest free cash: Buy only toward the targets, at that broker', invest.map(o => [o.direction, o.ticker, o.amount, o.brokerId]), [['Buy', 'AAA', 100, 'c1']]);
 console.log('all operations queue checks passed');

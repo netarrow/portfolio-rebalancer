@@ -47,11 +47,12 @@ export const LIQUIDITY_MAX_AGE_DAYS = 7;
 export const LIQUIDITY_MIN_INTEREST = 1;
 export const CAPEX_SYNC_MAX_AGE_DAYS = 7;
 export const BACKUP_MAX_AGE_DAYS = 7;
-/** Broker cash below its minimum by more than this (€) is a to-do. */
-export const BROKER_CASH_LOW_TOLERANCE = 50;
-/** Above it, a to-do once the excess passes both this (€) and this share of the reserve. */
-export const BROKER_CASH_HIGH_MIN = 500;
-export const BROKER_CASH_HIGH_SHARE = 0.1;
+/**
+ * Broker cash off what it must keep by at least this (€) is a to-do: the
+ * Dashboard's "You can invest" / "You need to save" line appears from the same
+ * amount.
+ */
+export const BROKER_CASH_TOLERANCE = 100;
 /** A portfolio is due for a rebalance once one of its rows is this many points off target. */
 export const REBALANCE_DRIFT_POINTS = 5;
 
@@ -119,16 +120,16 @@ export const detectBrokerCash = (input: {
     const invested = calculateAssets(input.transactions.filter(t => t.brokerId === b.id), input.assetSettings, input.marketData).summary.totalValue;
     const st = brokerLiquidityStatus(b, invested, input.reserveAllocatedCash);
     // Without a minimum only negative cash is out of range: it cannot settle anything.
-    if (!st.hasReserve && st.liquidity >= -BROKER_CASH_LOW_TOLERANCE) return [];
+    if (!st.hasReserve && st.liquidity > -BROKER_CASH_TOLERANCE) return [];
     const reserveText = `${eur0(st.liquidity)} against ${eur0(st.reserve)} to keep${input.reserveAllocatedCash && st.allocatedReserve > 0 ? ` (minimum ${eur0(st.targetValue)} + ${eur0(st.allocatedReserve)} allocated to portfolios)` : ''}${b.minLiquidityLinked ? ' · minimum from Expense Planning' : ''}`;
-    if (st.deviation < -BROKER_CASH_LOW_TOLERANCE) return [{
+    if (st.deviation <= -BROKER_CASH_TOLERANCE) return [{
         key: `broker-cash:${b.id}`, kind: 'broker-cash', brokerId: b.id, amount: st.deviation, urgency: 'due',
         title: st.hasReserve ? `Top up ${b.name}: ${eur0(-st.deviation)} below its minimum` : `Top up ${b.name}: its cash is negative (−${eur0(-st.liquidity)})`,
         detail: st.hasReserve ? reserveText : 'no minimum set; a negative balance cannot settle any order',
     } as OperationTodo];
-    if (st.deviation > Math.max(BROKER_CASH_HIGH_MIN, st.reserve * BROKER_CASH_HIGH_SHARE)) return [{
-        key: `broker-cash:${b.id}`, kind: 'broker-cash', brokerId: b.id, amount: st.deviation, urgency: 'info',
-        title: `${eur0(st.deviation)} more cash than needed at ${b.name}`, detail: `${reserveText} · move it or invest it`,
+    if (st.hasReserve && st.deviation >= BROKER_CASH_TOLERANCE) return [{
+        key: `broker-cash:${b.id}`, kind: 'broker-cash', brokerId: b.id, amount: st.deviation, urgency: 'due',
+        title: `You can invest ${eur0(st.deviation)} from ${b.name}`, detail: `${reserveText} · invest it in a portfolio, or move it`,
     } as OperationTodo];
     return [];
 });
@@ -216,6 +217,27 @@ export const detectRebalance = (input: {
         }
         return out;
     });
+};
+
+/**
+ * Buy only orders investing `amount` of a broker's free cash in a portfolio:
+ * the portfolio's own Buy only plan, sized on that amount, every order at
+ * that broker.
+ */
+export const buildCashInvestOrders = (input: {
+    portfolio: Portfolio;
+    amount: number;
+    broker: Broker;
+    transactions: Transaction[];
+    assetSettings: AssetDefinition[];
+    marketData: Record<string, { price: number; lastUpdated: string }>;
+    brokers: Broker[];
+}): Transaction[] => {
+    const portfolio = { ...input.portfolio, liquidity: Math.max(0, input.amount) };
+    const pc = buildPortfolioCalc(portfolio, input.transactions, input.assetSettings, input.marketData, input.brokers.map(realCashAllocations));
+    const resolved = resolveGroups(portfolio);
+    const buyOnly = computeBuyOnly(pc, resolved, input.marketData);
+    return buildRebalanceOrders({ mode: 'BuyOnly', portfolioCalc: pc, resolved, marketData: input.marketData, buyOnly, allTransactions: input.transactions, preferredBroker: input.broker });
 };
 
 /** A broker whose cash allocations exceed its liquidity, scaled down to it. */

@@ -129,7 +129,7 @@ const sourceFiles = (dir: string): string[] => readdirSync(dir).flatMap(name => 
 });
 const persistedKeys = new Set<string>();
 for (const file of sourceFiles('src')) {
-    for (const m of readFileSync(file, 'utf8').matchAll(/useLocalStorage<[\s\S]*?>\(\s*'([^']+)'/g)) persistedKeys.add(m[1]);
+    for (const m of readFileSync(file, 'utf8').matchAll(/useLocalStorage<[^()]*?>\(\s*'([^']+)'/g)) persistedKeys.add(m[1]);
 }
 const backedUp = new Set<string>(Object.values(BACKUP_STORAGE_KEYS));
 check('found the persisted states in the source', persistedKeys.size > 30, true);
