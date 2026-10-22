@@ -10,7 +10,7 @@ import { suggestReassignments } from '../../utils/ynabWriteBack';
 import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
 import CapexSyncModal from '../YnabTracking/CapexSyncModal';
 import CapexNotesModal from './CapexNotesModal';
-import { capexNotesOutOfDate } from '../../utils/ynabCapexNotes';
+import { capexNotesOutOfDate, wantsInvestedTag } from '../../utils/ynabCapexNotes';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import { buildGoalRow, formatCurrency, formatCurrencyExact } from './goalRows';
 
@@ -147,8 +147,6 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
     }, [writebackMoves]);
     const writebackTotal = writebackMoves.reduce((s, m) => s + m.amount, 0);
     const [syncFocus, setSyncFocus] = useState<string | null | undefined>(undefined);
-    // Targets set in the tool that the YNAB notes do not carry yet.
-    const notesOutOfDate = useMemo(() => capexNotesOutOfDate(ynabGoals), [ynabGoals]);
     const [notesOpen, setNotesOpen] = useState(false);
     const fmtExact = (v: number) => formatCurrencyExact(v, currencyIso);
 
@@ -161,6 +159,14 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
             .map(g => buildGoalRow(g, getYnabGoalAllocations(g.id), coveredBy));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ynabGoals, ynabGoalAllocations, pinnedCoverage]);
+
+    // Targets set in the tool that the YNAB notes do not carry yet, and names
+    // whose "[Invested]" postfix no longer says how the capex is held.
+    const tagOf = useMemo(() => {
+        const wants = new Map(rows.map(r => [r.goal.id, wantsInvestedTag(r)]));
+        return (goalId: string) => wants.get(goalId) ?? false;
+    }, [rows]);
+    const notesOutOfDate = useMemo(() => capexNotesOutOfDate(ynabGoals, tagOf), [ynabGoals, tagOf]);
 
     const totals = useMemo(() => {
         const active = rows.filter(r => !r.goal.archived);
@@ -256,9 +262,9 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
             {notesOutOfDate.length > 0 && ynabConfig?.goalsGroupId && (
                 <div className="ygl-writeback">
                     <span>
-                        <strong>YNAB notes out of date</strong> · {notesOutOfDate.length} capex target{notesOutOfDate.length === 1 ? '' : 's'} not yet in the category note ([PRB] line)
+                        <strong>YNAB capex categories out of date</strong> · {notesOutOfDate.length} capex categor{notesOutOfDate.length === 1 ? 'y' : 'ies'} to update in YNAB: the [PRB] target line in the note, or the [Invested] postfix on the name
                     </span>
-                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setNotesOpen(true)}>Write notes…</button>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={() => setNotesOpen(true)}>Update YNAB…</button>
                 </div>
             )}
 
@@ -391,7 +397,7 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
                 })}
             </div>
 
-            {notesOpen && <CapexNotesModal onClose={() => setNotesOpen(false)} />}
+            {notesOpen && <CapexNotesModal tagOf={tagOf} onClose={() => setNotesOpen(false)} />}
 
             {syncFocus !== undefined && (
                 <CapexSyncModal

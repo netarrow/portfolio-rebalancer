@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { stripInvestedTag } from '../utils/ynabGoalParser';
 import type { YnabCategory, YnabCategoryGroupSummary, YnabMonthSnapshot, YnabMonthCategorySnapshot } from '../types';
 
 const YNAB_BASE = 'https://api.ynab.com/v1';
@@ -163,7 +164,7 @@ export async function getCurrentMonthCategories(
                 id: c.id,
                 groupId: group.id,
                 groupName: group.name,
-                name: c.name,
+                name: stripInvestedTag(c.name).name,
                 balanceMilliunits: typeof c.balance === 'number' ? c.balance : 0,
                 budgetedMilliunits: typeof c.budgeted === 'number' ? c.budgeted : 0,
             });
@@ -234,11 +235,13 @@ export async function getGoalCategories(
         for (const c of rawCats) {
             if (c.hidden || c.deleted) continue;
             const monthSnap = monthById.get(c.id);
+            const tag = stripInvestedTag(c.name);
             out.push({
                 id: c.id,
                 groupId: group.id,
                 groupName: group.name,
-                name: c.name,
+                name: tag.name,
+                ...(tag.tagged ? { rawName: c.name } : {}),
                 balanceMilliunits: typeof c.balance === 'number' ? c.balance : 0,
                 budgetedMilliunits: typeof c.budgeted === 'number' ? c.budgeted : 0,
                 note: typeof c.note === 'string' && c.note.length > 0 ? c.note : undefined,
@@ -398,7 +401,7 @@ export async function getMonthlyBudgetSnapshots(
                 if (HIDDEN_GROUP_NAMES.has(group.name)) continue;
                 categories.push({
                     categoryId: c.id,
-                    name: c.name,
+                    name: stripInvestedTag(c.name).name,
                     groupId: c.category_group_id,
                     groupName: group.name,
                     budgetedMilliunits: typeof c.budgeted === 'number' ? c.budgeted : 0,
@@ -544,22 +547,23 @@ export async function updateTransaction(
     }
 }
 
-// Rewrites a category's note (the capex [PRB] line). Only the note is sent:
-// the name and YNAB's own goal fields are left as they are.
-export async function updateCategoryNote(
+// Rewrites a capex category's note (the [PRB] line) and/or its name (the
+// [Invested] postfix). Only those fields are sent: YNAB's own goal fields are
+// left as they are.
+export async function updateCategory(
     apiKey: string,
     budgetId: string,
     categoryId: string,
-    note: string,
-): Promise<YnabApiResult<{ note: string | null }>> {
+    patch: { note?: string; name?: string },
+): Promise<YnabApiResult<{ note: string | null; name: string | null }>> {
     try {
         const response = await axios.patch(
             `${YNAB_BASE}/budgets/${encodeURIComponent(budgetId)}/categories/${encodeURIComponent(categoryId)}`,
-            { category: { note } },
+            { category: patch },
             { headers: { Authorization: `Bearer ${apiKey}` } },
         );
         const saved = response.data?.data?.category;
-        return { success: true, data: { note: saved?.note ?? note } };
+        return { success: true, data: { note: saved?.note ?? patch.note ?? null, name: saved?.name ?? patch.name ?? null } };
     } catch (e) {
         return { success: false, error: mapError(e) };
     }

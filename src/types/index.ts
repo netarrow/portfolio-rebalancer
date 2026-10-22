@@ -439,11 +439,15 @@ export interface YnabWriteLogEntry {
   rolledBackAt?: string;
 }
 
+// One capex category the Writeback rewrote: its note ([PRB] line), its name
+// ([Invested] postfix), or both. Only the fields it changed are set.
 export interface YnabWriteLogNote {
   categoryId: string;
   categoryName: string;
-  previousNote: string | null;
-  note: string;
+  previousNote?: string | null;
+  note?: string;
+  previousName?: string;
+  name?: string;
 }
 
 // One movement of a goal's share of one holding, in units. The stored list is a
@@ -521,6 +525,9 @@ export interface YnabCategory {
   avgSpentMilliunits?: number;
   spentMonthsCount?: number;
   note?: string;
+  // The name as YNAB has it, when it carries the tool's "[Invested]" postfix
+  // (`name` is always read without it).
+  rawName?: string;
   goalType?: string;
   goalTargetMilliunits?: number;
   // YNAB's own goal target date ('YYYY-MM-DD'), set on dated goals (TBD/NEED).
@@ -562,6 +569,8 @@ export interface YnabGoal {
   // The category note as last read from (or written to) YNAB: tells a [PRB]
   // line edited in YNAB apart from one the tool still has to write.
   ynabNote?: string;
+  // The category name in YNAB carries the "[Invested]" postfix.
+  ynabInvestedTag?: boolean;
 }
 
 export interface YnabGoalAllocation {
@@ -589,6 +598,8 @@ export interface YnabGoalSyncCandidate {
   // "- 2500€ - 2030" tail when it carries one. Editable in the sync modal.
   parsedName: string;
   rawNote: string | null;
+  // The YNAB name carries the "[Invested]" postfix.
+  investedTag?: boolean;
   // Values that will be applied: the name/note parse when it found something,
   // otherwise YNAB's own goal target, otherwise the value already stored in
   // YNAB Goals. Editable in the sync modal before confirming.

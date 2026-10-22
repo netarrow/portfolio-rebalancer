@@ -2,8 +2,8 @@
 // name and the rest of the note, merged into a note without touching the rest,
 // and proposed for writing only when YNAB did not edit it since the last sync.
 // Run with: npx esbuild scripts/verify-capex-notes.ts --bundle --format=esm --platform=node | node --input-type=module
-import { formatPrbLine, parseGoalDescriptor, parsePrbLine, upsertPrbLine } from '../src/utils/ynabGoalParser';
-import { buildCapexNoteRows, capexNotesOutOfDate } from '../src/utils/ynabCapexNotes';
+import { formatPrbLine, parseGoalDescriptor, parsePrbLine, stripInvestedTag, upsertPrbLine, withInvestedTag } from '../src/utils/ynabGoalParser';
+import { buildCapexNoteRows, capexNotesOutOfDate, wantsInvestedTag, type FreshCapexCategory } from '../src/utils/ynabCapexNotes';
 import type { YnabGoal } from '../src/types';
 
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -40,16 +40,43 @@ const goals = [
     goal('F', 400, undefined, undefined, { origin: 'category' }),
     goal('G', undefined, undefined),
 ];
-check('out of date from stored notes', capexNotesOutOfDate(goals).map(g => g.id), ['A', 'C']);
+const noTag = () => false;
+check('out of date from stored notes', capexNotesOutOfDate(goals, noTag).map(g => g.id), ['A', 'C']);
 
-const fresh = new Map<string, string | null>([
-    ['A', null],
-    ['B', '[PRB] target: 900€ · due: 2029-01-31'],
-    ['C', 'keep me\n[PRB] target: 1000€ · due: 2030-03-31'],
-    ['D', '[PRB] target: 750€ · due: 2028-10-31'],
+const fc = (note: string | null, rawName = 'x'): FreshCapexCategory => ({ note, rawName });
+const fresh = new Map<string, FreshCapexCategory>([
+    ['A', fc(null, 'A')],
+    ['B', fc('[PRB] target: 900€ · due: 2029-01-31', 'B')],
+    ['C', fc('keep me\n[PRB] target: 1000€ · due: 2030-03-31', 'C')],
+    ['D', fc('[PRB] target: 750€ · due: 2028-10-31', 'D')],
 ]);
-const rows = buildCapexNoteRows(goals, fresh);
+const rows = buildCapexNoteRows(goals, fresh, noTag);
 check('rows', rows.map(r => [r.goalId, r.status]), [['A', 'write'], ['C', 'write'], ['D', 'changed-in-ynab']]);
 check('C keeps its text', rows.find(r => r.goalId === 'C')?.after, 'keep me\n[PRB] target: 1200€ · due: 2030-03-31');
-check('missing category', buildCapexNoteRows([goal('Z', 100, undefined)], new Map()).map(r => r.status), ['missing']);
+check('missing category', buildCapexNoteRows([goal('Z', 100, undefined)], new Map(), noTag).map(r => r.status), ['missing']);
+
+// [Invested] postfix
+check('strip', stripInvestedTag('Garden Shed [Invested]'), { name: 'Garden Shed', tagged: true });
+check('strip case-insensitive', stripInvestedTag('Garden Shed  [invested] ').name, 'Garden Shed');
+check('strip untagged', stripInvestedTag('Garden Shed'), { name: 'Garden Shed', tagged: false });
+check('add', withInvestedTag('Garden Shed', true), 'Garden Shed [Invested]');
+check('add once', withInvestedTag('Garden Shed [Invested]', true), 'Garden Shed [Invested]');
+check('remove', withInvestedTag('Garden Shed [Invested]', false), 'Garden Shed');
+check('parse a tagged name', parseGoalDescriptor(stripInvestedTag('Laptop - 1800€ - 2031 [Invested]').name, null).name, 'Laptop');
+
+check('wants: partly invested', wantsInvestedTag({ invested: 300, cash: 200, target: 1000 }), true);
+check('wants: cash covers the target', wantsInvestedTag({ invested: 300, cash: 1000, target: 1000 }), false);
+check('wants: nothing invested', wantsInvestedTag({ invested: 0, cash: 100, target: 1000 }), false);
+check('wants: invested, no target', wantsInvestedTag({ invested: 300, cash: 0, target: 0 }), true);
+
+const inLine = goal('K', 500, '2030-01-31', '[PRB] target: 500€ · due: 2030-01-31');
+const tagK = (id: string) => id === 'K';
+check('tag wanted: out of date', capexNotesOutOfDate([inLine], tagK).map(g => g.id), ['K']);
+check('tag stored: in line', capexNotesOutOfDate([{ ...inLine, ynabInvestedTag: true }], tagK).length, 0);
+const kRows = buildCapexNoteRows([inLine], new Map([['K', fc('[PRB] target: 500€ · due: 2030-01-31', 'Bike')]]), tagK);
+check('name only', kRows.map(r => [r.status, r.after, r.nameBefore, r.nameAfter]), [['write', null, 'Bike', 'Bike [Invested]']]);
+const untag = buildCapexNoteRows([{ ...inLine, ynabInvestedTag: true }], new Map([['K', fc('[PRB] target: 500€ · due: 2030-01-31', 'Bike [Invested]')]]), noTag);
+check('removed once covered', untag.map(r => r.nameAfter), ['Bike']);
+const both = buildCapexNoteRows([goal('D', 700, '2028-10-31', '[PRB] target: 700€ · due: 2028-10-31')], new Map([['D', fc('[PRB] target: 750€ · due: 2028-10-31', 'D')]]), () => true);
+check('note edited in YNAB, name still written', both.map(r => [r.status, r.after, r.nameAfter, r.noteEditedInYnab]), [['write', null, 'D [Invested]', true]]);
 console.log('all capex note checks passed');

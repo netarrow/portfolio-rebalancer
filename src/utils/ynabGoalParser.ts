@@ -340,3 +340,17 @@ export function upsertPrbLine(note: string | null | undefined, line: string): st
     const trimmed = text.replace(/\s+$/, '');
     return trimmed ? `${trimmed}\n${line}` : line;
 }
+
+// The "[Invested]" postfix the YNAB Writeback keeps on a capex category name
+// while part of it is invested (and its cash alone does not cover it). It is
+// the tool's own mark: names are read without it everywhere else.
+export const INVESTED_TAG = '[Invested]';
+const INVESTED_TAG_RE = /\s*\[invested\]\s*$/i;
+
+export const stripInvestedTag = (name: string): { name: string; tagged: boolean } =>
+    INVESTED_TAG_RE.test(name) ? { name: name.replace(INVESTED_TAG_RE, ''), tagged: true } : { name, tagged: false };
+
+export const withInvestedTag = (name: string, on: boolean): string => {
+    const clean = stripInvestedTag(name).name;
+    return on ? `${clean} ${INVESTED_TAG}` : clean;
+};

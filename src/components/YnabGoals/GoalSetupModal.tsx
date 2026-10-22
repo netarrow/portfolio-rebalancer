@@ -162,7 +162,7 @@ const GoalSetupModal: React.FC<Props> = ({ row, currencyIso, coveredBy, isPinned
                 {!g.archived && g.origin !== 'category' && !noteInLine && (g.targetAmount != null || g.targetDate) && (
                     <p className="gsm-note-hint">
                         {prb ? 'The [PRB] line in the YNAB note is out of date.' : 'The YNAB note has no [PRB] line yet.'}{' '}
-                        Write it from “YNAB notes out of date” in the Capex list: if the line is edited in YNAB, YNAB wins at the next sync.
+                        Write it from “YNAB capex categories out of date” in the Capex list: if the line is edited in YNAB, YNAB wins at the next sync.
                     </p>
                 )}
 
