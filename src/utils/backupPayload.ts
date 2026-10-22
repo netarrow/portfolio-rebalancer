@@ -2,13 +2,14 @@ import type {
     Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal,
     YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond,
     FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution,
-    GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote,
+    GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote, OperationRecord,
 } from '../types';
 import { DEFAULT_YNAB_FUNDING_SETTINGS } from '../types';
 import { normalizeAssetAllocationSettings } from './assetAllocation';
 import { normalizeYnabAccountMappings } from './ynabAccountMappings';
 import { normalizeYnabTrackingConfig } from './ynabTrackingPlan';
 import { normalizeYnabGoalQuotes, normalizeYnabWriteLog } from './ynabWriteBack';
+import { normalizeOperations } from './operationsQueue';
 
 // The data a backup carries — the same for the JSON file and the Azure blob,
 // so the two can never drift apart: both are built by `buildBackupData` and
@@ -54,6 +55,8 @@ export interface BackupData {
     // back) and the goal shares frozen by a migration.
     ynabWriteLog?: YnabWriteLogEntry[];
     ynabGoalQuotes?: YnabGoalQuote[];
+    // Operations run from Execute → Operations, and the to-dos snoozed there.
+    operations?: OperationRecord[];
     ynabGoalsGroupId?: string;
     ynabGoalsGroupName?: string;
     ynabLastGoalsSyncAt?: string;
@@ -101,6 +104,7 @@ export function buildBackupData(state: BackupData): BackupData {
         ynabTrackingConfig: state.ynabTrackingConfig,
         ynabWriteLog: state.ynabWriteLog,
         ynabGoalQuotes: state.ynabGoalQuotes,
+        operations: state.operations,
         ynabGoalsGroupId: state.ynabGoalsGroupId,
         ynabGoalsGroupName: state.ynabGoalsGroupName,
         ynabLastGoalsSyncAt: state.ynabLastGoalsSyncAt,
@@ -142,6 +146,8 @@ export interface ParsedBackup {
     ynabTrackingConfig?: YnabTrackingConfig;
     ynabWriteLog?: YnabWriteLogEntry[];
     ynabGoalQuotes?: YnabGoalQuote[];
+    // Operations run from Execute → Operations, and the to-dos snoozed there.
+    operations?: OperationRecord[];
     ynabGoalsGroupId?: string;
     ynabGoalsGroupName?: string;
     ynabLastGoalsSyncAt?: string;
@@ -217,6 +223,7 @@ export function parseBackupData(raw: unknown, fallbackBudgetId?: string): Parsed
         ynabTrackingConfig: optional(data, 'ynabTrackingConfig', normalizeYnabTrackingConfig),
         ynabWriteLog: optional(data, 'ynabWriteLog', normalizeYnabWriteLog),
         ynabGoalQuotes: optional(data, 'ynabGoalQuotes', normalizeYnabGoalQuotes),
+        operations: optional(data, 'operations', normalizeOperations),
         ynabGoalsGroupId: asString(data.ynabGoalsGroupId),
         ynabGoalsGroupName: asString(data.ynabGoalsGroupName),
         ynabLastGoalsSyncAt: asString(data.ynabLastGoalsSyncAt),
@@ -263,6 +270,7 @@ export const BACKUP_STORAGE_KEYS = {
     ynabTrackingConfig: 'portfolio_ynab_tracking_config',
     ynabWriteLog: 'portfolio_ynab_write_log',
     ynabGoalQuotes: 'portfolio_ynab_goal_quotes',
+    operations: 'portfolio_operations',
     virtualBonds: 'portfolio_virtual_bonds',
     freeCommissionPeriods: 'portfolio_free_commissions',
     plannedForecastExpenses: 'portfolio_forecast_planned_expenses',

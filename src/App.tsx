@@ -4,7 +4,7 @@ import { SecurityProvider } from './context/SecurityContext';
 import UnlockGate from './components/Security/UnlockGate';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'operations' | 'ynabTracking' | 'ynabSettings';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -28,6 +28,7 @@ import PerformanceView from './components/Performance/PerformanceView';
 import AssetScopeToggles from './components/Layout/AssetScopeToggles';
 import PacView from './components/Pac/PacView';
 import FundRelocationView from './components/FundRelocation/FundRelocationView';
+import OperationsView from './components/Operations/OperationsView';
 
 // Placeholders for views
 const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
@@ -120,6 +121,7 @@ function App() {
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
       case 'fundRelocation': return <FundRelocationView />;
+      case 'operations': return <OperationsView />;
       case 'performance': return <PerformanceView />;
       case 'disclaimer': return <DisclaimerView />;
       case 'globalRebalancing': return <GlobalRebalancingPage />;

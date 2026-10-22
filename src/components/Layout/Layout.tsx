@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'ynabTracking' | 'ynabSettings';
+type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'operations' | 'ynabTracking' | 'ynabSettings';
 
 interface LayoutProps {
   currentView: View;
@@ -33,6 +33,7 @@ const menuStructure = [
     items: [
       // Asset Allocation is hidden: Capital Allocation covers it (its per-row
       // targets still feed the Dashboard weights; the view stays reachable in code).
+      { label: '✅ Operations', view: 'operations' as const },
       { label: '🔀 Capital Allocation', view: 'fundRelocation' as const },
     ],
   },

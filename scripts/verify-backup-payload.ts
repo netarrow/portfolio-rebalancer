@@ -57,6 +57,7 @@ const makeState = (tag: string): BackupData => ({
         createdAt: '2026-03-01T10:00:00Z', updatedAt: '2026-03-01T10:00:00Z', status: 'applied', createdAccounts: [], transactions: [],
     }],
     ynabGoalQuotes: [{ entryId: `w-${tag}`, goalId: 'g1', portfolioId: 'p1', brokerId: 'b1', ticker: 'VWCE', quantity: 2, cost: 200, frozenAt: '2026-03-01' }],
+    operations: [{ id: `op-${tag}`, key: 'prices', kind: 'prices', title: 'Update prices', status: 'done', at: '2026-03-03T08:00:00Z', detail: '3 tickers refreshed' }],
     ynabGoalsGroupId: `group-${tag}`,
     ynabGoalsGroupName: `Goals ${tag}`,
     ynabLastGoalsSyncAt: '2026-03-02T09:00:00Z',
@@ -193,7 +194,7 @@ const oldInto = storeFrom(A);
 const parsedV6 = restore(oldInto, v6File(B));
 for (const f of V6_FIELDS) check(`v6 field ${f} is restored`, read(oldInto, f), (B as unknown as Record<string, unknown>)[f]);
 const notInV6 = stored.filter(f => !(V6_FIELDS as readonly string[]).includes(f));
-check('the v6 file leaves 14 fields to the tool', notInV6.length, 14);
+check('the v6 file leaves 15 fields to the tool', notInV6.length, 15);
 for (const f of notInV6) check(`${f} keeps the local value`, read(oldInto, f), (A as unknown as Record<string, unknown>)[f]);
 check('the local YNAB goals group is kept', [parsedV6.ynabGoalsGroupId, parsedV6.ynabGoalsGroupName], [undefined, undefined]);
 

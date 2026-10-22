@@ -857,3 +857,25 @@ export interface SLEConfig {
   idleTimeoutMinutes: number;    // auto-lock after N minutes of inactivity
 }
 
+
+// ── Operations queue (Execute → Operations) ─────────────────────────
+// What still has to be done is detected live from the data; what has been
+// done from the Operations page is recorded here, with what it produced.
+export type OperationKind =
+  | 'prices' | 'liquidity' | 'pac' | 'rebalance' | 'capex-notes' | 'capex-bond'
+  | 'virtual-bond' | 'ynab-writeback' | 'ynab-revalue' | 'capex-sync' | 'backup';
+
+export interface OperationRecord {
+  id: string;
+  /** The detected to-do it settled, e.g. "pac:<planId>:<date>". */
+  key: string;
+  kind: OperationKind;
+  title: string;
+  /** done = its action ran; skipped = dismissed for good; snoozed = hidden until `until`. */
+  status: 'done' | 'skipped' | 'snoozed';
+  at: string;
+  until?: string;
+  /** What it did, in a few words: "3 transactions created". */
+  detail?: string;
+  transactionIds?: string[];
+}
