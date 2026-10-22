@@ -34,6 +34,8 @@ check('liquidity: not mapped, no plan', detectLiquidity({ brokers: [broker], yna
 const plan = { id: 'p1', name: 'Monthly ETF', ticker: 'AAA', portfolioId: 'pf', brokerId: 'b1', mode: 'amount', amount: 100, frequency: 'monthly', startDate: '2030-01-10', costMode: 'none', costsIncluded: false, rounding: 'floor', active: true, createdAt: '' } as unknown as PacPlan;
 const pac = detectPac({ plans: [plan], executions: [{ planId: 'p1', dueDate: '2030-01-10', transactionId: 't' }], now });
 check('pac: due dates not actioned', pac.map(t => [t.key, t.urgency]), [['pac:p1:2030-02-10', 'overdue'], ['pac:p1:2030-03-10', 'overdue']]);
+check('pac: nothing before the plan was created', detectPac({ plans: [{ ...plan, createdAt: '2030-03-01T09:00:00Z' }], executions: [], now }).map(t => t.dueDate), ['2030-03-10']);
+check('pac: titled by the plan name', pac[0].title, 'PAC instalment: Monthly ETF');
 check('pac: paused plan', detectPac({ plans: [{ ...plan, active: false }], executions: [], now }).length, 0);
 
 // Rebalance: 80/20 target held 50/50 → drift 30 points
@@ -46,6 +48,14 @@ check('rebalance: drifted', reb.map(t => [t.key, t.orders?.map(o => [o.direction
 const onTarget = detectRebalance({ portfolios: [pf], transactions: [tx('AAA', 79, 10), tx('BBB', 21, 10)], assetSettings: [], marketData: prices, brokers: [] });
 check('rebalance: within the threshold', onTarget.length, 0);
 check('rebalance: amount mode left out', detectRebalance({ portfolios: [{ ...pf, targetMode: 'amount' }], transactions: [tx('AAA', 50, 10)], assetSettings: [], marketData: prices, brokers: [] }).length, 0);
+
+// Buy only: never more than the cash the broker really holds for the portfolio
+const cashPf: Portfolio = { ...pf, allocations: { AAA: 50, BBB: 50 }, liquidity: 5000, preferredBrokerId: 'b1' } as Portfolio;
+const thin = { id: 'b1', name: 'Broker One', currentLiquidity: 600, liquidityAllocations: { pf: 1000, other: 200 } } as unknown as Broker;
+const buy = detectRebalance({ portfolios: [cashPf], transactions: [tx('AAA', 50, 10), tx('BBB', 50, 10)], assetSettings: [], marketData: prices, brokers: [thin] })
+    .find(t => t.mode === 'BuyOnly');
+check('buy only capped to the real cash', [buy?.detail.startsWith('€500 to deploy'), buy?.orders?.reduce((s, o) => s + o.amount * o.price, 0)], [true, 500]);
+check('no cash at the broker: no buy only', detectRebalance({ portfolios: [cashPf], transactions: [tx('AAA', 50, 10), tx('BBB', 50, 10)], assetSettings: [], marketData: prices, brokers: [{ ...thin, currentLiquidity: 0 }] }).length, 0);
 
 // Virtual bonds with parked cash
 const vb = { id: 'v1', label: 'BTP ~2032', targetMaturityDate: '2032-06-01', universe: 'IT', minMonthsBefore: 1, maxMonthsBefore: 6, createdAt: '' } as const;

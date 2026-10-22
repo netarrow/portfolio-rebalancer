@@ -98,13 +98,16 @@ export const detectLiquidity = (input: {
 export const detectPac = (input: { plans: PacPlan[]; executions: PacExecution[]; now: Date }): OperationTodo[] => {
     const today = isoDay(input.now);
     return input.plans.filter(p => p.active !== false).flatMap(plan => generateInstalments(plan, today, 0)
+        // Dates before the plan was created were not instalments of it: the
+        // plan describes them, it did not ask for them.
+        .filter(dueDate => !plan.createdAt || dueDate >= plan.createdAt.slice(0, 10))
         .filter(dueDate => dueDate <= today
             && !input.executions.some(e => e.planId === plan.id && e.dueDate === dueDate && (e.skipped || e.transactionId)))
         .map((dueDate): OperationTodo => ({
             key: `pac:${plan.id}:${dueDate}`, kind: 'pac', planId: plan.id, dueDate,
             urgency: dueDate < today ? 'overdue' : 'due',
-            title: `PAC instalment: ${plan.ticker}`,
-            detail: `${plan.name ?? plan.ticker} · due ${dueDate}`,
+            title: `PAC instalment: ${plan.name || plan.ticker}`,
+            detail: `${plan.ticker} · due ${dueDate}`,
         })));
 };
 
@@ -117,16 +120,26 @@ export const detectRebalance = (input: {
     driftPoints?: number;
 }): OperationTodo[] => {
     const threshold = input.driftPoints ?? REBALANCE_DRIFT_POINTS;
+    // Orders are for real money: a broker's cash allocations are cut down to
+    // what the broker actually holds when they add up to more.
+    const brokers = input.brokers.map(realCashAllocations);
     return input.portfolios.flatMap(portfolio => {
         // Amount-mode portfolios buy toward € targets, never sell: their own table drives them.
         if (portfolio.targetMode === 'amount') return [];
         const allocations = portfolio.allocations || {};
         if (Object.values(allocations).reduce((s, v) => s + (v || 0), 0) <= 0) return [];
-        const pc = buildPortfolioCalc(portfolio, input.transactions, input.assetSettings, input.marketData, input.brokers);
+        const pc = buildPortfolioCalc(portfolio, input.transactions, input.assetSettings, input.marketData, brokers);
         if (pc.totalValue <= 0) return [];
         const resolved = resolveGroups(portfolio);
-        const preferredBroker = input.brokers.find(b => b.id === portfolio.preferredBrokerId);
-        const buyOnly = computeBuyOnly(pc, resolved, input.marketData);
+        const preferredBroker = brokers.find(b => b.id === portfolio.preferredBrokerId);
+        // Buy only deploys the cash set on the portfolio, but never more than
+        // the cash its brokers really hold for it.
+        const realCash = brokers
+            .filter(b => !preferredBroker || b.id === preferredBroker.id)
+            .reduce((sum, b) => sum + (b.liquidityAllocations?.[portfolio.id] || 0), 0);
+        const deployable = Math.max(0, Math.min(portfolio.liquidity || 0, realCash));
+        const buyPc = { ...pc, portfolio: { ...portfolio, liquidity: deployable } };
+        const buyOnly = computeBuyOnly(buyPc, resolved, input.marketData);
         const out: OperationTodo[] = [];
 
         // Points off target, per row (a group is one row).
@@ -154,16 +167,27 @@ export const detectRebalance = (input: {
                 detail: `${worst} is ${drift.toFixed(1)} points off target · ${orders.length} order${orders.length === 1 ? '' : 's'}`,
             });
         }
-        if ((portfolio.liquidity || 0) > 0) {
-            const orders = buildRebalanceOrders({ mode: 'BuyOnly', portfolioCalc: pc, resolved, marketData: input.marketData, buyOnly, allTransactions: input.transactions, preferredBroker });
+        if (deployable > 0) {
+            const orders = buildRebalanceOrders({ mode: 'BuyOnly', portfolioCalc: buyPc, resolved, marketData: input.marketData, buyOnly, allTransactions: input.transactions, preferredBroker });
+            const capped = deployable < (portfolio.liquidity || 0) - 0.5;
             if (orders.length > 0) out.push({
                 key: `rebalance:${portfolio.id}:buyonly`, kind: 'rebalance', portfolioId: portfolio.id, mode: 'BuyOnly', orders,
                 urgency: 'due', title: `Invest ${portfolio.name}'s cash (Buy only)`,
-                detail: `${eur0(portfolio.liquidity || 0)} to deploy · ${orders.length} order${orders.length === 1 ? '' : 's'}`,
+                detail: `${eur0(deployable)} to deploy${capped ? ` (${eur0(portfolio.liquidity || 0)} set on the portfolio, capped to the cash at the broker${preferredBroker ? '' : 's'})` : ''} · ${orders.length} order${orders.length === 1 ? '' : 's'}`,
             });
         }
         return out;
     });
+};
+
+/** A broker whose cash allocations exceed its liquidity, scaled down to it. */
+export const realCashAllocations = (b: Broker): Broker => {
+    const allocations = b.liquidityAllocations ?? {};
+    const total = Object.values(allocations).reduce((s, v) => s + Math.max(0, v || 0), 0);
+    const available = Math.max(0, b.currentLiquidity || 0);
+    if (total <= available + 0.005) return b;
+    const k = total > 0 ? available / total : 0;
+    return { ...b, liquidityAllocations: Object.fromEntries(Object.entries(allocations).map(([id, v]) => [id, Math.max(0, v || 0) * k])) };
 };
 
 export const detectCapex = (input: {
@@ -190,7 +214,7 @@ export const detectCapex = (input: {
             key: `capex-bond:${g.id}`, kind: 'capex-bond', goalId: g.id, dueDate: g.targetDate?.slice(0, 10),
             urgency: g.targetDate && g.targetDate.slice(0, 10) < today ? 'overdue' : 'info',
             title: `Find a bond for ${g.name}`,
-            detail: `${eur0(m.toMatch)} not matched by a bond maturing before ${g.targetDate?.slice(0, 10)}`,
+            detail: `${eur0(m.toMatch)} invested without a bond maturing before ${g.targetDate?.slice(0, 10)}`,
         });
     });
     return out;

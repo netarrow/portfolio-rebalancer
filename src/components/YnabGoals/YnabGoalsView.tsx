@@ -413,7 +413,7 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
             {bondGoalId && (() => {
                 const br = rows.find(x => x.goal.id === bondGoalId);
                 const m = bondMatchOf(bondGoalId);
-                return br ? <CapexBondModal goal={br.goal} gap={m ? m.toMatch : br.gap} plannedIncluded={!!m} currencyIso={currencyIso} onClose={() => setBondGoalId(null)} /> : null;
+                return br ? <CapexBondModal goal={br.goal} gap={m ? (m.toMatch > 0 ? m.toMatch : m.uncovered) : br.gap} plannedIncluded={!!m} currencyIso={currencyIso} onClose={() => setBondGoalId(null)} /> : null;
             })()}
 
             {setupRow && (

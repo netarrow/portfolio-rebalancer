@@ -39,4 +39,12 @@ check('a planned virtual bond counts; the ETF part does not', [mixed.bonds[0].pl
 const undated = capexBondMatch(goal('E', 3000, undefined), [alloc('E', 3000)], defs, vbs);
 check('no date: no search flag', undated.needsSearch, false);
 
+// What is not invested yet waits: the bond is searched for the invested part only.
+const saving = capexBondMatch(goal('F', 6000, '2028-09-01', 2000), [], defs, vbs);
+check('only cash saved in YNAB: no search yet', [saving.needsSearch, saving.toMatch, saving.uncovered], [false, 0, 4000]);
+const partly = capexBondMatch(goal('G', 6000, '2028-09-01', 2000), [alloc('G', 1500)], defs, vbs);
+check('partly invested: search for the invested part', [partly.needsSearch, partly.toMatch, partly.uncovered], [true, 1500, 4000]);
+const over = capexBondMatch(goal('H', 6000, '2028-09-01', 5000), [alloc('H', 3000)], defs, vbs);
+check('invested beyond the gap: capped to what is uncovered', [over.toMatch, over.uncovered], [1000, 1000]);
+
 console.log('verify-capex-bond-match: all checks passed');

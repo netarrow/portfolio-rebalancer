@@ -5,9 +5,10 @@ import { maturityFromLabel } from './maturityLadder';
 /**
  * Whether a planned capex is matched to a bond by date. An allocation pinned
  * to a bond (a real one, or a virtual bond) is matched: that bond pays it at
- * maturity. Anything else — allocated to the portfolio as a whole, pinned to an
- * ETF, or not allocated at all — still needs a bond maturing before the capex:
- * that part is flagged for a bond search.
+ * maturity. What is invested otherwise — allocated to the portfolio as a whole,
+ * pinned to an ETF, or to a bond maturing too late — still needs a bond
+ * maturing before the capex: that part is flagged for a bond search. What is
+ * not invested yet (saved as cash in YNAB, or not funded) waits.
  */
 export interface CapexBond {
     label: string;
@@ -23,9 +24,16 @@ export interface CapexBondMatch {
     bonds: CapexBond[];
     /** Allocated to the portfolio as a whole, or to a row that is not a bond. */
     generic: number;
-    /** target − YNAB cash − what bonds cover: what still needs a bond. */
+    /**
+     * What needs a bond now: the invested part not on a bond maturing in time
+     * (allocated to the portfolio as a whole, to an ETF, or to a late bond),
+     * up to target − YNAB cash − on-time bonds. What is still being saved as
+     * cash in the YNAB category gets its bond later, once it is invested.
+     */
     toMatch: number;
-    /** Dated, active, and with something left to match. */
+    /** target − YNAB cash − on-time bonds, invested or not. */
+    uncovered: number;
+    /** Dated, active, and with an invested part left to match. */
     needsSearch: boolean;
 }
 
@@ -62,6 +70,8 @@ export const capexBondMatch = (
     const need = Math.max(0, (goal.targetAmount ?? 0) - (goal.cashCoverage || 0));
     // A bond maturing too late does not cover the capex.
     const onTime = bonds.filter(b => !b.late).reduce((s, b) => s + b.amount, 0);
-    const toMatch = round(Math.max(0, need - onTime));
-    return { bonds, generic: round(generic), toMatch, needsSearch: !goal.archived && !!date && toMatch > 0.5 };
+    const uncovered = Math.max(0, need - onTime);
+    const late = bonds.filter(b => b.late).reduce((s, b) => s + b.amount, 0);
+    const toMatch = round(Math.min(uncovered, generic + late));
+    return { bonds, generic: round(generic), toMatch, uncovered: round(uncovered), needsSearch: !goal.archived && !!date && toMatch > 0.5 };
 };
