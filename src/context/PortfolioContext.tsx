@@ -87,6 +87,8 @@ interface PortfolioContextType {
     deletePortfolio: (id: string) => void;
     addBroker: (broker: Broker) => void;
     updateBroker: (broker: Broker) => void;
+    /** Linked brokers' minimum from Expense Planning (brokerId → €, null = back to the typed one). */
+    syncLinkedBrokerMinimums: (values: Record<string, number | null>) => void;
     deleteBroker: (id: string) => void;
     addGoal: (goal: Goal) => void;
     updateGoal: (goal: Goal) => void;
@@ -1229,6 +1231,26 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const updateBroker = (broker: Broker) => {
         setBrokers(prev => prev.map(b => b.id === broker.id ? broker : b));
+    };
+
+    const syncLinkedBrokerMinimums = (values: Record<string, number | null>) => {
+        setBrokers(prev => {
+            let changed = false;
+            const next = prev.map(b => {
+                if (!b.minLiquidityLinked || !(b.id in values)) return b;
+                const linked = values[b.id];
+                const manual = b.minLiquidityManual;
+                const target: Pick<Broker, 'minLiquidityType' | 'minLiquidityAmount' | 'minLiquidityPercentage'> = linked !== null
+                    ? { minLiquidityType: 'fixed', minLiquidityAmount: Math.round(linked * 100) / 100, minLiquidityPercentage: undefined }
+                    : { minLiquidityType: manual?.type ?? 'fixed', minLiquidityAmount: manual?.amount, minLiquidityPercentage: manual?.percentage };
+                if (b.minLiquidityType === target.minLiquidityType
+                    && Math.abs((b.minLiquidityAmount ?? 0) - (target.minLiquidityAmount ?? 0)) < 0.01
+                    && (b.minLiquidityPercentage ?? null) === (target.minLiquidityPercentage ?? null)) return b;
+                changed = true;
+                return { ...b, ...target };
+            });
+            return changed ? next : prev;
+        });
     };
 
     const deleteBroker = (id: string) => {
@@ -4100,6 +4122,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         brokers,
         addBroker,
         updateBroker,
+        syncLinkedBrokerMinimums,
         deleteBroker,
         goals,
         addGoal,

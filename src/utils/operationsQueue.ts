@@ -3,11 +3,12 @@ import type {
     VirtualBond, YnabGoal, YnabGoalAllocation,
 } from '../types';
 import { getVirtualBondTicker, isVirtualBondTicker } from '../types';
-import { isCashTicker, isGroupKey } from './portfolioCalculations';
+import { calculateAssets, isCashTicker, isGroupKey } from './portfolioCalculations';
 import { memberInfoFromAssets, resolveGroups } from './allocationGroups';
 import { buildPortfolioCalc, buildRebalanceOrders, computeBuyOnly, computeFullRebalance } from './rebalanceOrders';
 import { generateInstalments } from './pacSchedule';
 import { computeBrokerAccrual } from './brokerRemuneration';
+import { brokerLiquidityStatus } from './brokerLiquidity';
 import { capexBondMatch } from './capexBondMatch';
 import { capexNotesOutOfDate } from './ynabCapexNotes';
 
@@ -32,6 +33,9 @@ export interface OperationTodo {
     planId?: string;
     goalId?: string;
     virtualBondId?: string;
+    brokerId?: string;
+    /** Broker cash: € below (< 0) or above (> 0) what the broker must keep. */
+    amount?: number;
     /** Rebalance: the orders it would create. */
     orders?: Transaction[];
 }
@@ -43,6 +47,11 @@ export const LIQUIDITY_MAX_AGE_DAYS = 7;
 export const LIQUIDITY_MIN_INTEREST = 1;
 export const CAPEX_SYNC_MAX_AGE_DAYS = 7;
 export const BACKUP_MAX_AGE_DAYS = 7;
+/** Broker cash below its minimum by more than this (€) is a to-do. */
+export const BROKER_CASH_LOW_TOLERANCE = 50;
+/** Above it, a to-do once the excess passes both this (€) and this share of the reserve. */
+export const BROKER_CASH_HIGH_MIN = 500;
+export const BROKER_CASH_HIGH_SHARE = 0.1;
 /** A portfolio is due for a rebalance once one of its rows is this many points off target. */
 export const REBALANCE_DRIFT_POINTS = 5;
 
@@ -94,6 +103,35 @@ export const detectLiquidity = (input: {
     if (interest.length > 0) parts.push(`interest to credit: ${interest.map(x => `${x.b.name} €${x.accrual.amount.toFixed(2)}`).join(', ')}`);
     return [{ key: 'liquidity', kind: 'liquidity', urgency: 'due', title: 'Update broker liquidity', detail: parts.join(' · ') }];
 };
+
+/**
+ * Brokers whose cash is out of range, as the Dashboard's Broker Performance &
+ * Liquidity cards show it: below the minimum (plus the cash allocated to
+ * portfolios, when that is reserved too), or well above it.
+ */
+export const detectBrokerCash = (input: {
+    brokers: Broker[];
+    transactions: Transaction[];
+    assetSettings: AssetDefinition[];
+    marketData: Record<string, { price: number; lastUpdated: string }>;
+    reserveAllocatedCash: boolean;
+}): OperationTodo[] => input.brokers.flatMap(b => {
+    const invested = calculateAssets(input.transactions.filter(t => t.brokerId === b.id), input.assetSettings, input.marketData).summary.totalValue;
+    const st = brokerLiquidityStatus(b, invested, input.reserveAllocatedCash);
+    // Without a minimum only negative cash is out of range: it cannot settle anything.
+    if (!st.hasReserve && st.liquidity >= -BROKER_CASH_LOW_TOLERANCE) return [];
+    const reserveText = `${eur0(st.liquidity)} against ${eur0(st.reserve)} to keep${input.reserveAllocatedCash && st.allocatedReserve > 0 ? ` (minimum ${eur0(st.targetValue)} + ${eur0(st.allocatedReserve)} allocated to portfolios)` : ''}${b.minLiquidityLinked ? ' · minimum from Expense Planning' : ''}`;
+    if (st.deviation < -BROKER_CASH_LOW_TOLERANCE) return [{
+        key: `broker-cash:${b.id}`, kind: 'broker-cash', brokerId: b.id, amount: st.deviation, urgency: 'due',
+        title: st.hasReserve ? `Top up ${b.name}: ${eur0(-st.deviation)} below its minimum` : `Top up ${b.name}: its cash is negative (−${eur0(-st.liquidity)})`,
+        detail: st.hasReserve ? reserveText : 'no minimum set; a negative balance cannot settle any order',
+    } as OperationTodo];
+    if (st.deviation > Math.max(BROKER_CASH_HIGH_MIN, st.reserve * BROKER_CASH_HIGH_SHARE)) return [{
+        key: `broker-cash:${b.id}`, kind: 'broker-cash', brokerId: b.id, amount: st.deviation, urgency: 'info',
+        title: `${eur0(st.deviation)} more cash than needed at ${b.name}`, detail: `${reserveText} · move it or invest it`,
+    } as OperationTodo];
+    return [];
+});
 
 export const detectPac = (input: { plans: PacPlan[]; executions: PacExecution[]; now: Date }): OperationTodo[] => {
     const today = isoDay(input.now);
@@ -275,7 +313,7 @@ export const addOperationRecord = (records: OperationRecord[], record: Operation
     return [record, ...rest].sort((a, b) => b.at.localeCompare(a.at)).slice(0, MAX_OPERATION_RECORDS);
 };
 
-const KINDS = new Set<OperationKind>(['prices', 'liquidity', 'pac', 'rebalance', 'capex-notes', 'capex-bond', 'virtual-bond', 'ynab-writeback', 'ynab-revalue', 'capex-sync', 'backup']);
+const KINDS = new Set<OperationKind>(['prices', 'liquidity', 'broker-cash', 'pac', 'rebalance', 'capex-notes', 'capex-bond', 'virtual-bond', 'ynab-writeback', 'ynab-revalue', 'capex-sync', 'backup']);
 
 export function normalizeOperations(raw: unknown): OperationRecord[] {
     if (!Array.isArray(raw)) return [];

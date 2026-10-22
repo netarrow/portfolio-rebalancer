@@ -239,6 +239,7 @@ const BrokerList: React.FC = () => {
                                     <div className="stat">
                                         <span className="stat-label">
                                             {broker.minLiquidityType === 'fixed' ? 'Min Amount' : 'Min %'}
+                                            {broker.minLiquidityLinked && <span title="Linked to Expense Planning"> · 🔗 Expense Planning</span>}
                                         </span>
                                         <span className="stat-value">
                                             {broker.minLiquidityType === 'fixed'

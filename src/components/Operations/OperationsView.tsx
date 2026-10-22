@@ -5,7 +5,7 @@ import type { BrokerLiquiditySyncRow, OperationRecord, Transaction } from '../..
 import { isVirtualBondTicker } from '../../types';
 import { calculateAssets, isCashTicker, isGroupKey } from '../../utils/portfolioCalculations';
 import {
-    detectCapex, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
+    detectBrokerCash, detectCapex, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
     visibleTodos, type OperationTodo,
 } from '../../utils/operationsQueue';
 import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
@@ -17,6 +17,9 @@ import { buildGoalRow, formatCurrencyExact } from '../YnabGoals/goalRows';
 import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import OrdersReviewModal from './OrdersReviewModal';
+import CashTransferModal, { OUTSIDE } from './CashTransferModal';
+import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { RESERVE_ALLOCATED_CASH_KEY } from '../../utils/brokerLiquidity';
 import BrokerLiquiditySyncModal from '../Brokers/BrokerLiquiditySyncModal';
 import PacConfirmModal from '../Pac/PacConfirmModal';
 import CapexNotesModal from '../YnabGoals/CapexNotesModal';
@@ -26,7 +29,7 @@ import CapexSyncModal from '../YnabTracking/CapexSyncModal';
 import RevalueModal from '../YnabTracking/RevalueModal';
 
 const KIND_ICON: Record<OperationTodo['kind'], string> = {
-    prices: '💱', liquidity: '🏦', pac: '📊', rebalance: '⚖️', 'capex-notes': '🧾', 'capex-bond': '🔎',
+    prices: '💱', liquidity: '🏦', 'broker-cash': '💶', pac: '📊', rebalance: '⚖️', 'capex-notes': '🧾', 'capex-bond': '🔎',
     'virtual-bond': '🧩', 'ynab-writeback': '🔁', 'ynab-revalue': '📈', 'capex-sync': '↻', backup: '☁️',
 };
 
@@ -43,12 +46,14 @@ const OperationsView: React.FC = () => {
         portfolios, scopedTransactions, scopedBrokers, transactions, brokers, effectiveAssetSettings, marketData,
         pacPlans, pacExecutions, skipPacInstalment, ynabGoals, ynabGoalAllocations, virtualBonds, ynabConfig,
         ynabAccountMappings, azureConfig, syncToAzure, refreshPrices, prepareBrokerLiquiditySync,
-        applyBrokerLiquiditySync, addTransactionsBulk, concretizeVirtualBond, operations, recordOperation,
+        applyBrokerLiquiditySync, adjustBrokerLiquidity, addTransactionsBulk, concretizeVirtualBond, operations, recordOperation,
         ynabMigratedBrokerIds, ynabTrackingConfig, ynabWriteLog,
     } = usePortfolio();
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const fmt = (v: number) => formatCurrencyExact(v, currencyIso);
     const [now, setNow] = useState(() => new Date());
+    // The Dashboard's "Reserve cash allocated to portfolios" setting, read as is.
+    const [reserveAllocatedCash] = useLocalStorage<boolean>(RESERVE_ALLOCATED_CASH_KEY, true);
 
     // ── Inputs the detectors need ──
     const priceTickers = useMemo(() => {
@@ -86,6 +91,7 @@ const OperationsView: React.FC = () => {
             ...detectPac({ plans: pacPlans, executions: pacExecutions, now }),
             ...detectPrices({ tickers: priceTickers, marketData, now }),
             ...detectLiquidity({ brokers, ynabBrokerIds: new Set(Object.keys(ynabAccountMappings)), records: operations, now }),
+            ...detectBrokerCash({ brokers: scopedBrokers, transactions: scopedTransactions, assetSettings: effectiveAssetSettings, marketData, reserveAllocatedCash }),
             ...detectRebalance({ portfolios, transactions: scopedTransactions, assetSettings: effectiveAssetSettings, marketData, brokers: scopedBrokers }),
             ...detectVirtualBonds({ virtualBonds, transactions }),
             ...detectCapex({
@@ -116,7 +122,7 @@ const OperationsView: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [pacPlans, pacExecutions, priceTickers, marketData, brokers, ynabAccountMappings, operations, portfolios, scopedTransactions,
         effectiveAssetSettings, scopedBrokers, virtualBonds, transactions, ynabGoals, ynabGoalAllocations, tagOf, ynabConfig,
-        azureConfig, tracking.accounts, tracking.plan, guard.ok, writebackInUse, ynabTrackingConfig, ynabWriteLog, now]);
+        azureConfig, reserveAllocatedCash, tracking.accounts, tracking.plan, guard.ok, writebackInUse, ynabTrackingConfig, ynabWriteLog, now]);
 
     const todos = useMemo(() => visibleTodos(detected, operations, now), [detected, operations, now]);
     const snoozed = operations.filter(r => r.status === 'snoozed' && r.until && new Date(r.until) > now);
@@ -204,6 +210,30 @@ const OperationsView: React.FC = () => {
     const confirmOrders = (todo: OperationTodo, orders: Transaction[]) => {
         addTransactionsBulk(orders);
         record(todo, `${orders.length} transaction${orders.length === 1 ? '' : 's'} recorded`, { transactionIds: orders.map(o => o.id) });
+        setActive(null);
+    };
+
+    // A broker short of cash is topped up from the one with the most to spare,
+    // a broker with too much sends it to the one most short (or outside).
+    const transferFor = (todo: OperationTodo) => {
+        const others = detected.filter(t => t.kind === 'broker-cash' && t.brokerId !== todo.brokerId);
+        const short = (todo.amount ?? 0) < 0;
+        const peer = others
+            .filter(t => short ? (t.amount ?? 0) > 0 : (t.amount ?? 0) < 0)
+            .sort((a, b) => Math.abs(b.amount ?? 0) - Math.abs(a.amount ?? 0))[0];
+        const amount = Math.abs(todo.amount ?? 0);
+        return short
+            ? { from: peer?.brokerId ?? OUTSIDE, to: todo.brokerId!, amount: peer ? Math.min(amount, peer.amount ?? 0) : amount }
+            : { from: todo.brokerId!, to: peer?.brokerId ?? OUTSIDE, amount: peer ? Math.min(amount, -(peer.amount ?? 0)) : amount };
+    };
+
+    const confirmTransfer = (todo: OperationTodo, move: { from: string; to: string; amount: number }) => {
+        const deltas: Record<string, number> = {};
+        if (move.from !== OUTSIDE) deltas[move.from] = -move.amount;
+        if (move.to !== OUTSIDE) deltas[move.to] = (deltas[move.to] ?? 0) + move.amount;
+        adjustBrokerLiquidity(deltas);
+        const name = (id: string) => id === OUTSIDE ? 'outside' : brokers.find(b => b.id === id)?.name ?? id;
+        record(todo, `${fmt(move.amount)} moved from ${name(move.from)} to ${name(move.to)}`);
         setActive(null);
     };
 
@@ -305,6 +335,20 @@ const OperationsView: React.FC = () => {
                     onClose={() => setActive(null)}
                 />
             )}
+            {active?.kind === 'broker-cash' && active.brokerId && (() => {
+                const t = transferFor(active);
+                return (
+                    <CashTransferModal
+                        title={active.title}
+                        brokers={brokers}
+                        from={t.from}
+                        to={t.to}
+                        amount={t.amount}
+                        onConfirm={move => confirmTransfer(active, move)}
+                        onClose={() => setActive(null)}
+                    />
+                );
+            })()}
             {active?.kind === 'liquidity' && liquidityRows && (
                 <BrokerLiquiditySyncModal
                     rows={liquidityRows}
@@ -406,6 +450,7 @@ const actionLabel = (t: OperationTodo): string => {
     switch (t.kind) {
         case 'prices': return 'Update prices';
         case 'liquidity': return 'Update…';
+        case 'broker-cash': return 'Transfer…';
         case 'pac': return 'Register…';
         case 'rebalance': return 'Review orders…';
         case 'capex-notes': return 'Update YNAB…';

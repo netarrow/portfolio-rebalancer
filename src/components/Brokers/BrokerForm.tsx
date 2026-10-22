@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import type { Broker, Portfolio, CommissionType, Person, BrokerRemuneration, RemunerationBaseType, RemunerationFrequency, TransferCostType } from '../../types';
 import { FREQUENCY_LABELS, describeRemuneration, todayIso } from '../../utils/brokerRemuneration';
+import { usePortfolio } from '../../context/PortfolioContext';
+import { useYnabCoverage } from '../YnabImport/useYnabCoverage';
 
 // Tax withheld at source on deposit interest in Italy; the usual case, so it is
 // what a new remuneration plan starts from.
@@ -30,6 +32,12 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
     const [liquidityType, setLiquidityType] = useState<'percent' | 'fixed'>('percent');
     const [minLiquidityPercentage, setMinLiquidityPercentage] = useState<number | ''>('');
     const [minLiquidityAmount, setMinLiquidityAmount] = useState<number | ''>('');
+    // Minimum linked to Expense Planning: the figures above stay as the fallback.
+    const [minLinked, setMinLinked] = useState(false);
+    const { ynabConfig } = usePortfolio();
+    const { report: coverage } = useYnabCoverage();
+    const coverageAccount = initialData?.id ? coverage.accounts.find(a => a.brokerId === initialData.id) : undefined;
+    const linkedMin = ynabConfig?.budgetId && coverageAccount ? Math.max(0, coverageAccount.liquidity - coverageAccount.free) : null;
 
     // Liquidity Allocations to Portfolios
     const [liquidityAllocations, setLiquidityAllocations] = useState<Record<string, number | ''>>({});
@@ -68,10 +76,14 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
             setOwnerId(initialData.familyAsset ? '' : (initialData.ownerId || ''));
             setIlliquid(!!initialData.illiquid);
 
-            const type = initialData.minLiquidityType || 'percent';
-            setLiquidityType(type);
-            setMinLiquidityPercentage(initialData.minLiquidityPercentage !== undefined ? initialData.minLiquidityPercentage : '');
-            setMinLiquidityAmount(initialData.minLiquidityAmount !== undefined ? initialData.minLiquidityAmount : '');
+            // A linked broker keeps the minimum typed by the user apart.
+            const own = initialData.minLiquidityLinked && initialData.minLiquidityManual
+                ? initialData.minLiquidityManual
+                : { type: initialData.minLiquidityType, percentage: initialData.minLiquidityPercentage, amount: initialData.minLiquidityAmount };
+            setMinLinked(!!initialData.minLiquidityLinked);
+            setLiquidityType(own.type || 'percent');
+            setMinLiquidityPercentage(own.percentage !== undefined ? own.percentage : '');
+            setMinLiquidityAmount(own.amount !== undefined ? own.amount : '');
 
             // Load existing allocations
             const allocs: Record<string, number | ''> = {};
@@ -133,15 +145,16 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
 
     // Compute the min liquidity target value for display
     const minLiquidityTarget = useMemo(() => {
+        if (minLinked && linkedMin !== null) return linkedMin;
         if (liquidityType === 'fixed') {
             return minLiquidityAmount === '' ? 0 : Number(minLiquidityAmount);
         }
         // For percent type, we can't compute exact target without total broker value,
         // so we show the percentage info only
         return null; // null means "percentage mode, can't compute absolute target here"
-    }, [liquidityType, minLiquidityAmount]);
+    }, [liquidityType, minLiquidityAmount, minLinked, linkedMin]);
 
-    const hasMinLiquidity = liquidityType === 'fixed'
+    const hasMinLiquidity = minLinked && linkedMin !== null ? linkedMin > 0 : liquidityType === 'fixed'
         ? (minLiquidityAmount !== '' && Number(minLiquidityAmount) > 0)
         : (minLiquidityPercentage !== '' && Number(minLiquidityPercentage) > 0);
 
@@ -198,9 +211,21 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
             ownerId: ownership === 'personal' ? (ownerId || undefined) : undefined,
             illiquid: illiquid || undefined,
             currentLiquidity: currentLiquidity === '' ? undefined : Number(currentLiquidity),
-            minLiquidityType: liquidityType,
-            minLiquidityPercentage: minLiquidityPercentage === '' ? undefined : Number(minLiquidityPercentage),
-            minLiquidityAmount: minLiquidityAmount === '' ? undefined : Number(minLiquidityAmount),
+            ...(() => {
+                const own = {
+                    type: liquidityType,
+                    percentage: minLiquidityPercentage === '' ? undefined : Number(minLiquidityPercentage),
+                    amount: minLiquidityAmount === '' ? undefined : Number(minLiquidityAmount),
+                };
+                if (!minLinked) {
+                    return { minLiquidityType: own.type, minLiquidityPercentage: own.percentage, minLiquidityAmount: own.amount, minLiquidityLinked: undefined, minLiquidityManual: undefined };
+                }
+                // Linked: the Expense Planning figure is the minimum (kept up to date
+                // from there); the typed one waits in minLiquidityManual.
+                return linkedMin !== null
+                    ? { minLiquidityType: 'fixed' as const, minLiquidityAmount: Math.round(linkedMin * 100) / 100, minLiquidityPercentage: undefined, minLiquidityLinked: true, minLiquidityManual: own }
+                    : { minLiquidityType: own.type, minLiquidityPercentage: own.percentage, minLiquidityAmount: own.amount, minLiquidityLinked: true, minLiquidityManual: own };
+            })(),
             liquidityAllocations: Object.keys(cleanAllocations).length > 0 ? cleanAllocations : undefined,
             commissionType: commissionType || undefined,
             commissionFixed: commissionType === 'fixed' && commissionFixed !== '' ? Number(commissionFixed) : undefined,
@@ -321,6 +346,18 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
 
                     <div className="form-group">
                         <label style={{ display: 'block', marginBottom: '0.5rem' }}>Minimum Liquidity Target</label>
+
+                        <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', marginBottom: '0.4rem' }}>
+                            <input type="checkbox" checked={minLinked} onChange={e => setMinLinked(e.target.checked)} />
+                            Link to Expense Planning
+                        </label>
+                        {minLinked && (
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 0.6rem 0', lineHeight: 1.4 }}>
+                                {linkedMin !== null
+                                    ? <>Minimum = what this account has to hold in Expense Planning (operating cash, emergency fund, set aside, capex due soon): <strong>€{linkedMin.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</strong> today, kept up to date. The value below applies if Expense Planning stops having a figure for this account.</>
+                                    : <>Expense Planning has no figure for this account{initialData ? '' : ' yet'} (no YNAB categories with cash here): the value below applies until it does.</>}
+                            </p>
+                        )}
 
                         <div style={{ display: 'flex', gap: '1rem', marginBottom: '0.5rem' }}>
                             <label style={{ fontWeight: 'normal', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>

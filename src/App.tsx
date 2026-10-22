@@ -29,6 +29,7 @@ import AssetScopeToggles from './components/Layout/AssetScopeToggles';
 import PacView from './components/Pac/PacView';
 import FundRelocationView from './components/FundRelocation/FundRelocationView';
 import OperationsView from './components/Operations/OperationsView';
+import BrokerMinLiquiditySync from './components/Brokers/BrokerMinLiquiditySync';
 
 // Placeholders for views
 const DashboardView = ({ onNavigateToDisclaimer }: { onNavigateToDisclaimer: () => void }) => {
@@ -134,6 +135,7 @@ function App() {
     <SecurityProvider>
       <UnlockGate>
         <PortfolioProvider>
+          <BrokerMinLiquiditySync />
           <Layout currentView={currentView} onNavigate={(view) => setCurrentView(view as View)}>
             {renderView()}
           </Layout>

@@ -20,6 +20,14 @@ export interface Broker {
   minLiquidityType?: 'percent' | 'fixed';
   minLiquidityPercentage?: number;
   minLiquidityAmount?: number;
+  // Minimum linked to Expense Planning: the cash the account has to hold
+  // there (operating cash + emergency fund + set aside + capex due soon) is
+  // kept in minLiquidityType 'fixed' / minLiquidityAmount, so every view
+  // reading the minimum follows it. The minimum the user typed is kept in
+  // minLiquidityManual: it applies again once unlinked, or while Expense
+  // Planning has no figure for this account.
+  minLiquidityLinked?: boolean;
+  minLiquidityManual?: { type: 'percent' | 'fixed'; percentage?: number; amount?: number };
   liquidityAllocations?: Record<string, number>; // portfolioId -> EUR amount
   // Commission plan
   commissionType?: CommissionType;
@@ -862,7 +870,7 @@ export interface SLEConfig {
 // What still has to be done is detected live from the data; what has been
 // done from the Operations page is recorded here, with what it produced.
 export type OperationKind =
-  | 'prices' | 'liquidity' | 'pac' | 'rebalance' | 'capex-notes' | 'capex-bond'
+  | 'prices' | 'liquidity' | 'broker-cash' | 'pac' | 'rebalance' | 'capex-notes' | 'capex-bond'
   | 'virtual-bond' | 'ynab-writeback' | 'ynab-revalue' | 'capex-sync' | 'backup';
 
 export interface OperationRecord {

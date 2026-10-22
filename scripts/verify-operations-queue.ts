@@ -2,7 +2,7 @@
 // only while the condition holds, and snoozed keys stay hidden until their date.
 // Run with: npx esbuild scripts/verify-operations-queue.ts --bundle --format=esm --platform=node | node --input-type=module
 import {
-    addOperationRecord, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
+    addOperationRecord, detectBrokerCash, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
     normalizeOperations, visibleTodos, type OperationTodo,
 } from '../src/utils/operationsQueue';
 import type { Broker, OperationRecord, PacPlan, Portfolio, Transaction } from '../src/types';
@@ -84,4 +84,15 @@ check('normalize drops malformed', normalizeOperations([rec('prices', hoursAgo(1
 const remunerated = (rate: number) => ({ id: 'r1', name: 'Saver', currentLiquidity: 10000, remuneration: { annualRatePercent: rate, frequency: 'monthly', creditDay: 1, startDate: '2030-01-01' } } as unknown as Broker);
 check('interest due', detectLiquidity({ brokers: [remunerated(3)], ynabBrokerIds: new Set(), records: [], now }).length, 1);
 check('interest of cents', detectLiquidity({ brokers: [remunerated(0.01)], ynabBrokerIds: new Set(), records: [], now }).length, 0);
+// Broker cash out of range (same figures as the Dashboard cards)
+const bc = (liq: number, min: number, alloc = 0): Broker => ({ id: 'c1', name: 'Cash Broker', currentLiquidity: liq, minLiquidityType: 'fixed', minLiquidityAmount: min, ...(alloc ? { liquidityAllocations: { pf: alloc } } : {}) } as Broker);
+const cash = (b: Broker, reserve = true) => detectBrokerCash({ brokers: [b], transactions: [], assetSettings: [], marketData: {}, reserveAllocatedCash: reserve });
+check('broker cash: below the minimum', cash(bc(800, 1000)).map(t => [t.urgency, t.amount]), [['due', -200]]);
+check('broker cash: within tolerance', cash(bc(980, 1000)).length, 0);
+check('broker cash: allocated cash reserved too', cash(bc(1200, 1000, 500)).map(t => t.amount), [-300]);
+check('broker cash: allocated cash not reserved', cash(bc(1200, 1000, 500), false).length, 0);
+check('broker cash: well above', cash(bc(3000, 1000)).map(t => [t.urgency, t.amount]), [['info', 2000]]);
+check('broker cash: a little above is fine', cash(bc(1400, 1000)).length, 0);
+check('broker cash: no minimum, nothing to say', cash(bc(3000, 0)).length, 0);
+check('broker cash: negative without a minimum', cash(bc(-400, 0)).map(t => t.amount), [-400]);
 console.log('all operations queue checks passed');

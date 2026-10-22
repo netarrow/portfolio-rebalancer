@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets } from '../../utils/portfolioCalculations';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { brokerLiquidityStatus, RESERVE_ALLOCATED_CASH_KEY } from '../../utils/brokerLiquidity';
 import './Dashboard.css';
 
 const BrokerPerformance: React.FC = () => {
@@ -13,7 +14,7 @@ const BrokerPerformance: React.FC = () => {
     // minimum liquidity AND the allocated cash aside. When OFF, only the broker's
     // configured minimum liquidity is reserved (legacy behaviour).
     const [reserveAllocatedCash, setReserveAllocatedCash] = useLocalStorage<boolean>(
-        'portfolio_broker_reserve_allocated_cash', true
+        RESERVE_ALLOCATED_CASH_KEY, true
     );
 
     const brokerStats = useMemo(() => {
@@ -42,40 +43,11 @@ const BrokerPerformance: React.FC = () => {
 
             const { summary } = calculateAssets(brokerTxs, assetSettings, marketData);
 
-            // Liquidity Calculations
-            const liquidity = brokerEntity?.currentLiquidity || 0;
             const invested = summary.totalValue; // "Value" of assets
+            const liq = brokerLiquidityStatus(brokerEntity, invested, reserveAllocatedCash);
+            const { liquidity, targetValue, targetLabel, allocatedReserve, reserve, deviation } = liq;
             const totalBrokerValue = invested + liquidity;
-
-            // "Calcola la parcentuale della liquidità sul value"
-            // FIX: Use totalBrokerValue (Invested + Liquidity) as the denominator
             const liquidityPercentOnValue = totalBrokerValue > 0 ? (liquidity / totalBrokerValue) * 100 : 0;
-
-            let targetValue = 0;
-            let targetLabel = '';
-
-            // Determine Target based on Type
-            const liquidityType = brokerEntity?.minLiquidityType || 'percent'; // default to percent
-
-            if (liquidityType === 'fixed') {
-                targetValue = brokerEntity?.minLiquidityAmount || 0;
-                targetLabel = `€${targetValue.toLocaleString('en-IE', { minimumFractionDigits: 0 })}`;
-            } else {
-                const targetPercent = brokerEntity?.minLiquidityPercentage || 0;
-                // FIX: Use totalBrokerValue as the base for percentage target
-                targetValue = totalBrokerValue * (targetPercent / 100);
-                targetLabel = `${targetPercent}%`;
-            }
-
-            // Cash already earmarked for the portfolios below this broker. This is
-            // not free to invest, so it must be reserved on top of the broker's
-            // configured minimum liquidity when the dashboard flag is on.
-            const allocatedReserve = Object.values(brokerEntity?.liquidityAllocations || {})
-                .reduce((sum, v) => sum + (v || 0), 0);
-
-            // Effective cash to keep aside: broker minimum + (optionally) allocated cash.
-            const reserve = targetValue + (reserveAllocatedCash ? allocatedReserve : 0);
-            const deviation = liquidity - reserve;
 
             return {
                 broker: displayName,
