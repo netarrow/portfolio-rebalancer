@@ -274,7 +274,7 @@ export const detectCapex = (input: {
             key: `capex-bond:${g.id}`, kind: 'capex-bond', goalId: g.id, dueDate: g.targetDate?.slice(0, 10),
             urgency: g.targetDate && g.targetDate.slice(0, 10) < today ? 'overdue' : 'info',
             title: `Find a bond for ${g.name}`,
-            detail: `${eur0(m.toMatch)} invested without a bond maturing before ${g.targetDate?.slice(0, 10)}`,
+            detail: `${eur0(m.toMatch)} invested in the portfolio as a whole, not yet tied to a product maturing before ${g.targetDate?.slice(0, 10)}`,
         });
     });
     return out;

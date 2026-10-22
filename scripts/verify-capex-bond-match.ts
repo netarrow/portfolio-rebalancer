@@ -34,7 +34,11 @@ const late = capexBondMatch(goal('C', 5000, '2027-09-01'), [alloc('C', 5000, 'IT
 check('tied to a bond maturing too late: still to search', [late.needsSearch, late.toMatch, late.bonds[0].late], [true, 5000, true]);
 
 const mixed = capexBondMatch(goal('D', 6000, '2028-06-01'), [alloc('D', 4000, '_VBOND_v1'), alloc('D', 2000, 'IE0000000001')], defs, vbs);
-check('a planned virtual bond counts; the ETF part does not', [mixed.bonds[0].planned, mixed.generic, mixed.toMatch, mixed.needsSearch], [true, 2000, 2000, true]);
+check('a planned virtual bond counts; an ETF is a product already chosen', [mixed.bonds[0].planned, mixed.pinned, mixed.toMatch, mixed.needsSearch], [true, 2000, 0, false]);
+const onEtf = capexBondMatch(goal('I', 5000, '2028-06-01'), [alloc('I', 5000, 'IE0000000001')], defs, vbs);
+check('pinned to an ETF: no bond search', [onEtf.pinned, onEtf.needsSearch], [5000, false]);
+const onGroup = capexBondMatch(goal('J', 5000, '2028-06-01'), [alloc('J', 3000, '_GRP_x1')], defs, vbs);
+check('on a group of tickers: still to tie to a product', [onGroup.generic, onGroup.toMatch, onGroup.needsSearch], [3000, 3000, true]);
 
 const undated = capexBondMatch(goal('E', 3000, undefined), [alloc('E', 3000)], defs, vbs);
 check('no date: no search flag', undated.needsSearch, false);
