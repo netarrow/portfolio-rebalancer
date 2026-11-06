@@ -1088,14 +1088,22 @@ export interface MergedTableContext {
     route: (unitKey: string, ticker: string, shares: number) => { portfolioId: string; shares: number }[];
     /** Member name by id, for the confirm dialog's breakdown. */
     nameById: Record<string, string>;
+    /** Sum of the members' own per-portfolio liquidity (the default budget). */
+    pooledLiquidity: number;
+    /** True when the Liquidity field holds a value typed in the Merged view. */
+    liquidityOverridden: boolean;
+    /** Sets (or, with undefined, clears) the Merged view's Buy-Only budget. */
+    onLiquidityChange: (value: number | undefined) => void;
+    /** Drops the typed value and goes back to the pooled member liquidity. */
+    onLiquidityReset: () => void;
 }
 
 /**
- * Read-only stand-in for the Broker picker and Liquidity input of a merged
- * table: the members behind the virtual portfolio, their shares, the pooled
- * Buy-Only budget, and where the shares came from.
+ * Stand-in for the Broker picker of a merged table: the members behind the
+ * virtual portfolio, their shares, the pooled liquidity of the members (the
+ * default Buy-Only budget), and where the shares came from.
  */
-const MergedControlsStrip: React.FC<{ merged: MergedTableContext; liquidity: number }> = ({ merged, liquidity }) => (
+const MergedControlsStrip: React.FC<{ merged: MergedTableContext }> = ({ merged }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', flexWrap: 'wrap', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
             {merged.members.map((m, i) => (
@@ -1110,9 +1118,6 @@ const MergedControlsStrip: React.FC<{ merged: MergedTableContext; liquidity: num
                     <span>{(m.share * 100).toFixed(1)}%</span>
                 </span>
             ))}
-        </span>
-        <span title="Pooled per-portfolio liquidity of every member, deployed by Buy Only">
-            Liquidity: <strong style={{ color: 'var(--text-secondary)' }}>{eur0(liquidity)}</strong> (pooled)
         </span>
         <span>
             {merged.ratioSource === 'config'
@@ -1738,15 +1743,17 @@ const PercentAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, all
                         getLabel={getCashFlowLabel}
                     />
                 </h3>
-                <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
-                    {merged ? (
+                <div className="allocation-liquidity-controls" style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', flexWrap: merged ? 'wrap' : undefined }}>
+                    {merged && (
                         // The merged portfolio is synthesized per render and has no row in
-                        // storage, so broker and liquidity are reported, not edited: both
-                        // editors write back through onUpdatePortfolio, which could only
-                        // persist a portfolio that doesn't exist.
-                        <MergedControlsStrip merged={merged} liquidity={portfolio.liquidity || 0} />
-                    ) : (<>
+                        // storage, so the broker is reported, not edited. Liquidity stays
+                        // editable: the value lives in the group section (not in storage)
+                        // and only drives the Buy-Only budget of this view.
+                        <MergedControlsStrip merged={merged} />
+                    )}
+                    {!merged && (
                     <BrokerPicker portfolio={portfolio} brokers={brokers} onUpdatePortfolio={onUpdatePortfolio} />
+                    )}
                     {/* Kept as one flex unit so the label never wraps away from its input. */}
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--space-2)' }}>
                     <label style={{ fontSize: '0.9rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Liquidity:</label>
@@ -1756,7 +1763,8 @@ const PercentAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, all
                         value={portfolio.liquidity !== undefined ? portfolio.liquidity : ''}
                         onChange={(e) => {
                             const val = e.target.value === '' ? undefined : parseFloat(e.target.value);
-                            onUpdatePortfolio({ ...portfolio, liquidity: val });
+                            if (merged) merged.onLiquidityChange(val);
+                            else onUpdatePortfolio({ ...portfolio, liquidity: val });
                         }}
                         style={{
                             borderRadius: 'var(--radius-sm)',
@@ -1788,14 +1796,36 @@ const PercentAllocationTable: React.FC<AllocationTableProps> = ({ portfolio, all
                                 className="allocation-liquidity-hint"
                                 style={{ fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer', marginLeft: 'var(--space-2)' }}
                                 title="Click to set Liquidity to this value"
-                                onClick={() => onUpdatePortfolio({ ...portfolio, liquidity: parseFloat(requiredTotalLiq.toFixed(2)) })}
+                                onClick={() => {
+                                    const val = parseFloat(requiredTotalLiq.toFixed(2));
+                                    if (merged) merged.onLiquidityChange(val);
+                                    else onUpdatePortfolio({ ...portfolio, liquidity: val });
+                                }}
                             >
                                 (Rebalancing Buy Only Liquidity: <span style={{ textDecoration: 'underline' }}>€{requiredTotalLiq.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</span>)
                             </div>
                         );
                     })()}
+                    {merged && (
+                        merged.liquidityOverridden ? (
+                            <button
+                                type="button"
+                                onClick={merged.onLiquidityReset}
+                                title="Go back to the liquidity set on the member portfolios"
+                                style={{
+                                    fontSize: '0.8rem', padding: 0, cursor: 'pointer', whiteSpace: 'nowrap',
+                                    background: 'none', border: 'none', color: 'var(--text-muted)',
+                                }}
+                            >
+                                (<span style={{ textDecoration: 'underline' }}>reset to pooled {eur0(merged.pooledLiquidity)}</span>)
+                            </button>
+                        ) : (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }} title="Sum of the per-portfolio liquidity of every member">
+                                (pooled from members)
+                            </span>
+                        )
+                    )}
                     </span>
-                    </>)}
                 </div>
             </div>
 

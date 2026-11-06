@@ -69,6 +69,10 @@ const PortfolioGroupSection: React.FC<Props> = ({
     onAddTransactions,
 }) => {
     const [viewMode, setViewMode] = useState<'grouped' | 'individual' | 'merged'>('individual');
+    // Buy-Only budget typed in the Merged view. The merged portfolio has no row
+    // in storage, so the value is kept here for the session; null means "use
+    // the pooled per-portfolio liquidity of the members".
+    const [mergedLiquidity, setMergedLiquidity] = useState<number | undefined | null>(null);
     const allPortfolios = useMemo(() => [parent, ...children], [parent, children]);
     // The full portfolio list, so the synthetic merged id cannot collide with
     // a real one. The parent/child proportions themselves (e.g. Core 80% /
@@ -177,7 +181,7 @@ const PortfolioGroupSection: React.FC<Props> = ({
             return key ? mv.quantityByTicker[key] : 0;
         };
 
-        const context: MergedTableContext = {
+        const context: Omit<MergedTableContext, 'pooledLiquidity' | 'liquidityOverridden' | 'onLiquidityChange' | 'onLiquidityReset'> = {
             members: ratio,
             ratioSource,
             nameById: Object.fromEntries(memberValues.map(m => [m.portfolio.id, m.portfolio.name])),
@@ -198,8 +202,22 @@ const PortfolioGroupSection: React.FC<Props> = ({
             },
         };
 
-        return { group, context };
-    }, [portfolioCalcs, shares, allTransactions, brokers, storedPortfolios, parent.id]);
+        const pooledLiquidity = group.portfolio.liquidity || 0;
+        const liquidityOverridden = mergedLiquidity !== null;
+        const groupWithLiquidity = liquidityOverridden
+            ? { ...group, portfolio: { ...group.portfolio, liquidity: mergedLiquidity } }
+            : group;
+
+        const fullContext: MergedTableContext = {
+            ...context,
+            pooledLiquidity,
+            liquidityOverridden,
+            onLiquidityChange: value => setMergedLiquidity(value),
+            onLiquidityReset: () => setMergedLiquidity(null),
+        };
+
+        return { group: groupWithLiquidity, context: fullContext };
+    }, [portfolioCalcs, shares, allTransactions, brokers, storedPortfolios, parent.id, mergedLiquidity]);
 
     /**
      * The merged portfolio is synthesized per render and has no row in storage,
