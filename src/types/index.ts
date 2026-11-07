@@ -812,10 +812,16 @@ export type PacRoundingMode = 'fractional' | 'floor' | 'floor-carry';
 // How the trade fee is sourced: the broker's own commission plan, a flat
 // override, a percent-of-trade-value override, or no fee at all.
 export type PacCostMode = 'broker' | 'fixed' | 'percent' | 'none';
+// What a plan buys: one asset ('asset', the default), or a whole portfolio
+// ('portfolio'): each installment's amount is spread over the portfolio's
+// assets by its target quotas, Buy-only style (underweight first).
+export type PacTarget = 'asset' | 'portfolio';
 
 export interface PacPlan {
     id: string;
     name: string;
+    // Absent = 'asset'. A 'portfolio' plan has no ticker ('') and is always mode 'amount'.
+    target?: PacTarget;
     ticker: string;
     portfolioId: string;
     brokerId: string;
@@ -845,7 +851,9 @@ export interface PacExecution {
     planId: string;
     dueDate: string;
     skipped?: boolean;        // user explicitly skipped this installment
-    transactionId?: string;   // id of the Transaction created on confirm
+    transactionId?: string;   // id of the Transaction created on confirm (the first one, for a portfolio plan)
+    transactionIds?: string[]; // portfolio plan: every Transaction created on confirm
+    orders?: { ticker: string; quantity: number; price: number }[]; // portfolio plan: what was bought
     executedDate?: string;    // date recorded on the Transaction (usually === dueDate)
     price?: number;           // unit price used
     quantity?: number;        // units bought

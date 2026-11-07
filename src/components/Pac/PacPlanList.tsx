@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { PacFrequency, PacPlan } from '../../types';
 import { generateInstalments } from '../../utils/pacSchedule';
+import { pacSubject } from '../../utils/pacPortfolio';
 import PacPlanForm from './PacPlanForm';
 import Swal from 'sweetalert2';
 
@@ -77,7 +78,7 @@ const PacPlanList: React.FC = () => {
                                 <div className="card-header">
                                     <div>
                                         <h3>{plan.name}</h3>
-                                        <span className="pac-ticker-badge">{plan.ticker}</span>
+                                        <span className="pac-ticker-badge">{pacSubject(plan, portfolios)}</span>
                                         {!plan.active && <span className="pac-paused-badge">Paused</span>}
                                     </div>
                                     <div className="card-actions">

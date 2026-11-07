@@ -10,6 +10,7 @@ import type { PortfolioTargetUnit } from '../types';
 import { resolveAmountTargets, derivePercentAllocations, sameAllocations } from '../utils/amountTargets';
 import { appendDailySnapshot, upsertTickerHistory, mergeHistoryMaps, mergeLatestCloses, priceAtDetailed } from '../utils/priceHistory';
 import { addPeriods, carryInFor, computeInstalment, generateInstalments } from '../utils/pacSchedule';
+import type { PortfolioInstalment } from '../utils/pacPortfolio';
 import { fetchAssetHistory } from '../services/marketData';
 import { listBudgets as ynabListBudgets, getCurrentMonthCategories as ynabGetCategories, getAverageBudgetedByCategory as ynabGetAverages, listCategoryGroups as ynabListGroups, getGoalCategories as ynabGetGoalCategories, getMonthlyBudgetSnapshots as ynabGetMonthlySnapshots, listAccounts as ynabListAccounts, listAccountsByBudget as ynabListAccountsByBudget, rollingMonthsIso, milliunitsToEur, createTransactions as ynabCreateTransactions, deleteTransaction as ynabDeleteTransaction, createTrackingAccount as ynabCreateTrackingAccount, updateTransaction as ynabUpdateTransaction, updateCategory as ynabUpdateCategory } from '../services/ynabApi';
 import type { YnabBudgetSummary, YnabAccountSummary } from '../services/ynabApi';
@@ -275,6 +276,8 @@ interface PortfolioContextType {
     updatePacPlan: (plan: PacPlan) => void;
     deletePacPlan: (id: string) => void;
     confirmPacInstalment: (planId: string, dueDate: string, opts?: { manualPrice?: number }) => { ok: boolean; error?: string };
+    /** Portfolio plan: records the (reviewed) orders of one installment. */
+    confirmPacPortfolioInstalment: (planId: string, dueDate: string, result: PortfolioInstalment) => { ok: boolean; error?: string };
     skipPacInstalment: (planId: string, dueDate: string) => void;
     unskipPacInstalment: (planId: string, dueDate: string) => void;
     undoPacInstalment: (planId: string, dueDate: string) => { ok: boolean };
@@ -1520,6 +1523,41 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ok: true };
     };
 
+    const confirmPacPortfolioInstalment = (planId: string, dueDate: string, result: PortfolioInstalment): { ok: boolean; error?: string } => {
+        const plan = pacPlans.find(p => p.id === planId);
+        if (!plan) return { ok: false, error: 'Plan not found' };
+        if (result.orders.length === 0) return { ok: false, error: 'Nothing to buy' };
+        const txs: Transaction[] = result.orders.map(o => ({
+            id: crypto.randomUUID(),
+            ticker: o.ticker,
+            amount: o.quantity,
+            price: o.price,
+            date: dueDate,
+            direction: 'Buy',
+            portfolioId: plan.portfolioId,
+            brokerId: plan.brokerId,
+            freeCommission: o.fee === 0 ? true : undefined,
+        }));
+        addTransactionsBulk(txs);
+        parkResidue(plan.brokerId, plan.portfolioId, result.parkedDelta);
+        setPacExecutions(prev => [
+            ...prev.filter(e => !(e.planId === planId && e.dueDate === dueDate)),
+            {
+                planId, dueDate,
+                transactionId: txs[0].id,
+                transactionIds: txs.map(t => t.id),
+                orders: result.orders.map(o => ({ ticker: o.ticker, quantity: o.quantity, price: o.price })),
+                executedDate: dueDate,
+                cost: result.fees,
+                carryIn: result.carryIn,
+                carryOut: result.carryOut,
+                parkedDelta: result.parkedDelta,
+                confirmedAt: new Date().toISOString(),
+            },
+        ]);
+        return { ok: true };
+    };
+
     const skipPacInstalment = (planId: string, dueDate: string) => {
         setPacExecutions(prev => [
             ...prev.filter(e => !(e.planId === planId && e.dueDate === dueDate)),
@@ -1535,9 +1573,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const execution = pacExecutions.find(e => e.planId === planId && e.dueDate === dueDate && !e.skipped);
         if (!execution) return { ok: false };
         const plan = pacPlans.find(p => p.id === planId);
-        if (execution.transactionId) {
-            deleteTransaction(execution.transactionId);
-        }
+        const ids = execution.transactionIds ?? (execution.transactionId ? [execution.transactionId] : []);
+        ids.forEach(id => deleteTransaction(id));
         // Mirrors deleteTransaction's own rule (cash deltas from a deleted trade
         // are not reverted); the parked residue is PAC-only bookkeeping though,
         // so reversing it here is safe and keeps the broker allocation correct.
@@ -2393,6 +2430,25 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const todayIso = new Date(today).toISOString().split('T')[0];
         const mockPacPlans: PacPlan[] = [
             {
+                // A plan that buys the whole portfolio, split by its quotas:
+                // its first installment is due today (Operations shows what to buy).
+                id: 'mock-pac-portfolio',
+                name: 'Monthly Core contribution',
+                target: 'portfolio',
+                ticker: '',
+                portfolioId: pIdMain,
+                brokerId: 'b3',
+                mode: 'amount',
+                amount: 800,
+                frequency: 'monthly',
+                startDate: todayIso,
+                costMode: 'broker',
+                costsIncluded: true,
+                rounding: 'fractional',
+                active: true,
+                createdAt: timestamp,
+            },
+            {
                 id: 'mock-pac-swda',
                 name: 'Monthly SWDA accumulation',
                 ticker: 'IE00B4L5Y983',
@@ -2449,6 +2505,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
         const mockPacExecutions: PacExecution[] = [];
         const registerPacInstalment = (plan: PacPlan, dueDate: string) => {
+            if (plan.target === 'portfolio') return; // no history to settle: its one installment is still due
             const price = priceAtDetailed(priceHistoryMap[plan.ticker], dueDate)?.price;
             if (price === undefined) return;
             const broker = mockBrokers.find(b => b.id === plan.brokerId);
@@ -4281,6 +4338,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updatePacPlan,
         deletePacPlan,
         confirmPacInstalment,
+        confirmPacPortfolioInstalment,
         skipPacInstalment,
         unskipPacInstalment,
         undoPacInstalment,

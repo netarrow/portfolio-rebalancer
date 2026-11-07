@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
-import type { PacContributionMode, PacCostMode, PacFrequency, PacPlan, PacRoundingMode } from '../../types';
+import type { PacContributionMode, PacCostMode, PacFrequency, PacPlan, PacRoundingMode, PacTarget } from '../../types';
 import { computeInstalment } from '../../utils/pacSchedule';
+import { computePortfolioInstalment } from '../../utils/pacPortfolio';
+import { realCashAllocations } from '../../utils/operationsQueue';
 import '../Transactions/Transactions.css'; // .modal-overlay, .modal-content, .form-group, .form-input
 
 const FREQUENCY_LABELS: Record<PacFrequency, string> = {
@@ -23,9 +25,10 @@ interface PacPlanFormProps {
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCancel }) => {
-    const { portfolios, brokers, assetSettings, marketData } = usePortfolio();
+    const { portfolios, brokers, assetSettings, effectiveAssetSettings, marketData, transactions } = usePortfolio();
 
     const [name, setName] = useState('');
+    const [target, setTarget] = useState<PacTarget>('asset');
     const [ticker, setTicker] = useState('');
     const [portfolioId, setPortfolioId] = useState('');
     const [brokerId, setBrokerId] = useState('');
@@ -46,6 +49,7 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
     useEffect(() => {
         if (initialData) {
             setName(initialData.name);
+            setTarget(initialData.target ?? 'asset');
             setTicker(initialData.ticker);
             setPortfolioId(initialData.portfolioId);
             setBrokerId(initialData.brokerId);
@@ -64,6 +68,7 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
             setActive(initialData.active);
         } else {
             setName('');
+            setTarget('asset');
             setTicker('');
             setPortfolioId(portfolios[0]?.id || '');
             setBrokerId(brokers[0]?.id || '');
@@ -98,18 +103,22 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!name || !ticker || !portfolioId || !brokerId) return;
-        if (mode === 'amount' && !amount) return;
-        if (mode === 'quantity' && !quantity) return;
+        const byPortfolio = target === 'portfolio';
+        // A portfolio plan always invests an amount: units of what?
+        const effMode: PacContributionMode = byPortfolio ? 'amount' : mode;
+        if (!name || (!byPortfolio && !ticker) || !portfolioId || !brokerId) return;
+        if (effMode === 'amount' && !amount) return;
+        if (effMode === 'quantity' && !quantity) return;
 
         onSubmit({
             name,
-            ticker: ticker.toUpperCase(),
+            target: byPortfolio ? 'portfolio' : undefined,
+            ticker: byPortfolio ? '' : ticker.toUpperCase(),
             portfolioId,
             brokerId,
-            mode,
-            amount: mode === 'amount' ? Number(amount) : undefined,
-            quantity: mode === 'quantity' ? Number(quantity) : undefined,
+            mode: effMode,
+            amount: effMode === 'amount' ? Number(amount) : undefined,
+            quantity: effMode === 'quantity' ? Number(quantity) : undefined,
             frequency,
             startDate,
             endDate: hasEndDate && endDate ? endDate : undefined,
@@ -124,7 +133,27 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
 
     // Live preview using the latest known market price (no carried-in residue —
     // just illustrates roughly what one installment looks like today).
+    const portfolioPreview = useMemo(() => {
+        if (target !== 'portfolio') return null;
+        const portfolio = portfolios.find(p => p.id === portfolioId);
+        if (!portfolio || !(Number(amount) > 0)) return null;
+        const broker = brokers.find(b => b.id === brokerId);
+        const previewPlan: PacPlan = {
+            id: 'preview', name, target: 'portfolio', ticker: '', portfolioId, brokerId, mode: 'amount',
+            amount: Number(amount), frequency, startDate, costMode,
+            costFixed: costMode === 'fixed' ? Number(costFixed || 0) : undefined,
+            costPercent: costMode === 'percent' ? Number(costPercent || 0) : undefined,
+            costsIncluded, rounding, active: true, createdAt: '',
+        };
+        return computePortfolioInstalment({
+            plan: previewPlan, portfolio, carryIn: 0, broker, transactions,
+            assetSettings: effectiveAssetSettings, marketData, brokers: brokers.map(realCashAllocations),
+        });
+    }, [target, portfolios, portfolioId, amount, brokers, brokerId, name, frequency, startDate, costMode, costFixed, costPercent, costsIncluded, rounding, transactions, effectiveAssetSettings, marketData]);
+    const labelOf = (t: string) => assetSettings.find(a => a.ticker === t)?.label || t;
+
     const preview = useMemo(() => {
+        if (target === 'portfolio') return null;
         const upperTicker = ticker.toUpperCase();
         const price = marketData[upperTicker]?.price;
         if (!price || price <= 0) return null;
@@ -141,7 +170,7 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
             costsIncluded, rounding, active: true, createdAt: '',
         };
         return { price, math: computeInstalment({ plan: previewPlan, price, carryIn: 0, broker }) };
-    }, [ticker, marketData, brokers, brokerId, name, portfolioId, mode, amount, quantity, frequency, startDate, costMode, costFixed, costPercent, costsIncluded, rounding]);
+    }, [target, ticker, marketData, brokers, brokerId, name, portfolioId, mode, amount, quantity, frequency, startDate, costMode, costFixed, costPercent, costsIncluded, rounding]);
 
     const portfolioName = portfolios.find(p => p.id === portfolioId)?.name;
 
@@ -162,14 +191,29 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
                     </div>
 
                     <div className="form-group">
-                        <label>Asset</label>
-                        <select className="form-input" value={ticker} onChange={(e) => setTicker(e.target.value)} required>
-                            <option value="">Select asset...</option>
-                            {assetOptions.map(a => (
-                                <option key={a.ticker} value={a.ticker}>{a.label || a.ticker}</option>
-                            ))}
+                        <label>Buys</label>
+                        <select className="form-input" value={target} onChange={(e) => setTarget(e.target.value as PacTarget)}>
+                            <option value="asset">One asset</option>
+                            <option value="portfolio">A whole portfolio, split by its target quotas</option>
                         </select>
+                        {target === 'portfolio' && (
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                                Each installment's amount goes where the portfolio needs it: its underweight assets first, in proportion to the gap from their target (like the Dashboard's Buy only column), priced on the due date.
+                            </p>
+                        )}
                     </div>
+
+                    {target === 'asset' && (
+                        <div className="form-group">
+                            <label>Asset</label>
+                            <select className="form-input" value={ticker} onChange={(e) => setTicker(e.target.value)} required>
+                                <option value="">Select asset...</option>
+                                {assetOptions.map(a => (
+                                    <option key={a.ticker} value={a.ticker}>{a.label || a.ticker}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
 
                     <div className="form-group">
                         <label>Portfolio</label>
@@ -187,15 +231,17 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
                         </select>
                     </div>
 
-                    <div className="form-group">
-                        <label>Contribution</label>
-                        <select className="form-input" value={mode} onChange={(e) => setMode(e.target.value as PacContributionMode)}>
-                            <option value="amount">Fixed EUR amount</option>
-                            <option value="quantity">Fixed quantity of units</option>
-                        </select>
-                    </div>
+                    {target === 'asset' && (
+                        <div className="form-group">
+                            <label>Contribution</label>
+                            <select className="form-input" value={mode} onChange={(e) => setMode(e.target.value as PacContributionMode)}>
+                                <option value="amount">Fixed EUR amount</option>
+                                <option value="quantity">Fixed quantity of units</option>
+                            </select>
+                        </div>
+                    )}
 
-                    {mode === 'amount' ? (
+                    {(mode === 'amount' || target === 'portfolio') ? (
                         <div className="form-group">
                             <label>Amount per installment (EUR)</label>
                             <input type="number" className="form-input" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required />
@@ -255,7 +301,7 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
                         </div>
                     )}
 
-                    {mode === 'amount' && (
+                    {(mode === 'amount' || target === 'portfolio') && (
                         <>
                             <div className="form-group">
                                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
@@ -281,6 +327,21 @@ const PacPlanForm: React.FC<PacPlanFormProps> = ({ initialData, onSubmit, onCanc
                                 <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
                                 <span>Active (paused plans keep their history but stop suggesting new installments)</span>
                             </label>
+                        </div>
+                    )}
+
+                    {portfolioPreview && (
+                        <div className="form-group" style={{ background: 'var(--bg-app)', padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            <strong style={{ color: 'var(--text-primary)' }}>Preview at today's prices</strong>
+                            {portfolioPreview.orders.length === 0
+                                ? <div>Nothing to buy: the portfolio has no target with a price, or the amount buys no whole unit.</div>
+                                : portfolioPreview.orders.map(o => (
+                                    <div key={o.ticker}>{labelOf(o.ticker)}: {o.quantity.toLocaleString('en-IE', { maximumFractionDigits: 6 })} × €{o.price.toFixed(2)} = €{o.tradeValue.toFixed(2)}</div>
+                                ))}
+                            <div>Fees: €{portfolioPreview.fees.toFixed(2)} · Total outlay: €{portfolioPreview.totalOutlay.toFixed(2)}</div>
+                            {portfolioPreview.carryOut > 0 && (
+                                <div>€{portfolioPreview.carryOut.toFixed(2)} earmarked to {portfolioName || 'the selected portfolio'}</div>
+                            )}
                         </div>
                     )}
 

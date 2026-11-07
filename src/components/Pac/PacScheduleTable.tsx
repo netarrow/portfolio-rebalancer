@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { PacExecution, PacPlan } from '../../types';
 import { generateInstalments } from '../../utils/pacSchedule';
+import { describePacOrders, pacSubject } from '../../utils/pacPortfolio';
 import PacConfirmModal from './PacConfirmModal';
 import Swal from 'sweetalert2';
 
@@ -17,7 +18,7 @@ interface Row {
 }
 
 const PacScheduleTable: React.FC = () => {
-    const { pacPlans, pacExecutions, portfolios, brokers, skipPacInstalment, unskipPacInstalment, undoPacInstalment } = usePortfolio();
+    const { pacPlans, pacExecutions, portfolios, brokers, assetSettings, skipPacInstalment, unskipPacInstalment, undoPacInstalment } = usePortfolio();
     const [confirmTarget, setConfirmTarget] = useState<{ plan: PacPlan; dueDate: string } | null>(null);
     const today = todayISO();
 
@@ -54,7 +55,7 @@ const PacScheduleTable: React.FC = () => {
     const handleUndo = (row: Row) => {
         Swal.fire({
             title: 'Undo this installment?',
-            text: `This removes the recorded transaction for "${row.plan.name}" on ${row.dueDate} and reverts any parked residue.`,
+            text: `This removes the recorded transaction(s) for "${row.plan.name}" on ${row.dueDate} and reverts any parked residue.`,
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
@@ -78,7 +79,7 @@ const PacScheduleTable: React.FC = () => {
                             <tr>
                                 <th>Due date</th>
                                 <th>Plan</th>
-                                <th>Ticker</th>
+                                <th>Buys</th>
                                 <th>Status</th>
                                 <th>Quantity</th>
                                 <th>Price</th>
@@ -95,10 +96,18 @@ const PacScheduleTable: React.FC = () => {
                                     <tr key={`${row.plan.id}-${row.dueDate}`}>
                                         <td>{row.dueDate}</td>
                                         <td>{row.plan.name}</td>
-                                        <td>{row.plan.ticker}</td>
+                                        <td>{pacSubject(row.plan, portfolios)}</td>
                                         <td><span className={`pac-status-badge pac-status-${row.status}`}>{row.status}</span></td>
-                                        <td>{row.execution?.quantity !== undefined ? row.execution.quantity.toLocaleString('en-IE', { maximumFractionDigits: 6 }) : '—'}</td>
-                                        <td>{row.execution?.price !== undefined ? `€${row.execution.price.toFixed(2)}` : '—'}</td>
+                                        {row.execution?.orders ? (
+                                            <td colSpan={2} style={{ whiteSpace: 'normal', maxWidth: '22rem' }}>
+                                                {describePacOrders(row.execution.orders, t => assetSettings.find(a => a.ticker === t)?.label || t)}
+                                            </td>
+                                        ) : (
+                                            <>
+                                                <td>{row.execution?.quantity !== undefined ? row.execution.quantity.toLocaleString('en-IE', { maximumFractionDigits: 6 }) : '—'}</td>
+                                                <td>{row.execution?.price !== undefined ? `€${row.execution.price.toFixed(2)}` : '—'}</td>
+                                            </>
+                                        )}
                                         <td>{row.execution?.cost !== undefined ? `€${row.execution.cost.toFixed(2)}` : '—'}</td>
                                         <td>
                                             {row.execution?.carryOut ? `€${row.execution.carryOut.toFixed(2)} on ${broker?.name || '?'} / ${portfolio?.name || '?'}` : '—'}

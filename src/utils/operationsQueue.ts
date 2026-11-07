@@ -6,7 +6,8 @@ import { getVirtualBondTicker, isVirtualBondTicker } from '../types';
 import { calculateAssets, isCashTicker, isGroupKey } from './portfolioCalculations';
 import { memberInfoFromAssets, resolveGroups } from './allocationGroups';
 import { buildPortfolioCalc, buildRebalanceOrders, computeBuyOnly, computeFullRebalance } from './rebalanceOrders';
-import { generateInstalments } from './pacSchedule';
+import { carryInFor, generateInstalments } from './pacSchedule';
+import { computePortfolioInstalment, describePacOrders, isPortfolioPac } from './pacPortfolio';
 import { computeBrokerAccrual } from './brokerRemuneration';
 import { brokerLiquidityStatus } from './brokerLiquidity';
 import { capexBondMatch } from './capexBondMatch';
@@ -150,20 +151,54 @@ export const detectBrokerCash = (input: {
     return [];
 });
 
-export const detectPac = (input: { plans: PacPlan[]; executions: PacExecution[]; now: Date }): OperationTodo[] => {
+export const detectPac = (input: {
+    plans: PacPlan[];
+    executions: PacExecution[];
+    now: Date;
+    /** For the plans that buy a whole portfolio: what the instalment would buy today. */
+    portfolios?: Portfolio[];
+    transactions?: Transaction[];
+    assetSettings?: AssetDefinition[];
+    marketData?: Record<string, { price: number; lastUpdated: string }>;
+    brokers?: Broker[];
+}): OperationTodo[] => {
     const today = isoDay(input.now);
-    return input.plans.filter(p => p.active !== false).flatMap(plan => generateInstalments(plan, today, 0)
-        // Dates before the plan was created were not instalments of it: the
-        // plan describes them, it did not ask for them.
-        .filter(dueDate => !plan.createdAt || dueDate >= plan.createdAt.slice(0, 10))
-        .filter(dueDate => dueDate <= today
-            && !input.executions.some(e => e.planId === plan.id && e.dueDate === dueDate && (e.skipped || e.transactionId)))
-        .map((dueDate): OperationTodo => ({
+    return input.plans.filter(p => p.active !== false).flatMap(plan => {
+        const due = generateInstalments(plan, today, 0)
+            // Dates before the plan was created were not instalments of it: the
+            // plan describes them, it did not ask for them.
+            .filter(dueDate => !plan.createdAt || dueDate >= plan.createdAt.slice(0, 10))
+            .filter(dueDate => dueDate <= today
+                && !input.executions.some(e => e.planId === plan.id && e.dueDate === dueDate && (e.skipped || e.transactionId)));
+        if (!isPortfolioPac(plan)) return due.map((dueDate): OperationTodo => ({
             key: `pac:${plan.id}:${dueDate}`, kind: 'pac', planId: plan.id, dueDate,
             urgency: dueDate < today ? 'overdue' : 'due',
             title: `PAC instalment: ${plan.name || plan.ticker}`,
             detail: `${plan.ticker} · due ${dueDate}`,
-        })));
+        }));
+        const portfolio = input.portfolios?.find(p => p.id === plan.portfolioId);
+        const brokers = (input.brokers ?? []).map(realCashAllocations);
+        const broker = input.brokers?.find(b => b.id === plan.brokerId);
+        const label = (t: string) => input.assetSettings?.find(a => a.ticker === t)?.label || t;
+        return due.map((dueDate): OperationTodo => {
+            let buys = '';
+            if (portfolio && input.transactions && input.assetSettings && input.marketData) {
+                const math = computePortfolioInstalment({
+                    plan, portfolio, carryIn: carryInFor(plan, input.executions, dueDate), broker,
+                    transactions: input.transactions, assetSettings: input.assetSettings, marketData: input.marketData, brokers,
+                });
+                buys = math.orders.length > 0
+                    ? ` · buy ${describePacOrders(math.orders, label)} (today's prices)`
+                    : ' · nothing to buy at today\'s prices';
+            }
+            return {
+                key: `pac:${plan.id}:${dueDate}`, kind: 'pac', planId: plan.id, dueDate, portfolioId: plan.portfolioId,
+                urgency: dueDate < today ? 'overdue' : 'due',
+                title: `PAC instalment: ${plan.name || `portfolio ${portfolio?.name ?? ''}`}`,
+                detail: `${eur0(plan.amount ?? 0)} into ${portfolio?.name ?? 'a deleted portfolio'} by its quotas · due ${dueDate}${buys}`,
+            };
+        });
+    });
 };
 
 export const detectRebalance = (input: {

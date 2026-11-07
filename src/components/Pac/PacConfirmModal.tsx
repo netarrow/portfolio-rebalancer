@@ -3,6 +3,8 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import type { PacPlan } from '../../types';
 import { priceAtDetailed } from '../../utils/priceHistory';
 import { carryInFor, computeInstalment } from '../../utils/pacSchedule';
+import { isPortfolioPac } from '../../utils/pacPortfolio';
+import PacPortfolioConfirmModal from './PacPortfolioConfirmModal';
 import '../Transactions/Transactions.css';
 
 interface PacConfirmModalProps {
@@ -11,7 +13,7 @@ interface PacConfirmModalProps {
     onClose: () => void;
 }
 
-const PacConfirmModal: React.FC<PacConfirmModalProps> = ({ plan, dueDate, onClose }) => {
+const AssetPacConfirmModal: React.FC<PacConfirmModalProps> = ({ plan, dueDate, onClose }) => {
     const { priceHistory, brokers, portfolios, assetSettings, pacExecutions, confirmPacInstalment, backfillTickerHistory } = usePortfolio();
 
     // Recomputed every render straight from context, so it reflects a
@@ -138,5 +140,9 @@ const PacConfirmModal: React.FC<PacConfirmModalProps> = ({ plan, dueDate, onClos
         </div>
     );
 };
+
+/** One installment: a single-asset plan, or a plan that buys a whole portfolio. */
+const PacConfirmModal: React.FC<PacConfirmModalProps> = props =>
+    isPortfolioPac(props.plan) ? <PacPortfolioConfirmModal {...props} /> : <AssetPacConfirmModal {...props} />;
 
 export default PacConfirmModal;

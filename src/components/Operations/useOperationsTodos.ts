@@ -83,7 +83,10 @@ export const useOperationsTodos = (now: Date) => {
 
     const detected = useMemo((): OperationTodo[] => {
         const list: OperationTodo[] = [
-            ...detectPac({ plans: pacPlans, executions: pacExecutions, now }),
+            ...detectPac({
+                plans: pacPlans, executions: pacExecutions, now,
+                portfolios, transactions, assetSettings: effectiveAssetSettings, marketData, brokers,
+            }),
             ...detectPrices({ tickers: priceTickers, marketData, now }),
             ...detectLiquidity({ brokers, ynabBrokerIds: new Set(Object.keys(ynabAccountMappings)), records: operations, now }),
             // The Dashboard's Broker Performance cards read the stored asset settings.
