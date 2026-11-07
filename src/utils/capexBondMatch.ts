@@ -1,6 +1,6 @@
 import type { AssetDefinition, VirtualBond, YnabGoal, YnabGoalAllocation } from '../types';
 import { getVirtualBondId, isVirtualBondTicker } from '../types';
-import { maturityFromLabel } from './maturityLadder';
+import { maturityFromLabel, type GoalLadder } from './maturityLadder';
 import { isGroupKey } from './portfolioCalculations';
 
 /**
@@ -38,6 +38,12 @@ export interface CapexBondMatch {
     toMatch: number;
     /** target − YNAB cash − on-time bonds, invested or not. */
     uncovered: number;
+    /**
+     * With the maturity ladder: what the portfolios already pay in time from
+     * bonds maturing before the date and from their cash, wherever the
+     * allocation is pinned.
+     */
+    readyInTime: number;
     /** Dated, active, and with an invested part left to match. */
     needsSearch: boolean;
 }
@@ -50,6 +56,13 @@ export const capexBondMatch = (
     allocations: YnabGoalAllocation[],
     assetDefs: AssetDefinition[],
     virtualBonds: VirtualBond[],
+    /**
+     * The capex' row of the maturity ladder. An allocation to a portfolio as a
+     * whole is then matched by what that portfolio really holds: bonds maturing
+     * in time and cash pay it, only what would have to be sold (or is not
+     * ready in time) still needs a bond.
+     */
+    ladder?: GoalLadder,
 ): CapexBondMatch => {
     const defByTicker = new Map(assetDefs.map(d => [d.ticker.toUpperCase(), d]));
     const date = goal.targetDate?.slice(0, 10);
@@ -79,6 +92,16 @@ export const capexBondMatch = (
     const onTime = bonds.filter(b => !b.late).reduce((s, b) => s + b.amount, 0);
     const uncovered = Math.max(0, need - onTime);
     const late = bonds.filter(b => b.late).reduce((s, b) => s + b.amount, 0);
-    const toMatch = round(Math.min(uncovered, generic + late));
-    return { bonds, generic: round(generic), pinned: round(pinned), toMatch, uncovered: round(uncovered), needsSearch: !goal.archived && !!date && toMatch > 0.5 };
+    let toMatch = Math.min(uncovered, generic + late);
+    let readyInTime = 0;
+    if (ladder) {
+        const sum = (parts: { amount: number }[]) => parts.reduce((s, p) => s + p.amount, 0);
+        readyInTime = sum(ladder.fromMaturity) + sum(ladder.fromCash);
+        // Allocated but not payable in time from maturities or cash: sold from
+        // liquid assets, or missing. The unallocated part waits, as before.
+        const notReady = sum(ladder.fromSelling) + Math.max(0, ladder.missing - ladder.unassigned);
+        toMatch = Math.min(toMatch, notReady);
+    }
+    toMatch = round(toMatch);
+    return { bonds, generic: round(generic), pinned: round(pinned), toMatch, uncovered: round(uncovered), readyInTime: round(readyInTime), needsSearch: !goal.archived && !!date && toMatch > 0.5 };
 };

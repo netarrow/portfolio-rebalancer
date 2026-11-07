@@ -2,10 +2,11 @@
 // only while the condition holds, and snoozed keys stay hidden until their date.
 // Run with: npx esbuild scripts/verify-operations-queue.ts --bundle --format=esm --platform=node | node --input-type=module
 import {
-    addOperationRecord, buildCashInvestOrders, detectBrokerCash, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
+    addOperationRecord, buildCashInvestOrders, detectBondMaturities, detectBrokerCash, detectCapexMatching, detectFreeBrokerCash, detectFreeBuyPromos,
+    detectGoalFlows, detectPriceHistory, detectRelocationQueue, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
     normalizeOperations, visibleTodos, type OperationTodo,
 } from '../src/utils/operationsQueue';
-import type { Broker, OperationRecord, PacPlan, Portfolio, Transaction } from '../src/types';
+import type { AssetDefinition, Broker, Goal, OperationRecord, PacPlan, Portfolio, Transaction, YnabGoal, YnabGoalAllocation } from '../src/types';
 
 const check = (label: string, actual: unknown, expected: unknown) => {
     const a = JSON.stringify(actual), e = JSON.stringify(expected);
@@ -55,6 +56,7 @@ const thin = { id: 'b1', name: 'Broker One', currentLiquidity: 600, liquidityAll
 const buy = detectRebalance({ portfolios: [cashPf], transactions: [tx('AAA', 50, 10), tx('BBB', 50, 10)], assetSettings: [], marketData: prices, brokers: [thin] })
     .find(t => t.mode === 'BuyOnly');
 check('buy only capped to the real cash', [buy?.detail.startsWith('€500 to deploy'), buy?.orders?.reduce((s, o) => s + o.amount * o.price, 0)], [true, 500]);
+check('a leftover under €100: no buy only', detectRebalance({ portfolios: [{ ...cashPf, liquidity: 27 }], transactions: [tx('AAA', 50, 10), tx('BBB', 50, 10)], assetSettings: [], marketData: prices, brokers: [thin] }).map(t => t.mode).filter(m => m === 'BuyOnly'), []);
 check('no cash at the broker: no buy only', detectRebalance({ portfolios: [cashPf], transactions: [tx('AAA', 50, 10), tx('BBB', 50, 10)], assetSettings: [], marketData: prices, brokers: [{ ...thin, currentLiquidity: 0 }] }).length, 0);
 
 // Virtual bonds with parked cash
@@ -97,4 +99,60 @@ check('broker cash: no minimum, nothing to say', cash(bc(3000, 0)).length, 0);
 check('broker cash: negative without a minimum', cash(bc(-400, 0)).map(t => t.amount), [-400]);
 const invest = buildCashInvestOrders({ portfolio: pf, amount: 1000, broker: bc(3000, 1000), transactions: [tx('AAA', 50, 10), tx('BBB', 50, 10)], assetSettings: [], marketData: prices, brokers: [] });
 check('invest free cash: Buy only toward the targets, at that broker', invest.map(o => [o.direction, o.ticker, o.amount, o.brokerId]), [['Buy', 'AAA', 100, 'c1']]);
+
+// Free cash on a broker with no minimum: invest it (the case detectBrokerCash leaves out)
+check('free cash: no minimum', detectFreeBrokerCash({ brokers: [bc(3000, 0)], reserveAllocatedCash: true }).map(t => [t.key, t.amount]), [['broker-cash:c1', 3000]]);
+check('free cash: earmarked cash left out', detectFreeBrokerCash({ brokers: [bc(3000, 0, 2950)], reserveAllocatedCash: false }).length, 0);
+check('free cash: a minimum is detectBrokerCash\'s', detectFreeBrokerCash({ brokers: [bc(3000, 1000)], reserveAllocatedCash: true }).length, 0);
+check('free cash: allocated and reserved is detectBrokerCash\'s', detectFreeBrokerCash({ brokers: [bc(3000, 0, 500)], reserveAllocatedCash: true }).length, 0);
+
+// Moves between portfolios: two buckets, 50/50 target, held 80/20
+const goals = [{ id: 'g1', title: 'Safety', order: 1 }, { id: 'g2', title: 'Growth', order: 2 }] as unknown as Goal[];
+const pA = { id: 'pa', name: 'Safe', allocations: { AAA: 100 }, goalId: 'g1' } as unknown as Portfolio;
+const pB = { id: 'pb', name: 'Growth', allocations: { BBB: 100 }, goalId: 'g2' } as unknown as Portfolio;
+const gtx = (pid: string, ticker: string, amount: number) => ({ ...tx(ticker, amount, 10), id: `${pid}-${ticker}`, portfolioId: pid });
+const flowsIn = (targets: Record<string, number>, queued: { from: { kind: 'portfolio'; portfolioId: string }; to: { kind: 'portfolio'; portfolioId: string }; netAmount: number }[] = []) => detectGoalFlows({
+    goals, portfolios: [pA, pB], transactions: [gtx('pa', 'AAA', 800), gtx('pb', 'BBB', 200)], brokers: [], assetSettings: [], marketData: prices,
+    targets, portfolioStates: {}, queued,
+});
+const flows = flowsIn({ __liquidity__: 0, g1: 50, g2: 50 });
+check('goal flows: one move Safe → Growth', flows.map(t => t.requests?.map(r => [r.from.kind === 'portfolio' && r.from.portfolioId, r.to.kind === 'portfolio' && r.to.portfolioId, r.netAmount])), [[['pa', 'pb', 3000]]]);
+check('goal flows: wait for the queue', flowsIn({ __liquidity__: 0, g1: 50, g2: 50 }, [{ from: { kind: 'portfolio', portfolioId: 'pa' }, to: { kind: 'portfolio', portfolioId: 'pb' }, netAmount: 3000 }]).length, 0);
+check('goal flows: on target', flowsIn({ __liquidity__: 0, g1: 80, g2: 20 }).length, 0);
+check('goal flows: targets not set yet', flowsIn({}).length, 0);
+check('relocation queue: listed', detectRelocationQueue({ queue: flows[0].requests!, portfolios: [pA, pB] }).map(t => t.title), ['Execute 1 queued move in Capital Allocation']);
+check('relocation queue: empty', detectRelocationQueue({ queue: [], portfolios: [pA, pB] }).length, 0);
+
+// Capex matching: €2,000 target on AAA, €1,000 held, €600 of cash at the broker
+const amountPf = { id: 'am', name: 'Capex', targetMode: 'amount', allocations: { AAA: 100 }, liquidity: 5000, preferredBrokerId: 'b1' } as unknown as Portfolio;
+const ygoal = { id: 'y1', name: 'Roof', targetAmount: 2000, targetDate: '2030-09-01' } as unknown as YnabGoal;
+const yalloc = { id: 'a1', ynabGoalId: 'y1', portfolioId: 'am', amount: 2000, ticker: 'AAA' } as unknown as YnabGoalAllocation;
+const match = (b: Broker) => detectCapexMatching({
+    portfolios: [amountPf], transactions: [{ ...tx('AAA', 100, 10), portfolioId: 'am' }], assetSettings: [], marketData: prices, brokers: [b],
+    goals: [ygoal], allocations: [yalloc], virtualBonds: [], now,
+});
+const funded = match({ id: 'b1', name: 'B', currentLiquidity: 600, liquidityAllocations: { am: 600 } } as unknown as Broker);
+check('capex matching: buys what the real cash pays', funded.map(t => [t.urgency, t.orders?.map(o => [o.ticker, o.amount, o.brokerId])]), [['due', [['AAA', 60, 'b1']]]]);
+check('capex matching: no cash, a notice', match({ id: 'b1', name: 'B', currentLiquidity: 0 } as unknown as Broker).map(t => [t.urgency, !!t.orders, t.view]), [['info', false, 'dashboard']]);
+
+// Price history
+const hist = { AAA: { points: [['2030-03-14', 10]], granularity: 'D' }, BBB: { points: [['2030-02-01', 10]], granularity: 'D' } } as never;
+check('history: stale and missing', detectPriceHistory({ tickers: ['AAA', 'BBB', 'CCC'], history: hist, assetSettings: [], now }).map(t => t.detail.split(':')[1].trim()), ['BBB, CCC']);
+check('history: CPRAM has none', detectPriceHistory({ tickers: ['CCC'], history: hist, assetSettings: [{ ticker: 'CCC', source: 'CPRAM' } as AssetDefinition], now }).length, 0);
+
+// Bond maturities: matured → a Sell at par per broker; within 30 days → a notice
+const bond = (maturityDate: string) => [{ ticker: 'IT0000000001', label: 'BTP 2030', source: 'MOT', assetClass: 'Bond', maturityDate } as AssetDefinition];
+const bondTx = { ...tx('IT0000000001', 20, 99), portfolioId: 'pf' };
+const bondPrices = { ...prices, IT0000000001: { price: 99.5, lastUpdated: hoursAgo(1) } };
+check('bond: matured', detectBondMaturities({ portfolios: [pf], transactions: [bondTx], assetSettings: bond('2030-03-01'), marketData: bondPrices, now })
+    .map(t => [t.urgency, t.orders?.map(o => [o.direction, o.amount, o.price, o.brokerId])]), [['overdue', [['Sell', 20, 100, 'b1']]]]);
+check('bond: maturing soon', detectBondMaturities({ portfolios: [pf], transactions: [bondTx], assetSettings: bond('2030-04-01'), marketData: bondPrices, now }).map(t => [t.urgency, !!t.orders]), [['info', false]]);
+check('bond: far away', detectBondMaturities({ portfolios: [pf], transactions: [bondTx], assetSettings: bond('2031-01-01'), marketData: bondPrices, now }).length, 0);
+check('bond: redeemed already', detectBondMaturities({ portfolios: [pf], transactions: [bondTx, { ...bondTx, id: 's', direction: 'Sell' }], assetSettings: bond('2030-03-01'), marketData: bondPrices, now }).length, 0);
+
+// Free-buy promotions
+const promoBroker = { id: 'b1', name: 'Broker One' } as Broker;
+check('free buy: last month only', detectFreeBuyPromos({ periods: [{ monthKey: '2030-02', brokerId: 'b1', isins: [] }], brokers: [promoBroker], now }).map(t => t.key), ['free-buy:2030-03']);
+check('free buy: this month entered', detectFreeBuyPromos({ periods: [{ monthKey: '2030-02', brokerId: 'b1', isins: [] }, { monthKey: '2030-03', brokerId: 'b1', isins: [] }], brokers: [promoBroker], now }).length, 0);
+check('free buy: never used', detectFreeBuyPromos({ periods: [], brokers: [promoBroker], now }).length, 0);
 console.log('all operations queue checks passed');

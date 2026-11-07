@@ -3,8 +3,8 @@ import type { Portfolio, Transaction, AssetDefinition, Broker, VirtualBond } fro
 import { isVirtualBondTicker, getVirtualBondId } from '../../types';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, isCashTicker, isGroupKey } from '../../utils/portfolioCalculations';
-import { resolveGroups, memberInfoFromAssets, buyRecipientOf, distributeGroupDelta } from '../../utils/allocationGroups';
-import { resolveAmountTargets, planAmountBuys, lotUnitsFor, BOND_LOT_NOMINAL, type AmountPlanUnit, type AmountPlanLine } from '../../utils/amountTargets';
+import { resolveGroups } from '../../utils/allocationGroups';
+import { resolveAmountTargets, planAmountBuys, amountTargetUnits, amountTargetOrders, BOND_LOT_NOMINAL, type AmountPlanLine } from '../../utils/amountTargets';
 import ConcretizeModal from '../modals/ConcretizeModal';
 
 const eur0 = (n: number) => `€${n.toLocaleString('en-IE', { maximumFractionDigits: 0 })}`;
@@ -63,30 +63,10 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
     const liquidity = portfolio.liquidity || 0;
     const brokerCash = brokers.reduce((s, b) => s + (b.liquidityAllocations?.[portfolio.id] || 0), 0);
 
-    const findAsset = (ticker: string) => assets.find(a =>
-        isVirtualBondTicker(ticker) ? a.ticker === ticker : a.ticker.toUpperCase() === ticker.toUpperCase());
-
-    // One planning unit per row: a group is priced at the member its buys go to.
-    const units = useMemo(() => rows.map((r, order) => {
-        const group = groupById[r.key];
-        if (group) {
-            const memberInfo = memberInfoFromAssets(group.members, assets, marketData);
-            const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
-            const pick = buyRecipientOf(group, memberInfo);
-            const price = pick?.price || 0;
-            return {
-                unit: { key: r.key, price, currentValue, target: r.target, dueDate: r.dueDate, lotUnits: pick ? lotUnitsFor(pick.ticker, price, assetSettings) : 1, order } as AmountPlanUnit,
-                memberInfo,
-            };
-        }
-        const asset = findAsset(r.key);
-        const price = isVirtualBondTicker(r.key) ? 1 : (asset?.currentPrice || marketData[r.key.toUpperCase()]?.price || 0);
-        return {
-            unit: { key: r.key, price, currentValue: asset?.currentValue || 0, target: r.target, dueDate: r.dueDate, lotUnits: lotUnitsFor(r.key, price, assetSettings), order } as AmountPlanUnit,
-            memberInfo: undefined,
-        };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }), [rows, groupById, assets, marketData, assetSettings]);
+    const units = useMemo(
+        () => amountTargetUnits({ portfolio, rows, assets, assetSettings, marketData }),
+        [portfolio, rows, assets, assetSettings, marketData]
+    );
 
     const plan = useMemo(() => planAmountBuys(units.map(u => u.unit), liquidity), [units, liquidity]);
 
@@ -122,33 +102,9 @@ const AmountTargetTable: React.FC<Props> = ({ portfolio, allTransactions, assetS
 
     const handleExecute = async () => {
         const Swal = (await import('sweetalert2')).default;
-        const today = new Date().toISOString().split('T')[0];
-        const txs: Transaction[] = [];
-        const push = (ticker: string, shares: number, price: number) => {
-            if (!(shares > 0) || !(price > 0)) return;
-            const lastTx = portfolioTxs.filter(t => t.ticker === ticker).pop();
-            txs.push({
-                id: `auto-alm-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
-                portfolioId: portfolio.id,
-                ticker,
-                date: today,
-                amount: shares,
-                price,
-                direction: 'Buy',
-                brokerId: portfolio.preferredBrokerId ?? lastTx?.brokerId,
-            });
-        };
-        units.forEach(({ unit, memberInfo }) => {
-            const line = plan.lines[unit.key];
-            if (!line || line.shares <= 0) return;
-            const group = groupById[unit.key];
-            if (group && memberInfo) {
-                // The group's own rules (priority, frozen members, weights) pick who buys.
-                const dist = distributeGroupDelta({ deltaEur: line.eur, members: group.members, memberInfo, rules: group.memberRules });
-                Object.values(dist.actions).forEach(a => push(a.ticker, a.shares, memberInfo[a.ticker.toUpperCase()]?.price || 0));
-                return;
-            }
-            push(unit.key, line.shares, unit.price);
+        const txs = amountTargetOrders({
+            portfolio, units, plan, portfolioTransactions: portfolioTxs,
+            date: new Date().toISOString().split('T')[0], brokerId: portfolio.preferredBrokerId,
         });
 
         if (txs.length === 0) {

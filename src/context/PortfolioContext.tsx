@@ -30,6 +30,7 @@ import PriceUpdateModal, { type PriceUpdateItem } from '../components/modals/Pri
 import { migrateRatioGroups, normalizeAssetAllocationSettings } from '../utils/assetAllocation';
 import { buildPortfolioTree } from '../utils/portfolioGroups';
 import { LIQUIDITY_LEVEL_ID } from '../utils/goalFlows';
+import type { RelocationRequest } from '../utils/fundRelocation';
 import { MERGED_PORTFOLIO_PREFIX, isMergedPortfolioId } from '../utils/mergedGroup';
 
 /**
@@ -181,6 +182,17 @@ interface PortfolioContextType {
     /** Execute → Operations: what was run from there, and the snoozed to-dos. */
     operations: OperationRecord[];
     recordOperation: (record: Omit<OperationRecord, 'id' | 'at'> & { at?: string }) => void;
+    /**
+     * Capital Allocation's queue of moves, kept across pages (local only, a
+     * draft: not in the backup) so Operations can fill it and list it.
+     */
+    relocationQueue: RelocationRequest[];
+    setRelocationQueue: (next: RelocationRequest[] | ((prev: RelocationRequest[]) => RelocationRequest[])) => void;
+    /**
+     * Buy orders paid with a portfolio's own cash: lowers its Liquidity and the
+     * cash earmarked to it at each broker by what was spent there.
+     */
+    consumePortfolioCash: (portfolioId: string, spentByBroker: Record<string, number>) => void;
     /** The capex categories' notes and names, read now from YNAB (by id). */
     readCapexNotes: () => Promise<{ ok: boolean; notes?: Map<string, FreshCapexCategory>; error?: string }>;
     /** Writes the capex [PRB] note lines and [Invested] postfixes, one log entry for all of them. */
@@ -342,6 +354,14 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [storedYnabGoalQuotes, setYnabGoalQuotes] = useLocalStorage<YnabGoalQuote[]>('portfolio_ynab_goal_quotes', []);
     const [storedOperations, setOperations] = useLocalStorage<OperationRecord[]>('portfolio_operations', []);
     const operations = useMemo(() => normalizeOperations(storedOperations), [storedOperations]);
+    const [storedRelocationQueue, setRelocationQueue] = useLocalStorage<RelocationRequest[]>('portfolio_relocation_queue', []);
+    // A move whose portfolio has since been deleted cannot be planned: it is dropped.
+    const relocationQueue = useMemo(() => {
+        if (!Array.isArray(storedRelocationQueue)) return [];
+        const ids = new Set(portfolios.map(p => p.id));
+        const valid = (e: RelocationRequest['from']) => !!e && (e.kind !== 'portfolio' || ids.has(e.portfolioId));
+        return storedRelocationQueue.filter(r => r && valid(r.from) && valid(r.to) && r.netAmount > 0);
+    }, [storedRelocationQueue, portfolios]);
     const ynabGoalQuotes = useMemo(() => normalizeYnabGoalQuotes(storedYnabGoalQuotes), [storedYnabGoalQuotes]);
     const [ynabWriting, setYnabWriting] = useState(false);
     const [ynabSyncing, setYnabSyncing] = useState(false);
@@ -3285,6 +3305,17 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return { ok: true };
     };
 
+    const consumePortfolioCash: PortfolioContextType['consumePortfolioCash'] = (portfolioId, spentByBroker) => {
+        const total = Object.values(spentByBroker).reduce((sum, v) => sum + Math.max(0, v || 0), 0);
+        if (total <= 0) return;
+        setPortfolios(prev => prev.map(p => p.id !== portfolioId || !(p.liquidity && p.liquidity > 0) ? p
+            : { ...p, liquidity: Math.max(0, Math.round((p.liquidity - total) * 100) / 100) }));
+        Object.entries(spentByBroker).forEach(([brokerId, spent]) => {
+            const earmarked = brokers.find(b => b.id === brokerId)?.liquidityAllocations?.[portfolioId] ?? 0;
+            if (earmarked > 0 && spent > 0) parkResidue(brokerId, portfolioId, -Math.min(earmarked, spent));
+        });
+    };
+
     const recordOperation: PortfolioContextType['recordOperation'] = record =>
         setOperations(prev => addOperationRecord(normalizeOperations(prev), { ...record, id: crypto.randomUUID(), at: record.at ?? new Date().toISOString() }));
 
@@ -4183,6 +4214,9 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         writeCapexNotes,
         operations,
         recordOperation,
+        relocationQueue,
+        setRelocationQueue,
+        consumePortfolioCash,
         ynabWriting,
         refreshYnabBudgets,
         listYnabAccounts,

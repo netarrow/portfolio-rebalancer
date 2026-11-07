@@ -1,6 +1,6 @@
 import React from 'react';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'operations' | 'ynabTracking' | 'ynabSettings';
+type View = 'home' | 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'operations' | 'ynabTracking' | 'ynabSettings';
 
 interface LayoutProps {
   currentView: View;
@@ -13,7 +13,7 @@ interface LayoutProps {
 // recurring investments, executing moves of money, analyzing the results, and
 // the data everything else reads from.
 const menuStructure = [
-  { label: '🏠 Dashboard', view: 'dashboard' as const },
+  { label: '🏠 Home', view: 'home' as const },
   {
     label: '🎯 Decide',
     items: [
@@ -57,6 +57,8 @@ const menuStructure = [
       { label: '🏦 Brokers', view: 'brokers' as const },
     ],
   },
+  // The full portfolio tables and rebalancing, one click away from the Home.
+  { label: '📊 Dashboard', view: 'dashboard' as const },
   {
     label: '⚙️ Settings',
     items: [

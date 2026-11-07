@@ -4,8 +4,8 @@ import {
     buildGoalFlowPlan,
     DEFAULT_MIN_MOVE,
     LIQUIDITY_LEVEL_ID,
-    type GoalFlowEndpoint,
-    type GoalFlowMove,
+    goalFlowMoveToRequest,
+    queuedMoveFlags,
 } from '../../utils/goalFlows';
 import { buildExpensePyramid, type PyramidLevel } from '../../utils/expensePyramid';
 import { useExpensePlanningTargets } from '../YnabImport/useExpensePlanningTargets';
@@ -64,19 +64,7 @@ export interface GoalFlowPlannerProps {
     queued?: RelocationRequest[];
 }
 
-/** Cash keeps no broker: the relocation planner picks where it comes from. */
-const toEndpoint = (e: GoalFlowEndpoint): RelocationRequest['from'] =>
-    e.kind === 'cash' ? { kind: 'cash' } : { kind: 'portfolio', portfolioId: e.portfolioId };
-
-/** Same ends, same amount (to the euro): the identity of a move in the queue. */
-const endKey = (e: RelocationRequest['from']) => (e.kind === 'portfolio' ? `p:${e.portfolioId}` : e.kind);
-const requestKey = (r: RelocationRequest) => `${endKey(r.from)}>${endKey(r.to)}|${Math.round(r.netAmount)}`;
-
-const toRequest = (move: GoalFlowMove): RelocationRequest => ({
-    from: toEndpoint(move.from),
-    to: toEndpoint(move.to),
-    netAmount: move.amount,
-});
+const toRequest = goalFlowMoveToRequest;
 
 const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
     goals, portfolios, transactions, brokers, assetSettings, marketData,
@@ -175,18 +163,7 @@ const GoalFlowPlanner: React.FC<GoalFlowPlannerProps> = ({
         [plan.goals]
     );
 
-    // Which proposed moves are already in the queue, one queue entry per move
-    // (two identical moves need two entries).
-    const queuedFlags = useMemo(() => {
-        const left = new Map<string, number>();
-        queued.forEach(r => left.set(requestKey(r), (left.get(requestKey(r)) ?? 0) + 1));
-        return plan.moves.map(m => {
-            const k = requestKey(toRequest(m));
-            const n = left.get(k) ?? 0;
-            if (n > 0) { left.set(k, n - 1); return true; }
-            return false;
-        });
-    }, [plan.moves, queued]);
+    const queuedFlags = useMemo(() => queuedMoveFlags(plan.moves, queued), [plan.moves, queued]);
     const openMoves = plan.moves.filter((_, i) => !queuedFlags[i]);
     const movedTotal = openMoves.reduce((s, m) => s + m.amount, 0);
 

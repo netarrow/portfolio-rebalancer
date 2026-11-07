@@ -3,6 +3,7 @@
 // bond search for what no on-time bond covers.
 // Run with: npx esbuild scripts/verify-capex-bond-match.ts --bundle --format=esm | node --input-type=module
 import { capexBondMatch } from '../src/utils/capexBondMatch';
+import { buildMaturityLadder } from '../src/utils/maturityLadder';
 import type { AssetDefinition, VirtualBond, YnabGoal, YnabGoalAllocation } from '../src/types';
 
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -51,4 +52,25 @@ check('partly invested: search for the invested part', [partly.needsSearch, part
 const over = capexBondMatch(goal('H', 6000, '2028-09-01', 5000), [alloc('H', 3000)], defs, vbs);
 check('invested beyond the gap: capped to what is uncovered', [over.toMatch, over.uncovered], [1000, 1000]);
 
+
+// On the portfolio as a whole, with the maturity ladder: a bond maturing before
+// the date and the portfolio's cash already pay it, no search.
+const carGoal = goal('K', 25000, '2027-09-01', 9000);
+const carAlloc = [alloc('K', 6000)];
+const ladderOf = (holdings: Parameters<typeof buildMaturityLadder>[0]['portfolios'][number]['holdings']) =>
+    buildMaturityLadder({ portfolios: [{ id: 'p', name: 'Safe', holdings }], goals: [carGoal], allocations: carAlloc }).goals.get('K');
+const paid = capexBondMatch(carGoal, carAlloc, defs, vbs, ladderOf([
+    { key: 'IT0000000017', label: 'BTP 01/06/2027 2%', value: 4000, kind: 'bond', maturityDate: '2027-06-01' },
+    { key: '_CASH_', label: 'Cash', value: 2500, kind: 'cash' },
+]));
+check('ladder: maturing bond + cash pay it', [paid.needsSearch, paid.toMatch, paid.readyInTime], [false, 0, 6000]);
+const partly2 = capexBondMatch(carGoal, carAlloc, defs, vbs, ladderOf([
+    { key: 'IT0000000017', label: 'BTP 01/06/2027 2%', value: 4000, kind: 'bond', maturityDate: '2027-06-01' },
+    { key: 'ETF', label: 'World ETF', value: 10000, kind: 'liquid' },
+]));
+check('ladder: the part to sell still needs a bond', [partly2.needsSearch, partly2.toMatch, partly2.readyInTime], [true, 2000, 4000]);
+const lateOnly = capexBondMatch(carGoal, carAlloc, defs, vbs, ladderOf([
+    { key: 'IT0000000025', label: 'BTP Long', value: 8000, kind: 'bond', maturityDate: '2031-01-01' },
+]));
+check('ladder: a bond maturing too late does not pay it', [lateOnly.needsSearch, lateOnly.toMatch], [true, 6000]);
 console.log('verify-capex-bond-match: all checks passed');

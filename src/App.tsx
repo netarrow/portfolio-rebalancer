@@ -4,7 +4,7 @@ import { SecurityProvider } from './context/SecurityContext';
 import UnlockGate from './components/Security/UnlockGate';
 import Layout from './components/Layout/Layout';
 
-type View = 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'operations' | 'ynabTracking' | 'ynabSettings';
+type View = 'home' | 'dashboard' | 'transactions' | 'settings' | 'portfolios' | 'brokers' | 'goals' | 'forecast' | 'stats' | 'performance' | 'disclaimer' | 'globalRebalancing' | 'summary' | 'pac' | 'fundRelocation' | 'operations' | 'ynabTracking' | 'ynabSettings';
 
 import TransactionForm from './components/Transactions/TransactionForm';
 import TransactionList from './components/Transactions/TransactionList';
@@ -29,6 +29,7 @@ import AssetScopeToggles from './components/Layout/AssetScopeToggles';
 import PacView from './components/Pac/PacView';
 import FundRelocationView from './components/FundRelocation/FundRelocationView';
 import OperationsView from './components/Operations/OperationsView';
+import HomeView from './components/Home/HomeView';
 import BrokerMinLiquiditySync from './components/Brokers/BrokerMinLiquiditySync';
 
 // Placeholders for views
@@ -106,10 +107,11 @@ const GlobalRebalancingPage = () => (
 );
 
 function App() {
-  const [currentView, setCurrentView] = useState<View>('dashboard');
+  const [currentView, setCurrentView] = useState<View>('home');
 
   const renderView = () => {
     switch (currentView) {
+      case 'home': return <HomeView onNavigate={view => setCurrentView(view)} />;
       case 'dashboard': return <DashboardView onNavigateToDisclaimer={() => setCurrentView('disclaimer')} />;
       case 'transactions': return <TransactionsView />;
       case 'settings': return <SettingsView />;
@@ -122,7 +124,7 @@ function App() {
       case 'forecast': return <ForecastView />;
       case 'stats': return <StatsView />;
       case 'fundRelocation': return <FundRelocationView />;
-      case 'operations': return <OperationsView />;
+      case 'operations': return <OperationsView onNavigate={view => setCurrentView(view)} />;
       case 'performance': return <PerformanceView />;
       case 'disclaimer': return <DisclaimerView />;
       case 'globalRebalancing': return <GlobalRebalancingPage />;

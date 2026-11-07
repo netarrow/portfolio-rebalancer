@@ -1,26 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Swal from 'sweetalert2';
 import { usePortfolio } from '../../context/PortfolioContext';
 import type { BrokerLiquiditySyncRow, OperationRecord, Transaction } from '../../types';
-import { isVirtualBondTicker } from '../../types';
-import { calculateAssets, isCashTicker, isGroupKey } from '../../utils/portfolioCalculations';
-import {
-    detectBrokerCash, detectCapex, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
-    visibleTodos, type OperationTodo,
-} from '../../utils/operationsQueue';
-import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
+import type { OperationTodo } from '../../utils/operationsQueue';
+import { OPERATION_ICON as KIND_ICON, useOperationsTodos } from './useOperationsTodos';
 import { capexBondMatch } from '../../utils/capexBondMatch';
-import { wantsInvestedTag } from '../../utils/ynabCapexNotes';
-import { buildRevaluationPreview, suggestReassignments } from '../../utils/ynabWriteBack';
-import { checkYnabGuardBudget } from '../../utils/ynabWriteGuard';
-import { buildGoalRow, formatCurrencyExact } from '../YnabGoals/goalRows';
-import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
+import { formatCurrencyExact } from '../YnabGoals/goalRows';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import OrdersReviewModal from './OrdersReviewModal';
 import CashTransferModal, { OUTSIDE } from './CashTransferModal';
 import InvestCashModal from './InvestCashModal';
-import { useLocalStorage } from '../../hooks/useLocalStorage';
-import { RESERVE_ALLOCATED_CASH_KEY } from '../../utils/brokerLiquidity';
 import BrokerLiquiditySyncModal from '../Brokers/BrokerLiquiditySyncModal';
 import PacConfirmModal from '../Pac/PacConfirmModal';
 import CapexNotesModal from '../YnabGoals/CapexNotesModal';
@@ -29,9 +18,9 @@ import ConcretizeModal from '../modals/ConcretizeModal';
 import CapexSyncModal from '../YnabTracking/CapexSyncModal';
 import RevalueModal from '../YnabTracking/RevalueModal';
 
-const KIND_ICON: Record<OperationTodo['kind'], string> = {
-    prices: '💱', liquidity: '🏦', 'broker-cash': '💶', pac: '📊', rebalance: '⚖️', 'capex-notes': '🧾', 'capex-bond': '🔎',
-    'virtual-bond': '🧩', 'ynab-writeback': '🔁', 'ynab-revalue': '📈', 'capex-sync': '↻', backup: '☁️',
+/** The to-dos that are done on their own page: their button opens it. */
+const VIEW_LABEL: Record<NonNullable<OperationTodo['view']>, string> = {
+    fundRelocation: 'Capital Allocation', settings: 'Settings', summary: 'Expense Planning', dashboard: 'Dashboard',
 };
 
 const SNOOZE_DAYS = 7;
@@ -42,91 +31,24 @@ const SNOOZE_DAYS = 7;
  * run from here. Every action reuses the flow its own page already has; YNAB
  * writes keep their preview, confirmation and write guard.
  */
-const OperationsView: React.FC = () => {
+interface Props {
+    /** Opens another page of the app, for the to-dos that are done there. */
+    onNavigate?: (view: NonNullable<OperationTodo['view']>) => void;
+}
+
+const OperationsView: React.FC<Props> = ({ onNavigate }) => {
     const {
-        portfolios, scopedTransactions, scopedBrokers, transactions, brokers, assetSettings, effectiveAssetSettings, marketData,
-        pacPlans, pacExecutions, skipPacInstalment, ynabGoals, ynabGoalAllocations, virtualBonds, ynabConfig,
-        ynabAccountMappings, azureConfig, syncToAzure, refreshPrices, prepareBrokerLiquiditySync,
+        portfolios, scopedTransactions, scopedBrokers, brokers, effectiveAssetSettings, marketData,
+        pacPlans, skipPacInstalment, ynabGoals, ynabGoalAllocations, virtualBonds, ynabConfig,
+        syncToAzure, refreshPrices, prepareBrokerLiquiditySync,
         applyBrokerLiquiditySync, adjustBrokerLiquidity, addTransactionsBulk, concretizeVirtualBond, operations, recordOperation,
-        ynabMigratedBrokerIds, ynabTrackingConfig, ynabWriteLog,
+        setRelocationQueue, consumePortfolioCash, refreshHistory,
     } = usePortfolio();
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const fmt = (v: number) => formatCurrencyExact(v, currencyIso);
     const [now, setNow] = useState(() => new Date());
-    // The Dashboard's "Reserve cash allocated to portfolios" setting, read as is.
-    const [reserveAllocatedCash] = useLocalStorage<boolean>(RESERVE_ALLOCATED_CASH_KEY, true);
+    const { detected, todos, priceTickers, heldTickers, tagOf, tracking, ladder, writebackInUse } = useOperationsTodos(now);
 
-    // ── Inputs the detectors need ──
-    const priceTickers = useMemo(() => {
-        const { assets } = calculateAssets(transactions, effectiveAssetSettings, marketData);
-        const out = new Set(assets.filter(a => a.quantity > 0 && !isCashTicker(a.ticker) && !isVirtualBondTicker(a.ticker)).map(a => a.ticker));
-        portfolios.forEach(p => {
-            const groups = Object.fromEntries((p.allocationGroups || []).map(g => [g.id, g]));
-            Object.entries(p.allocations || {}).forEach(([k, perc]) => {
-                if ((perc || 0) < 1) return;
-                const tickers = isGroupKey(k) ? groups[k]?.members ?? [] : [k];
-                tickers.forEach(t => { if (!isCashTicker(t) && !isVirtualBondTicker(t) && !isGroupKey(t)) out.add(t); });
-            });
-        });
-        return [...out];
-    }, [transactions, effectiveAssetSettings, marketData, portfolios]);
-
-    const pinnedCoverage = useMemo(() => pinnedAllocationCoverage({
-        portfolios, transactions, assetSettings: effectiveAssetSettings, marketData,
-        allocations: ynabGoalAllocations, goals: ynabGoals, virtualBonds,
-    }), [portfolios, transactions, effectiveAssetSettings, marketData, ynabGoalAllocations, ynabGoals, virtualBonds]);
-    const tagOf = useMemo(() => {
-        const wants = new Map(ynabGoals.map(g => [g.id, wantsInvestedTag(buildGoalRow(
-            g, ynabGoalAllocations.filter(a => a.ynabGoalId === g.id), a => pinnedCoverage.get(a.id) ?? a.amount,
-        ))]));
-        return (id: string) => wants.get(id) ?? false;
-    }, [ynabGoals, ynabGoalAllocations, pinnedCoverage]);
-
-    // YNAB Writeback: accounts are read on demand, only when the Writeback is in use.
-    const writebackInUse = ynabMigratedBrokerIds.length > 0;
-    const tracking = useTrackingPlan(false);
-    const guard = checkYnabGuardBudget(ynabTrackingConfig, ynabConfig?.budgetId);
-
-    const detected = useMemo((): OperationTodo[] => {
-        const list: OperationTodo[] = [
-            ...detectPac({ plans: pacPlans, executions: pacExecutions, now }),
-            ...detectPrices({ tickers: priceTickers, marketData, now }),
-            ...detectLiquidity({ brokers, ynabBrokerIds: new Set(Object.keys(ynabAccountMappings)), records: operations, now }),
-            // The Dashboard's Broker Performance cards read the stored asset settings.
-            ...detectBrokerCash({ brokers: scopedBrokers, transactions: scopedTransactions, assetSettings, marketData, reserveAllocatedCash }),
-            ...detectRebalance({ portfolios, transactions: scopedTransactions, assetSettings: effectiveAssetSettings, marketData, brokers: scopedBrokers }),
-            ...detectVirtualBonds({ virtualBonds, transactions }),
-            ...detectCapex({
-                goals: ynabGoals, allocations: ynabGoalAllocations, assetSettings: effectiveAssetSettings, virtualBonds,
-                tagOf, goalsGroupSet: !!ynabConfig?.goalsGroupId, now,
-            }),
-            ...detectSyncs({
-                goalsGroupSet: !!ynabConfig?.goalsGroupId, lastGoalsSyncAt: ynabConfig?.lastGoalsSyncAt,
-                azureEnabled: !!azureConfig?.enabled, azureLastSync: azureConfig?.lastSync, now,
-            }),
-        ];
-        if (tracking.accounts) {
-            const moves = suggestReassignments(tracking.plan);
-            if (moves.length > 0) list.push({
-                key: 'ynab-writeback', kind: 'ynab-writeback', urgency: 'due', title: 'Update the YNAB Writeback accounts',
-                detail: `${moves.length} move${moves.length === 1 ? '' : 's'} (${fmt(moves.reduce((s, m) => s + m.amount, 0))}) between the accounts by purpose`,
-            });
-            if (guard.ok && writebackInUse) {
-                const p = buildRevaluationPreview({ plan: tracking.plan, accounts: tracking.accounts, config: ynabTrackingConfig, budgetId: ynabConfig?.budgetId ?? '', entryId: 'check', date: '2000-01-01', log: ynabWriteLog });
-                const n = p.accounts.filter(a => !a.suspicious && !a.blocked && (Math.abs(a.delta) >= 1 || Math.abs(a.taxTarget - a.taxSeen) >= 1)).length;
-                if (n > 0) list.push({
-                    key: 'ynab-revalue', kind: 'ynab-revalue', urgency: 'info', title: 'Revalue the YNAB Writeback accounts',
-                    detail: `${n} account${n === 1 ? '' : 's'} to bring to market value (P/L and latent tax)`,
-                });
-            }
-        }
-        return list;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pacPlans, pacExecutions, priceTickers, marketData, brokers, ynabAccountMappings, operations, portfolios, scopedTransactions,
-        effectiveAssetSettings, scopedBrokers, virtualBonds, transactions, ynabGoals, ynabGoalAllocations, tagOf, ynabConfig,
-        azureConfig, reserveAllocatedCash, assetSettings, tracking.accounts, tracking.plan, guard.ok, writebackInUse, ynabTrackingConfig, ynabWriteLog, now]);
-
-    const todos = useMemo(() => visibleTodos(detected, operations, now), [detected, operations, now]);
     const snoozed = operations.filter(r => r.status === 'snoozed' && r.until && new Date(r.until) > now);
     const history = operations.filter(r => r.status === 'done');
 
@@ -199,10 +121,26 @@ const OperationsView: React.FC = () => {
                 setCashMode((todo.amount ?? 0) > 0 ? 'invest' : 'transfer');
                 setActive(todo);
                 return;
+            case 'price-history': {
+                setBusyKey(todo.key);
+                try { await refreshHistory(); record(todo, `History update started for ${heldTickers.length} tickers`); }
+                finally { setBusyKey(null); setNow(new Date()); }
+                return;
+            }
+            case 'goal-flows': {
+                const requests = todo.requests ?? [];
+                setRelocationQueue(prev => [...prev, ...requests]);
+                record(todo, `${requests.length} move${requests.length === 1 ? '' : 's'} queued in Capital Allocation`);
+                onNavigate?.('fundRelocation');
+                return;
+            }
             default:
+                if (!todo.orders && todo.view) { onNavigate?.(todo.view); return; }
                 setActive(todo);
         }
     };
+
+    const dismiss = (todo: OperationTodo) => recordOperation({ key: todo.key, kind: todo.kind, title: todo.title, status: 'skipped' });
 
     const snooze = (todo: OperationTodo) => recordOperation({
         key: todo.key, kind: todo.kind, title: todo.title, status: 'snoozed',
@@ -218,6 +156,17 @@ const OperationsView: React.FC = () => {
 
     const confirmOrders = (todo: OperationTodo, orders: Transaction[]) => {
         addTransactionsBulk(orders);
+        // Bought with the portfolio's own cash: that cash is spent, so the
+        // to-do does not come back on the Liquidity it already used.
+        if (todo.portfolioId && (todo.kind === 'capex-match' || (todo.kind === 'rebalance' && todo.mode === 'BuyOnly'))) {
+            const spent: Record<string, number> = {};
+            orders.filter(o => o.direction === 'Buy' && o.brokerId && !o.ticker.startsWith('_'))
+                .forEach(o => { spent[o.brokerId!] = (spent[o.brokerId!] ?? 0) + o.amount * o.price; });
+            const parked = orders.filter(o => o.ticker.startsWith('_')).reduce((s, o) => s + o.amount * o.price, 0);
+            // Virtual-bond parking moves no broker cash, but it does use the portfolio's Liquidity.
+            if (parked > 0) spent[''] = parked;
+            consumePortfolioCash(todo.portfolioId, spent);
+        }
         record(todo, `${orders.length} transaction${orders.length === 1 ? '' : 's'} recorded`, { transactionIds: orders.map(o => o.id) });
         setActive(null);
     };
@@ -292,9 +241,13 @@ const OperationsView: React.FC = () => {
                                     <button type="button" className="btn btn-sm" onClick={() => { setCashMode('transfer'); setActive(t); }}>Transfer…</button>
                                 )}
                                 <button type="button" className="btn btn-sm" onClick={() => snooze(t)} title={`Hide for ${SNOOZE_DAYS} days`}>Snooze</button>
-                                <button type="button" className="btn btn-sm btn-primary" onClick={() => run(t)} disabled={busyKey === t.key}>
-                                    {busyKey === t.key ? 'Working…' : actionLabel(t)}
-                                </button>
+                                {hasAction(t) ? (
+                                    <button type="button" className="btn btn-sm btn-primary" onClick={() => run(t)} disabled={busyKey === t.key}>
+                                        {busyKey === t.key ? 'Working…' : actionLabel(t)}
+                                    </button>
+                                ) : (
+                                    <button type="button" className="btn btn-sm" onClick={() => dismiss(t)} title="Noted: hide it for good">Got it</button>
+                                )}
                             </div>
                         </li>
                     ))}
@@ -338,7 +291,7 @@ const OperationsView: React.FC = () => {
                 </ul>
             </section>
 
-            {active?.kind === 'rebalance' && active.orders && (
+            {(active?.kind === 'rebalance' || active?.kind === 'capex-match' || active?.kind === 'bond-maturity') && active.orders && (
                 <OrdersReviewModal
                     title={active.title}
                     orders={active.orders}
@@ -404,7 +357,7 @@ const OperationsView: React.FC = () => {
             )}
             {active?.kind === 'capex-notes' && <CapexNotesModal tagOf={tagOf} onClose={closeAndSettle} />}
             {active?.kind === 'capex-bond' && activeGoal && (() => {
-                const m = capexBondMatch(activeGoal, ynabGoalAllocations, effectiveAssetSettings, virtualBonds);
+                const m = capexBondMatch(activeGoal, ynabGoalAllocations, effectiveAssetSettings, virtualBonds, ladder.goals.get(activeGoal.id));
                 return <CapexBondModal goal={activeGoal} gap={m.toMatch} plannedIncluded currencyIso={currencyIso} onClose={closeAndSettle} />;
             })()}
             {active?.kind === 'virtual-bond' && activeBond && (
@@ -483,7 +436,14 @@ const settledDetail = (t: OperationTodo): string => {
     }
 };
 
+/** A to-do with nothing to run (a notice): it can only be snoozed or noted. */
+const hasAction = (t: OperationTodo): boolean => {
+    if (t.kind === 'bond-maturity' || t.kind === 'capex-match') return !!t.orders || !!t.view;
+    return true;
+};
+
 const actionLabel = (t: OperationTodo): string => {
+    if (t.view && !t.orders && t.kind !== 'goal-flows') return `Open ${VIEW_LABEL[t.view]}`;
     switch (t.kind) {
         case 'prices': return 'Update prices';
         case 'liquidity': return 'Update…';
@@ -497,6 +457,11 @@ const actionLabel = (t: OperationTodo): string => {
         case 'ynab-revalue': return 'Revalue…';
         case 'capex-sync': return 'Sync…';
         case 'backup': return 'Back up';
+        case 'goal-flows': return 'Queue moves…';
+        case 'capex-match': return 'Review orders…';
+        case 'bond-maturity': return 'Register…';
+        case 'price-history': return 'Update history';
+        default: return 'Open…';
     }
 };
 

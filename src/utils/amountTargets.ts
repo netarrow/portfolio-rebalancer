@@ -9,7 +9,8 @@
  * for bonds bought on the MOT, in lots of €1,000 nominal. Nothing is ever sold
  * — a row above its target (a bond whose price rose) is only reported.
  */
-import type { Portfolio, VirtualBond, YnabGoal, YnabGoalAllocation, AssetDefinition } from '../types';
+import type { Asset, AllocationGroup, Portfolio, Transaction, VirtualBond, YnabGoal, YnabGoalAllocation, AssetDefinition } from '../types';
+import { buyRecipientOf, distributeGroupDelta, memberInfoFromAssets, resolveGroups } from './allocationGroups';
 import { isVirtualBondTicker, getVirtualBondId } from '../types';
 
 /** Minimum bond lot on the MOT, in € of nominal. */
@@ -219,4 +220,87 @@ export const suggestLotQuantity = (target: number, price: number, lotUnits: numb
     if (!(target > 0) || !(price > 0)) return 0;
     const lots = Math.max(1, Math.round(target / (price * lotUnits)));
     return lots * lotUnits;
+};
+
+// ── Units and orders (Dashboard table and Operations alike) ─────────
+
+export interface AmountTargetUnit {
+    unit: AmountPlanUnit;
+    /** A group row: its members, priced, for the group's own buy rules. */
+    memberInfo?: ReturnType<typeof memberInfoFromAssets>;
+}
+
+/** One planning unit per row: a group is priced at the member its buys go to. */
+export const amountTargetUnits = (input: {
+    portfolio: Portfolio;
+    rows: AmountTargetRow[];
+    assets: Asset[];
+    assetSettings: AssetDefinition[];
+    marketData: Record<string, { price: number; lastUpdated: string }>;
+}): AmountTargetUnit[] => {
+    const { groupById } = resolveGroups(input.portfolio);
+    const findAsset = (ticker: string) => input.assets.find(a =>
+        isVirtualBondTicker(ticker) ? a.ticker === ticker : a.ticker.toUpperCase() === ticker.toUpperCase());
+    return input.rows.map((r, order) => {
+        const group: AllocationGroup | undefined = groupById[r.key];
+        if (group) {
+            const memberInfo = memberInfoFromAssets(group.members, input.assets, input.marketData);
+            const currentValue = Object.values(memberInfo).reduce((s, mi) => s + mi.currentValue, 0);
+            const pick = buyRecipientOf(group, memberInfo);
+            const price = pick?.price || 0;
+            return {
+                unit: { key: r.key, price, currentValue, target: r.target, dueDate: r.dueDate, lotUnits: pick ? lotUnitsFor(pick.ticker, price, input.assetSettings) : 1, order },
+                memberInfo,
+            };
+        }
+        const asset = findAsset(r.key);
+        const price = isVirtualBondTicker(r.key) ? 1 : (asset?.currentPrice || input.marketData[r.key.toUpperCase()]?.price || 0);
+        return {
+            unit: { key: r.key, price, currentValue: asset?.currentValue || 0, target: r.target, dueDate: r.dueDate, lotUnits: lotUnitsFor(r.key, price, input.assetSettings), order },
+        };
+    });
+};
+
+/**
+ * The Buy orders a plan asks for, at today's prices: a group row is shared
+ * across its members by the group's own rules (priority, frozen members,
+ * weights). Each order goes to `brokerId`, else to the broker of the last
+ * trade in that ticker.
+ */
+export const amountTargetOrders = (input: {
+    portfolio: Portfolio;
+    units: AmountTargetUnit[];
+    plan: AmountPlan;
+    portfolioTransactions: Transaction[];
+    date: string;
+    brokerId?: string;
+}): Transaction[] => {
+    const { groupById } = resolveGroups(input.portfolio);
+    const txs: Transaction[] = [];
+    const push = (ticker: string, shares: number, price: number) => {
+        if (!(shares > 0) || !(price > 0)) return;
+        const lastTx = input.portfolioTransactions.filter(t => t.ticker === ticker).pop();
+        txs.push({
+            id: `auto-alm-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+            portfolioId: input.portfolio.id,
+            ticker,
+            date: input.date,
+            amount: shares,
+            price,
+            direction: 'Buy',
+            brokerId: input.brokerId ?? lastTx?.brokerId,
+        });
+    };
+    input.units.forEach(({ unit, memberInfo }) => {
+        const line = input.plan.lines[unit.key];
+        if (!line || line.shares <= 0) return;
+        const group = groupById[unit.key];
+        if (group && memberInfo) {
+            const dist = distributeGroupDelta({ deltaEur: line.eur, members: group.members, memberInfo, rules: group.memberRules });
+            Object.values(dist.actions).forEach(a => push(a.ticker, a.shares, memberInfo[a.ticker.toUpperCase()]?.price || 0));
+            return;
+        }
+        push(unit.key, line.shares, unit.price);
+    });
+    return txs;
 };

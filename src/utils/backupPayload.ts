@@ -17,7 +17,8 @@ import { normalizeOperations } from './operationsQueue';
 //
 // Deliberately NOT here (local-only): the Azure config and passphrase, the
 // YNAB API key and config, the private-tier key, the price history (own JSON
-// export) and the YNAB spending history (rebuilt from YNAB with one sync).
+// export), the YNAB spending history (rebuilt from YNAB with one sync) and the
+// Capital Allocation queue (a draft of moves, re-queued in a click).
 export interface BackupData {
     transactions: Transaction[];
     assetSettings: AssetDefinition[];

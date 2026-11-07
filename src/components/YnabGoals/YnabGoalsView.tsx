@@ -13,6 +13,7 @@ import CapexNotesModal from './CapexNotesModal';
 import { capexNotesOutOfDate, wantsInvestedTag } from '../../utils/ynabCapexNotes';
 import { useCapexSync } from '../YnabImport/useCapexSync';
 import { buildGoalRow, formatCurrency, formatCurrencyExact } from './goalRows';
+import { useMaturityLadder } from './useMaturityLadder';
 
 // Investments shown inline in a row of the list; the rest are summed into "+N".
 const MAX_WHERE_CHIPS = 2;
@@ -87,11 +88,12 @@ const YnabGoalsView: React.FC<Props> = ({ embedded }) => {
 
     const [setupGoalId, setSetupGoalId] = useState<string | null>(null);
     const [bondGoalId, setBondGoalId] = useState<string | null>(null);
+    const { ladder } = useMaturityLadder();
     // Tied to a specific bond, or to the portfolio as a whole (then a bond
     // maturing before the capex date is still to find).
     const bondMatchOf = (goalId: string): CapexBondMatch | null => {
         const g = ynabGoals.find(x => x.id === goalId);
-        return g ? capexBondMatch(g, ynabGoalAllocations, effectiveAssetSettings, virtualBonds) : null;
+        return g ? capexBondMatch(g, ynabGoalAllocations, effectiveAssetSettings, virtualBonds, ladder.goals.get(g.id)) : null;
     };
     const capexSync = useCapexSync();
     const groupPicker = ynabConfig && (
@@ -701,7 +703,11 @@ const BondMatchLine: React.FC<{ m: CapexBondMatch | null; iso: string; onSearch:
             </button>
         );
     }
-    if (m.bonds.length === 0) return null;
+    if (m.bonds.length === 0) {
+        // Allocated to a portfolio as a whole and paid in time by what it holds.
+        if (m.generic > 0.5 && m.readyInTime > 0.5) return <span className="ygl-bondline is-ok" title={detail}>✓ paid in time by maturing bonds and cash in its portfolio</span>;
+        return null;
+    }
     const late = m.bonds.find(b => b.late);
     const planned = m.bonds.some(b => b.planned);
     const first = late ?? m.bonds[0];

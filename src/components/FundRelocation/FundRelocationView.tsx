@@ -42,7 +42,7 @@ const FundRelocationView: React.FC = () => {
     const {
         portfolios, goals, marketData, macroAllocations, goalAllocations, freeCommissionPeriods,
         goalModeTargets, setGoalModeTargets, goalFlowPortfolioStates, setGoalFlowPortfolioStates,
-        addTransactionsBulk, adjustBrokerLiquidity,
+        addTransactionsBulk, adjustBrokerLiquidity, relocationQueue: queue, setRelocationQueue: setQueue,
         // Scoped + effective, so this page counts exactly what the Stats page
         // counts: the family/illiquid/person toggles apply here too, and
         // unresolved virtual bonds carry their synthetic Bond definition
@@ -56,8 +56,9 @@ const FundRelocationView: React.FC = () => {
     const [to, setTo] = useState<RelocationEndpoint>({ kind: 'portfolio', portfolioId: '' });
     const [netAmount, setNetAmount] = useState(0);
     const [applyFreeBuyPromo, setApplyFreeBuyPromo] = useState(false);
-    /** Moves already pinned, in execution order. The form always edits the next one. */
-    const [queue, setQueue] = useState<RelocationRequest[]>([]);
+    // Moves already pinned, in execution order (the form always edits the next
+    // one), kept in the context so they survive a page change and Operations
+    // can list them and add the Buckets moves to them.
 
     /** Today's state — the baseline every comparison is measured against. */
     const baseCtx = useMemo<RelocationContext>(() => ({
@@ -264,7 +265,7 @@ const FundRelocationView: React.FC = () => {
             background: 'var(--bg-card)',
             color: 'var(--text-primary)',
         });
-    }, [executionMoves, brokers, addTransactionsBulk, adjustBrokerLiquidity]);
+    }, [executionMoves, brokers, addTransactionsBulk, adjustBrokerLiquidity, setQueue]);
 
     const addToSequence = useCallback(() => {
         if (draftRequests.length === 0) return;
@@ -275,7 +276,7 @@ const FundRelocationView: React.FC = () => {
         // Only the amount is cleared: the endpoints are the most likely start of
         // the next move, and leaving them alone keeps the form where the eye is.
         setNetAmount(0);
-    }, [draftRequests]);
+    }, [draftRequests, setQueue]);
 
     /** The goal planner hands over whole moves; they queue like any other. */
     /**
@@ -295,11 +296,11 @@ const FundRelocationView: React.FC = () => {
     const queueMoves = useCallback((requests: RelocationRequest[]) => {
         if (requests.length === 0) return;
         setQueue(prev => [...prev, ...requests]);
-    }, []);
+    }, [setQueue]);
 
     const removeStep = useCallback((index: number) => {
         setQueue(prev => prev.filter((_, i) => i !== index));
-    }, []);
+    }, [setQueue]);
 
     const reorderStep = useCallback((index: number, target: number) => {
         setQueue(prev => {
@@ -309,7 +310,7 @@ const FundRelocationView: React.FC = () => {
             next.splice(target, 0, moved);
             return next;
         });
-    }, []);
+    }, [setQueue]);
 
     if (portfolios.length === 0) {
         return (

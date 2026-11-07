@@ -122,6 +122,7 @@ const LOCAL_ONLY = new Set([
     'portfolio_ynab_spending_history',    // rebuilt from YNAB with one sync
     'portfolio_risk_free_rate',           // per-device view preference
     'portfolio_broker_reserve_allocated_cash', // per-device view preference
+    'portfolio_relocation_queue',         // Capital Allocation draft, rebuilt in a click
 ]);
 const sourceFiles = (dir: string): string[] => readdirSync(dir).flatMap(name => {
     const p = join(dir, name);

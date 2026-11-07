@@ -871,7 +871,8 @@ export interface SLEConfig {
 // done from the Operations page is recorded here, with what it produced.
 export type OperationKind =
   | 'prices' | 'liquidity' | 'broker-cash' | 'pac' | 'rebalance' | 'capex-notes' | 'capex-bond'
-  | 'virtual-bond' | 'ynab-writeback' | 'ynab-revalue' | 'capex-sync' | 'backup';
+  | 'virtual-bond' | 'ynab-writeback' | 'ynab-revalue' | 'capex-sync' | 'backup'
+  | 'goal-flows' | 'relocation-queue' | 'capex-match' | 'price-history' | 'bond-maturity' | 'free-buy' | 'capex-sell';
 
 export interface OperationRecord {
   id: string;

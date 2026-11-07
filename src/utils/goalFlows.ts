@@ -4,6 +4,7 @@ import { calculateAssets, injectCashAssets } from './portfolioCalculations';
 import { buildPortfolioTree } from './portfolioGroups';
 import { configuredShares, mergedRatio } from './mergedGroup';
 import { splitGroupAmount } from './mergedPortfolioView';
+import type { RelocationRequest } from './fundRelocation';
 
 /**
  * Goal-level flows: what has to move for the wealth split across the pyramid to
@@ -508,4 +509,36 @@ export const buildGoalFlowPlan = (input: GoalFlowInput): GoalFlowPlan => {
         .sort((a, b) => b.value - a.value);
 
     return { goals: flowGoals, total, moves, orphanPortfolios, excludedPortfolios, issues };
+};
+
+// ── Moves as relocation requests ────────────────────────────────────
+
+/** Cash keeps no broker: the relocation planner picks where it comes from. */
+const toRequestEndpoint = (e: GoalFlowEndpoint): RelocationRequest['from'] =>
+    e.kind === 'cash' ? { kind: 'cash' } : { kind: 'portfolio', portfolioId: e.portfolioId };
+
+/** A proposed move as the relocation queue holds it. */
+export const goalFlowMoveToRequest = (move: GoalFlowMove): RelocationRequest => ({
+    from: toRequestEndpoint(move.from),
+    to: toRequestEndpoint(move.to),
+    netAmount: move.amount,
+});
+
+/** Same ends, same amount (to the euro): the identity of a move in the queue. */
+const endKey = (e: RelocationRequest['from']) => (e.kind === 'portfolio' ? `p:${e.portfolioId}` : e.kind);
+export const relocationRequestKey = (r: RelocationRequest) => `${endKey(r.from)}>${endKey(r.to)}|${Math.round(r.netAmount)}`;
+
+/**
+ * Which proposed moves are already in the queue, one queue entry per move
+ * (two identical moves need two entries).
+ */
+export const queuedMoveFlags = (moves: GoalFlowMove[], queued: RelocationRequest[]): boolean[] => {
+    const left = new Map<string, number>();
+    queued.forEach(r => left.set(relocationRequestKey(r), (left.get(relocationRequestKey(r)) ?? 0) + 1));
+    return moves.map(m => {
+        const k = relocationRequestKey(goalFlowMoveToRequest(m));
+        const n = left.get(k) ?? 0;
+        if (n > 0) { left.set(k, n - 1); return true; }
+        return false;
+    });
 };
