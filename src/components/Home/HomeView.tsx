@@ -13,9 +13,10 @@ import EmptyState from '../Dashboard/EmptyState';
 import QuickActions from './QuickActions';
 import { CoherenceRows, PerformanceCard, SafetyCard, SpendingCard } from './HomeIndicators';
 import { useSpendingFigures } from './useSpendingFigures';
+import GroupRatioCard from './GroupRatioCard';
 import './Home.css';
 
-type HomeTarget = 'operations' | 'performance' | 'stats' | 'fundRelocation' | 'summary' | 'pac' | 'dashboard' | 'disclaimer';
+type HomeTarget = 'portfolios' | 'operations' | 'performance' | 'stats' | 'fundRelocation' | 'summary' | 'pac' | 'dashboard' | 'disclaimer';
 
 interface Props {
     onNavigate: (view: HomeTarget) => void;
@@ -319,6 +320,8 @@ const HomeView: React.FC<Props> = ({ onNavigate }) => {
                         <CoherenceRows plan={buckets.plan} targets={goalModeTargets} />
                     </section>
                 )}
+
+                <GroupRatioCard onOpen={() => onNavigate('portfolios')} />
             </div>
 
             <button type="button" className="home-link home-classic" onClick={() => onNavigate('dashboard')}>
