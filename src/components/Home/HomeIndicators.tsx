@@ -183,7 +183,12 @@ export const SafetyCard: React.FC<{
     const operating = spending?.avgConsumption ?? 0;
     const em = report.emergency;
     const annual = monthly * 12;
-    const fiRatio = annual > 0 ? netWorth / (annual * 25) : null;
+    // FI is about recurring spending: one-off dated spending (capex, sinking)
+    // and unmapped outflows would inflate the withdrawal rate.
+    const annualOperating = operating * 12;
+    const fiRatio = annualOperating > 0 ? netWorth / (annualOperating * 25) : null;
+    const withdrawalPct = annualOperating > 0 ? (annualOperating / Math.max(1, netWorth)) * 100 : null;
+    const allInPct = annual > 0 ? (annual / Math.max(1, netWorth)) * 100 : null;
     const liqGap = expense.liquidity != null ? liquidity - expense.liquidity : null;
     if (!spending && expense.liquidity == null && !(em.target > 0)) return null;
 
@@ -202,8 +207,8 @@ export const SafetyCard: React.FC<{
                     title="Above: idle cash that could be invested. Below: cash to set aside." />
                 <Metric label="Years of spending" value={annual > 0 ? `${(netWorth / annual).toFixed(1)} y` : '—'} sub="net worth ÷ yearly spending" />
                 <Metric label="FI progress (25×)" value={fiRatio == null ? '—' : plainPct(fiRatio * 100, 0)}
-                    sub={annual > 0 ? `withdrawal rate ${plainPct((annual / Math.max(1, netWorth)) * 100)}` : ''} tone={fiRatio != null && fiRatio >= 1 ? 'up' : undefined}
-                    title="Net worth against 25 times the yearly spending (the 4% rule)" />
+                    sub={withdrawalPct != null ? `implied withdrawal ${plainPct(withdrawalPct)}` : ''} tone={fiRatio != null && fiRatio >= 1 ? 'up' : undefined}
+                    title={`Net worth against 25 times the yearly operating spending (the 4% rule). Implied withdrawal: operating spending ÷ net worth${allInPct != null ? `; with dated and unmapped spending it would be ${plainPct(allInPct)}` : ''}.`} />
             </div>
             {em.target > 0 && (
                 <div className="home-emergency">
