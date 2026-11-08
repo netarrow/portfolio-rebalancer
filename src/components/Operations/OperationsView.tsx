@@ -296,6 +296,7 @@ const OperationsView: React.FC<Props> = ({ onNavigate }) => {
                     title={active.title}
                     orders={active.orders}
                     brokers={brokers}
+                    assetSettings={effectiveAssetSettings}
                     onConfirm={orders => confirmOrders(active, orders)}
                     onClose={() => setActive(null)}
                 />
@@ -321,6 +322,7 @@ const OperationsView: React.FC<Props> = ({ onNavigate }) => {
                     title={investOrders.title}
                     orders={investOrders.orders}
                     brokers={brokers}
+                    assetSettings={effectiveAssetSettings}
                     onConfirm={orders => { setInvestOrders(null); confirmOrders(active, orders); }}
                     onClose={() => { setInvestOrders(null); setActive(null); }}
                 />

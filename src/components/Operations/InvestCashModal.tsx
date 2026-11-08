@@ -36,6 +36,7 @@ const InvestCashModal: React.FC<Props> = ({ broker, amount: amount0, portfolios,
         ? buildCashInvestOrders({ portfolio, amount: value, broker, transactions, assetSettings, marketData, brokers })
         : [], [portfolio, value, broker, transactions, assetSettings, marketData, brokers]);
     const cost = orders.reduce((s, o) => s + o.amount * o.price, 0);
+    const assetName = (ticker: string) => assetSettings.find(a => a.ticker.toUpperCase() === ticker.toUpperCase())?.label || ticker;
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -61,7 +62,7 @@ const InvestCashModal: React.FC<Props> = ({ broker, amount: amount0, portfolios,
                 {portfolio && value > 0 && (
                     <div className="icm-sum">
                         {orders.length > 0
-                            ? <>{orders.length} order{orders.length === 1 ? '' : 's'} · {eur(cost)}: {orders.map(o => `${o.amount} × ${o.ticker}`).join(', ')}</>
+                            ? <>{orders.length} order{orders.length === 1 ? '' : 's'} · {eur(cost)}: {orders.map(o => `${o.amount} × ${assetName(o.ticker)}`).join(', ')}</>
                             : 'Nothing to buy with this amount: the targets are met, or the prices are missing.'}
                     </div>
                 )}

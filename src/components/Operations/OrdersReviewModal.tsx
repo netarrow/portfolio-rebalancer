@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import type { Broker, Transaction } from '../../types';
+import type { AssetDefinition, Broker, Transaction } from '../../types';
 
 interface Props {
     title: string;
     orders: Transaction[];
     brokers: Broker[];
+    /** To show each order's asset by name rather than by ISIN. */
+    assetSettings?: AssetDefinition[];
     onConfirm: (orders: Transaction[]) => void;
     onClose: () => void;
 }
@@ -15,7 +17,7 @@ const eur = (v: number) => `€${v.toLocaleString('en-IE', { minimumFractionDigi
  * The orders a rebalance would create, to check and correct before they become
  * transactions: quantity and price can be changed, an order can be left out.
  */
-const OrdersReviewModal: React.FC<Props> = ({ title, orders, brokers, onConfirm, onClose }) => {
+const OrdersReviewModal: React.FC<Props> = ({ title, orders, brokers, assetSettings, onConfirm, onClose }) => {
     const [rows, setRows] = useState(() => orders.map(o => ({ order: o, qty: String(o.amount), price: String(o.price), on: true })));
     const parsed = rows.map(r => ({ ...r, q: Number(r.qty.replace(',', '.')), p: Number(r.price.replace(',', '.')) }));
     const picked = parsed.filter(r => r.on && r.q > 0 && r.p > 0);
@@ -24,6 +26,7 @@ const OrdersReviewModal: React.FC<Props> = ({ title, orders, brokers, onConfirm,
     const sells = picked.filter(r => r.order.direction === 'Sell').reduce((s, r) => s + r.q * r.p, 0);
     const set = (i: number, patch: Partial<(typeof rows)[number]>) => setRows(prev => prev.map((r, j) => j === i ? { ...r, ...patch } : r));
     const brokerName = (id?: string) => brokers.find(b => b.id === id)?.name ?? 'no broker';
+    const assetName = (ticker: string) => assetSettings?.find(a => a.ticker.toUpperCase() === ticker.toUpperCase())?.label;
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -40,8 +43,8 @@ const OrdersReviewModal: React.FC<Props> = ({ title, orders, brokers, onConfirm,
                                 <td><input type="checkbox" checked={r.on} onChange={e => set(i, { on: e.target.checked })} aria-label="Include order" /></td>
                                 <td>
                                     <span className={`orm-dir orm-${r.order.direction.toLowerCase()}`}>{r.order.direction.toUpperCase()}</span>{' '}
-                                    <strong>{r.order.ticker}</strong>
-                                    <div className="orm-sub">{brokerName(r.order.brokerId)}</div>
+                                    <strong>{assetName(r.order.ticker) || r.order.ticker}</strong>
+                                    <div className="orm-sub">{assetName(r.order.ticker) ? `${r.order.ticker} · ` : ''}{brokerName(r.order.brokerId)}</div>
                                 </td>
                                 <td><input className="orm-in" inputMode="decimal" value={r.qty} disabled={!r.on} onChange={e => set(i, { qty: e.target.value })} /></td>
                                 <td><input className="orm-in" inputMode="decimal" value={r.price} disabled={!r.on} onChange={e => set(i, { price: e.target.value })} /></td>
