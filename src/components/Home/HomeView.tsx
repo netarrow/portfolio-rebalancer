@@ -205,7 +205,7 @@ const HomeView: React.FC<Props> = ({ onNavigate }) => {
 
             <QuickActions tracking={tracking} writebackInUse={writebackInUse} priceCount={priceTickers.length} />
 
-            <div className="home-grid">
+            <div className="home-grid home-grid-top">
                 {/* To do */}
                 <section className="home-card home-todo">
                     <div className="home-card-head">
@@ -238,55 +238,59 @@ const HomeView: React.FC<Props> = ({ onNavigate }) => {
                     </button>
                 </section>
 
-                {/* Coming up */}
-                <section className="home-card home-upcoming">
-                    <div className="home-card-head"><h3>Coming up</h3><span className="home-muted">next 90 days</span></div>
-                    {upcoming.length === 0
-                        ? <div className="home-empty">Nothing scheduled.</div>
-                        : (
-                            <ul className="home-list">
-                                {upcoming.map((u, i) => (
-                                    <li key={`${u.date}-${i}`}>
-                                        <button type="button" className="home-row" onClick={() => onNavigate(u.target)}>
-                                            <span className="home-date"><b>{shortDate(u.date).split(' ')[0]}</b>{shortDate(u.date).split(' ')[1]}</span>
-                                            <span className="home-row-text">
-                                                <span className="home-row-title">{u.icon} {u.title}</span>
-                                                <span className="home-row-detail">{u.detail}</span>
-                                            </span>
-                                        </button>
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-                </section>
+                <div className="home-side">
+                    {/* Coming up */}
+                    <section className="home-card home-upcoming">
+                        <div className="home-card-head"><h3>Coming up</h3><span className="home-muted">next 90 days</span></div>
+                        {upcoming.length === 0
+                            ? <div className="home-empty">Nothing scheduled.</div>
+                            : (
+                                <ul className="home-list">
+                                    {upcoming.map((u, i) => (
+                                        <li key={`${u.date}-${i}`}>
+                                            <button type="button" className="home-row" onClick={() => onNavigate(u.target)}>
+                                                <span className="home-date"><b>{shortDate(u.date).split(' ')[0]}</b>{shortDate(u.date).split(' ')[1]}</span>
+                                                <span className="home-row-text">
+                                                    <span className="home-row-title">{u.icon} {u.title}</span>
+                                                    <span className="home-row-detail">{u.detail}</span>
+                                                </span>
+                                            </button>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                    </section>
 
-                <PerformanceCard base={base} flows={flows} now={now} onOpen={() => onNavigate('performance')} />
+                    {/* Asset classes */}
+                    <section className="home-card">
+                        <div className="home-card-head">
+                            <h3>Asset classes</h3>
+                            <button type="button" className="home-link-inline" onClick={() => onNavigate('stats')}>Stats →</button>
+                        </div>
+                        <div className="home-stack" role="img" aria-label="Net worth by asset class">
+                            {macroRows.map(([k, v]) => (
+                                <span key={k} style={{ width: `${(v / (macro.totalValue || 1)) * 100}%`, background: MACRO_COLORS[k] ?? '#94a3b8' }} />
+                            ))}
+                        </div>
+                        <ul className="home-legend">
+                            {macroRows.map(([k, v]) => (
+                                <li key={k}>
+                                    <span className="home-dot" style={{ background: MACRO_COLORS[k] ?? '#94a3b8' }} />
+                                    <span>{MACRO_LABEL[k] ?? k}</span>
+                                    <span className="home-legend-val">{((v / (macro.totalValue || 1)) * 100).toFixed(1)}%</span>
+                                    <span className="home-muted">{eur(v)}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+                </div>
+            </div>
 
+            <PerformanceCard base={base} flows={flows} now={now} onOpen={() => onNavigate('performance')} />
+
+            <div className="home-grid home-grid-pairs">
                 {spending && <SpendingCard figures={spending} onOpen={() => onNavigate('summary')} />}
                 <SafetyCard netWorth={netWorth} liquidity={liquidity} spending={spending} onOpen={() => onNavigate('summary')} />
-
-                {/* Asset classes */}
-                <section className="home-card">
-                    <div className="home-card-head">
-                        <h3>Asset classes</h3>
-                        <button type="button" className="home-link-inline" onClick={() => onNavigate('stats')}>Stats →</button>
-                    </div>
-                    <div className="home-stack" role="img" aria-label="Net worth by asset class">
-                        {macroRows.map(([k, v]) => (
-                            <span key={k} style={{ width: `${(v / (macro.totalValue || 1)) * 100}%`, background: MACRO_COLORS[k] ?? '#94a3b8' }} />
-                        ))}
-                    </div>
-                    <ul className="home-legend">
-                        {macroRows.map(([k, v]) => (
-                            <li key={k}>
-                                <span className="home-dot" style={{ background: MACRO_COLORS[k] ?? '#94a3b8' }} />
-                                <span>{MACRO_LABEL[k] ?? k}</span>
-                                <span className="home-legend-val">{((v / (macro.totalValue || 1)) * 100).toFixed(1)}%</span>
-                                <span className="home-muted">{eur(v)}</span>
-                            </li>
-                        ))}
-                    </ul>
-                </section>
 
                 {/* Buckets */}
                 {buckets && buckets.goals.length > 0 && (

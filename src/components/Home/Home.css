@@ -53,7 +53,14 @@
 .home-kpi-sub { font-size: 0.72rem; color: var(--text-muted); }
 
 /* Grid */
-.home-grid { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: var(--space-5); align-items: start; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-5); align-items: stretch; }
+.home-grid-top { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
+/* The side column ends level with To do: its last card takes what is left. */
+.home-side { display: flex; flex-direction: column; gap: var(--space-5); min-width: 0; }
+.home-side > .home-card:last-child { flex: 1; }
+/* A card left alone on the last row takes the whole row instead of leaving half of it empty. */
+.home-grid-pairs > .home-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.home-todo .home-link { margin-top: auto; }
 
 .home-pills { display: flex; gap: 0.35rem; flex-wrap: wrap; justify-content: flex-end; }
 .home-pill { font-size: 0.7rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 999px; background: rgba(148, 163, 184, 0.14); color: var(--text-secondary); }
