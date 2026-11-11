@@ -2,7 +2,7 @@
 // only while the condition holds, and snoozed keys stay hidden until their date.
 // Run with: npx esbuild scripts/verify-operations-queue.ts --bundle --format=esm --platform=node | node --input-type=module
 import {
-    addOperationRecord, buildCashInvestOrders, detectBondMaturities, crossBrokerCash, detectBrokerCash, detectCapexMatching, detectFreeBrokerCash, detectFreeBuyPromos,
+    addOperationRecord, buildCashInvestOrders, detectBondMaturities, crossBrokerCash, detectBrokerCash, detectSinkingFunds, detectCapexMatching, detectFreeBrokerCash, detectFreeBuyPromos,
     detectGoalFlows, detectPriceHistory, detectRelocationQueue, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
     normalizeOperations, visibleTodos, type OperationTodo,
 } from '../src/utils/operationsQueue';
@@ -190,5 +190,14 @@ check('free buy: never used', detectFreeBuyPromos({ periods: [], brokers: [promo
         forCapex.map(t => [t.brokerId, t.amount, t.cashAction, t.title]), [['b', 0, 'transfer', 'Move €1,000 from Savings to Current']]);
     check('cash plan: cash in transit names where it goes',
         run([rich], planOf([], [{ id: 'house', name: 'House', amount: 2500, reason: 'capex', portfolioIds: ['pf'] }]))[0].detail.includes('in transit: House €2,500 → Ladder'), true);
+}
+
+// Cyclical capex: behind their line, or with the cycle over.
+{
+    const fund = (behind: number, ended = false) => ({ goalId: 'car', name: 'Car', target: 24000, covered: 12000, years: 10, quota: 2400, expected: 12000 + behind, behind, ended });
+    const sink = (f: ReturnType<typeof fund>) => detectSinkingFunds({ summary: { funds: [f], annualQuota: 2400, behind: f.behind, setAside: 12000 } });
+    check('sinking fund: behind its line', sink(fund(2400)).map(t => [t.key, t.title, t.amount]), [['sinking-fund:car', 'Car: €2,400 behind its line', -2400]]);
+    check('sinking fund: under 5% of the target is not a to-do', sink(fund(1100)).length, 0);
+    check('sinking fund: a cycle that has ended asks for the next one', sink(fund(0, true)).map(t => t.key), ['sinking-fund:car:ended']);
 }
 console.log('all operations queue checks passed');

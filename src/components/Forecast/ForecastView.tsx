@@ -14,6 +14,7 @@ import type { CashflowGranularity } from '../../utils/forecastCashflow';
 import ForecastCashflowTable from './ForecastCashflowTable';
 import ForecastDrawdownPanel, { type DrawdownTrough } from './ForecastDrawdownPanel';
 import { forecastYearForDate } from '../../utils/plannedForecastExpenses';
+import { laterPurchases } from '../../utils/sinkingFunds';
 import { calculatePortfolioPerformance, calculateAssets } from '../../utils/portfolioCalculations';
 import {
     computeRealizedVolatility, computeReturnStats, computeFlowAdjustedFactors,
@@ -363,17 +364,21 @@ const ForecastView: React.FC = () => {
     };
 
     // Enabled YNAB goal expenses mapped onto the forecast's relative-year scale
+    // A cyclical capex is bought again every cycle, at the price it will have
+    // by then: the purchases after the first, up to the end of the horizon.
+    const cycleByGoalId = useMemo(() => new Map(ynabGoals.filter(g => !g.archived && g.cycle).map(g => [g.id, g.cycle!])), [ynabGoals]);
+    const horizonLastYear = new Date().getFullYear() + (Number(timeHorizon) || 10) - 1;
     const ynabSimulationExpenses = useMemo(() =>
         (plannedForecastExpenses ?? [])
             .filter(e => e.enabled)
-            .map(e => ({
-                year: forecastYearForDate(e.targetDate),
-                amount: e.amount,
+            .flatMap(e => [e, ...laterPurchases(e, cycleByGoalId.get(e.ynabGoalId), horizonLastYear)].map(x => ({
+                year: forecastYearForDate(x.targetDate),
+                amount: x.amount,
                 allowedGoalIds: e.allowedGoalIds,
                 allowedGoalLabels: e.allowedGoalIds.map(id => goalTitleById[id] || id),
                 erosionAllowed: e.erosionAllowed
-            })),
-        [plannedForecastExpenses, goalTitleById]);
+            }))),
+        [plannedForecastExpenses, goalTitleById, cycleByGoalId, horizonLastYear]);
 
     // Calculated returns (Read-Only)
     const portfolioPerformance = useMemo(() => {
@@ -1389,6 +1394,16 @@ const ForecastView: React.FC = () => {
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.5rem', fontSize: '0.75rem', color: 'var(--text-tertiary)', flexWrap: 'wrap', alignItems: 'center' }}>
                                             <span>🎯 {expense.targetDate}</span>
+                                            {(() => {
+                                                const cycle = cycleByGoalId.get(expense.ynabGoalId);
+                                                if (!cycle) return null;
+                                                const again = laterPurchases(expense, cycle, horizonLastYear);
+                                                return (
+                                                    <span title={again.length > 0 ? again.map(x => `${x.targetDate}: €${x.amount.toLocaleString()}`).join('\n') : 'No further purchase within the horizon'}>
+                                                        | ↻ every {cycle.years}y{again.length > 0 ? ` · bought again ${again.length}× (€${again.reduce((t, x) => t + x.amount, 0).toLocaleString()})` : ''}
+                                                    </span>
+                                                );
+                                            })()}
                                             <span>|</span>
                                             <ErosionToggle
                                                 allowed={expense.erosionAllowed}

@@ -5,7 +5,7 @@ import { calculateAssets, isCashTicker, isGroupKey } from '../../utils/portfolio
 import {
     detectBondMaturities, detectBrokerCash, detectCapex, detectCapexMatching, detectCapexSelling, detectFreeBrokerCash, detectFreeBuyPromos,
     detectGoalFlows, detectLiquidity, detectPac, detectPriceHistory, detectPrices, detectRebalance, detectRelocationQueue, detectSyncs,
-    crossBrokerCash, detectVirtualBonds, visibleTodos, type OperationTodo,
+    crossBrokerCash, detectSinkingFunds, detectVirtualBonds, visibleTodos, type OperationTodo,
 } from '../../utils/operationsQueue';
 import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import { wantsInvestedTag } from '../../utils/ynabCapexNotes';
@@ -15,6 +15,7 @@ import { buildGoalRow, formatCurrencyExact } from '../YnabGoals/goalRows';
 import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
 import { useMaturityLadder } from '../YnabGoals/useMaturityLadder';
 import { useCashPlan } from '../YnabImport/useCashPlan';
+import { useSinkingSummary } from '../YnabGoals/useSinkingSummary';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { RESERVE_ALLOCATED_CASH_KEY } from '../../utils/brokerLiquidity';
 
@@ -22,7 +23,7 @@ export const OPERATION_ICON: Record<OperationTodo['kind'], string> = {
     prices: '💱', liquidity: '🏦', 'broker-cash': '💶', pac: '📊', rebalance: '⚖️', 'capex-notes': '🧾', 'capex-bond': '🔎',
     'virtual-bond': '🧩', 'ynab-writeback': '🔁', 'ynab-revalue': '📈', 'capex-sync': '↻', backup: '☁️',
     'goal-flows': '🔀', 'relocation-queue': '📦', 'capex-match': '🎯', 'price-history': '📉', 'bond-maturity': '📅',
-    'free-buy': '🎁', 'capex-sell': '💸',
+    'free-buy': '🎁', 'capex-sell': '💸', 'sinking-fund': '🪣',
 };
 
 /**
@@ -42,6 +43,7 @@ export const useOperationsTodos = (now: Date) => {
     } = usePortfolio();
     const { ladder } = useMaturityLadder();
     const cashPlan = useCashPlan();
+    const sinking = useSinkingSummary();
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const fmt = (v: number) => formatCurrencyExact(v, currencyIso);
     // The Dashboard's "Reserve cash allocated to portfolios" setting, read as is.
@@ -107,6 +109,7 @@ export const useOperationsTodos = (now: Date) => {
             ...detectRelocationQueue({ queue: relocationQueue, portfolios }),
             ...detectBondMaturities({ portfolios, transactions, assetSettings: effectiveAssetSettings, marketData, now }),
             ...detectCapexSelling({ ladder, now }),
+            ...detectSinkingFunds({ summary: sinking }),
             ...detectPriceHistory({ tickers: heldTickers, history: priceHistory, assetSettings: effectiveAssetSettings, now }),
             ...detectFreeBuyPromos({ periods: freeCommissionPeriods, brokers, now }),
             ...detectVirtualBonds({ virtualBonds, transactions }),
@@ -137,7 +140,7 @@ export const useOperationsTodos = (now: Date) => {
         // Keeping, moving and investing cash read the same plan.
         return crossBrokerCash(list, { plan: cashPlan, brokers, portfolioName: id => portfolios.find(p => p.id === id)?.name });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [cashPlan, pacPlans, pacExecutions, priceTickers, marketData, brokers, ynabAccountMappings, operations, portfolios, scopedTransactions,
+    }, [cashPlan, sinking, pacPlans, pacExecutions, priceTickers, marketData, brokers, ynabAccountMappings, operations, portfolios, scopedTransactions,
         effectiveAssetSettings, scopedBrokers, virtualBonds, transactions, ynabGoals, ynabGoalAllocations, tagOf, ynabConfig,
         azureConfig, reserveAllocatedCash, assetSettings, goals, goalModeTargets, goalFlowPortfolioStates, relocationQueue, ladder,
         heldTickers, priceHistory, freeCommissionPeriods, tracking.accounts, tracking.plan, guard.ok, writebackInUse, ynabTrackingConfig, ynabWriteLog, now]);

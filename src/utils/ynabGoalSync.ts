@@ -127,6 +127,8 @@ export function mergeYnabGoalsFromCandidates(
             archived: false,
             ...(c.rawNote ? { ynabNote: c.rawNote } : {}),
             ...(c.investedTag ? { ynabInvestedTag: true } : {}),
+            // Set in the tool only: a sync from YNAB must not lose it.
+            ...(existing?.cycle ? { cycle: existing.cycle } : {}),
         });
         if (existing) report.updated += 1;
         else report.created += 1;

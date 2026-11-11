@@ -558,6 +558,16 @@ export interface YnabCategoryGroupSummary {
 // note carry no explicit target of their own.
 export type YnabGoalTargetSource = 'parsed-name' | 'parsed-note' | 'ynab-goal' | 'manual-override';
 
+// A planned capex that comes back: a car, a boiler, a laptop. Setting money
+// aside for it month by month IS its depreciation, paid in advance — so the
+// yearly quota (target ÷ years) is its cost of living, and the purchase itself
+// is the use of the fund, not a cost on top. See utils/sinkingFunds.
+export interface SinkingCycle {
+  years: number;                 // how often the expense comes back
+  inflationPercent?: number;     // yearly growth of its price, for the next target
+  startDate?: string;            // 'YYYY-MM-DD' the current cycle started setting aside; absent = target date − years
+}
+
 export interface YnabGoal {
   id: string;
   ynabBudgetId: string;
@@ -580,6 +590,8 @@ export interface YnabGoal {
   ynabNote?: string;
   // The category name in YNAB carries the "[Invested]" postfix.
   ynabInvestedTag?: boolean;
+  // Set in the tool only (YNAB knows nothing of it): the expense is cyclical.
+  cycle?: SinkingCycle;
 }
 
 export interface YnabGoalAllocation {
@@ -881,7 +893,7 @@ export interface SLEConfig {
 export type OperationKind =
   | 'prices' | 'liquidity' | 'broker-cash' | 'pac' | 'rebalance' | 'capex-notes' | 'capex-bond'
   | 'virtual-bond' | 'ynab-writeback' | 'ynab-revalue' | 'capex-sync' | 'backup'
-  | 'goal-flows' | 'relocation-queue' | 'capex-match' | 'price-history' | 'bond-maturity' | 'free-buy' | 'capex-sell';
+  | 'goal-flows' | 'relocation-queue' | 'capex-match' | 'price-history' | 'bond-maturity' | 'free-buy' | 'capex-sell' | 'sinking-fund';
 
 export interface OperationRecord {
   id: string;

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabLinkedCategory, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote, OperationRecord } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, SinkingCycle, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabLinkedCategory, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote, OperationRecord } from '../types';
 import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import { checkYnabGuardBudget, checkYnabWriteTarget } from '../utils/ynabWriteGuard';
@@ -22,6 +22,7 @@ import type { CapexNoteRow, FreshCapexCategory } from '../utils/ynabCapexNotes';
 import { addOperationRecord, normalizeOperations } from '../utils/operationsQueue';
 import { parsePrbLine, stripInvestedTag } from '../utils/ynabGoalParser';
 import { buildPlannedForecastExpenses, isForecastableYnabGoal } from '../utils/plannedForecastExpenses';
+import { nextCycle } from '../utils/sinkingFunds';
 import { mergeYnabGoalsFromCandidates, resolveGoalTarget } from '../utils/ynabGoalSync';
 import { buildFundingCommit, isRegisterableOrder, roundCents } from '../utils/ynabFundingPlan';
 import type { FundingOrder, FundingTransfer } from '../utils/ynabFundingPlan';
@@ -141,6 +142,10 @@ interface PortfolioContextType {
     ensureCategoryGoal: (categoryId: string) => YnabGoal | null;
     /** Sets a category's goal target by hand (creating the goal if needed). */
     setCategoryGoalTarget: (categoryId: string, target: { amount?: number | null; date?: string | null }) => void;
+    /** Makes a planned capex cyclical (or one-off again, with null). */
+    setYnabGoalCycle: (goalId: string, cycle: SinkingCycle | null) => void;
+    /** After the purchase: the next date, the price by then, a new cycle. */
+    renewYnabGoalCycle: (goalId: string) => void;
     // Funding plan: how the mapped categories are turned into wires and orders,
     // and the one-click registration of the orders it proposes.
     ynabFundingSettings: YnabFundingSettings;
@@ -3166,6 +3171,27 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         });
     };
 
+    const setYnabGoalCycle = (goalId: string, cycle: SinkingCycle | null) => {
+        setYnabGoals(prev => prev.map(g => {
+            if (g.id !== goalId) return g;
+            const next: YnabGoal = { ...g };
+            if (cycle && cycle.years > 0) next.cycle = cycle; else delete next.cycle;
+            return next;
+        }));
+    };
+
+    const renewYnabGoalCycle = (goalId: string) => {
+        setYnabGoals(prev => prev.map(g => {
+            if (g.id !== goalId) return g;
+            const renewed = nextCycle(g);
+            if (!renewed) return g;
+            return {
+                ...g, targetSource: 'manual-override', targetDate: renewed.targetDate, cycle: renewed.cycle,
+                ...(renewed.targetAmount ? { targetAmount: renewed.targetAmount } : {}),
+            };
+        }));
+    };
+
     /**
      * Books the funding plan's orders as real Buy transactions.
      *
@@ -4246,6 +4272,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setYnabMappingEmergency,
         ensureCategoryGoal,
         setCategoryGoalTarget,
+        setYnabGoalCycle,
+        renewYnabGoalCycle,
         ynabFundingSettings,
         setYnabFundingSettings,
         registerYnabFundingOrders,

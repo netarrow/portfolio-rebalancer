@@ -17,6 +17,7 @@ import { buildGoalFlowPlan, goalFlowMoveToRequest, LIQUIDITY_LEVEL_ID } from './
 import type { RelocationRequest } from './fundRelocation';
 import type { MaturityLadder } from './maturityLadder';
 import type { CashPlan } from './cashPlan';
+import type { SinkingSummary } from './sinkingFunds';
 
 /**
  * Execute → Operations: everything still to be done, detected from the data.
@@ -493,6 +494,30 @@ export const detectFreeBrokerCash = (input: { brokers: Broker[]; reserveAllocate
         } as OperationTodo];
     });
 
+/** A cyclical fund counts as behind from this much: € and share of its target. */
+export const SINKING_BEHIND_MIN = 100;
+export const SINKING_BEHIND_SHARE = 0.05;
+
+/**
+ * Cyclical capex (sinking funds): one whose cycle has ended — bought, or to
+ * buy: either way the next cycle is to start — and one that holds less than a
+ * straight line from the start of its cycle to its date asks for today.
+ */
+export const detectSinkingFunds = (input: { summary: SinkingSummary }): OperationTodo[] =>
+    input.summary.funds.flatMap(f => {
+        if (f.ended) return [{
+            key: `sinking-fund:${f.goalId}:ended`, kind: 'sinking-fund', goalId: f.goalId, urgency: 'info', view: 'summary',
+            title: `${f.name}: its cycle has ended`,
+            detail: `once paid, start the next cycle from its setup in Expense Planning → Capex (every ${f.years} year${f.years === 1 ? '' : 's'}, ${eur0(f.quota)} a year)`,
+        } as OperationTodo];
+        if (f.behind < Math.max(SINKING_BEHIND_MIN, f.target * SINKING_BEHIND_SHARE)) return [];
+        return [{
+            key: `sinking-fund:${f.goalId}`, kind: 'sinking-fund', goalId: f.goalId, amount: -f.behind, urgency: 'info', view: 'summary',
+            title: `${f.name}: ${eur0(f.behind)} behind its line`,
+            detail: `${eur0(f.covered)} set aside against ${eur0(f.expected ?? 0)} by now (${eur0(f.quota)} a year over ${f.years}) · raise its monthly funding, or move its date`,
+        } as OperationTodo];
+    });
+
 /**
  * The broker-cash to-dos crossed with the cash plan, so that keeping, moving
  * and investing never contradict each other: the free cash the plan wires to
@@ -739,7 +764,7 @@ export const addOperationRecord = (records: OperationRecord[], record: Operation
 
 const KINDS = new Set<OperationKind>([
     'prices', 'liquidity', 'broker-cash', 'pac', 'rebalance', 'capex-notes', 'capex-bond', 'virtual-bond', 'ynab-writeback', 'ynab-revalue', 'capex-sync', 'backup',
-    'goal-flows', 'relocation-queue', 'capex-match', 'price-history', 'bond-maturity', 'free-buy', 'capex-sell',
+    'goal-flows', 'relocation-queue', 'capex-match', 'price-history', 'bond-maturity', 'free-buy', 'capex-sell', 'sinking-fund',
 ]);
 
 export function normalizeOperations(raw: unknown): OperationRecord[] {

@@ -10,6 +10,7 @@ import { buildExpensePyramid } from '../../utils/expensePyramid';
 import type { GoalFlowPlan } from '../../utils/goalFlows';
 import { useYnabCoverage } from '../YnabImport/useYnabCoverage';
 import { useExpensePlanningTargets } from '../YnabImport/useExpensePlanningTargets';
+import { useSinkingSummary } from '../YnabGoals/useSinkingSummary';
 import { useMaturityLadder } from '../YnabGoals/useMaturityLadder';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 
@@ -179,13 +180,16 @@ export const SafetyCard: React.FC<{
 }> = ({ netWorth, liquidity, spending, onOpen }) => {
     const { report } = useYnabCoverage();
     const expense = useExpensePlanningTargets();
+    const sinking = useSinkingSummary();
     const monthly = spending?.avgSpending ?? 0;
     const operating = spending?.avgConsumption ?? 0;
     const em = report.emergency;
     const annual = monthly * 12;
-    // FI is about recurring spending: one-off dated spending (capex, sinking)
-    // and unmapped outflows would inflate the withdrawal rate.
-    const annualOperating = operating * 12;
+    // FI is about recurring spending: one-off dated spending and unmapped
+    // outflows would inflate the withdrawal rate. A capex that comes back is
+    // recurring, though: it counts with its yearly quota (target ÷ years), not
+    // with the lump of the year it is bought in.
+    const annualOperating = operating * 12 + sinking.annualQuota;
     const fiRatio = annualOperating > 0 ? netWorth / (annualOperating * 25) : null;
     const withdrawalPct = annualOperating > 0 ? (annualOperating / Math.max(1, netWorth)) * 100 : null;
     const allInPct = annual > 0 ? (annual / Math.max(1, netWorth)) * 100 : null;
@@ -208,7 +212,18 @@ export const SafetyCard: React.FC<{
                 <Metric label="Years of spending" value={annual > 0 ? `${(netWorth / annual).toFixed(1)} y` : '—'} sub="net worth ÷ yearly spending" />
                 <Metric label="FI progress (25×)" value={fiRatio == null ? '—' : plainPct(fiRatio * 100, 0)}
                     sub={withdrawalPct != null ? `implied withdrawal ${plainPct(withdrawalPct)}` : ''} tone={fiRatio != null && fiRatio >= 1 ? 'up' : undefined}
-                    title={`Net worth against 25 times the yearly operating spending (the 4% rule). Implied withdrawal: operating spending ÷ net worth${allInPct != null ? `; with dated and unmapped spending it would be ${plainPct(allInPct)}` : ''}.`} />
+                    title={`Net worth against 25 times the yearly operating spending${sinking.annualQuota > 0 ? ` plus the yearly quota of the cyclical capex (${eur(sinking.annualQuota)})` : ''} (the 4% rule). Implied withdrawal: that spending ÷ net worth${allInPct != null ? `; with dated and unmapped spending it would be ${plainPct(allInPct)}` : ''}.`} />
+                {sinking.funds.length > 0 && (
+                    <Metric label="Cyclical capex" value={`${eur(sinking.annualQuota)} / y`}
+                        sub={`${sinking.funds.length} fund${sinking.funds.length === 1 ? '' : 's'} · ${sinking.behind > 0.5 ? `${eur(sinking.behind)} behind their line` : 'in line'}`}
+                        tone={sinking.behind > 0.5 ? 'warn' : 'up'}
+                        title="Planned capex that come back every N years. Their yearly quota (target ÷ years) is cost of living: setting it aside is the depreciation, paid in advance." />
+                )}
+                {sinking.setAside > 0.5 && (
+                    <Metric label="Net of set-asides" value={eur(netWorth - sinking.setAside)}
+                        sub={`${eur(sinking.setAside)} already put toward planned capex`}
+                        title="Net worth less the money already put toward the planned capex (cash and investments, up to each target): yours, but committed. Paying a capex takes it from the net worth, not from this." />
+                )}
             </div>
             {em.target > 0 && (
                 <div className="home-emergency">

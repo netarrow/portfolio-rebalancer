@@ -5,6 +5,7 @@ import type { YnabGoalAllocation } from '../../types';
 import AllocationModal from './AllocationModal';
 import { formatCurrency, formatCurrencyExact, formatTargetDate, type GoalRow } from './goalRows';
 import { parsePrbLine } from '../../utils/ynabGoalParser';
+import { nextCycle, sinkingFundStatus } from '../../utils/sinkingFunds';
 
 interface Props {
     row: GoalRow;
@@ -20,7 +21,7 @@ interface Props {
 // Setup of one YNAB goal: its figures, its monthly funding and the
 // investments covering it — everything the goals list leaves out.
 const GoalSetupModal: React.FC<Props> = ({ row, currencyIso, coveredBy, isPinned, allocationLabel, onClose }) => {
-    const { removeAllocation, deleteYnabGoal, setCategoryGoalTarget } = usePortfolio();
+    const { removeAllocation, deleteYnabGoal, setCategoryGoalTarget, setYnabGoalCycle, renewYnabGoalCycle } = usePortfolio();
     const [editing, setEditing] = useState<{ allocation: YnabGoalAllocation | null } | null>(null);
     const g = row.goal;
     // The target is set here; the YNAB Writeback copies it into the note.
@@ -36,6 +37,29 @@ const GoalSetupModal: React.FC<Props> = ({ row, currencyIso, coveredBy, isPinned
             date: draft.date || null,
         });
         setDraft(null);
+    };
+
+    // Cyclical capex: the fund against its straight line, and its renewal.
+    const fund = sinkingFundStatus(g, row.covered, new Date().toLocaleDateString('sv-SE'));
+    const setCycle = (patch: { years?: string; inflation?: string }) => {
+        const years = patch.years !== undefined ? Number(patch.years.replace(',', '.')) : g.cycle?.years ?? 0;
+        const inflation = patch.inflation !== undefined ? Number(patch.inflation.replace(',', '.')) : g.cycle?.inflationPercent ?? 0;
+        if (!(years > 0)) { setYnabGoalCycle(g.id, null); return; }
+        setYnabGoalCycle(g.id, {
+            ...g.cycle, years: Math.min(100, years),
+            ...(inflation > 0 ? { inflationPercent: Math.min(50, inflation) } : { inflationPercent: undefined }),
+        });
+    };
+    const handleRenew = () => {
+        const next = nextCycle(g);
+        if (!next) return;
+        Swal.fire({
+            title: 'Start the next cycle?',
+            html: `Once “${g.name}” has been paid, the fund starts again:<br/><b>${formatCurrency(next.targetAmount, currencyIso)}</b> by <b>${formatTargetDate(next.targetDate)}</b>.<br/><span style="font-size:0.85rem">The target and the date change here; what is still in the fund is kept and counts toward the next one.</span>`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Start next cycle',
+        }).then(r => { if (r.isConfirmed) renewYnabGoalCycle(g.id); });
     };
 
     const handleRemoveAllocation = (alloc: YnabGoalAllocation) => {
@@ -184,6 +208,49 @@ const GoalSetupModal: React.FC<Props> = ({ row, currencyIso, coveredBy, isPinned
                         <span className={`gsm-stat-value${row.gap > 0 ? ' gsm-stat-gap' : ''}`}>{formatCurrencyExact(row.gap, currencyIso)}</span>
                     </div>
                 </div>
+
+                <section className="gsm-section">
+                    <h4 className="gsm-section-title">Cycle</h4>
+                    <div className="gsm-cycle">
+                        <label title="How often this expense comes back. Empty = a one-off expense.">
+                            Comes back every
+                            <input type="number" min="0" max="100" step="any" inputMode="decimal" placeholder="—"
+                                value={g.cycle?.years ?? ''} onChange={e => setCycle({ years: e.target.value })} />
+                            years
+                        </label>
+                        {g.cycle && (
+                            <label title="Yearly growth of its price: sizes the target of the next cycle and its later purchases in the Forecast">
+                                price
+                                <input type="number" min="0" max="50" step="any" inputMode="decimal" placeholder="0"
+                                    value={g.cycle.inflationPercent ?? ''} onChange={e => setCycle({ inflation: e.target.value })} />
+                                % a year
+                            </label>
+                        )}
+                    </div>
+                    {!g.cycle && <p className="gsm-muted">A one-off expense. Give it a cycle if it comes back (a car, a boiler, a laptop): its yearly quota then counts as cost of living, and the Forecast buys it again.</p>}
+                    {fund && (
+                        <>
+                            <div className="gsm-funding-line" title="Target ÷ years: what this costs a year. Setting it aside is its depreciation, paid in advance: the purchase itself is not a cost on top.">
+                                <span className="gsm-funding-label">Yearly quota</span>
+                                <span className="gsm-funding-value">{formatCurrencyExact(fund.quota, currencyIso)}<small>/y</small> · {formatCurrencyExact(fund.quota / 12, currencyIso)}<small>/mo</small></span>
+                            </div>
+                            {fund.expected !== null && (
+                                <div className="gsm-funding-line" title="A straight line from the start of the cycle to its date">
+                                    <span className="gsm-funding-label">Should hold today</span>
+                                    <span className="gsm-funding-value">
+                                        {formatCurrencyExact(fund.expected, currencyIso)}
+                                        {fund.behind > 0.5
+                                            ? <small className="gsm-stat-gap"> · {formatCurrencyExact(fund.behind, currencyIso)} behind</small>
+                                            : <small> · in line</small>}
+                                    </span>
+                                </div>
+                            )}
+                            {g.targetDate
+                                ? <button type="button" className="btn btn-sm gsm-renew" onClick={handleRenew} title="After the purchase: next date, the price by then, a new cycle">{fund.ended ? 'Cycle ended — start the next one…' : 'Purchased — start the next cycle…'}</button>
+                                : <p className="gsm-muted">Set a due date to follow the fund against its line.</p>}
+                        </>
+                    )}
+                </section>
 
                 <section className="gsm-section">
                     <h4 className="gsm-section-title">Monthly funding</h4>
@@ -356,6 +423,10 @@ const GoalSetupModal: React.FC<Props> = ({ row, currencyIso, coveredBy, isPinned
                 }
                 .gsm-add { padding: 0.35rem 0.85rem; font-size: 0.8rem; }
 
+                .gsm-cycle { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); font-size: 0.88rem; color: var(--text-secondary); }
+                .gsm-cycle label { display: flex; align-items: center; gap: var(--space-2); }
+                .gsm-cycle input { width: 4.5rem; padding: 0.3rem 0.45rem; border: 1px solid var(--border-color); border-radius: var(--radius-sm); background: var(--bg-primary); color: var(--text-primary); }
+                .gsm-renew { align-self: flex-start; }
                 .gsm-funding-line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: 0.88rem; }
                 .gsm-funding-label { color: var(--text-secondary); }
                 .gsm-funding-value {
