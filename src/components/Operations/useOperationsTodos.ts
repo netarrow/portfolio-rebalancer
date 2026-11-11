@@ -5,7 +5,7 @@ import { calculateAssets, isCashTicker, isGroupKey } from '../../utils/portfolio
 import {
     detectBondMaturities, detectBrokerCash, detectCapex, detectCapexMatching, detectCapexSelling, detectFreeBrokerCash, detectFreeBuyPromos,
     detectGoalFlows, detectLiquidity, detectPac, detectPriceHistory, detectPrices, detectRebalance, detectRelocationQueue, detectSyncs,
-    detectVirtualBonds, visibleTodos, type OperationTodo,
+    crossBrokerCash, detectVirtualBonds, visibleTodos, type OperationTodo,
 } from '../../utils/operationsQueue';
 import { pinnedAllocationCoverage } from '../../utils/goalAllocationCoverage';
 import { wantsInvestedTag } from '../../utils/ynabCapexNotes';
@@ -14,6 +14,7 @@ import { checkYnabGuardBudget } from '../../utils/ynabWriteGuard';
 import { buildGoalRow, formatCurrencyExact } from '../YnabGoals/goalRows';
 import { useTrackingPlan } from '../YnabTracking/useTrackingPlan';
 import { useMaturityLadder } from '../YnabGoals/useMaturityLadder';
+import { useCashPlan } from '../YnabImport/useCashPlan';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { RESERVE_ALLOCATED_CASH_KEY } from '../../utils/brokerLiquidity';
 
@@ -40,6 +41,7 @@ export const useOperationsTodos = (now: Date) => {
         priceHistory, freeCommissionPeriods,
     } = usePortfolio();
     const { ladder } = useMaturityLadder();
+    const cashPlan = useCashPlan();
     const currencyIso = ynabConfig?.currencyIso || 'EUR';
     const fmt = (v: number) => formatCurrencyExact(v, currencyIso);
     // The Dashboard's "Reserve cash allocated to portfolios" setting, read as is.
@@ -132,9 +134,10 @@ export const useOperationsTodos = (now: Date) => {
                 });
             }
         }
-        return list;
+        // Keeping, moving and investing cash read the same plan.
+        return crossBrokerCash(list, { plan: cashPlan, brokers, portfolioName: id => portfolios.find(p => p.id === id)?.name });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [pacPlans, pacExecutions, priceTickers, marketData, brokers, ynabAccountMappings, operations, portfolios, scopedTransactions,
+    }, [cashPlan, pacPlans, pacExecutions, priceTickers, marketData, brokers, ynabAccountMappings, operations, portfolios, scopedTransactions,
         effectiveAssetSettings, scopedBrokers, virtualBonds, transactions, ynabGoals, ynabGoalAllocations, tagOf, ynabConfig,
         azureConfig, reserveAllocatedCash, assetSettings, goals, goalModeTargets, goalFlowPortfolioStates, relocationQueue, ladder,
         heldTickers, priceHistory, freeCommissionPeriods, tracking.accounts, tracking.plan, guard.ok, writebackInUse, ynabTrackingConfig, ynabWriteLog, now]);

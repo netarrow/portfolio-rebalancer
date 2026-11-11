@@ -118,7 +118,7 @@ const OperationsView: React.FC<Props> = ({ onNavigate }) => {
                 setActive(todo);
                 return;
             case 'broker-cash':
-                setCashMode((todo.amount ?? 0) > 0 ? 'invest' : 'transfer');
+                setCashMode((todo.amount ?? 0) > 0 && todo.cashAction !== 'transfer' ? 'invest' : 'transfer');
                 setActive(todo);
                 return;
             case 'price-history': {
@@ -174,6 +174,8 @@ const OperationsView: React.FC<Props> = ({ onNavigate }) => {
     // A broker short of cash is topped up from the one with the most to spare,
     // a broker with too much sends it to the one most short (or outside).
     const transferFor = (todo: OperationTodo) => {
+        // The cash plan already says which account's free cash covers it.
+        if (todo.transfer) return todo.transfer;
         const others = detected.filter(t => t.kind === 'broker-cash' && t.brokerId !== todo.brokerId);
         const short = (todo.amount ?? 0) < 0;
         const peer = others

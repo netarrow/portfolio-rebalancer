@@ -16,6 +16,7 @@ import { amountTargetOrders, amountTargetUnits, planAmountBuys, resolveAmountTar
 import { buildGoalFlowPlan, goalFlowMoveToRequest, LIQUIDITY_LEVEL_ID } from './goalFlows';
 import type { RelocationRequest } from './fundRelocation';
 import type { MaturityLadder } from './maturityLadder';
+import type { CashPlan } from './cashPlan';
 
 /**
  * Execute → Operations: everything still to be done, detected from the data.
@@ -45,6 +46,10 @@ export interface OperationTodo {
     orders?: Transaction[];
     /** Buckets moves: what goes into the Capital Allocation queue. */
     requests?: RelocationRequest[];
+    /** Broker cash crossed with the cash plan: the wire it proposes (broker ids). */
+    transfer?: { from: string; to: string; amount: number };
+    /** Broker cash: the action is a transfer whatever the sign of `amount`. */
+    cashAction?: 'transfer';
     /** Where its own page is, for the to-dos that are done there. */
     view?: 'fundRelocation' | 'settings' | 'summary' | 'dashboard';
 }
@@ -487,6 +492,102 @@ export const detectFreeBrokerCash = (input: { brokers: Broker[]; reserveAllocate
             detail: `${eur0(st.liquidity)} of cash, ${eur0(st.allocatedReserve)} allocated to portfolios, no minimum set · invest it in a portfolio, or move it`,
         } as OperationTodo];
     });
+
+/**
+ * The broker-cash to-dos crossed with the cash plan, so that keeping, moving
+ * and investing never contradict each other: the free cash the plan wires to
+ * an account that is short (of its hold, or of a capex due soon nothing
+ * covers) is taken off what its own account says can be invested, and the
+ * wire is proposed on the to-do of the account that is short — or, when that
+ * one has none, on the donor's. Only a broker whose minimum is linked to
+ * Expense Planning gives its cash away: on the others the minimum typed by
+ * hand is the rule, and their to-dos are left as they are.
+ */
+export const crossBrokerCash = (todos: OperationTodo[], input: {
+    plan: CashPlan | null;
+    brokers: Broker[];
+    portfolioName?: (id: string) => string | undefined;
+}): OperationTodo[] => {
+    const { plan, brokers } = input;
+    if (!plan) return todos;
+    const byBroker = new Map<string, OperationTodo>();
+    todos.forEach(t => { if (t.kind === 'broker-cash' && t.brokerId) byBroker.set(t.brokerId, { ...t }); });
+    if (byBroker.size === 0) return todos;
+    const linked = new Set(brokers.filter(b => b.minLiquidityLinked).map(b => b.id));
+    const name = (id: string) => brokers.find(b => b.id === id)?.name ?? id;
+
+    const spare = new Map<string, number>();
+    const shortLeft = new Map<string, number>();
+    byBroker.forEach((t, id) => {
+        if ((t.amount ?? 0) > 0 && linked.has(id)) spare.set(id, t.amount!);
+        if ((t.amount ?? 0) < 0) shortLeft.set(id, -t.amount!);
+    });
+    const kept = new Map<string, string[]>();
+    const note = (id: string, text: string) => kept.set(id, [...(kept.get(id) ?? []), text]);
+
+    plan.moves.forEach(m => {
+        if (m.kind !== 'wire' || !m.fromBrokerId || !m.toBrokerId) return;
+        const from = m.fromBrokerId, to = m.toBrokerId;
+        const donor = byBroker.get(from);
+        let left = Math.min(m.amount, spare.get(from) ?? 0);
+        if (!donor || left < 1) return;
+        const give = (amount: number) => {
+            spare.set(from, (spare.get(from) ?? 0) - amount);
+            donor.amount = Math.round(((donor.amount ?? 0) - amount) * 100) / 100;
+            left -= amount;
+        };
+        // First what the receiving account lacks of its own minimum…
+        const short = Math.min(left, shortLeft.get(to) ?? 0);
+        if (short >= 1) {
+            const receiver = byBroker.get(to)!;
+            shortLeft.set(to, (shortLeft.get(to) ?? 0) - short);
+            receiver.transfer ??= { from, to, amount: short };
+            receiver.detail += ` · cash plan: ${eur0(short)} is free on ${name(from)}`;
+            note(from, `${eur0(short)} kept to top up ${name(to)}`);
+            give(short);
+        }
+        // …then what the plan sends there for another reason (a capex not covered).
+        if (left >= 1) {
+            donor.transfer ??= { from, to, amount: Math.round(left * 100) / 100 };
+            note(from, `${eur0(left)} to wire to ${name(to)} (${m.reason})`);
+            give(left);
+        }
+    });
+
+    const out: OperationTodo[] = [];
+    todos.forEach(t => {
+        const crossed = t.kind === 'broker-cash' && t.brokerId ? byBroker.get(t.brokerId) : undefined;
+        if (!crossed) { out.push(t); return; }
+        const id = t.brokerId!;
+        const notes = kept.get(id);
+        if ((t.amount ?? 0) > 0 && linked.has(id)) {
+            // What is only waiting here to reach a portfolio: where to invest it.
+            const transit = plan.accounts.find(a => a.brokerId === id)?.layers.find(l => l.kind === 'in-transit')?.items ?? [];
+            if (transit.length > 0) {
+                const text = transit.slice(0, 3).map(i => {
+                    const to = (i.portfolioIds ?? []).map(pid => input.portfolioName?.(pid)).filter(Boolean).join(' / ');
+                    return `${i.name} ${eur0(i.amount)}${to ? ` → ${to}` : ''}`;
+                }).join(', ');
+                crossed.detail += ` · in transit: ${text}${transit.length > 3 ? ` and ${transit.length - 3} more` : ''}`;
+            }
+        }
+        if (!notes) { out.push(crossed); return; }
+        if ((crossed.amount ?? 0) >= BROKER_CASH_TOLERANCE) {
+            crossed.title = `You can invest ${eur0(crossed.amount ?? 0)} from ${name(id)}`;
+            crossed.detail += ` · ${notes.join(', ')}`;
+            out.push(crossed);
+        } else if (crossed.transfer && crossed.transfer.from === id) {
+            // Nothing left to invest: the to-do is the wire itself.
+            out.push({
+                ...crossed, amount: 0, cashAction: 'transfer',
+                title: `Move ${eur0(crossed.transfer.amount)} from ${name(id)} to ${name(crossed.transfer.to)}`,
+                detail: notes.join(', '),
+            });
+        }
+        // Else its free cash is the top-up proposed on the account that is short.
+    });
+    return out;
+};
 
 /**
  * Held tickers whose day-by-day history (Performance) is behind: never

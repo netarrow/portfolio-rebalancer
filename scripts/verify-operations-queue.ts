@@ -2,10 +2,11 @@
 // only while the condition holds, and snoozed keys stay hidden until their date.
 // Run with: npx esbuild scripts/verify-operations-queue.ts --bundle --format=esm --platform=node | node --input-type=module
 import {
-    addOperationRecord, buildCashInvestOrders, detectBondMaturities, detectBrokerCash, detectCapexMatching, detectFreeBrokerCash, detectFreeBuyPromos,
+    addOperationRecord, buildCashInvestOrders, detectBondMaturities, crossBrokerCash, detectBrokerCash, detectCapexMatching, detectFreeBrokerCash, detectFreeBuyPromos,
     detectGoalFlows, detectPriceHistory, detectRelocationQueue, detectLiquidity, detectPac, detectPrices, detectRebalance, detectSyncs, detectVirtualBonds,
     normalizeOperations, visibleTodos, type OperationTodo,
 } from '../src/utils/operationsQueue';
+import type { CashPlan } from '../src/utils/cashPlan';
 import type { AssetDefinition, Broker, Goal, OperationRecord, PacPlan, Portfolio, Transaction, YnabGoal, YnabGoalAllocation } from '../src/types';
 
 const check = (label: string, actual: unknown, expected: unknown) => {
@@ -155,4 +156,39 @@ const promoBroker = { id: 'b1', name: 'Broker One' } as Broker;
 check('free buy: last month only', detectFreeBuyPromos({ periods: [{ monthKey: '2030-02', brokerId: 'b1', isins: [] }], brokers: [promoBroker], now }).map(t => t.key), ['free-buy:2030-03']);
 check('free buy: this month entered', detectFreeBuyPromos({ periods: [{ monthKey: '2030-02', brokerId: 'b1', isins: [] }, { monthKey: '2030-03', brokerId: 'b1', isins: [] }], brokers: [promoBroker], now }).length, 0);
 check('free buy: never used', detectFreeBuyPromos({ periods: [], brokers: [promoBroker], now }).length, 0);
+
+// Broker cash crossed with the cash plan: the wire before the investing.
+{
+    const mk = (id: string, name: string, liq: number, min: number, linked = true): Broker =>
+        ({ id, name, currentLiquidity: liq, minLiquidityType: 'fixed', minLiquidityAmount: min, minLiquidityLinked: linked } as Broker);
+    const account = (brokerId: string, items: { id: string; name: string; amount: number; reason: 'capex'; portfolioIds: string[] }[] = []) =>
+        ({ brokerId, layers: [{ kind: 'in-transit', items }] });
+    const planOf = (moves: unknown[], transit: Parameters<typeof account>[1] = []) =>
+        ({ accounts: [account('a'), account('b', transit)], moves } as unknown as CashPlan);
+    const run = (list: Broker[], plan: CashPlan | null) => crossBrokerCash(
+        detectBrokerCash({ brokers: list, transactions: [], assetSettings: [], marketData: {}, reserveAllocatedCash: true }),
+        { plan, brokers: list, portfolioName: id => (id === 'pf' ? 'Ladder' : undefined) },
+    );
+    const short = mk('a', 'Current', 1000, 2000);
+    const rich = mk('b', 'Savings', 5000, 1000);
+    const wire = { kind: 'wire', amount: 1000, fromBrokerId: 'b', toBrokerId: 'a', reason: 'cash Current has to hold' };
+
+    const crossed = run([short, rich], planOf([wire]));
+    check('cash plan: the short account is topped up from the free one',
+        crossed.find(t => t.brokerId === 'a')!.transfer, { from: 'b', to: 'a', amount: 1000 });
+    check('cash plan: and that cash is no longer proposed for investing',
+        crossed.find(t => t.brokerId === 'b')!.title, 'You can invest €3,000 from Savings');
+    check('cash plan: without a plan the to-dos are untouched', run([short, rich], null).map(t => t.amount), [-1000, 4000]);
+    check('cash plan: a broker with a minimum typed by hand gives nothing away',
+        run([short, mk('b', 'Savings', 5000, 1000, false)], planOf([wire])).map(t => [t.amount, t.transfer ?? null]), [[-1000, null], [4000, null]]);
+    // All the free cash goes to the top-up: one to-do, on the account that is short.
+    check('cash plan: a donor with nothing left has no to-do of its own',
+        run([mk('a', 'Current', 1000, 5000), rich], planOf([{ ...wire, amount: 4000 }])).map(t => [t.brokerId, t.amount]), [['a', -4000]]);
+    // The receiving account is in line: the wire is for a capex nothing covers.
+    const forCapex = run([mk('a', 'Current', 2000, 2000), mk('b', 'Savings', 2000, 1000)], planOf([{ ...wire, reason: 'Car: not covered in time' }]));
+    check('cash plan: a wire for a capex not covered is the donor\'s to-do',
+        forCapex.map(t => [t.brokerId, t.amount, t.cashAction, t.title]), [['b', 0, 'transfer', 'Move €1,000 from Savings to Current']]);
+    check('cash plan: cash in transit names where it goes',
+        run([rich], planOf([], [{ id: 'house', name: 'House', amount: 2500, reason: 'capex', portfolioIds: ['pf'] }]))[0].detail.includes('in transit: House €2,500 → Ladder'), true);
+}
 console.log('all operations queue checks passed');
