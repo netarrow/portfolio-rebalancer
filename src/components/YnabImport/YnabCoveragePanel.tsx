@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { useYnabCoverage } from './useYnabCoverage';
+import CashPlanBlock from './CashPlanBlock';
+import { useAccountCashPlans } from './useCashPlan';
 
 /**
  * Liquidity & coverage, as three plain answers for the primary budget:
@@ -30,6 +32,7 @@ interface Props {
 const YnabCoveragePanel: React.FC<Props> = () => {
     const { brokers, ynabCategories, setYnabFundingSettings, setYnabMappingEmergency, portfolios, effectiveAssetSettings } = usePortfolio();
     const { report, settings } = useYnabCoverage();
+    const cashAccounts = useAccountCashPlans();
     const [editFund, setEditFund] = useState(false);
     const [openAside, setOpenAside] = useState<Record<string, boolean>>({});
 
@@ -128,6 +131,8 @@ const YnabCoveragePanel: React.FC<Props> = () => {
             </div>
 
             <div className="cov-blocks">
+                <CashPlanBlock />
+
                 {/* ── 1 · Operating cash ─────────────────────────── */}
                 <section className="cov-block">
                     <h4>Operating cash</h4>
@@ -205,14 +210,18 @@ const YnabCoveragePanel: React.FC<Props> = () => {
                                         <span>{eur(a.dueCapexCash)}</span>
                                     </div>
                                 )}
-                                <div className="cov-aside-check" title="Liquidity on the account against operating cash + emergency fund + set aside + cash of the capex due soon">
-                                    {eur(a.liquidity)} on the account vs {eur(a.liquidity - a.free)} to hold
-                                    {' '}(operating {eur(a.operatingCash)}{a.emergencyHere > 0 && <> + fund {eur(a.emergencyHere)}</>} + set aside {eur(a.earmarked)}
-                                    {a.dueCapexCash > 0 && <> + capex due {eur(a.dueCapexCash)}</>}) ·{' '}
-                                    {a.free >= 0
-                                        ? <span className="pill pill-ok">in line +{eur(a.free)}</span>
-                                        : <span className="pill pill-bad">already short {eur(-a.free)}</span>}
-                                </div>
+                                {(() => {
+                                    const c = cashAccounts.find(x => x.brokerId === a.brokerId);
+                                    if (!c) return null;
+                                    return (
+                                        <div className="cov-aside-check" title="Liquidity on the account against what it has to hold in the cash plan: operating cash + capex due soon + set aside + emergency fund held as cash. Cash only waiting to reach a portfolio is not held.">
+                                            {eur(c.liquidity)} on the account vs {eur(c.hold)} to hold{c.transit > 0.5 && <>, {eur(c.transit)} in transit</>} ·{' '}
+                                            {c.short > 0.5
+                                                ? <span className="pill pill-bad">already short {eur(c.short)}</span>
+                                                : <span className="pill pill-ok">in line +{eur(c.movable)}</span>}
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         );
                     })}

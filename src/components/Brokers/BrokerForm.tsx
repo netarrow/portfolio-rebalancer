@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import type { Broker, Portfolio, CommissionType, Person, BrokerRemuneration, RemunerationBaseType, RemunerationFrequency, TransferCostType } from '../../types';
 import { FREQUENCY_LABELS, describeRemuneration, todayIso } from '../../utils/brokerRemuneration';
 import { usePortfolio } from '../../context/PortfolioContext';
-import { useYnabCoverage } from '../YnabImport/useYnabCoverage';
+import { useAccountCashPlans } from '../YnabImport/useCashPlan';
 
 // Tax withheld at source on deposit interest in Italy; the usual case, so it is
 // what a new remuneration plan starts from.
@@ -35,9 +35,9 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
     // Minimum linked to Expense Planning: the figures above stay as the fallback.
     const [minLinked, setMinLinked] = useState(false);
     const { ynabConfig } = usePortfolio();
-    const { report: coverage } = useYnabCoverage();
-    const coverageAccount = initialData?.id ? coverage.accounts.find(a => a.brokerId === initialData.id) : undefined;
-    const linkedMin = ynabConfig?.budgetId && coverageAccount ? Math.max(0, coverageAccount.liquidity - coverageAccount.free) : null;
+    const cashAccounts = useAccountCashPlans();
+    const cashAccount = initialData?.id ? cashAccounts.find(a => a.brokerId === initialData.id) : undefined;
+    const linkedMin = ynabConfig?.budgetId && cashAccount ? cashAccount.hold : null;
 
     // Liquidity Allocations to Portfolios
     const [liquidityAllocations, setLiquidityAllocations] = useState<Record<string, number | ''>>({});
@@ -354,7 +354,7 @@ const BrokerForm: React.FC<BrokerFormProps> = ({ initialData, portfolios, people
                         {minLinked && (
                             <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '0 0 0.6rem 0', lineHeight: 1.4 }}>
                                 {linkedMin !== null
-                                    ? <>Minimum = what this account has to hold in Expense Planning (operating cash, emergency fund, set aside, capex due soon): <strong>€{linkedMin.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</strong> today, kept up to date. The value below applies if Expense Planning stops having a figure for this account.</>
+                                    ? <>Minimum = what this account has to hold in Expense Planning (operating cash, capex due soon, set aside, emergency fund held as cash — not the cash only waiting to reach a portfolio): <strong>€{linkedMin.toLocaleString('en-IE', { maximumFractionDigits: 0 })}</strong> today, kept up to date. The value below applies if Expense Planning stops having a figure for this account.</>
                                     : <>Expense Planning has no figure for this account{initialData ? '' : ' yet'} (no YNAB categories with cash here): the value below applies until it does.</>}
                             </p>
                         )}

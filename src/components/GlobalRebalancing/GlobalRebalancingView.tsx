@@ -509,7 +509,7 @@ const GlobalRebalancingView: React.FC = () => {
                         </div>
                         {liquidityTarget.mode === 'expense' ? (
                             <div className="aa-field">
-                                <label>Operating cash + capex held as cash (EUR)</label>
+                                <label>Cash to hold on the accounts + capex cash to come in (EUR)</label>
                                 <div className="aa-readout">
                                     {expense.liquidity === null ? '—' : formatCurrency(expense.liquidity)}
                                 </div>
@@ -528,6 +528,16 @@ const GlobalRebalancingView: React.FC = () => {
                                             <div className="aa-expense-source">
                                                 + capex {formatCurrency(expense.capexCash)}:{' '}
                                                 {expense.capexCashItems.map(c => `${c.name} ${formatCurrency(c.amount)} (${CAPEX_CASH_REASON[c.reason]}${c.divest > 0 || c.missing ? `: ${formatCurrency(c.cash)} cash + ${formatCurrency(c.divest)} back from the portfolios${c.missing ? ` + ${formatCurrency(c.missing)} not there in time` : ''}` : ''})`).join(' · ')}
+                                            </div>
+                                        )}
+                                        {expense.setAsideCash > 0 && (
+                                            <div className="aa-expense-source" title="Cash set aside on the accounts that stays cash: sinking funds with no planned capex behind them, unmapped money">
+                                                + set aside {formatCurrency(expense.setAsideCash)}
+                                            </div>
+                                        )}
+                                        {expense.fundCashHeld > 0 && (
+                                            <div className="aa-expense-source" title="Emergency-fund cash held on the accounts: no fund portfolio is configured to move it to">
+                                                + emergency fund held as cash {formatCurrency(expense.fundCashHeld)}
                                             </div>
                                         )}
                                     </>

@@ -202,7 +202,7 @@ export const SafetyCard: React.FC<{
                 <Metric label="Cash runway" value={operating > 0 ? `${(liquidity / operating).toFixed(1)} mo` : '—'} sub="broker cash ÷ operating spending"
                     tone={operating > 0 ? (liquidity / operating >= 6 ? 'up' : liquidity / operating < 3 ? 'down' : 'warn') : undefined} />
                 <Metric label="Liquidity vs target" value={liqGap == null ? '—' : signedEur(liqGap)}
-                    sub={expense.liquidity == null ? 'no Expense Planning target' : `${eur(liquidity)} of ${eur(expense.liquidity)} (operating + capex cash)`}
+                    sub={expense.liquidity == null ? 'no Expense Planning target' : `${eur(liquidity)} of ${eur(expense.liquidity)} (to hold on the accounts + capex to come in)`}
                     tone={liqGap == null ? undefined : liqGap < -100 ? 'down' : liqGap > Math.max(1000, (expense.liquidity ?? 0) * 0.25) ? 'accent' : 'up'}
                     title="Above: idle cash that could be invested. Below: cash to set aside." />
                 <Metric label="Years of spending" value={annual > 0 ? `${(netWorth / annual).toFixed(1)} y` : '—'} sub="net worth ÷ yearly spending" />

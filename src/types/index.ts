@@ -21,7 +21,8 @@ export interface Broker {
   minLiquidityPercentage?: number;
   minLiquidityAmount?: number;
   // Minimum linked to Expense Planning: the cash the account has to hold
-  // there (operating cash + emergency fund + set aside + capex due soon) is
+  // there (the hold of utils/cashPlan: operating cash + capex due soon + set
+  // aside + emergency fund held as cash) is
   // kept in minLiquidityType 'fixed' / minLiquidityAmount, so every view
   // reading the minimum follows it. The minimum the user typed is kept in
   // minLiquidityManual: it applies again once unlinked, or while Expense
