@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import Chart from 'react-apexcharts';
 import { usePortfolio } from '../../context/PortfolioContext';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useEcbDepositRates } from '../../hooks/useEcbDepositRates';
 import { getPortfolioValueSeries, getNetWorthSeries, getAssetPriceSeries, getCashFlowsByDate, getAssetDistributionFlows, computeTWR, computeXIRR, computeReturnStats, computeDrawdownAnalysis, type PortfolioScope } from '../../utils/performanceCalculations';
 import { buildPortfolioTree } from '../../utils/portfolioGroups';
 import AssetScopeToggles from '../Layout/AssetScopeToggles';
@@ -45,6 +46,9 @@ const PerformanceView: React.FC = () => {
     const [showUnderwater, setShowUnderwater] = useState(false);
     // Annual risk-free rate (%) used for Sharpe; persisted locally.
     const [riskFreeRate, setRiskFreeRate] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
+    // Historical ECB deposit facility rate, for the Sharpe that follows the
+    // rates actually in force over the track record.
+    const ecb = useEcbDepositRates();
 
     const hasHistory = Object.keys(priceHistory).length > 0;
 
@@ -264,8 +268,8 @@ const PerformanceView: React.FC = () => {
     ), [scope, scopeIds, isUnitPrice, transactions, scopeTx, includeDistributions]);
 
     const returnStats = useMemo(
-        () => computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate }),
-        [baseSeries, cashFlows, riskFreeRate]
+        () => computeReturnStats(baseSeries, cashFlows, { riskFreePct: riskFreeRate, riskFreeSeries: ecb.rates }),
+        [baseSeries, cashFlows, riskFreeRate, ecb.rates]
     );
 
     // Distance from the high-water mark, measured on the same flow-adjusted
@@ -540,6 +544,35 @@ const PerformanceView: React.FC = () => {
                         %
                     </label>
                 )}
+
+                {!isUnitPrice && (
+                    <span
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', fontSize: '0.85rem' }}
+                        title={`ECB deposit facility rate history, read from the ECB Data Portal and used for the "Sharpe (ECB rates)" figure.${ecb.syncedAt ? ` Last synced ${new Date(ecb.syncedAt).toLocaleString()}.` : ''}${ecb.error ? ` Last sync failed: ${ecb.error}` : ''}`}
+                    >
+                        ECB deposit rate
+                        <b style={{ color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                            {ecb.current ? `${ecb.current.ratePct.toFixed(2)}%` : '—'}
+                        </b>
+                        <button
+                            type="button"
+                            onClick={() => { void ecb.refresh(); }}
+                            disabled={ecb.loading}
+                            style={{
+                                padding: '0.3rem 0.6rem', background: 'var(--bg-card)', color: 'var(--text-primary)',
+                                border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)',
+                                cursor: ecb.loading ? 'wait' : 'pointer', fontSize: '0.8rem'
+                            }}
+                        >
+                            {ecb.loading ? 'Syncing…' : 'Sync'}
+                        </button>
+                        {ecb.error && !ecb.loading && (
+                            <span style={{ color: 'var(--color-danger)', fontSize: '0.75rem' }}>
+                                {ecb.rates.length > 0 ? 'sync failed, using saved rates' : 'sync failed'}
+                            </span>
+                        )}
+                    </span>
+                )}
             </div>
 
             {/* Summary */}
@@ -612,6 +645,16 @@ const PerformanceView: React.FC = () => {
                                     <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Sharpe (rf {riskFreeRate}%)</div>
                                     <div style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: '1.3rem' }}>
                                         {returnStats.sharpe.toFixed(2)}
+                                    </div>
+                                </div>
+                            )}
+                            {returnStats.sharpeHistorical !== null && (
+                                <div title="Sharpe against the historical ECB deposit facility rate: each period of the track record is compared with the rate in force over those days, and only the days actually invested count">
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>
+                                        Sharpe (ECB rates{returnStats.avgRiskFreePct !== null ? `, avg ${returnStats.avgRiskFreePct.toFixed(2)}%` : ''})
+                                    </div>
+                                    <div style={{ color: 'var(--text-primary)', fontWeight: 700, fontSize: '1.3rem' }}>
+                                        {returnStats.sharpeHistorical.toFixed(2)}
                                     </div>
                                 </div>
                             )}

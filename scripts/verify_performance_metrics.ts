@@ -6,6 +6,7 @@
 import {
     computeTWR,
     computeReturnStats,
+    riskFreeLogGrowth,
     computeDrawdownAnalysis,
     computeRealizedVolatility,
     getUninvestedProceedsTimeline,
@@ -86,6 +87,63 @@ check('TWR withdrawal stripped: 100→55 with -50 flow = +5%',
     const s2 = computeReturnStats(noisy, new Map());
     if (s2!.sharpe === null || !isFinite(s2!.sharpe)) { failures++; console.log('FAIL  Sharpe finite on noisy series'); }
     else console.log(`PASS  Sharpe finite on noisy series (${s2!.sharpe.toFixed(2)})`);
+}
+
+// --- Historical risk-free rate (ECB deposit facility) ------------------------
+{
+    // Step function: 0% until 2025-07-01, then 4%.
+    const rates = [{ date: '2020-01-01', ratePct: 0 }, { date: '2025-07-01', ratePct: 4 }];
+    check('rf growth: one year at a constant 4% = +4%',
+        Math.expm1(riskFreeLogGrowth([{ date: '2000-01-01', ratePct: 4 }], '2025-01-01', '2026-01-01')) * 100,
+        (Math.pow(1.04, 365 / 365.25) - 1) * 100, 1e-9);
+    check('rf growth: half the window at 0%, half at 4%',
+        riskFreeLogGrowth(rates, '2025-01-01', '2026-01-01'),
+        Math.log(1.04) * (184 / 365.25), 1e-12);
+    check('rf growth: before the first point uses the first rate',
+        riskFreeLogGrowth([{ date: '2025-06-01', ratePct: 2 }], '2025-01-01', '2025-01-11'),
+        Math.log(1.02) * (10 / 365.25), 1e-12);
+    check('rf growth: empty window = 0', riskFreeLogGrowth(rates, '2025-03-01', '2025-03-01'), 0);
+
+    // A noisy daily series over a full year.
+    const noisy: ValuePoint[] = [];
+    let v = 100;
+    const d0 = Date.parse('2025-01-01');
+    for (let i = 0; i <= 365; i++) {
+        noisy.push({ date: new Date(d0 + i * 86400000).toISOString().slice(0, 10), value: v });
+        v *= i % 2 === 0 ? 1.004 : 0.9968;
+    }
+    const none = computeReturnStats(noisy, new Map(), { riskFreePct: 3 })!;
+    if (none.sharpeHistorical !== null || none.avgRiskFreePct !== null) { failures++; console.log('FAIL  no rate series ⇒ historical Sharpe null'); }
+    else console.log('PASS  no rate series ⇒ historical Sharpe null');
+
+    // A flat history must reproduce the fixed-rate Sharpe.
+    const flat = computeReturnStats(noisy, new Map(), { riskFreePct: 3, riskFreeSeries: [{ date: '2000-01-01', ratePct: 3 }] })!;
+    check('constant series ⇒ average rate = that rate', flat.avgRiskFreePct, 3, 1e-9);
+    check('constant series ⇒ historical Sharpe = fixed-rate Sharpe', flat.sharpeHistorical, flat.sharpe!, 1e-6);
+    check('fixed-rate Sharpe untouched by the series', flat.sharpe, none.sharpe!, 1e-12);
+
+    // Rates that moved: the average sits between the two and so does the Sharpe.
+    const stepped = computeReturnStats(noisy, new Map(), { riskFreeSeries: rates })!;
+    check('stepped series ⇒ time-weighted average rate',
+        stepped.avgRiskFreePct, Math.expm1(Math.log(1.04) * (184 / 365.25) / (365 / 365.25)) * 100, 1e-9);
+    const at0 = computeReturnStats(noisy, new Map(), { riskFreePct: 0 })!.sharpe!;
+    const at4 = computeReturnStats(noisy, new Map(), { riskFreePct: 4 })!.sharpe!;
+    const between = stepped.sharpeHistorical! < at0 && stepped.sharpeHistorical! > at4;
+    if (!between) { failures++; console.log(`FAIL  stepped Sharpe ${stepped.sharpeHistorical} not between ${at4} and ${at0}`); }
+    else console.log(`PASS  stepped Sharpe ${stepped.sharpeHistorical!.toFixed(2)} sits between rf 4% (${at4.toFixed(2)}) and rf 0% (${at0.toFixed(2)})`);
+
+    // Not invested during the 4% stretch: nothing held from 2025-03-01 to
+    // 2025-12-01, so only 0%-rate days count and the 4% is never charged.
+    const gappy: ValuePoint[] = [];
+    v = 100;
+    for (let i = 0; i <= 59; i++) {
+        gappy.push({ date: new Date(d0 + i * 86400000).toISOString().slice(0, 10), value: v });
+        v *= i % 2 === 0 ? 1.004 : 0.9968;
+    }
+    gappy.push({ date: '2025-03-02', value: 0 }, { date: '2025-12-01', value: 0 });
+    const gapFlows = new Map<string, number>([['2025-03-02', -v]]);
+    const gap = computeReturnStats(gappy, gapFlows, { riskFreeSeries: rates })!;
+    check('out of the market while rates were 4% ⇒ average rate 0%', gap.avgRiskFreePct, 0, 1e-12);
 }
 
 // --- computeRealizedVolatility ----------------------------------------------

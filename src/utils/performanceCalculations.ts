@@ -255,6 +255,14 @@ export interface ReturnStats {
     annualizedReturnPct: number;
     annualizedVolatilityPct: number | null; // null with too few points
     sharpe: number | null;                  // null when volatility is 0/unknown
+    /**
+     * Sharpe against the *historical* risk-free rate (`riskFreeSeries`, e.g.
+     * the ECB deposit facility rate): each return period is compared with the
+     * rate in force over those very days. Null without a series or volatility.
+     */
+    sharpeHistorical: number | null;
+    /** Time-weighted average of that rate (%/yr) over the days actually invested. */
+    avgRiskFreePct: number | null;
     maxDrawdownPct: number;                 // ≤ 0
     maxDrawdownDate: string | null;
     /** Distance (%) from the high-water mark right now; ≤ 0, 0 at a new high. */
@@ -276,10 +284,13 @@ export interface ReturnStats {
 export function computeFlowAdjustedFactors(
     series: ValuePoint[],
     cashFlows: Map<string, number>
-): { factors: number[]; dates: string[] } {
+): { factors: number[]; dates: string[]; starts: string[] } {
     const factors: number[] = [];
     const dates: string[] = [];
-    if (series.length < 2) return { factors, dates };
+    // starts[i] is the opening date of the period factor[i] covers — not
+    // always dates[i-1]: stretches with nothing invested are skipped.
+    const starts: string[] = [];
+    if (series.length < 2) return { factors, dates, starts };
     const flowIn = buildFlowWindow(cashFlows);
     for (let i = 1; i < series.length; i++) {
         const prev = series[i - 1].value;
@@ -287,8 +298,9 @@ export function computeFlowAdjustedFactors(
         const cf = flowIn(series[i - 1].date, series[i].date);
         factors.push((series[i].value - cf) / prev);
         dates.push(series[i].date);
+        starts.push(series[i - 1].date);
     }
-    return { factors, dates };
+    return { factors, dates, starts };
 }
 
 /**
@@ -435,6 +447,43 @@ export function computeDrawdownAnalysis(
     };
 }
 
+/** One step of a rate history: `ratePct` (%/yr) applies from `date` until the next point. */
+export interface RatePoint {
+    date: string;
+    ratePct: number;
+}
+
+/**
+ * Log-growth of one euro left at the risk-free rate over (from, to]: the rate
+ * history is a step function, and each stretch compounds as
+ * (1 + r)^(days/365.25) — so a constant r% over a year grows by exactly r%.
+ * Dates before the first point use the first known rate. `rates` must be
+ * sorted by date.
+ */
+export function riskFreeLogGrowth(rates: RatePoint[], from: string, to: string): number {
+    if (rates.length === 0) return 0;
+    const start = Date.parse(from), end = Date.parse(to);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+
+    // Last change at or before `from` (binary search); 0 when `from` predates the series.
+    let lo = 0, hi = rates.length - 1, idx = 0;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (rates[mid].date <= from) { idx = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+
+    let log = 0, cursor = start;
+    for (let i = idx; i < rates.length && cursor < end; i++) {
+        const next = i + 1 < rates.length ? Date.parse(rates[i + 1].date) : Infinity;
+        const segEnd = Math.min(end, next);
+        if (segEnd <= cursor) continue;
+        const r = rates[i].ratePct / 100;
+        if (r > -1) log += Math.log1p(r) * ((segEnd - cursor) / MS_PER_DAY / 365.25);
+        cursor = segEnd;
+    }
+    return log;
+}
+
 /**
  * Return/risk metrics on the flow-adjusted return stream (same daily factors
  * TWR links, so deposits/withdrawals don't show up as gains or losses):
@@ -445,10 +494,10 @@ export function computeDrawdownAnalysis(
 export function computeReturnStats(
     series: ValuePoint[],
     cashFlows: Map<string, number>,
-    opts: { riskFreePct?: number; minReturns?: number } = {}
+    opts: { riskFreePct?: number; riskFreeSeries?: RatePoint[]; minReturns?: number } = {}
 ): ReturnStats | null {
     if (series.length < 2) return null;
-    const { factors, dates } = computeFlowAdjustedFactors(series, cashFlows);
+    const { factors, dates, starts } = computeFlowAdjustedFactors(series, cashFlows);
     if (factors.length === 0) return null;
 
     const msPerYear = 365.25 * 86400000;
@@ -484,11 +533,46 @@ export function computeReturnStats(
         ? (annualizedReturnPct - riskFree) / annualizedVolatilityPct
         : null;
 
+    // Historical Sharpe: every period is set against what the risk-free rate
+    // paid over those same days. The rate only accrues while something was
+    // invested (periods with no capital have no factor), so a year sat out in
+    // cash is not charged against the return, and money put to work in a 4%
+    // world is judged against 4%, not against today's rate.
+    let sharpeHistorical: number | null = null;
+    let avgRiskFreePct: number | null = null;
+    const rfSeries = opts.riskFreeSeries;
+    if (rfSeries && rfSeries.length > 0) {
+        let rfLogTotal = 0, investedDays = 0;
+        const excess: number[] = [];
+        for (let i = 0; i < factors.length; i++) {
+            if (factors[i] <= 0) continue;
+            const rfLog = riskFreeLogGrowth(rfSeries, starts[i], dates[i]);
+            rfLogTotal += rfLog;
+            investedDays += daysBetween(starts[i], dates[i]);
+            excess.push(Math.log(factors[i]) - rfLog);
+        }
+        if (investedDays > 0) {
+            avgRiskFreePct = Math.expm1(rfLogTotal / (investedDays / 365.25)) * 100;
+        }
+        if (excess.length >= minReturns && totalFactor > 0) {
+            const mean = excess.reduce((a, b) => a + b, 0) / excess.length;
+            const variance = excess.reduce((a, r) => a + (r - mean) * (r - mean), 0) / (excess.length - 1);
+            const excessVolPct = Math.sqrt(variance) * Math.sqrt(excess.length / years) * 100;
+            // Same annualization basis as annualizedReturnPct (calendar span).
+            const rfAnnualizedPct = Math.expm1(rfLogTotal / years) * 100;
+            if (excessVolPct > 1e-6) {
+                sharpeHistorical = (annualizedReturnPct - rfAnnualizedPct) / excessVolPct;
+            }
+        }
+    }
+
     return {
         twrPct,
         annualizedReturnPct,
         annualizedVolatilityPct,
         sharpe,
+        sharpeHistorical,
+        avgRiskFreePct,
         maxDrawdownPct: drawdown.maxDrawdownPct,
         maxDrawdownDate: drawdown.maxDrawdownDate,
         currentDrawdownPct: drawdown.currentDrawdownPct,

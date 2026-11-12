@@ -13,6 +13,7 @@ import { useExpensePlanningTargets } from '../YnabImport/useExpensePlanningTarge
 import { useSinkingSummary } from '../YnabGoals/useSinkingSummary';
 import { useMaturityLadder } from '../YnabGoals/useMaturityLadder';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useEcbDepositRates } from '../../hooks/useEcbDepositRates';
 
 const DAY = 86_400_000;
 const isoDay = (d: Date) => d.toLocaleDateString('sv-SE');
@@ -51,6 +52,7 @@ const Meter: React.FC<{ value: number; target: number }> = ({ value, target }) =
  */
 export const PerformanceCard: React.FC<{ base: ValuePoint[]; flows: Map<string, number>; now: Date; onOpen: () => void }> = ({ base, flows, now, onOpen }) => {
     const [riskFree] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
+    const { rates: ecbRates } = useEcbDepositRates();
     const m = useMemo(() => {
         const { factors, dates } = computeFlowAdjustedFactors(base, flows);
         const first = base[0]?.date;
@@ -71,7 +73,7 @@ export const PerformanceCard: React.FC<{ base: ValuePoint[]; flows: Map<string, 
                 { label: 'YTD', value: since(`${now.getFullYear() - 1}-12-31`) },
                 { label: '1Y', value: since(ago(365)) },
             ],
-            stats: computeReturnStats(base, flows, { riskFreePct: riskFree }),
+            stats: computeReturnStats(base, flows, { riskFreePct: riskFree, riskFreeSeries: ecbRates }),
             dd: computeDrawdownAnalysis(base, flows),
             xirr: computeXIRR(base, flows),
             best: monthly.length > 0 ? Math.max(...monthly) : null,
@@ -79,7 +81,7 @@ export const PerformanceCard: React.FC<{ base: ValuePoint[]; flows: Map<string, 
             positive: monthly.length > 0 ? (monthly.filter(r => r > 0).length / monthly.length) * 100 : null,
             months: monthly.length,
         };
-    }, [base, flows, now, riskFree]);
+    }, [base, flows, now, riskFree, ecbRates]);
 
     const { stats, dd } = m;
     if (base.length < 2 || !dd) return null;
@@ -113,6 +115,12 @@ export const PerformanceCard: React.FC<{ base: ValuePoint[]; flows: Map<string, 
                 <Metric label="Max drawdown" value={pct(stats?.maxDrawdownPct)} sub={dd.longestUnderwaterDays > 0 ? `longest below a high: ${dd.longestUnderwaterDays} d` : ''} tone="down" />
                 <Metric label="Sharpe" value={stats?.sharpe != null ? stats.sharpe.toFixed(2) : '—'} sub={`risk-free ${riskFree}% · since start`}
                     tone={stats?.sharpe == null ? undefined : stats.sharpe >= 1 ? 'up' : stats.sharpe < 0 ? 'down' : undefined} />
+                {stats?.sharpeHistorical != null && (
+                    <Metric label="Sharpe (ECB rates)" value={stats.sharpeHistorical.toFixed(2)}
+                        sub={stats.avgRiskFreePct != null ? `avg deposit rate ${stats.avgRiskFreePct.toFixed(2)}% · since start` : 'since start'}
+                        tone={stats.sharpeHistorical >= 1 ? 'up' : stats.sharpeHistorical < 0 ? 'down' : undefined}
+                        title="Sharpe against the historical ECB deposit facility rate: each period is compared with the rate in force at the time" />
+                )}
                 <Metric label="Volatility" value={plainPct(stats?.annualizedVolatilityPct)} sub="annualized" />
                 <Metric label="Return / risk" value={stats?.annualizedVolatilityPct ? (stats.annualizedReturnPct / stats.annualizedVolatilityPct).toFixed(2) : '—'} sub="ann. return ÷ volatility" />
                 <Metric label="Best / worst month" value={m.best != null ? `${pct(m.best)} / ${pct(m.worst)}` : '—'} sub={m.months > 0 ? `${m.months} full months` : ''} />

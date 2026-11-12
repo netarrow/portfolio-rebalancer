@@ -63,9 +63,17 @@ const RiskMetricsRow: React.FC<RiskMetricsRowProps> = ({ stats, title, riskFreeP
                 )}
                 {stats.sharpe !== null && (
                     <div style={cardStyle} title={`Annualised excess return (above the ${riskFreePct}% risk-free rate) divided by volatility. The higher it is, the better the risk-adjusted return.`}>
-                        <div style={labelStyle}>Sharpe Ratio</div>
+                        <div style={labelStyle}>Sharpe (rf {riskFreePct}%)</div>
                         <div style={{ ...valueStyle, color: stats.sharpe >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
                             {stats.sharpe.toFixed(2)}
+                        </div>
+                    </div>
+                )}
+                {stats.sharpeHistorical !== null && (
+                    <div style={cardStyle} title={`Sharpe against the historical ECB deposit facility rate: each period is compared with the rate in force at the time${stats.avgRiskFreePct !== null ? ` (${stats.avgRiskFreePct.toFixed(2)}% on average over the days invested)` : ''}, instead of one fixed rate for the whole history.`}>
+                        <div style={labelStyle}>Sharpe (ECB rates)</div>
+                        <div style={{ ...valueStyle, color: stats.sharpeHistorical >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                            {stats.sharpeHistorical.toFixed(2)}
                         </div>
                     </div>
                 )}

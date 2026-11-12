@@ -9,7 +9,7 @@ import type { Asset, Transaction, PriceHistoryMap } from '../../types';
 import { CASH_TICKER_PREFIX, getCashTicker } from '../../types';
 import MacroStats from './MacroStats';
 import RiskMetricsRow from '../Performance/RiskMetrics';
-import { getPortfolioValueSeries, getCashFlowsByDate, computeReturnStats } from '../../utils/performanceCalculations';
+import { getPortfolioValueSeries, getCashFlowsByDate, computeReturnStats, type RatePoint } from '../../utils/performanceCalculations';
 import {
     buildPortfolioTree,
     aggregateGroup,
@@ -18,6 +18,7 @@ import {
     type GroupAggregate,
 } from '../../utils/portfolioGroups';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
+import { useEcbDepositRates } from '../../hooks/useEcbDepositRates';
 import './Dashboard.css';
 
 // Shared with the Performance view so the two risk-metric readouts can be
@@ -67,10 +68,12 @@ const ScopeRiskMetrics: React.FC<{
     priceHistory: PriceHistoryMap;
     range: RiskRangeKey;
     riskFreePct: number;
+    /** Historical risk-free rate (ECB deposit facility) for the second Sharpe. */
+    riskFreeSeries: RatePoint[];
     /** One portfolio, or every member of a group. */
     portfolioId?: string | string[];
     brokerId?: string;
-}> = ({ transactions, priceHistory, range, riskFreePct, portfolioId, brokerId }) => {
+}> = ({ transactions, priceHistory, range, riskFreePct, riskFreeSeries, portfolioId, brokerId }) => {
     // `portfolioId` may be an array (a parent/child group). Callers must pass a
     // memoized array — a fresh literal would invalidate this memo every render.
     const stats = useMemo(() => {
@@ -78,8 +81,8 @@ const ScopeRiskMetrics: React.FC<{
         const scoped = brokerId ? transactions.filter(t => t.brokerId === brokerId) : transactions;
         const series = getPortfolioValueSeries(scoped, priceHistory, { portfolioId, from });
         const cashFlows = getCashFlowsByDate(scoped, portfolioId);
-        return computeReturnStats(series, cashFlows, { riskFreePct });
-    }, [transactions, priceHistory, range, riskFreePct, portfolioId, brokerId]);
+        return computeReturnStats(series, cashFlows, { riskFreePct, riskFreeSeries });
+    }, [transactions, priceHistory, range, riskFreePct, riskFreeSeries, portfolioId, brokerId]);
 
     if (!stats) return null;
     return (
@@ -598,6 +601,7 @@ const AllocationCharts: React.FC = () => {
     // (same localStorage keys), so both readouts reconcile on the same range.
     const [riskRange, setRiskRange] = useState<RiskRangeKey>('MAX');
     const [riskFreeRate] = useLocalStorage<number>('portfolio_risk_free_rate', 0);
+    const { rates: ecbRates } = useEcbDepositRates();
 
     // Whole-account risk metrics (annualized return, volatility, Sharpe, max
     // drawdown) over the selected window, derived from the same net-worth value
@@ -606,8 +610,8 @@ const AllocationCharts: React.FC = () => {
         const from = riskRangeFrom(riskRange);
         const series = getPortfolioValueSeries(transactions, priceHistory, { from });
         const cashFlows = getCashFlowsByDate(transactions);
-        return computeReturnStats(series, cashFlows, { riskFreePct: riskFreeRate });
-    }, [transactions, priceHistory, riskRange, riskFreeRate]);
+        return computeReturnStats(series, cashFlows, { riskFreePct: riskFreeRate, riskFreeSeries: ecbRates });
+    }, [transactions, priceHistory, riskRange, riskFreeRate, ecbRates]);
 
     // 1. Total / All (including virtual cash assets from all portfolios)
     const totalAssets = useMemo(() => {
@@ -1207,6 +1211,7 @@ const AllocationCharts: React.FC = () => {
                                     priceHistory={priceHistory}
                                     range={riskRange}
                                     riskFreePct={riskFreeRate}
+                                    riskFreeSeries={ecbRates}
                                     portfolioId={memberIds}
                                 />
                             }
@@ -1236,6 +1241,7 @@ const AllocationCharts: React.FC = () => {
                                         priceHistory={priceHistory}
                                         range={riskRange}
                                         riskFreePct={riskFreeRate}
+                                        riskFreeSeries={ecbRates}
                                         portfolioId={p.id}
                                     />
                                 }
@@ -1269,6 +1275,7 @@ const AllocationCharts: React.FC = () => {
                                         priceHistory={priceHistory}
                                         range={riskRange}
                                         riskFreePct={riskFreeRate}
+                                        riskFreeSeries={ecbRates}
                                         brokerId={broker.id}
                                     />
                                 }

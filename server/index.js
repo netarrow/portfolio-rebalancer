@@ -22,6 +22,7 @@ import { fetchFtQuote } from './ftMarkets.js';
 import { fetchAlifondQuote, compartoFromTicker } from './alifond.js';
 import { NON_ISIN_SOURCES } from './sources.js';
 import { amountToEur } from './fx.js';
+import { getDepositFacilityRates } from './ecbRates.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1057,6 +1058,26 @@ app.get('/api/btp-italia/:isin/coefficient', priceLimiter, async (req, res) => {
         }
         console.error('[BtpItalia] endpoint error:', err.message);
         res.status(502).json({ error: err.message });
+    }
+});
+
+// --- ECB DEPOSIT FACILITY RATE (risk-free leg of the Sharpe ratio) ---
+// Public reference data, cached server-side for 12h and client-side for a day,
+// so it gets its own light limiter instead of eating the price budget.
+const ecbLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: 20,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please retry in a minute.' },
+});
+
+app.get('/api/ecb/deposit-rates', ecbLimiter, async (req, res) => {
+    try {
+        res.json(await getDepositFacilityRates({ force: req.query.refresh === '1' }));
+    } catch (err) {
+        console.error('[ecb] deposit rates error:', err.message);
+        res.status(502).json({ error: `Could not read the ECB deposit facility rate: ${err.message}` });
     }
 });
 
