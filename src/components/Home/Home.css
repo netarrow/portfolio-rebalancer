@@ -194,3 +194,8 @@
 .home-ptotals-up { color: var(--color-success); }
 .home-ptotals-down { color: var(--color-danger); }
 .home-ptotals-sum { border-top: 1px solid rgba(148, 163, 184, 0.12); padding-top: var(--space-3); font-weight: 600; }
+
+.home-actotals-tools { display: flex; align-items: center; gap: var(--space-3); }
+.home-actotals-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-muted); cursor: pointer; user-select: none; }
+.home-actotals-toggle input { margin: 0; cursor: pointer; }
+.home-actotals-subs { display: block; margin-top: 2px; font-size: 0.75rem; }
