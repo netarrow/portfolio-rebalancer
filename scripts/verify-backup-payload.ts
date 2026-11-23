@@ -68,6 +68,7 @@ const makeState = (tag: string): BackupData => ({
     people: [{ id: `person-${tag}`, name: `Person ${tag}` }],
     pacPlans: [{ id: `pac-${tag}`, ticker: 'VWCE', amount: 200 }],
     pacExecutions: [{ id: `pe-${tag}`, planId: `pac-${tag}`, dueDate: '2026-05-01', status: 'done' }],
+    securityBufferSettings: { birthYear: tag === 'A' ? 1980 : 1990, riskFreePct: 2, riskFreeDate: '2026-03-01', minPct: 10, pyramidCredit: 0.5, roles: { p1: 'growth' } },
 } as unknown as BackupData);
 
 // The JSON file exactly as the app writes it (TargetSettings.handleBackup).
@@ -195,7 +196,7 @@ const oldInto = storeFrom(A);
 const parsedV6 = restore(oldInto, v6File(B));
 for (const f of V6_FIELDS) check(`v6 field ${f} is restored`, read(oldInto, f), (B as unknown as Record<string, unknown>)[f]);
 const notInV6 = stored.filter(f => !(V6_FIELDS as readonly string[]).includes(f));
-check('the v6 file leaves 15 fields to the tool', notInV6.length, 15);
+check('the v6 file leaves 16 fields to the tool', notInV6.length, 16);
 for (const f of notInV6) check(`${f} keeps the local value`, read(oldInto, f), (A as unknown as Record<string, unknown>)[f]);
 check('the local YNAB goals group is kept', [parsedV6.ynabGoalsGroupId, parsedV6.ynabGoalsGroupName], [undefined, undefined]);
 

@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useMemo, useEffect, useState, useRef } from 'react';
 import { calculateAssets, isGroupKey, isCashTicker, isVirtualBondTicker } from '../utils/portfolioCalculations';
 import { useLocalStorage } from '../hooks/useLocalStorage';
-import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, SinkingCycle, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabLinkedCategory, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote, OperationRecord } from '../types';
-import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
+import type { Transaction, Asset, AssetClass, PortfolioSummary, AssetSubClass, Portfolio, AllocationGroup, AssetDefinition, Broker, MacroAllocation, GoalAllocation, AssetAllocationSettings, PortfolioTargetConfig, LiquidityTargetConfig, Goal, YnabConfig, YnabCategory, YnabCategoryMapping, YnabMappingTarget, YnabFundingSettings, YnabCategoryGroupSummary, YnabGoal, SinkingCycle, YnabGoalAllocation, YnabGoalSyncCandidate, YnabMacroCategory, YnabMacroMappings, YnabDecisionHorizon, YnabLinkedCategory, YnabMonthSnapshot, YnabSpendingHistoryByBudget, PriceHistoryMap, PricePoint, VirtualBond, FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMapping, YnabAccountMappings, YnabBudgetRef, BrokerLiquiditySyncRow, BrokerAccrual, PacPlan, PacExecution, PriceSource, GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote, OperationRecord, SecurityBufferSettings } from '../types';
+import { getVirtualBondTicker, getVirtualBondId, DEFAULT_YNAB_FUNDING_SETTINGS, DEFAULT_SECURITY_BUFFER_SETTINGS, EMPTY_YNAB_TRACKING_CONFIG } from '../types';
 import { normalizeYnabTrackingConfig, withEntry } from '../utils/ynabTrackingPlan';
 import { checkYnabGuardBudget, checkYnabWriteTarget } from '../utils/ynabWriteGuard';
 import { executeMigration, executeReassignment, executeRevaluation, buildOrphanRelease, goalHeldUnits, goalsHoldingShares, rollbackWriteEntry, rollbackDependents, normalizeYnabWriteLog, normalizeYnabGoalQuotes, migratedBrokerIds, upsertWriteLogEntry, type MigrationPreview, type ReassignmentPreview, type RevaluationPreview, type YnabWriteApi } from '../utils/ynabWriteBack';
@@ -277,6 +277,9 @@ interface PortfolioContextType {
     // PAC (piano di accumulo) auto-tracking
     pacPlans: PacPlan[];
     pacExecutions: PacExecution[];
+    // Security Buffer target (Portfolios page)
+    securityBufferSettings: SecurityBufferSettings;
+    setSecurityBufferSettings: (next: SecurityBufferSettings) => void;
     addPacPlan: (plan: PacPlan) => void;
     updatePacPlan: (plan: PacPlan) => void;
     deletePacPlan: (id: string) => void;
@@ -402,6 +405,11 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     const [pacPlans, setPacPlans] = useLocalStorage<PacPlan[]>('portfolio_pac_plans', []);
     const [pacExecutions, setPacExecutions] = useLocalStorage<PacExecution[]>('portfolio_pac_executions', []);
+    const [storedSecurityBufferSettings, setSecurityBufferSettings] = useLocalStorage<SecurityBufferSettings>('portfolio_security_buffer', DEFAULT_SECURITY_BUFFER_SETTINGS);
+    // Defaults under the stored fields, so a partial object still has a floor and a credit.
+    const securityBufferSettings = useMemo<SecurityBufferSettings>(
+        () => ({ ...DEFAULT_SECURITY_BUFFER_SETTINGS, ...storedSecurityBufferSettings, roles: storedSecurityBufferSettings?.roles ?? {} }),
+        [storedSecurityBufferSettings]);
 
     // Auto-seed the forecast planned expenses the first time forecastable YNAB
     // goals exist. Runs only while the stored value is null: once the user has
@@ -1107,6 +1115,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         people,
         pacPlans,
         pacExecutions,
+        securityBufferSettings: storedSecurityBufferSettings,
     });
 
     // Debounced Azure sync: fires 3s after any portfolio data change
@@ -1145,7 +1154,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         return () => { if (syncDebounceRef.current) clearTimeout(syncDebounceRef.current); };
     }, [transactions, assetSettings, portfolios, brokers, marketData,
         storedAssetAllocationSettings, macroAllocations, goalAllocations, goals, aggregateExcludedTickers, goalModeTargets, goalFlowPortfolioStates, ynabMappings, ynabFundingSettings, ynabAccountMappings,
-        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabTrackingConfig, ynabWriteLog, ynabGoalQuotes, operations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions]);
+        ynabGoals, ynabGoalAllocations, ynabMacroMappings, ynabBudgetOwners, ynabTrackingConfig, ynabWriteLog, ynabGoalQuotes, operations, ynabConfig?.goalsGroupId, ynabConfig?.goalsGroupName, ynabConfig?.lastGoalsSyncAt, virtualBonds, freeCommissionPeriods, storedPlannedForecastExpenses, assetScope, people, pacPlans, pacExecutions, storedSecurityBufferSettings]);
 
     // On mount: check if Azure has newer data and offer restore
     useEffect(() => {
@@ -2919,6 +2928,7 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 people: setPeople,
                 pacPlans: setPacPlans,
                 pacExecutions: setPacExecutions,
+                securityBufferSettings: setSecurityBufferSettings,
             };
             for (const [field, key, value] of backupStorageEntries(parsed)) {
                 persist(key, value);
@@ -4362,6 +4372,8 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setAssetMaturities,
         pacPlans,
         pacExecutions,
+        securityBufferSettings,
+        setSecurityBufferSettings,
         addPacPlan,
         updatePacPlan,
         deletePacPlan,

@@ -909,3 +909,30 @@ export interface OperationRecord {
   detail?: string;
   transactionIds?: string[];
 }
+
+// ── Security Buffer target (Portfolios page) ────────────────────────
+// Role of a portfolio in the Omney pyramid, as the Security Buffer reads it.
+// BUFFER is never assigned: the children of a CRESCITA ('growth') parent are
+// the buffer by derivation. 'excluded' = left out (pension funds, third-party
+// plans, illiquid or someone else's assets). Unassigned = not counted either.
+export type PyramidRole = 'emergency' | 'goal' | 'growth' | 'excluded';
+
+export interface SecurityBufferSettings {
+  /** Year of birth; the age is worked out from it every year. */
+  birthYear?: number;
+  /** Risk-free rate typed by hand, in % (2 = 2%), and the date it refers to. */
+  riskFreePct?: number;
+  riskFreeDate?: string;      // 'YYYY-MM-DD'
+  /** Floor of the buffer, % of L3. */
+  minPct: number;
+  /** How much a covered pyramid lowers the buffer, 0..1. */
+  pyramidCredit: number;
+  /** portfolioId → role. */
+  roles: Record<string, PyramidRole>;
+}
+
+export const DEFAULT_SECURITY_BUFFER_SETTINGS: SecurityBufferSettings = {
+  minPct: 10,
+  pyramidCredit: 0.5,
+  roles: {},
+};

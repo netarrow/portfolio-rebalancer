@@ -1,0 +1,103 @@
+.sb-panel {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    margin-bottom: var(--space-6);
+}
+.sb-toggle {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-4);
+    background: none;
+    border: 0;
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+}
+.sb-toggle-sum { font-weight: 400; font-size: 0.85rem; color: var(--text-secondary); }
+.sb-body { padding: 0 var(--space-4) var(--space-4); }
+.sb-intro { color: var(--text-secondary); font-size: 0.85rem; margin: 0 0 var(--space-3); }
+.sb-warnings {
+    list-style: none;
+    margin: 0 0 var(--space-4);
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    color: var(--color-warning);
+    font-size: 0.8rem;
+    display: grid;
+    gap: var(--space-1);
+}
+.sb-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+}
+.sb-card {
+    background: var(--bg-app);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    min-width: 0;
+}
+.sb-card h4 { margin: 0 0 var(--space-3); font-size: 0.95rem; }
+.sb-card h4 small { color: var(--text-secondary); font-weight: 400; }
+.sb-field {
+    display: grid;
+    grid-template-columns: 9rem 1fr;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+    margin-bottom: var(--space-2);
+    font-size: 0.85rem;
+}
+.sb-field small { grid-column: 2; color: var(--text-muted); font-size: 0.75rem; }
+.sb-field .form-input { min-width: 0; }
+.sb-roles { display: grid; gap: var(--space-2); }
+.sb-role { display: grid; grid-template-columns: 1fr minmax(9rem, 12rem); gap: var(--space-2); align-items: center; font-size: 0.85rem; }
+.sb-role-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-role-derived { color: var(--color-accent); font-size: 0.8rem; }
+.sb-note { display: block; color: var(--text-muted); font-size: 0.75rem; margin-top: var(--space-2); }
+.sb-dl { margin: 0; display: grid; gap: var(--space-1); font-size: 0.85rem; }
+.sb-dl > div { display: flex; justify-content: space-between; gap: var(--space-2); }
+.sb-dl dt { color: var(--text-secondary); }
+.sb-dl dd { margin: 0; font-variant-numeric: tabular-nums; }
+.sb-strong dt, .sb-strong dd { color: var(--text-primary); font-weight: 700; }
+.sb-muted dt, .sb-muted dd { color: var(--text-muted); }
+.sb-table { width: 100%; margin-top: var(--space-3); border-collapse: collapse; font-size: 0.8rem; }
+.sb-table th { text-align: left; color: var(--text-muted); font-weight: 500; padding: 2px 4px; }
+.sb-table td { padding: 2px 4px; border-top: 1px solid var(--border-color); font-variant-numeric: tabular-nums; }
+.sb-table small { color: var(--text-muted); }
+.sb-ok { color: var(--color-success); }
+.sb-bad { color: var(--color-warning); }
+.sb-group { margin-bottom: var(--space-3); }
+.sb-kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+.sb-kpis > div { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2); border-radius: var(--radius-sm); background: var(--bg-surface); }
+.sb-kpis span { color: var(--text-muted); font-size: 0.75rem; }
+.sb-kpis strong { font-variant-numeric: tabular-nums; }
+.sb-kpis small { font-weight: 400; color: var(--text-secondary); }
+.sb-kpi-main { outline: 1px solid var(--color-primary); }
+.sb-kpi-bad strong { color: var(--color-warning); }
+.sb-kpi-ok strong { color: var(--color-success); }
+.sb-shares { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; justify-content: space-between; font-size: 0.85rem; margin-bottom: var(--space-3); }
+.sb-apply { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+.sb-flows { font-size: 0.85rem; }
+.sb-flows-title { color: var(--text-secondary); }
+.sb-flows ol { margin: var(--space-1) 0 0; padding-left: 1.25rem; }
+@media (max-width: 600px) {
+    .sb-field { grid-template-columns: 1fr; }
+    .sb-field small { grid-column: 1; }
+    .sb-role { grid-template-columns: 1fr; }
+}

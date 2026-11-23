@@ -2,9 +2,9 @@ import type {
     Transaction, AssetDefinition, Portfolio, Broker, AssetAllocationSettings, MacroAllocation, GoalAllocation, Goal,
     YnabCategoryMapping, YnabFundingSettings, YnabGoal, YnabGoalAllocation, YnabMacroMappings, VirtualBond,
     FreeCommissionPeriod, PlannedForecastExpense, AssetScope, Person, YnabAccountMappings, PacPlan, PacExecution,
-    GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote, OperationRecord,
+    GoalFlowPortfolioState, YnabTrackingConfig, YnabWriteLogEntry, YnabGoalQuote, OperationRecord, SecurityBufferSettings,
 } from '../types';
-import { DEFAULT_YNAB_FUNDING_SETTINGS } from '../types';
+import { DEFAULT_SECURITY_BUFFER_SETTINGS, DEFAULT_YNAB_FUNDING_SETTINGS } from '../types';
 import { normalizeAssetAllocationSettings } from './assetAllocation';
 import { normalizeYnabAccountMappings } from './ynabAccountMappings';
 import { normalizeYnabTrackingConfig } from './ynabTrackingPlan';
@@ -73,6 +73,8 @@ export interface BackupData {
     // PAC (piano di accumulo) auto-tracking plans and their installment ledger.
     pacPlans?: PacPlan[];
     pacExecutions?: PacExecution[];
+    // Security Buffer target: age, risk-free rate, floor, credit and the pyramid role of each portfolio.
+    securityBufferSettings?: SecurityBufferSettings;
 }
 
 // Version of the JSON backup file. v7 carries every field of BackupData (v6
@@ -116,6 +118,7 @@ export function buildBackupData(state: BackupData): BackupData {
         people: state.people,
         pacPlans: state.pacPlans,
         pacExecutions: state.pacExecutions,
+        securityBufferSettings: state.securityBufferSettings,
     };
 }
 
@@ -160,6 +163,7 @@ export interface ParsedBackup {
     people?: Person[];
     pacPlans?: PacPlan[];
     pacExecutions?: PacExecution[];
+    securityBufferSettings?: SecurityBufferSettings;
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
@@ -242,6 +246,14 @@ export function parseBackupData(raw: unknown, fallbackBudgetId?: string): Parsed
         people: optional(data, 'people', r => asArray<Person>(r)),
         pacPlans: optional(data, 'pacPlans', r => asArray<PacPlan>(r)),
         pacExecutions: optional(data, 'pacExecutions', r => asArray<PacExecution>(r)),
+        securityBufferSettings: optional(data, 'securityBufferSettings', r => isPlainObject(r)
+            ? {
+                ...(r as Partial<SecurityBufferSettings>),
+                minPct: typeof r.minPct === 'number' ? r.minPct : DEFAULT_SECURITY_BUFFER_SETTINGS.minPct,
+                pyramidCredit: typeof r.pyramidCredit === 'number' ? r.pyramidCredit : DEFAULT_SECURITY_BUFFER_SETTINGS.pyramidCredit,
+                roles: asRecord(r.roles),
+            } as SecurityBufferSettings
+            : DEFAULT_SECURITY_BUFFER_SETTINGS),
     };
 }
 
@@ -279,6 +291,7 @@ export const BACKUP_STORAGE_KEYS = {
     people: 'portfolio_people',
     pacPlans: 'portfolio_pac_plans',
     pacExecutions: 'portfolio_pac_executions',
+    securityBufferSettings: 'portfolio_security_buffer',
 } as const satisfies Record<Exclude<keyof ParsedBackup, 'ynabGoalsGroupId' | 'ynabGoalsGroupName' | 'ynabLastGoalsSyncAt'>, string>;
 
 export type StoredBackupField = keyof typeof BACKUP_STORAGE_KEYS;

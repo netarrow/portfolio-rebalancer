@@ -3,6 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import PortfolioForm from './PortfolioForm';
 import PortfolioAllocations from './PortfolioAllocations';
 import GroupRatioModal from './GroupRatioModal';
+import SecurityBufferPanel from './SecurityBufferPanel';
 import type { Portfolio } from '../../types';
 import Swal from 'sweetalert2';
 
@@ -84,6 +85,8 @@ const PortfolioList: React.FC = () => {
                     + New Portfolio
                 </button>
             </div>
+
+            {portfolios.length > 0 && <SecurityBufferPanel />}
 
             <div className="portfolio-grid">
                 {portfolios.length === 0 ? (

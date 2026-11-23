@@ -3,6 +3,7 @@ import { usePortfolio } from '../../context/PortfolioContext';
 import { calculateAssets, injectCashAssets, isCashTicker } from '../../utils/portfolioCalculations';
 import { buildPortfolioTree, GROUP_MEMBER_COLORS } from '../../utils/portfolioGroups';
 import type { Portfolio } from '../../types';
+import { useSecurityBuffer } from './useSecurityBuffer';
 
 /**
  * The parent/child ratio, edited where the relationship itself is: on the
@@ -132,6 +133,16 @@ const GroupRatioModal: React.FC<Props> = ({ parent, onClose }) => {
         ])));
     };
 
+    // Security Buffer target for this group, when the parent is a CRESCITA one:
+    // it only fills the drafts, Save is still the confirmation.
+    const { report: bufferReport } = useSecurityBuffer();
+    const bufferGroup = bufferReport.groups.find(g => g.parentId === parent.id && g.proposedRatio);
+    const useBufferTarget = () => {
+        if (!bufferGroup?.proposedRatio) return;
+        const proposed = bufferGroup.proposedRatio;
+        setDrafts(prev => ({ ...prev, ...Object.fromEntries(Object.entries(proposed).map(([id, v]) => [id, String(v)])) }));
+    };
+
     /** Back to "no ratio configured": every member reverts to its value share. */
     const clearAll = () => setDrafts(Object.fromEntries(rows.map(r => [r.portfolio.id, ''])));
 
@@ -224,6 +235,12 @@ const GroupRatioModal: React.FC<Props> = ({ parent, onClose }) => {
                     <button type="button" className="btn btn-secondary" onClick={clearAll} disabled={!anyConfigured}>
                         Clear
                     </button>
+                    {bufferGroup && (
+                        <button type="button" className="btn btn-secondary" onClick={useBufferTarget}
+                            title="Fill the shares with the Security Buffer target (saved only with Save)">
+                            Use Security Buffer target ({bufferGroup.childShareTarget}% buffer)
+                        </button>
+                    )}
                 </div>
 
                 {sumIsOff && (
