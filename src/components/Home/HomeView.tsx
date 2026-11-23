@@ -14,6 +14,7 @@ import QuickActions from './QuickActions';
 import { CoherenceRows, PerformanceCard, SafetyCard, SpendingCard } from './HomeIndicators';
 import { useSpendingFigures } from './useSpendingFigures';
 import GroupRatioCard from './GroupRatioCard';
+import PortfolioTotalsCard from './PortfolioTotalsCard';
 import './Home.css';
 
 type HomeTarget = 'portfolios' | 'operations' | 'performance' | 'stats' | 'fundRelocation' | 'summary' | 'pac' | 'dashboard' | 'disclaimer';
@@ -285,6 +286,8 @@ const HomeView: React.FC<Props> = ({ onNavigate }) => {
                     </section>
                 </div>
             </div>
+
+            <PortfolioTotalsCard onOpen={() => onNavigate('portfolios')} />
 
             <PerformanceCard base={base} flows={flows} now={now} onOpen={() => onNavigate('performance')} />
 

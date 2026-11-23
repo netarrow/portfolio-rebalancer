@@ -184,3 +184,13 @@
     .home-group-options dd { margin-bottom: 0.35rem; }
 }
 .home-nowrap { white-space: nowrap; }
+
+/* Portfolio totals */
+.home-ptotals { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-3) var(--space-5); }
+.home-ptotals li { min-width: 0; }
+.home-ptotals li.is-child { padding-left: var(--space-4); }
+.home-ptotals-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-ptotals-value { white-space: nowrap; }
+.home-ptotals-up { color: var(--color-success); }
+.home-ptotals-down { color: var(--color-danger); }
+.home-ptotals-sum { border-top: 1px solid rgba(148, 163, 184, 0.12); padding-top: var(--space-3); font-weight: 600; }
